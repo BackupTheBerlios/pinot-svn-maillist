@@ -1,0 +1,329 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r30 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r30%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200512292130.jBTLUs7p003159%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000028.html">
+   <LINK REL="Next"  HREF="000030.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r30 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r30%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200512292130.jBTLUs7p003159%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r30 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Dec 29 22:30:54 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000028.html">[Pinot-svn] r29 - in trunk/UI: GTK2 GTK2/src RenderHTML
+</A></li>
+        <LI>Next message: <A HREF="000030.html">[Pinot-svn] r31 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29">[ date ]</a>
+              <a href="thread.html#29">[ thread ]</a>
+              <a href="subject.html#29">[ subject ]</a>
+              <a href="author.html#29">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-29 22:30:54 +0100 (Thu, 29 Dec 2005)
+New Revision: 30
+
+Modified:
+   trunk/UI/GTK2/src/HtmlView.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+Hide, don't close the view tab. Fixed document update.
+
+
+Modified: trunk/UI/GTK2/src/HtmlView.cpp
+===================================================================
+--- trunk/UI/GTK2/src/HtmlView.cpp	2005-12-29 14:09:35 UTC (rev 29)
++++ trunk/UI/GTK2/src/HtmlView.cpp	2005-12-29 21:30:54 UTC (rev 30)
+@@ -28,6 +28,7 @@
+ 
+ HtmlView::HtmlView(Menu *pPopupMenu) :
+ 	MozillaRenderer(),
++	SigC::Object(),
+ 	m_pPopupMenu(pPopupMenu),
+ 	m_pDocHtmlView(NULL)
+ {
+@@ -49,6 +50,10 @@
+ 
+ HtmlView::~HtmlView()
+ {
++	if (m_pDocHtmlView != NULL)
++	{
++		delete m_pDocHtmlView;
++	}
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2005-12-29 14:09:35 UTC (rev 29)
++++ trunk/UI/GTK2/src/mainWindow.cc	2005-12-29 21:30:54 UTC (rev 30)
+@@ -708,10 +708,17 @@
+ 	{
+ 		if (type == NotebookPageBox::VIEW_PAGE)
+ 		{
++			// Stop rendering
+ 			m_pHtmlView-&gt;stop();
++
++			// Hide, don't close the page
++			Widget *pPage = m_pNotebook-&gt;get_nth_page(pageNum);
++			if (pPage != NULL)
++			{
++				pPage-&gt;hide();
++			}
+ 		}
+-
+-		if (m_state.writeLock(2) == true)
++		else if (m_state.writeLock(2) == true)
+ 		{
+ 			// Remove the page
+ 			m_pNotebook-&gt;remove_page(pageNum);
+@@ -1482,7 +1489,7 @@
+ 	else
+ 	{
+ 		// The focus may be on one of the notebook pages
+-		NotebookPageBox *pNotebookPage = get_page_with_focus();
++		NotebookPageBox *pNotebookPage = get_current_page();
+ 		if (pNotebookPage != NULL)
+ 		{
+ 			ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1611,7 +1618,7 @@
+ 	}
+ 	else
+ 	{
+-		NotebookPageBox *pNotebookPage = get_page_with_focus();
++		NotebookPageBox *pNotebookPage = get_current_page();
+ 		if (pNotebookPage != NULL)
+ 		{
+ 			ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1638,7 +1645,7 @@
+ //
+ void mainWindow::on_clearresults_activate()
+ {
+-	NotebookPageBox *pNotebookPage = get_page_with_focus();
++	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1659,7 +1666,7 @@
+ //
+ void mainWindow::on_showextract_activate()
+ {
+-	NotebookPageBox *pNotebookPage = get_page_with_focus();
++	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1682,7 +1689,7 @@
+ 	ResultsModelColumns::ResultType currentType, newType;
+ 
+ 	// What's the new grouping criteria ?
+-	NotebookPageBox *pNotebookPage = get_page_with_focus();
++	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1702,7 +1709,7 @@
+ //
+ void mainWindow::on_viewresults_activate()
+ {
+-	NotebookPageBox *pNotebookPage = get_page_with_focus();
++	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1727,7 +1734,7 @@
+ //
+ void mainWindow::on_viewcache_activate()
+ {
+-	NotebookPageBox *pNotebookPage = get_page_with_focus();
++	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1761,7 +1768,7 @@
+ 		return;
+ 	}
+ 
+-	NotebookPageBox *pNotebookPage = get_page_with_focus();
++	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+@@ -1814,7 +1821,7 @@
+ //
+ void mainWindow::on_viewfromindex_activate()
+ {
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page_with_focus());
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+ 		IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+@@ -1843,7 +1850,7 @@
+ 	}
+ 
+ 	// Get the current documents selection
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page_with_focus());
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+ 		IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+@@ -1862,28 +1869,28 @@
+ 	for (vector&lt;IndexedDocument&gt;::const_iterator docIter = documentsList.begin();
+ 		docIter != documentsList.end(); ++docIter)
+ 	{
+-		// The URL to download, ie the original location of the document
+-		string url = docIter-&gt;getOriginalLocation();
+-		if (url.empty() == true)
++		// The document ID
++		unsigned int docId = docIter-&gt;getID();
++		if (docId == 0)
+ 		{
+ 			continue;
+ 		}
+ 
+-		// The document ID
+-		unsigned int docId = docIter-&gt;getID();
+-		if (docId == 0)
++		// The URL to download, ie the original location of the document
++		string url = docIter-&gt;getOriginalLocation();
++		if (url.empty() == true)
+ 		{
+ 			continue;
+ 		}
+-
+-		// The title
+-		string title = docIter-&gt;getTitle();
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;mainWindow::on_refreshindex_activate: URL is &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
+ 
+ 		// Add this action to the queue
+-		queue_index(*docIter, &quot;&quot;, docId);
++		DocumentInfo docInfo(docIter-&gt;getTitle(), url,
++			docIter-&gt;getType(), docIter-&gt;getLanguage());
++		docInfo.setTimestamp(docIter-&gt;getTimestamp());
++		queue_index(docInfo, &quot;&quot;, docId);
+ 	}
+ }
+ 
+@@ -1904,7 +1911,7 @@
+ 	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: called&quot; &lt;&lt; endl;
+ #endif
+ 	IndexTree *pIndexTree = NULL;
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page_with_focus());
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+ 		indexName = locale_from_utf8(pIndexPage-&gt;getTitle());
+@@ -2035,7 +2042,7 @@
+ 	ustring boxTitle = _(&quot;Delete this document from the index ?&quot;);
+ 
+ 	IndexTree *pIndexTree = NULL;
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page_with_focus());
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+ 		pIndexTree = pIndexPage-&gt;getTree();
+@@ -2416,21 +2423,18 @@
+ }
+ 
+ //
+-// Returns the page that has the focus.
++// Returns the current page.
+ //
+-NotebookPageBox *mainWindow::get_page_with_focus(void)
++NotebookPageBox *mainWindow::get_current_page(void)
+ {
+ 	NotebookPageBox *pNotebookPage = NULL;
+ 
+ 	if (m_state.readLock(7) == true)
+ 	{
+-		if (m_state.m_currentPage &gt;= 0)
++		Widget *pPage = m_pNotebook-&gt;get_nth_page(m_pNotebook-&gt;get_current_page());
++		if (pPage != NULL)
+ 		{
+-			Widget *pPage = m_pNotebook-&gt;get_nth_page(m_state.m_currentPage);
+-			if (pPage != NULL)
+-			{
+-				pNotebookPage = dynamic_cast&lt;NotebookPageBox*&gt;(pPage);
+-			}
++			pNotebookPage = dynamic_cast&lt;NotebookPageBox*&gt;(pPage);
+ 		}
+ 
+ 		m_state.unlock();
+@@ -2477,7 +2481,7 @@
+ }
+ 
+ //
+-// Returns the page number with the given title.
++// Returns the number of the page with the given title.
+ //
+ int mainWindow::get_page_number(const ustring &amp;title, NotebookPageBox::PageType type)
+ {
+@@ -2956,6 +2960,9 @@
+ 			if (pViewPage != NULL)
+ 			{
+ 				pageNum = get_page_number(viewName, NotebookPageBox::VIEW_PAGE);
++				// The page may be hidden
++				pViewPage-&gt;show();
++				// FIXME: move the page
+ 			}
+ 			else
+ 			{
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2005-12-29 14:09:35 UTC (rev 29)
++++ trunk/UI/GTK2/src/mainWindow.hh	2005-12-29 21:30:54 UTC (rev 30)
+@@ -113,7 +113,7 @@
+ 	virtual bool on_mainWindow_delete_event(GdkEventAny *ev);
+ 
+ 	// Action methods
+-	NotebookPageBox *get_page_with_focus(void);
++	NotebookPageBox *get_current_page(void);
+ 	NotebookPageBox *get_page(const Glib::ustring &amp;title,
+ 		NotebookPageBox::PageType type);
+ 	int get_page_number(const Glib::ustring &amp;title,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000028.html">[Pinot-svn] r29 - in trunk/UI: GTK2 GTK2/src RenderHTML
+</A></li>
+	<LI>Next message: <A HREF="000030.html">[Pinot-svn] r31 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29">[ date ]</a>
+              <a href="thread.html#29">[ thread ]</a>
+              <a href="subject.html#29">[ subject ]</a>
+              <a href="author.html#29">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

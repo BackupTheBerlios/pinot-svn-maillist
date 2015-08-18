@@ -1,0 +1,235 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r361 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r361%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201356.k6KDuiJ5009082%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000353.html">
+   <LINK REL="Next"  HREF="000355.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r361 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r361%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201356.k6KDuiJ5009082%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r361 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 20 15:56:44 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000353.html">[Pinot-svn] r360 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000355.html">[Pinot-svn] r362 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#354">[ date ]</a>
+              <a href="thread.html#354">[ thread ]</a>
+              <a href="subject.html#354">[ subject ]</a>
+              <a href="author.html#354">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-20 15:56:38 +0200 (Thu, 20 Jul 2006)
+New Revision: 361
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+Log:
+Load locations indexable by the daemon process. Define an index for the daemon
+use (temporarily named &quot;My Computer&quot;).
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-07-20 13:53:17 UTC (rev 360)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-07-20 13:56:38 UTC (rev 361)
+@@ -112,10 +112,12 @@
+ 	}
+ 
+ 	// This is where the internal indices live
+-	m_indexLocation = directoryName;
+-	m_indexLocation += &quot;/index&quot;;
++	m_docsIndexLocation = directoryName;
++	m_docsIndexLocation += &quot;/index&quot;;
+ 	m_mailIndexLocation = directoryName;
+ 	m_mailIndexLocation += &quot;/mail&quot;;
++	m_daemonIndexLocation = directoryName;
++	m_daemonIndexLocation += &quot;/daemon&quot;;
+ 
+ 	// The location of the history database is not configurable
+ 	m_historyDatabase = directoryName;
+@@ -189,6 +191,7 @@
+ 	m_queries.clear();
+ 	m_labels.clear();
+ 	m_mailAccounts.clear();
++	m_indexableLocations.clear();
+ 	m_cacheProviders.clear();
+ }
+ 
+@@ -213,8 +216,9 @@
+ 	}
+ 
+ 	// Internal indices
+-	addIndex(_(&quot;My Documents&quot;), m_indexLocation);
++	addIndex(_(&quot;My Documents&quot;), m_docsIndexLocation);
+ 	addIndex(_(&quot;My Email&quot;), m_mailIndexLocation);
++	addIndex(_(&quot;My Computer&quot;), m_daemonIndexLocation);
+ 
+ 	// Add default labels on the first run
+ 	if (m_firstRun == true)
+@@ -355,6 +359,10 @@
+ 				{
+ 					loadMailAccounts(pElem);
+ 				}
++				else if (nodeName == &quot;indexable&quot;)
++				{
++					loadIndexableLocations(pElem);
++				}
+ 			}
+ 		}
+ 	}
+@@ -743,6 +751,41 @@
+ 	return true;
+ }
+ 
++bool PinotSettings::loadIndexableLocations(const Element *pElem)
++{
++	if (pElem == NULL)
++	{
++		return false;
++	}
++
++	Node::NodeList childNodes = pElem-&gt;get_children();
++	if (childNodes.empty() == true)
++	{
++		return false;
++	}
++
++	// Load the indexable location's properties
++	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++	{
++		Node *pNode = (*iter);
++		Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++		if (pElem == NULL)
++		{
++			continue;
++		}
++
++		string nodeName = pElem-&gt;get_name();
++		string nodeContent = getElementContent(pElem);
++
++		if (nodeName == &quot;location&quot;)
++		{
++			m_indexableLocations.insert(nodeContent);
++		}
++	}
++
++	return true;
++}
++
+ bool PinotSettings::loadCacheProviders(const Element *pElem)
+ {
+ 	if (pElem == NULL)
+@@ -997,6 +1040,16 @@
+ 		sprintf(numStr, &quot;%ld&quot;, mailIter-&gt;m_size);
+ 		addChildElement(pElem, &quot;size&quot;, numStr);
+ 	}
++	// Locations to index 
++	for (set&lt;string&gt;::iterator locationIter = m_indexableLocations.begin(); locationIter != m_indexableLocations.end(); ++locationIter)
++	{
++		pElem = pRootElem-&gt;add_child(&quot;indexable&quot;);
++		if (pElem == NULL)
++		{
++			return false;
++		}
++		addChildElement(pElem, &quot;location&quot;, *locationIter);
++	}
+ 
+ 	// Save to file
+ 	doc.write_to_file_formatted(getConfigurationFileName());
+@@ -1014,7 +1067,8 @@
+ bool PinotSettings::isInternalIndex(const string &amp;indexName) const
+ {
+ 	if ((indexName == _(&quot;My Documents&quot;)) ||
+-		(indexName == _(&quot;My Email&quot;)))
++		(indexName == _(&quot;My Email&quot;)) ||
++		(indexName == _(&quot;My Computer&quot;)))
+ 	{
+ 		return true;
+ 	}
+@@ -1069,8 +1123,9 @@
+ 	// Clear both maps, reinsert the internal index
+ 	m_indexNames.clear();
+ 	m_indexIds.clear();
+-	addIndex(_(&quot;My Documents&quot;), m_indexLocation);
++	addIndex(_(&quot;My Documents&quot;), m_docsIndexLocation);
+ 	addIndex(_(&quot;My Email&quot;), m_mailIndexLocation);
++	addIndex(_(&quot;My Computer&quot;), m_daemonIndexLocation);
+ }
+ 
+ /// Returns an ID that identifies the given index.
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-07-20 13:53:17 UTC (rev 360)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-07-20 13:56:38 UTC (rev 361)
+@@ -160,8 +160,9 @@
+ 		};
+ 
+ 		Glib::ustring m_googleAPIKey;
+-		Glib::ustring m_indexLocation;
++		Glib::ustring m_docsIndexLocation;
+ 		Glib::ustring m_mailIndexLocation;
++		Glib::ustring m_daemonIndexLocation;
+ 		Glib::ustring m_historyDatabase;
+ 		int m_xPos;
+ 		int m_yPos;
+@@ -173,6 +174,7 @@
+ 		bool m_suggestQueryTerms;
+ 		Gdk::Color m_newResultsColour;
+ 		std::set&lt;MailAccount&gt; m_mailAccounts;
++		std::set&lt;std::string&gt; m_indexableLocations;
+ 		std::vector&lt;CacheProvider&gt; m_cacheProviders;
+ 		std::set&lt;Glib::ustring&gt; m_cacheProtocols;
+ 
+@@ -196,6 +198,7 @@
+ 		bool loadLabels(const xmlpp::Element *pElem);
+ 		bool loadColour(const xmlpp::Element *pElem);
+ 		bool loadMailAccounts(const xmlpp::Element *pElem);
++		bool loadIndexableLocations(const xmlpp::Element *pElem);
+ 		bool loadCacheProviders(const xmlpp::Element *pElem);
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000353.html">[Pinot-svn] r360 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000355.html">[Pinot-svn] r362 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#354">[ date ]</a>
+              <a href="thread.html#354">[ thread ]</a>
+              <a href="subject.html#354">[ subject ]</a>
+              <a href="author.html#354">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

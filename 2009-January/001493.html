@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1503 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1503%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901221352.n0MDqh3M017623%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001492.html">
+   <LINK REL="Next"  HREF="001494.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1503 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1503%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901221352.n0MDqh3M017623%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1503 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan 22 14:52:43 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001492.html">[Pinot-svn] r1502 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001494.html">[Pinot-svn] r1504 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1493">[ date ]</a>
+              <a href="thread.html#1493">[ thread ]</a>
+              <a href="subject.html#1493">[ subject ]</a>
+              <a href="author.html#1493">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-22 14:52:38 +0100 (Thu, 22 Jan 2009)
+New Revision: 1503
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+Log:
+Try and load prefs.xml first: if that fails, load the old config.xml, if it
+works then load ui.xml. This fixes the issue where the daemon would fail to
+load settings on its first Reload.
+Save backend and googleapikey in prefs.xml.
+Copy the UI's history over to the daemon's if the first exists and the second
+doesn't.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2009-01-22 13:22:13 UTC (rev 1502)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2009-01-22 13:52:38 UTC (rev 1503)
+@@ -251,11 +251,13 @@
+ 	string daemonHistoryDatabase(getConfigurationDirectory());
+ 	struct stat fileStat;
+ 
+-	// We only need to copy the UI's over to the daemon's history if it doesn't exist
+ 	uiHistoryDatabase += &quot;/history&quot;;
+ 	daemonHistoryDatabase += &quot;/history-daemon&quot;;
+-	if ((stat(daemonHistoryDatabase.c_str(), &amp;fileStat) != 0) ||
+-		(!S_ISREG(fileStat.st_mode)))
++
++	// Copy the UI's over to the daemon's history if it doesn't exist
++	if ((stat(uiHistoryDatabase.c_str(), &amp;fileStat) == 0) &amp;&amp;
++		((stat(daemonHistoryDatabase.c_str(), &amp;fileStat) != 0) ||
++		(!S_ISREG(fileStat.st_mode))))
+ 	{
+ 		string output;
+ 
+@@ -351,8 +353,8 @@
+ 	// Load settings ?
+ 	if (m_firstRun == false)
+ 	{
+-		if ((loadConfiguration(getFileName(true), false) == false) ||
+-			(loadConfiguration(getFileName(false), false) == false))
++		// Load 0.90 preferences first
++		if (loadConfiguration(getFileName(false), false) == false)
+ 		{
+ 			fileName = getConfigurationDirectory() + &quot;/config.xml&quot;;
+ 
+@@ -371,7 +373,10 @@
+ 				m_firstRun = true;
+ 			}
+ 		}
+-
++		else
++		{
++			loadConfiguration(getFileName(true), false);
++		}
+ 	}
+ 
+ 	if (what == LOAD_ALL)
+@@ -1474,8 +1479,6 @@
+ 		if (what == SAVE_CONFIG)
+ 		{
+ 			addChildElement(pRootElem, &quot;warnaboutversion&quot;, (m_warnAboutVersion ? &quot;YES&quot; : &quot;NO&quot;));
+-			addChildElement(pRootElem, &quot;backend&quot;, m_defaultBackend);
+-			addChildElement(pRootElem, &quot;googleapikey&quot;, m_googleAPIKey);
+ 			// User interface position and size
+ 			pElem = pRootElem-&gt;add_child(&quot;ui&quot;);
+ 			if (pElem == NULL)
+@@ -1560,6 +1563,8 @@
+ 		}
+ 		if (what == SAVE_PREFS)
+ 		{
++			addChildElement(pRootElem, &quot;backend&quot;, m_defaultBackend);
++			addChildElement(pRootElem, &quot;googleapikey&quot;, m_googleAPIKey);
+ 			// Labels
+ 			for (set&lt;string&gt;::iterator labelIter = m_labels.begin(); labelIter != m_labels.end(); ++labelIter)
+ 			{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001492.html">[Pinot-svn] r1502 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001494.html">[Pinot-svn] r1504 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1493">[ date ]</a>
+              <a href="thread.html#1493">[ thread ]</a>
+              <a href="subject.html#1493">[ subject ]</a>
+              <a href="author.html#1493">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

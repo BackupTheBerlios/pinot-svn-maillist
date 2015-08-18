@@ -1,0 +1,249 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1511 - in trunk: SQL Tokenize UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1511%20-%20in%20trunk%3A%20SQL%20Tokenize%20UI/GTK2/src&In-Reply-To=%3C200901260338.n0Q3ckwA018977%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001500.html">
+   <LINK REL="Next"  HREF="001502.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1511 - in trunk: SQL Tokenize UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1511%20-%20in%20trunk%3A%20SQL%20Tokenize%20UI/GTK2/src&In-Reply-To=%3C200901260338.n0Q3ckwA018977%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1511 - in trunk: SQL Tokenize UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 26 04:38:46 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001500.html">[Pinot-svn] r1510 - trunk/po
+</A></li>
+        <LI>Next message: <A HREF="001502.html">[Pinot-svn] r1512 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1501">[ date ]</a>
+              <a href="thread.html#1501">[ thread ]</a>
+              <a href="subject.html#1501">[ subject ]</a>
+              <a href="author.html#1501">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-26 04:38:35 +0100 (Mon, 26 Jan 2009)
+New Revision: 1511
+
+Modified:
+   trunk/SQL/ActionQueue.cpp
+   trunk/SQL/ActionQueue.h
+   trunk/Tokenize/FilterUtils.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+FilterUrils::isSupportedType() could return false for supported types. This
+could lead to some documents content not being indexed.
+In pinot-dbus-daemon, actions queued by a previous instance of the daemon were
+cleared and the corresponding files would never get indexed.
+
+
+Modified: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2009-01-24 08:56:29 UTC (rev 1510)
++++ trunk/SQL/ActionQueue.cpp	2009-01-26 03:38:35 UTC (rev 1511)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -115,7 +115,7 @@
+ 
+ 	// Is there already an item for this URL ?
+ 	SQLResults *results = executeStatement(&quot;SELECT Url FROM ActionQueue \
+-		WHERE QueueId='%q' AND Url='%q'&quot;,
++		WHERE QueueId='%q' AND Url='%q';&quot;,
+ 		m_queueId.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+@@ -197,7 +197,7 @@
+ 	bool success = false;
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Type, Info FROM ActionQueue \
+-		WHERE QueueId='%q' ORDER BY Date DESC LIMIT 1&quot;,
++		WHERE QueueId='%q' ORDER BY Date DESC LIMIT 1;&quot;,
+ 		m_queueId.c_str());
+ 	if (results != NULL)
+ 	{
+@@ -219,6 +219,30 @@
+ 	return success;
+ }
+ 
++/// Returns the number of items of a particular type.
++unsigned int ActionQueue::getItemsCount(ActionType type)
++{
++	unsigned int count = 0;
++
++	SQLResults *results = executeStatement(&quot;SELECT COUNT(*) FROM ActionQueue \
++		WHERE Type='%q';&quot;,
++		typeToText(type).c_str());
++	if (results != NULL)
++	{
++		SQLRow *row = results-&gt;nextRow();
++		if (row != NULL)
++		{
++			count = atoi(row-&gt;getColumn(0).c_str());
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	return count;
++}
++
+ /// Expires items older than the given date.
+ bool ActionQueue::expireItems(time_t expiryDate)
+ {
+
+Modified: trunk/SQL/ActionQueue.h
+===================================================================
+--- trunk/SQL/ActionQueue.h	2009-01-24 08:56:29 UTC (rev 1510)
++++ trunk/SQL/ActionQueue.h	2009-01-26 03:38:35 UTC (rev 1511)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -43,6 +43,9 @@
+ 		/// Pops and deletes the oldest item.
+ 		bool popItem(ActionType &amp;type, DocumentInfo &amp;docInfo);
+ 
++		/// Returns the number of items of a particular type.
++		unsigned int getItemsCount(ActionType type);
++
+ 		/// Expires items older than the given date.
+ 		bool expireItems(time_t expiryDate);
+ 
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2009-01-24 08:56:29 UTC (rev 1510)
++++ trunk/Tokenize/FilterUtils.cpp	2009-01-26 03:38:35 UTC (rev 1511)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007-2008 Fabrice Colin
++ *  Copyright 2007-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -129,34 +129,35 @@
+ 		return true;
+ 	}
+ 
+-	if (Dijon::FilterFactory::isSupportedType(mimeType) == false)
++	if (Dijon::FilterFactory::isSupportedType(mimeType) == true)
+ 	{
+-		set&lt;string&gt; parentTypes;
++		return true;
++	}
+ 
+-		if (m_types.empty() == true)
+-		{
+-			Dijon::FilterFactory::getSupportedTypes(m_types);
+-		}
++	if (m_types.empty() == true)
++	{
++		Dijon::FilterFactory::getSupportedTypes(m_types);
++	}
+ 
+-		// Try that type's parents
+-		MIMEScanner::getParentTypes(mimeType, m_types, parentTypes);
+-		for (set&lt;string&gt;::const_iterator parentIter = parentTypes.begin();
+-			parentIter != parentTypes.end(); ++parentIter)
++	// Try that type's parents
++	set&lt;string&gt; parentTypes;
++	MIMEScanner::getParentTypes(mimeType, m_types, parentTypes);
++	for (set&lt;string&gt;::const_iterator parentIter = parentTypes.begin();
++		parentIter != parentTypes.end(); ++parentIter)
++	{
++		if (Dijon::FilterFactory::isSupportedType(*parentIter) == true)
+ 		{
+-			if (Dijon::FilterFactory::isSupportedType(*parentIter) == true)
+-			{
+-				// Add an alias
+-				m_typeAliases[mimeType] = *parentIter;
+-				return true;
+-			}
++			// Add an alias
++			m_typeAliases[mimeType] = *parentIter;
++			return true;
+ 		}
++	}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterUtils::isSupportedType: no valid parent for &quot; &lt;&lt; mimeType &lt;&lt; endl;
++	cout &lt;&lt; &quot;FilterUtils::isSupportedType: no valid parent for &quot; &lt;&lt; mimeType &lt;&lt; endl;
+ #endif
+ 
+-		// This type has no valid parent
+-		m_typeAliases[mimeType] = UNSUPPORTED_TYPE;
+-	}
++	// This type has no valid parent
++	m_typeAliases[mimeType] = UNSUPPORTED_TYPE;
+ 
+ 	return false;
+ }
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2009-01-24 08:56:29 UTC (rev 1510)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2009-01-26 03:38:35 UTC (rev 1511)
+@@ -508,9 +508,13 @@
+ 		QueryHistory queryHistory(historyDatabase);
+ 		ViewHistory viewHistory(historyDatabase);
+ 		time_t timeNow = time(NULL);
++		unsigned int actionsCount = actionQueue.getItemsCount(ActionQueue::INDEX);
+ 
+-		// Expire all actions left from last time
+-		actionQueue.expireItems(timeNow);
++		// Don't expire actions left from last time
++		actionsCount += actionQueue.getItemsCount(ActionQueue::UNINDEX);
++		cout &lt;&lt; actionsCount &lt;&lt; &quot; actions left&quot; &lt;&lt; endl;
++
++		// Expire the rest
+ 		queryHistory.expireItems(timeNow);
+ 		viewHistory.expireItems(timeNow);
+ 	}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001500.html">[Pinot-svn] r1510 - trunk/po
+</A></li>
+	<LI>Next message: <A HREF="001502.html">[Pinot-svn] r1512 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1501">[ date ]</a>
+              <a href="thread.html#1501">[ thread ]</a>
+              <a href="subject.html#1501">[ subject ]</a>
+              <a href="author.html#1501">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

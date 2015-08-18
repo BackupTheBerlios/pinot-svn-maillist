@@ -1,0 +1,280 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1275 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1275%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200806151424.m5FEOTfr014552%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001268.html">
+   <LINK REL="Next"  HREF="001270.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1275 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1275%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200806151424.m5FEOTfr014552%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1275 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jun 15 16:24:29 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001268.html">[Pinot-svn] r1274 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="001270.html">[Pinot-svn] r1276 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1269">[ date ]</a>
+              <a href="thread.html#1269">[ thread ]</a>
+              <a href="subject.html#1269">[ subject ]</a>
+              <a href="author.html#1269">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-06-15 16:24:18 +0200 (Sun, 15 Jun 2008)
+New Revision: 1275
+
+Modified:
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+Log:
+On a full scan, change the status of all entries in CrawlHistory so that we can
+unindex orphaned documents at the end of the scan, ie documents that belong to
+deleted sources. Documents that have been deleted since the last full scan are
+still unindexed at the end of source scans.
+Do full scans on Reload.
+
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2008-06-15 14:19:55 UTC (rev 1274)
++++ trunk/SQL/CrawlHistory.cpp	2008-06-15 14:24:18 UTC (rev 1275)
+@@ -326,14 +326,28 @@
+ }
+ 
+ /// Updates the status of items en masse.
+-bool CrawlHistory::updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus)
++bool CrawlHistory::updateItemsStatus(CrawlStatus currentStatus, CrawlStatus newStatus,
++	unsigned int sourceId, bool allSources)
+ {
++	SQLResults *results = NULL;
+ 	bool success = false;
+ 
+-	SQLResults *results = executeStatement(&quot;UPDATE CrawlHistory \
+-		SET Status='%q' WHERE SourceId='%u' AND Status='%q';&quot;,
+-		statusToText(newStatus).c_str(), sourceId,
+-		statusToText(currentStatus).c_str());
++	if (allSources == false)
++	{
++		results = executeStatement(&quot;UPDATE CrawlHistory \
++			SET Status='%q' WHERE SourceId='%u' AND Status='%q';&quot;,
++			statusToText(newStatus).c_str(), sourceId,
++			statusToText(currentStatus).c_str());
++	}
++	else
++	{
++		// Ignore the source
++		results = executeStatement(&quot;UPDATE CrawlHistory \
++			SET Status='%q' WHERE Status='%q';&quot;,
++			statusToText(newStatus).c_str(),
++			statusToText(currentStatus).c_str());
++	}
++
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+@@ -367,6 +381,35 @@
+ 	return errNum;
+ }
+ 
++/// Returns items.
++unsigned int CrawlHistory::getItems(CrawlStatus status, set&lt;string&gt; &amp;urls)
++{
++	unsigned int count = 0;
++
++	SQLResults *results = executeStatement(&quot;SELECT Url FROM CrawlHistory \
++		WHERE Status='%q';&quot;, statusToText(status).c_str());
++	if (results != NULL)
++	{
++		while (results-&gt;hasMoreRows() == true)
++		{
++			SQLRow *row = results-&gt;nextRow();
++			if (row == NULL)
++			{
++				break;
++			}
++
++			urls.insert(Url::unescapeUrl(row-&gt;getColumn(0)));
++			++count;
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	return count;
++}
++
+ /// Returns items that belong to a source.
+ unsigned int CrawlHistory::getSourceItems(unsigned int sourceId, CrawlStatus status,
+ 	set&lt;string&gt; &amp;urls, time_t minDate)
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2008-06-15 14:19:55 UTC (rev 1274)
++++ trunk/SQL/CrawlHistory.h	2008-06-15 14:24:18 UTC (rev 1275)
+@@ -64,11 +64,15 @@
+ 		bool updateItems(const std::map&lt;std::string, time_t&gt; urls, CrawlStatus status);
+ 
+ 		/// Updates the status of items en masse.
+-		bool updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus);
++		bool updateItemsStatus(CrawlStatus currentStatus, CrawlStatus newStatus,
++			unsigned int sourceId, bool allSources = false);
+ 
+ 		/// Gets the error number and date for a URL.
+ 		int getErrorDetails(const std::string &amp;url, time_t &amp;date);
+ 
++		/// Returns items.
++		unsigned int getItems(CrawlStatus status, std::set&lt;std::string&gt; &amp;urls);
++
+ 		/// Returns items that belong to a source.
+ 		unsigned int getSourceItems(unsigned int sourceId, CrawlStatus status,
+ 			std::set&lt;std::string&gt; &amp;urls, time_t minDate = 0);
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-06-15 14:19:55 UTC (rev 1274)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-06-15 14:24:18 UTC (rev 1275)
+@@ -324,6 +324,13 @@
+ 	cout &lt;&lt; &quot;DaemonState::start: &quot; &lt;&lt; m_crawlQueue.size() &lt;&lt; &quot; locations to crawl&quot; &lt;&lt; endl;
+ #endif
+ 
++	if (m_fullScan == true)
++	{
++		CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
++
++		// Update all items status so that we can get rid of files from deleted sources
++		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::CRAWLING, 0, true);
++	}
+ 	// Initiate crawling
+ 	start_crawling();
+ }
+@@ -343,12 +350,38 @@
+ 			&lt;&lt; m_crawlers &lt;&lt; &quot; crawlers&quot; &lt;&lt; endl;
+ #endif
+ 		// Get the next location, unless something is still being crawled
+-		if ((m_crawlers == 0) &amp;&amp;
+-			(m_crawlQueue.empty() == false))
++		if (m_crawlers == 0)
+ 		{
+-			PinotSettings::IndexableLocation nextLocation(m_crawlQueue.front());
++			if (m_crawlQueue.empty() == false)
++			{
++				PinotSettings::IndexableLocation nextLocation(m_crawlQueue.front());
+ 
+-			crawl_location(nextLocation);
++				crawl_location(nextLocation);
++			}
++			else if (m_fullScan == true)
++			{
++				CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
++				set&lt;string&gt; deletedFiles;
++
++				// All files left with status CRAWLING belong to deleted sources
++				if ((m_pDiskHandler != NULL) &amp;&amp;
++					(crawlHistory.getItems(CrawlHistory::CRAWLING, deletedFiles) &gt; 0))
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;DaemonState::start_crawling: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; orphaned files&quot; &lt;&lt; endl;
++#endif
++					for(set&lt;string&gt;::const_iterator fileIter = deletedFiles.begin();
++						fileIter != deletedFiles.end(); ++fileIter)
++					{
++						// Inform the MonitorHandler
++						if (m_pDiskHandler-&gt;fileDeleted(fileIter-&gt;substr(7)) == true)
++						{
++							// Delete this item
++							crawlHistory.deleteItem(*fileIter);
++						}
++					}
++				}
++			}
+ 		}
+ 
+ 		unlock_lists();
+@@ -488,14 +521,13 @@
+ 		settings.clear();
+ 		settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
+ 		settings.load();
+-
+-		// ...and restart everything 
+-		start(false);
++		m_reload = false;
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::on_thread_end: reloaded&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;DaemonState::on_thread_end: reloading&quot; &lt;&lt; endl;
+ #endif
+ 
+-		m_reload = false;
++		// ...and restart everything 
++		start(true);
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;DaemonState::on_thread_end: reload status &quot; &lt;&lt; m_reload &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-06-15 14:19:55 UTC (rev 1274)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-06-15 14:24:18 UTC (rev 1275)
+@@ -474,7 +474,8 @@
+ 		cout &lt;&lt; &quot;Doing a full scan on &quot; &lt;&lt; m_dirName &lt;&lt; endl;
+ 
+ 		// Update this source's items status so that we can detect files that have been deleted
+-		crawlHistory.updateItemsStatus(m_sourceId, CrawlHistory::CRAWLED, CrawlHistory::CRAWLING);
++		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::CRAWLING,
++			m_sourceId);
+ 	}
+ 	// Remove errors
+ 	crawlHistory.deleteItems(m_sourceId, CrawlHistory::ERROR);
+@@ -496,7 +497,7 @@
+ 
+ 	if (m_fullScan == true)
+ 	{
+-		// All files with status set to CRAWLING were not found in this crawl
++		// All files left with status CRAWLING were not found in this crawl
+ 		// Chances are they were removed after the last full scan
+ 		if ((m_pHandler != NULL) &amp;&amp;
+ 			(crawlHistory.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, deletedFiles) &gt; 0))
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001268.html">[Pinot-svn] r1274 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="001270.html">[Pinot-svn] r1276 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1269">[ date ]</a>
+              <a href="thread.html#1269">[ thread ]</a>
+              <a href="subject.html#1269">[ subject ]</a>
+              <a href="author.html#1269">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

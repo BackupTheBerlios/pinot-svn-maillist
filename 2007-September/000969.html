@@ -1,0 +1,328 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r975 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r975%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200709121449.l8CEnP5D020156%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000968.html">
+   <LINK REL="Next"  HREF="000970.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r975 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r975%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200709121449.l8CEnP5D020156%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r975 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 12 16:49:25 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000968.html">[Pinot-svn] r974 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000970.html">[Pinot-svn] r976 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#969">[ date ]</a>
+              <a href="thread.html#969">[ thread ]</a>
+              <a href="subject.html#969">[ subject ]</a>
+              <a href="author.html#969">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-12 16:49:24 +0200 (Wed, 12 Sep 2007)
+New Revision: 975
+
+Modified:
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/QueryHistory.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+In importDialog, the location field suggests URLs pulled from QueryHistory,
+based on what the user entered, similarly to terms suggestion on the live query
+field.
+Removed unnecessary match method in mainWindow.
+
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2007-09-11 13:54:26 UTC (rev 974)
++++ trunk/SQL/QueryHistory.cpp	2007-09-12 14:49:24 UTC (rev 975)
+@@ -71,14 +71,13 @@
+ 	const string &amp;title, const string &amp;extract, const string &amp;charset, float score)
+ {
+ 	Url urlObj(url);
+-	string hostName = urlObj.getHost();
+-	string escapedUrl = Url::escapeUrl(url);
++	string hostName(urlObj.getHost());
+ 	bool success = false;
+ 
+ 	SQLiteResults *results = executeStatement(&quot;INSERT INTO QueryHistory \
+ 		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%q', '%f', '0.0', '%d');&quot;,
+ 		queryName.c_str(), engineName.c_str(), hostName.c_str(),
+-		escapedUrl.c_str(), title.c_str(), extract.c_str(), charset.c_str(),
++		Url::escapeUrl(url).c_str(), title.c_str(), extract.c_str(), charset.c_str(),
+ 		score, time(NULL));
+ 	if (results != NULL)
+ 	{
+@@ -198,6 +197,41 @@
+ 	return extract;
+ }
+ 
++/// Finds URLs.
++bool QueryHistory::findUrlsLike(const string &amp;url, unsigned int count, set&lt;string&gt; &amp;urls)
++{
++	bool success = false;
++
++	if (url.empty() == true)
++	{
++		return false; 
++	}
++
++	SQLiteResults *results = executeStatement(&quot;SELECT Url FROM QueryHistory \
++		WHERE Url LIKE '%q%%' ORDER BY Url LIMIT %u&quot;,
++		Url::escapeUrl(url).c_str(), count);
++	if (results != NULL)
++	{
++		while (results-&gt;hasMoreRows() == true)
++		{
++			SQLiteRow *row = results-&gt;nextRow();
++			if (row == NULL)
++			{
++				break;
++			}
++
++			urls.insert(Url::unescapeUrl(row-&gt;getColumn(0)));
++			success = true;
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	return success;
++}
++
+ /// Gets a query's last run time.
+ string QueryHistory::getLastRun(const string &amp;queryName, const string &amp;engineName)
+ {
+@@ -206,7 +240,7 @@
+ 
+ 	if (queryName.empty() == true)
+ 	{
+-		return lastRun;
++		return &quot;&quot;;
+ 	}
+ 
+ 	if (engineName.empty() == true)
+
+Modified: trunk/SQL/QueryHistory.h
+===================================================================
+--- trunk/SQL/QueryHistory.h	2007-09-11 13:54:26 UTC (rev 974)
++++ trunk/SQL/QueryHistory.h	2007-09-12 14:49:24 UTC (rev 975)
+@@ -21,6 +21,7 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
++#include &lt;set&gt;
+ 
+ #include &quot;DocumentInfo.h&quot;
+ #include &quot;SQLiteBase.h&quot;
+@@ -60,6 +61,10 @@
+ 		string getItemExtract(const string &amp;queryName, const string &amp;engineName,
+ 			const string &amp;url, string &amp;charset);
+ 
++		/// Finds URLs.
++		bool findUrlsLike(const string &amp;url, unsigned int count,
++			set&lt;string&gt; &amp;urls);
++
+ 		/// Gets a query's last run time.
+ 		string getLastRun(const string &amp;queryName, const string &amp;engineName = &quot;&quot;);
+ 
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2007-09-11 13:54:26 UTC (rev 974)
++++ trunk/UI/GTK2/src/importDialog.cc	2007-09-12 14:49:24 UTC (rev 975)
+@@ -30,6 +30,7 @@
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;QueryHistory.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;importDialog.hh&quot;
+@@ -40,6 +41,7 @@
+ 
+ importDialog::InternalState::InternalState(unsigned int maxIndexThreads, importDialog *pWindow) :
+ 	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
++	m_locationLength(0),
+ 	m_importing(false)
+ {
+ 	m_onThreadEndSignal.connect(SigC::slot(*pWindow, &amp;importDialog::on_thread_end));
+@@ -54,6 +56,15 @@
+ 	m_docsCount(0),
+ 	m_state(10, this)
+ {
++	// Enable completion on the location field
++	m_refLocationList = ListStore::create(m_locationColumns);
++	m_refLocationCompletion = EntryCompletion::create();
++	m_refLocationCompletion-&gt;set_model(m_refLocationList);
++	m_refLocationCompletion-&gt;set_text_column(m_locationColumns.m_name);
++	m_refLocationCompletion-&gt;set_minimum_key_length(8);
++	m_refLocationCompletion-&gt;set_popup_completion(true);
++	locationEntry-&gt;set_completion(m_refLocationCompletion);
++
+ 	// Populate
+ 	populate_comboboxes();
+ 
+@@ -216,6 +227,36 @@
+ 		enableImport = false;
+ 	}
+ 	importButton-&gt;set_sensitive(enableImport);
++
++	unsigned int locationLength = fileName.length();
++
++	// Reset the list
++	m_refLocationList-&gt;clear();
++
++	// If characters are being deleted or if the location is too short, don't
++	// attempt to offer suggestions
++	if ((m_state.m_locationLength &gt; locationLength) ||
++		(fileName.empty() == true) ||
++		(m_refLocationCompletion-&gt;get_minimum_key_length() &gt; fileName.length()))
++	{
++		m_state.m_locationLength = locationLength;
++		return;
++	}
++	m_state.m_locationLength = locationLength;
++
++	// Get 10 URLs like this one
++	QueryHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
++	set&lt;string&gt; suggestedUrls;
++	history.findUrlsLike(fileName, 10, suggestedUrls);
++	// Populate the list
++	for (set&lt;string&gt;::iterator urlIter = suggestedUrls.begin();
++		urlIter != suggestedUrls.end(); ++urlIter)
++	{
++		TreeModel::iterator iter = m_refLocationList-&gt;append();
++		TreeModel::Row row = *iter;
++
++		row[m_locationColumns.m_name] = to_utf8(*urlIter);
++	}
+ }
+ 
+ void importDialog::on_importButton_clicked()
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2007-09-11 13:54:26 UTC (rev 974)
++++ trunk/UI/GTK2/src/importDialog.hh	2007-09-12 14:49:24 UTC (rev 975)
+@@ -23,8 +23,11 @@
+ #include &lt;set&gt;
+ #include &lt;sigc++/slot.h&gt;
+ #include &lt;sigc++/connection.h&gt;
++#include &lt;gtkmm/entrycompletion.h&gt;
++#include &lt;gtkmm/liststore.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ 
++#include &quot;ModelColumns.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ #include &quot;importDialog_glade.hh&quot;
+ 
+@@ -47,6 +50,9 @@
+ 	void on_thread_end(WorkerThread *pThread);
+ 
+ private:
++	ComboModelColumns m_locationColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLocationList;
++	Glib::RefPtr&lt;Gtk::EntryCompletion&gt; m_refLocationCompletion;
+ 	unsigned int m_docsCount;
+ 	// Activity timeout
+ 	SigC::Connection m_timeoutConnection;
+@@ -57,6 +63,7 @@
+ 			InternalState(unsigned int maxIndexThreads, importDialog *pWindow);
+ 			~InternalState();
+ 
++			unsigned int m_locationLength;
+ 			bool m_importing;
+ 
+ 	} m_state;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-09-11 13:54:26 UTC (rev 974)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-09-12 14:49:24 UTC (rev 975)
+@@ -130,8 +130,6 @@
+ 	m_refLiveQueryCompletion-&gt;set_text_column(m_liveQueryColumns.m_name);
+ 	m_refLiveQueryCompletion-&gt;set_minimum_key_length(3);
+ 	m_refLiveQueryCompletion-&gt;set_popup_completion(true);
+-	m_refLiveQueryCompletion-&gt;set_match_func(
+-		SigC::slot(*this, &amp;mainWindow::on_queryCompletion_match));
+ 	liveQueryEntry-&gt;set_completion(m_refLiveQueryCompletion);
+ 
+ 	// Associate the columns model to the query tree
+@@ -431,15 +429,6 @@
+ 	}
+ }
+ 
+-bool mainWindow::on_queryCompletion_match(const ustring &amp;key, const TreeModel::const_iterator &amp;iter)
+-{
+-	TreeModel::Row row = *iter;
+-
+-	ustring match = row[m_liveQueryColumns.m_name];
+-
+-	return true;
+-}
+-
+ //
+ // Engines tree selection changed
+ //
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2007-09-11 13:54:26 UTC (rev 974)
++++ trunk/UI/GTK2/src/mainWindow.hh	2007-09-12 14:49:24 UTC (rev 975)
+@@ -63,7 +63,6 @@
+ 	void add_query(QueryProperties &amp;queryProps, bool mergeQueries);
+ 
+ 	// Handlers
+-	bool on_queryCompletion_match(const Glib::ustring &amp;key, const Gtk::TreeModel::const_iterator &amp;iter);
+ 	void on_enginesTreeviewSelection_changed();
+ 	void on_queryTreeviewSelection_changed();
+ 	void on_resultsTreeviewSelection_changed(Glib::ustring queryName);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000968.html">[Pinot-svn] r974 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000970.html">[Pinot-svn] r976 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#969">[ date ]</a>
+              <a href="thread.html#969">[ thread ]</a>
+              <a href="subject.html#969">[ subject ]</a>
+              <a href="author.html#969">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

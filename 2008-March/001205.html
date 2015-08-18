@@ -1,0 +1,667 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1211 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1211%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200803211618.m2LGIqx2012411%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001204.html">
+   <LINK REL="Next"  HREF="001206.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1211 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1211%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200803211618.m2LGIqx2012411%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1211 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar 21 17:18:52 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001204.html">[Pinot-svn] r1210 - in trunk/IndexSearch: . Xapian
+</A></li>
+        <LI>Next message: <A HREF="001206.html">[Pinot-svn] r1212 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1205">[ date ]</a>
+              <a href="thread.html#1205">[ thread ]</a>
+              <a href="subject.html#1205">[ subject ]</a>
+              <a href="author.html#1205">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-03-21 17:18:50 +0100 (Fri, 21 Mar 2008)
+New Revision: 1211
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/UI/GTK2/src/statisticsDialog.cc
+Log:
+Pass parameters to the file_found signal by value, not reference.
+DaemonState and mainWindow don't delete the monitor and handler objects when
+destroyed because the Monitor thread might still be running.
+Added flags for when the daemon receives Stop or Disconnected. This is saved
+as database metadata, and shown by the Status window.
+Some other minor mods.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -126,7 +126,7 @@
+ };
+ 
+ DaemonState::DaemonState() :
+-	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 20),
++	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 10),
+ 	m_fullScan(false),
+ 	m_reload(false),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+@@ -146,12 +146,8 @@
+ 
+ DaemonState::~DaemonState()
+ {
+-	if (m_pDiskMonitor != NULL)
+-	{
+-		delete m_pDiskMonitor;
+-	}
+-	// Don't delete m_pDiskHandler, threads may need it
+-	// Since DaemonState is destroyed when the program exits, it's okay
++	// Don't delete m_pDiskMonitor and m_pDiskHandler, threads may need them
++	// Since DaemonState is destroyed when the program exits, it's a leak we can live with
+ }
+ 
+ bool DaemonState::on_activity_timeout(void)
+@@ -213,13 +209,13 @@
+ 			onBattery = true;
+ 		}
+ 
+-		bool wasOnBattery = is_flag_set(DaemonState::ON_BATTERY);
++		bool wasOnBattery = is_flag_set(ON_BATTERY);
+ 		if (onBattery != wasOnBattery)
+ 		{
+ 			if (onBattery == true)
+ 			{
+ 				// We are now on battery
+-				set_flag(DaemonState::ON_BATTERY);
++				set_flag(ON_BATTERY);
+ 				stop_crawling();
+ 
+ 				cout &lt;&lt; &quot;System is now on battery&quot; &lt;&lt; endl;
+@@ -227,7 +223,7 @@
+ 			else
+ 			{
+ 				// Back on-line
+-				reset_flag(DaemonState::ON_BATTERY);
++				reset_flag(ON_BATTERY);
+ 				start_crawling();
+ 
+ 				cout &lt;&lt; &quot;System is now on AC&quot; &lt;&lt; endl;
+@@ -514,7 +510,7 @@
+ 	pop_queue(indexedUrl);
+ }
+ 
+-void DaemonState::on_message_filefound(const DocumentInfo &amp;docInfo, const string &amp;sourceLabel, bool isDirectory)
++void DaemonState::on_message_filefound(DocumentInfo docInfo, string sourceLabel, bool isDirectory)
+ {
+ 	if (isDirectory == false)
+ 	{
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -36,7 +36,7 @@
+ 		DaemonState();
+ 		virtual ~DaemonState();
+ 
+-		typedef enum { LOW_DISK_SPACE = 0, ON_BATTERY } StatusFlag;
++		typedef enum { LOW_DISK_SPACE = 0, ON_BATTERY, STOPPED, DISCONNECTED } StatusFlag;
+ 
+ 		void start(bool forceFullScan);
+ 
+@@ -48,7 +48,7 @@
+ 
+ 		void on_thread_end(WorkerThread *pThread);
+ 
+-		void on_message_filefound(const DocumentInfo &amp;docInfo, const std::string &amp;sourceLabel,
++		void on_message_filefound(DocumentInfo docInfo, std::string sourceLabel,
+ 			bool isDirectory);
+ 
+ 		sigc::signal1&lt;void, int&gt;&amp; getQuitSignal(void);
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -22,6 +22,7 @@
+ #include &lt;set&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
++#include &lt;sstream&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -47,8 +48,8 @@
+ 	pthread_mutex_destroy(&amp;m_mutex);
+ 
+ 	// Disconnect the signal
+-	sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
+-	sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+ 	if (slotIter != slotsList.end())
+ 	{
+ 		if (slotIter-&gt;empty() == false)
+@@ -215,14 +216,14 @@
+ 
+ 		if (sourceIter-&gt;second.substr(0, location.length()) == location)
+ 		{
+-			char labelStr[64];
++			stringstream labelStream;
+ 
+ 			// That's the one
+-			snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, sourceIter-&gt;first);
++			labelStream &lt;&lt; &quot;X-SOURCE&quot; &lt;&lt; sourceIter-&gt;first;
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;OnDiskHandler::indexFile: source label for &quot; &lt;&lt; location &lt;&lt; &quot; is &quot; &lt;&lt; labelStr &lt;&lt; endl;
++			cout &lt;&lt; &quot;OnDiskHandler::indexFile: source label for &quot; &lt;&lt; location &lt;&lt; &quot; is &quot; &lt;&lt; labelStream.str() &lt;&lt; endl;
+ #endif
+-			m_signalFileFound(docInfo, labelStr, isDirectory);
++			m_signalFileFound(docInfo, labelStream.str(), isDirectory);
+ 			return true;
+ 		}
+ 	}
+@@ -279,9 +280,9 @@
+ 			// Is this an indexable location ?
+ 			if (directories.find(sourceIter-&gt;second.substr(7)) == directories.end())
+ 			{
+-				char labelStr[64];
++				stringstream labelStream;
+ 
+-				snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, sourceId);
++				labelStream &lt;&lt; &quot;X-SOURCE&quot; &lt;&lt; sourceId;
+ 
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;OnDiskHandler::initialize: &quot; &lt;&lt; sourceIter-&gt;second
+@@ -289,7 +290,7 @@
+ #endif
+ 				// All documents with this label will be unindexed
+ 				if ((m_pIndex != NULL) &amp;&amp;
+-					(m_pIndex-&gt;unindexDocuments(labelStr, IndexInterface::BY_LABEL) == true))
++					(m_pIndex-&gt;unindexDocuments(labelStream.str(), IndexInterface::BY_LABEL) == true))
+ 				{
+ 					// Delete the source itself and all its items
+ 					m_history.deleteSource(sourceId);
+@@ -409,7 +410,7 @@
+ 	return fileDeleted(dirName, IndexInterface::BY_DIRECTORY);
+ }
+ 
+-sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;&amp; OnDiskHandler::getFileFoundSignal(void)
++sigc::signal3&lt;void, DocumentInfo, string, bool&gt;&amp; OnDiskHandler::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -68,11 +68,11 @@
+ 		/// Handles directory deleted events.
+ 		virtual bool directoryDeleted(const std::string &amp;dirName);
+ 
+-		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getFileFoundSignal(void);
++		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt;&amp; getFileFoundSignal(void);
+ 
+ 	protected:
+ 		pthread_mutex_t m_mutex;
+-		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
++		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt; m_signalFileFound;
+ 		std::map&lt;unsigned int, std::string&gt; m_fileSources;
+ 		CrawlHistory m_history;
+ 		IndexInterface *m_pIndex;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -28,6 +28,7 @@
+ #include &lt;exception&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
++#include &lt;sstream&gt;
+ #include &lt;glibmm/miscutils.h&gt;
+ 
+ #include &quot;config.h&quot;
+@@ -170,8 +171,8 @@
+ void DirectoryScannerThread::stop(void)
+ {
+ 	// Disconnect the signal
+-	sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
+-	sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+ 	if (slotIter != slotsList.end())
+ 	{
+ 		if (slotIter-&gt;empty() == false)
+@@ -183,7 +184,7 @@
+ 	WorkerThread::stop();
+ }
+ 
+-sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
++sigc::signal3&lt;void, DocumentInfo, string, bool&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+@@ -212,20 +213,20 @@
+ 
+ void DirectoryScannerThread::foundFile(const DocumentInfo &amp;docInfo)
+ {
+-	char labelStr[64];
+-
+ 	if ((docInfo.getLocation().empty() == true) ||
+ 		(m_done == true))
+ 	{
+ 		return;
+ 	}
+ 
++	stringstream labelStream;
++
+ 	// This identifies the source
+-	snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, m_sourceId);
++	labelStream &lt;&lt; &quot;X-SOURCE&quot; &lt;&lt; m_sourceId;
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;DirectoryScannerThread::foundFile: source label for &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; is &quot; &lt;&lt; labelStr &lt;&lt; endl;
++	cout &lt;&lt; &quot;DirectoryScannerThread::foundFile: source label for &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; is &quot; &lt;&lt; labelStream.str() &lt;&lt; endl;
+ #endif
+-	m_signalFileFound(docInfo, labelStr, false);
++	m_signalFileFound(docInfo, labelStream.str(), false);
+ }
+ 
+ bool DirectoryScannerThread::scanEntry(const string &amp;entryName, CrawlHistory &amp;history)
+@@ -712,6 +713,8 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;DBusServletThread::doWork: received Stop&quot; &lt;&lt; endl;
+ #endif
++			m_pServer-&gt;set_flag(DaemonState::STOPPED);
++
+ 			// Prepare the reply
+ 			m_pReply = newDBusReply(m_pRequest);
+ 			if (m_pReply != NULL)
+
+Modified: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/ServerThreads.h	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -55,7 +55,7 @@
+ 
+ 		virtual void stop(void);
+ 
+-		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getFileFoundSignal(void);
++		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt;&amp; getFileFoundSignal(void);
+ 
+ 	protected:
+ 		std::string m_dirName;
+@@ -66,7 +66,7 @@
+ 		unsigned int m_currentLevel;
+ 		unsigned int m_maxLevel;
+ 		bool m_followSymLinks;
+-		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
++		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt; m_signalFileFound;
+ 		std::map&lt;std::string, time_t&gt; m_updateCache;
+ 
+ 		void cacheUpdate(const std::string &amp;location, time_t mTime, CrawlHistory &amp;history);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -722,18 +722,6 @@
+ 	return foundItem;
+ }
+ 
+-void ThreadsManager::get_statistics(unsigned int &amp;queueSize)
+-{
+-	if (read_lock_lists() == true)
+-	{
+-		// We want the number of documents being indexed,
+-		// not the number of document waiting in the queue
+-		queueSize = m_beingIndexed.size();
+-
+-		unlock_lists();
+-	}
+-}
+-
+ ListerThread::ListerThread(const string &amp;indexName, unsigned int startDoc) :
+ 	WorkerThread(),
+ 	m_indexName(indexName),
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -136,8 +136,6 @@
+ 
+ 		bool pop_queue(const std::string &amp;urlWasIndexed = &quot;&quot;);
+ 
+-		void get_statistics(unsigned int &amp;queueSize);
+-
+ 	protected:
+ 		sigc::connection m_threadsEndConnection;
+ 		pthread_rwlock_t m_threadsLock;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -276,17 +276,9 @@
+ //
+ mainWindow::~mainWindow()
+ {
+-	// FIXME: delete all &quot;ignored&quot; threads when exiting !!!
++	// Don't delete m_pSettingsMonitor and m_pSettingsHandler, threads may need them
++	// Since mainWindow is destroyed when the program exits, it's a leak we can live with
+ 
+-	if (m_pSettingsMonitor != NULL)
+-	{
+-		delete m_pSettingsMonitor;
+-	}
+-	if (m_pSettingsHandler != NULL)
+-	{
+-		delete m_pSettingsHandler;
+-	}
+-
+ 	// Save engines
+ 	m_pEnginesTree-&gt;save();
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -26,6 +26,7 @@
+ #include &lt;unistd.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
++#include &lt;cstring&gt;
+ #include &lt;sigc++/sigc++.h&gt;
+ #include &lt;glibmm.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+@@ -113,6 +114,8 @@
+ 
+ static DBusHandlerResult filterHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
++	DaemonState *pServer = (DaemonState *)pData;
++
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;filterHandler: called&quot; &lt;&lt; endl;
+ #endif
+@@ -122,6 +125,10 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;filterHandler: received Disconnected&quot; &lt;&lt; endl;
+ #endif
++		if (pServer != NULL)
++		{
++			pServer-&gt;set_flag(DaemonState::DISCONNECTED);
++		}
+ 		quitAll(0);
+ 	}
+ 	else if (dbus_message_is_signal(pMessage, DBUS_INTERFACE_DBUS, &quot;NameOwnerChanged&quot;) == TRUE)
+@@ -147,8 +154,6 @@
+ 			DBUS_TYPE_INVALID) == TRUE) &amp;&amp;
+ 			(pData != NULL))
+ 		{
+-			DaemonState *pServer = (DaemonState *)pData;
+-
+ 			if (dbus_message_is_signal(pMessage, &quot;org.gnome.PowerManager&quot;, &quot;OnAcChanged&quot;) == TRUE)
+ 			{
+ 				// This tells us if we are on AC, not on battery
+@@ -165,16 +170,22 @@
+ 			if (onBattery == TRUE)
+ 			{
+ 				// We are now on battery
+-				pServer-&gt;set_flag(DaemonState::ON_BATTERY);
+-				pServer-&gt;stop_crawling();
++				if (pServer != NULL)
++				{
++					pServer-&gt;set_flag(DaemonState::ON_BATTERY);
++					pServer-&gt;stop_crawling();
++				}
+ 
+ 				cout &lt;&lt; &quot;System is now on battery&quot; &lt;&lt; endl;
+ 			}
+ 			else
+ 			{
+ 				// Back on-line
+-				pServer-&gt;reset_flag(DaemonState::ON_BATTERY);
+-				pServer-&gt;start_crawling();
++				if (pServer != NULL)
++				{
++					pServer-&gt;reset_flag(DaemonState::ON_BATTERY);
++					pServer-&gt;start_crawling();
++				}
+ 
+ 				cout &lt;&lt; &quot;System is now on AC&quot; &lt;&lt; endl;
+ 			}
+@@ -194,20 +205,18 @@
+ 
+ static DBusHandlerResult messageHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
+-	DaemonState *pServer = NULL;
++	DaemonState *pServer = (DaemonState *)pData;
+ 
+-	if (pData != NULL)
+-	{
+-		pServer = (DaemonState *)pData;
+-	}
+-
+ 	if ((pConnection != NULL) &amp;&amp;
+ 		(pMessage != NULL))
+ 	{
+ 		dbus_connection_ref(pConnection);
+ 		dbus_message_ref(pMessage);
+ 
+-		pServer-&gt;start_thread(new DBusServletThread(pServer, pConnection, pMessage));
++		if (pServer != NULL)
++		{
++			pServer-&gt;start_thread(new DBusServletThread(pServer, pConnection, pMessage));
++		}
+ 	}
+ 
+ 	return DBUS_HANDLER_RESULT_HANDLED;
+@@ -515,13 +524,14 @@
+ 
+ 	DBusError error;
+ 	DaemonState server;
++	IndexInterface *pIndex = NULL;
+ 
+ 	dbus_error_init(&amp;error);
+ 	dbus_connection_set_exit_on_disconnect(pConnection, FALSE);
+ 	dbus_connection_setup_with_g_main(pConnection, NULL);
+ 
+ 	if (dbus_connection_register_object_path(pConnection, g_pinotDBusObjectPath,
+-			&amp;g_callVTable, &amp;server) == TRUE)
++		&amp;g_callVTable, &amp;server) == TRUE)
+ 	{
+ 		// Request to be identified by this name
+ 		// FIXME: flags are currently broken ?
+@@ -552,12 +562,18 @@
+ 			bool gotLabels = false;
+ 			bool onBattery = false;
+ 
+-			IndexInterface *pIndex = settings.getIndex(settings.m_daemonIndexLocation);
++			pIndex = settings.getIndex(settings.m_daemonIndexLocation);
+ 			if (pIndex != NULL)
+ 			{
+-				string indexVersion(pIndex-&gt;getVersion());
++				string indexVersion(pIndex-&gt;getMetadata(&quot;version&quot;));
++
+ 				gotLabels = pIndex-&gt;getLabels(labels);
++
+ 				// What version is the index at ?
++				if (indexVersion.empty() == true)
++				{
++					indexVersion = &quot;0.0&quot;;
++				}
+ 				if (indexVersion &lt; PINOT_INDEX_MIN_VERSION)
+ 				{
+ 					cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; VERSION &lt;&lt; endl;
+@@ -573,7 +589,7 @@
+ 
+ 					resetHistory = resetLabels = true;
+ 				}
+-				pIndex-&gt;setVersion(VERSION);
++				pIndex-&gt;setMetadata(&quot;version&quot;, VERSION);
+ 			}
+ 
+ 			if (resetHistory == true)
+@@ -611,11 +627,6 @@
+ 				}
+ 			}
+ 
+-			if (pIndex != NULL)
+-			{
+-				delete pIndex;
+-			}
+-
+ 			// Connect to the quit signal
+ 			server.getQuitSignal().connect(sigc::ptr_fun(&amp;quitAll));
+ 
+@@ -679,6 +690,23 @@
+ 	}
+ 	dbus_error_free(&amp;error);
+ 
++	if (pIndex != NULL)
++	{
++		if (server.is_flag_set(DaemonState::DISCONNECTED) == true)
++		{
++			pIndex-&gt;setMetadata(&quot;dbus-status&quot;, &quot;Disconnected&quot;);
++		}
++		else if (server.is_flag_set(DaemonState::STOPPED) == true)
++		{
++			pIndex-&gt;setMetadata(&quot;dbus-status&quot;, &quot;Stopped&quot;);
++		}
++		else
++		{
++			pIndex-&gt;setMetadata(&quot;dbus-status&quot;, &quot;&quot;);
++		}
++		delete pIndex;
++	}
++
+ 	// Stop everything
+ 	server.disconnect();
+ 	server.stop_threads();
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/pinot.cc	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -312,9 +312,13 @@
+ 	IndexInterface *pIndex = settings.getIndex(settings.m_docsIndexLocation);
+ 	if (pIndex != NULL)
+ 	{
+-		string indexVersion(pIndex-&gt;getVersion());
++		string indexVersion(pIndex-&gt;getMetadata(&quot;version&quot;));
+ 
+ 		// What version is the index at ?
++		if (indexVersion.empty() == true)
++		{
++			indexVersion = &quot;0.0&quot;;
++		}
+ 		// Is an upgrade necessary ?
+ 		if ((indexVersion &lt; PINOT_INDEX_MIN_VERSION) &amp;&amp;
+ 			(pIndex-&gt;getDocumentsCount() &gt; 0))
+@@ -324,7 +328,7 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;My Web Pages was set to version &quot; &lt;&lt; indexVersion &lt;&lt; endl;
+ #endif
+-		pIndex-&gt;setVersion(VERSION);
++		pIndex-&gt;setMetadata(&quot;version&quot;, VERSION);
+ 
+ 		delete pIndex;
+ 	}
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-03-20 11:06:31 UTC (rev 1210)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-03-21 16:18:50 UTC (rev 1211)
+@@ -132,6 +132,7 @@
+ 	ViewHistory viewHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 	TreeModel::Row row;
+ 	std::map&lt;unsigned int, string&gt; sources;
++	string daemonDBusStatus;
+ 	char countStr[64];
+ 
+ 	row = *m_myWebPagesIter;
+@@ -159,6 +160,8 @@
+ 		snprintf(countStr, 64, &quot;%u&quot;, docsCount);
+ 		row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;documents&quot;);
+ 
++		daemonDBusStatus = pIndex-&gt;getMetadata(&quot;dbus-status&quot;);
++
+ 		delete pIndex;
+ 	}
+ 	else
+@@ -197,7 +200,18 @@
+ 	}
+ 	else
+ 	{
+-		row[m_statsColumns.m_name] = ustring(_(&quot;Currently not running&quot;));
++		if (daemonDBusStatus == &quot;Disconnected&quot;)
++		{
++			row[m_statsColumns.m_name] = ustring(_(&quot;Disconnected from D-Bus&quot;));
++		}
++		else if (daemonDBusStatus == &quot;Stopped&quot;)
++		{
++			row[m_statsColumns.m_name] = ustring(_(&quot;Stopped&quot;));
++		}
++		else
++		{
++			row[m_statsColumns.m_name] = ustring(_(&quot;Currently not running&quot;));
++		}
+ 	}
+ 
+ 	// Show errors
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001204.html">[Pinot-svn] r1210 - in trunk/IndexSearch: . Xapian
+</A></li>
+	<LI>Next message: <A HREF="001206.html">[Pinot-svn] r1212 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1205">[ date ]</a>
+              <a href="thread.html#1205">[ thread ]</a>
+              <a href="subject.html#1205">[ subject ]</a>
+              <a href="author.html#1205">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

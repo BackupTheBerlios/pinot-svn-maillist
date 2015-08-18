@@ -1,0 +1,253 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r855 - in trunk: . Index Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r855%20-%20in%20trunk%3A%20.%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200705310749.l4V7ndLP021386%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000848.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r855 - in trunk: . Index Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r855%20-%20in%20trunk%3A%20.%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200705310749.l4V7ndLP021386%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r855 - in trunk: . Index Search UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu May 31 09:49:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000848.html">[Pinot-svn] r854 - trunk/UI/GTK2/src
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#849">[ date ]</a>
+              <a href="thread.html#849">[ thread ]</a>
+              <a href="subject.html#849">[ subject ]</a>
+              <a href="author.html#849">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-31 09:49:38 +0200 (Thu, 31 May 2007)
+New Revision: 855
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/Utils/Languages.cpp
+   trunk/textcat_conf.txt
+Log:
+Hungarian, Romanian and Turkish are supported by Xapian 1.0's stemmers.
+Libtextcat 2.2 has Language Models for them but not 3.0 yet.
+Xapian::Stem is supposed to throw an exception for languages it doesn't know
+about, so this change should be backward-compatible with Xapian &lt; 1.0.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-05-31 07:45:02 UTC (rev 854)
++++ trunk/Index/XapianIndex.cpp	2007-05-31 07:49:38 UTC (rev 855)
+@@ -174,7 +174,14 @@
+ 	// Do we know what language to use for stemming ?
+ 	if (m_stemLanguage.empty() == false)
+ 	{
+-		pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
++		try
++		{
++			pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
++		}
++		catch (const Xapian::Error &amp;error)
++		{
++			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		}
+ 	}
+ 
+ 	// Terms starting with a capital letter are R-prefixed, unless a prefix is already defined
+@@ -254,7 +261,14 @@
+ 	// Do we know what language to use for stemming ?
+ 	if (language.empty() == false)
+ 	{
+-		pStemmer = new Xapian::Stem(StringManip::toLowerCase(language));
++		try
++		{
++			pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
++		}
++		catch (const Xapian::Error &amp;error)
++		{
++			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		}
+ 	}
+ 
+ 	// Terms starting with a capital letter are R-prefixed, unless a prefix is already defined
+@@ -561,7 +575,7 @@
+ 		}
+ 		catch (const Xapian::Error &amp;error)
+ 		{
+-			cerr &lt;&lt; &quot;XapianIndex::scanDocument: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 			continue;
+ 		}
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-05-31 07:45:02 UTC (rev 854)
++++ trunk/Search/XapianEngine.cpp	2007-05-31 07:49:38 UTC (rev 855)
+@@ -199,7 +199,14 @@
+ 	// Set things up
+ 	if (stemLanguage.empty() == false)
+ 	{
+-		stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
++		try
++		{
++			stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
++		}
++		catch (const Xapian::Error &amp;error)
++		{
++			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		}
+ 		parser.set_stemming_strategy(Xapian::QueryParser::STEM_ALL);
+ 		parser.set_stemmer(stemmer);
+ 	}
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-05-31 07:45:02 UTC (rev 854)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-05-31 07:49:38 UTC (rev 855)
+@@ -299,12 +299,15 @@
+ 	Languages::setIntlName(4, _(&quot;Finnish&quot;));
+ 	Languages::setIntlName(5, _(&quot;French&quot;));
+ 	Languages::setIntlName(6, _(&quot;German&quot;));
+-	Languages::setIntlName(7, _(&quot;Italian&quot;));
+-	Languages::setIntlName(8, _(&quot;Norwegian&quot;));
+-	Languages::setIntlName(9, _(&quot;Portuguese&quot;));
+-	Languages::setIntlName(10, _(&quot;Russian&quot;));
+-	Languages::setIntlName(11, _(&quot;Spanish&quot;));
+-	Languages::setIntlName(12, _(&quot;Swedish&quot;));
++	Languages::setIntlName(7, _(&quot;Hungarian&quot;));
++	Languages::setIntlName(8, _(&quot;Italian&quot;));
++	Languages::setIntlName(9, _(&quot;Norwegian&quot;));
++	Languages::setIntlName(10, _(&quot;Portuguese&quot;));
++	Languages::setIntlName(11, _(&quot;Romanian&quot;));
++	Languages::setIntlName(12, _(&quot;Russian&quot;));
++	Languages::setIntlName(13, _(&quot;Spanish&quot;));
++	Languages::setIntlName(14, _(&quot;Swedish&quot;));
++	Languages::setIntlName(15, _(&quot;Turkish&quot;));
+ 
+ 	// Load tokenizer libraries, if any
+ 	Dijon::HtmlFilter::initialize();
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-05-31 07:45:02 UTC (rev 854)
++++ trunk/UI/GTK2/src/pinot.cc	2007-05-31 07:49:38 UTC (rev 855)
+@@ -231,12 +231,15 @@
+ 	Languages::setIntlName(4, _(&quot;Finnish&quot;));
+ 	Languages::setIntlName(5, _(&quot;French&quot;));
+ 	Languages::setIntlName(6, _(&quot;German&quot;));
+-	Languages::setIntlName(7, _(&quot;Italian&quot;));
+-	Languages::setIntlName(8, _(&quot;Norwegian&quot;));
+-	Languages::setIntlName(9, _(&quot;Portuguese&quot;));
+-	Languages::setIntlName(10, _(&quot;Russian&quot;));
+-	Languages::setIntlName(11, _(&quot;Spanish&quot;));
+-	Languages::setIntlName(12, _(&quot;Swedish&quot;));
++	Languages::setIntlName(7, _(&quot;Hungarian&quot;));
++	Languages::setIntlName(8, _(&quot;Italian&quot;));
++	Languages::setIntlName(9, _(&quot;Norwegian&quot;));
++	Languages::setIntlName(10, _(&quot;Portuguese&quot;));
++	Languages::setIntlName(11, _(&quot;Romanian&quot;));
++	Languages::setIntlName(12, _(&quot;Russian&quot;));
++	Languages::setIntlName(13, _(&quot;Spanish&quot;));
++	Languages::setIntlName(14, _(&quot;Swedish&quot;));
++	Languages::setIntlName(15, _(&quot;Turkish&quot;));
+ 
+ 	// Load search engines
+ 	settings.loadSearchEngines(prefixDir + &quot;/share/pinot/engines&quot;);
+
+Modified: trunk/Utils/Languages.cpp
+===================================================================
+--- trunk/Utils/Languages.cpp	2007-05-31 07:45:02 UTC (rev 854)
++++ trunk/Utils/Languages.cpp	2007-05-31 07:49:38 UTC (rev 855)
+@@ -26,14 +26,14 @@
+ using std::pair;
+ using std::min;
+ 
+-unsigned int Languages::m_count = 13;
++unsigned int Languages::m_count = 16;
+ 
+ char *Languages::m_names[] = { &quot;Unknown&quot;, &quot;Danish&quot;, &quot;Dutch&quot;, &quot;English&quot;,
+-	&quot;Finnish&quot;, &quot;French&quot;, &quot;German&quot;, &quot;Italian&quot;, &quot;Norwegian&quot;, &quot;Portuguese&quot;,
+-	&quot;Russian&quot;, &quot;Spanish&quot;, &quot;Swedish&quot; };
++	&quot;Finnish&quot;, &quot;French&quot;, &quot;German&quot;, &quot;Hungarian&quot;, &quot;Italian&quot;, &quot;Norwegian&quot;,
++	&quot;Portuguese&quot;, &quot;Romanian&quot;, &quot;Russian&quot;, &quot;Spanish&quot;, &quot;Swedish&quot;, &quot;Turkish&quot; };
+ 
+-char *Languages::m_codes[] = { &quot;&quot;, &quot;da&quot;, &quot;nl&quot;, &quot;en&quot;, &quot;fi&quot;, &quot;fr&quot;, &quot;de&quot;, \
+-	&quot;it&quot;, &quot;nn&quot;, &quot;pt&quot;, &quot;ru&quot;, &quot;es&quot;, &quot;sv&quot; };
++char *Languages::m_codes[] = { &quot;&quot;, &quot;da&quot;, &quot;nl&quot;, &quot;en&quot;, &quot;fi&quot;, &quot;fr&quot;, &quot;de&quot;, &quot;hu&quot;, \
++	&quot;it&quot;, &quot;nn&quot;, &quot;pt&quot;, &quot;ro&quot;, &quot;ru&quot;, &quot;es&quot;, &quot;sv&quot;, &quot;tr&quot; };
+ 
+ map&lt;unsigned int, string&gt; Languages::m_intlNames;
+ 
+
+Modified: trunk/textcat_conf.txt
+===================================================================
+--- trunk/textcat_conf.txt	2007-05-31 07:45:02 UTC (rev 854)
++++ trunk/textcat_conf.txt	2007-05-31 07:49:38 UTC (rev 855)
+@@ -3,17 +3,20 @@
+ # The following languages are supported by Xapian::Stem
+ # Languages names MUST be in English
+ #
+-/usr/share/libtextcat/LM/english.lm                     english
+-/usr/share/libtextcat/LM/spanish.lm                     spanish
+-/usr/share/libtextcat/LM/french.lm                      french
+-/usr/share/libtextcat/LM/german.lm                      german
+ /usr/share/libtextcat/LM/danish.lm			danish
+ /usr/share/libtextcat/LM/dutch.lm			dutch
++/usr/share/libtextcat/LM/english.lm			english
+ /usr/share/libtextcat/LM/finnish.lm			finnish
++/usr/share/libtextcat/LM/french.lm			french
++/usr/share/libtextcat/LM/german.lm			german
++/usr/share/libtextcat/LM/hungarian.lm			hungarian
+ /usr/share/libtextcat/LM/italian.lm			italian
+ /usr/share/libtextcat/LM/norwegian.lm			norwegian
+ /usr/share/libtextcat/LM/portuguese.lm			portuguese
++/usr/share/libtextcat/LM/romanian.lm			romanian
+ /usr/share/libtextcat/LM/russian-iso8859_5.lm		russian-iso8859_5
+ /usr/share/libtextcat/LM/russian-koi8_r.lm		russian-koi8_r
+ /usr/share/libtextcat/LM/russian-windows1251.lm		russian-windows1251
++/usr/share/libtextcat/LM/spanish.lm			spanish
+ /usr/share/libtextcat/LM/swedish.lm			swedish
++/usr/share/libtextcat/LM/turkish.lm			turkish
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000848.html">[Pinot-svn] r854 - trunk/UI/GTK2/src
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#849">[ date ]</a>
+              <a href="thread.html#849">[ thread ]</a>
+              <a href="subject.html#849">[ subject ]</a>
+              <a href="author.html#849">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

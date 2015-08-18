@@ -1,0 +1,230 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1042 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1042%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710150406.l9F46VRN003327%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001035.html">
+   <LINK REL="Next"  HREF="001037.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1042 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1042%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710150406.l9F46VRN003327%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1042 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 15 06:06:31 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001035.html">[Pinot-svn] r1041 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001037.html">[Pinot-svn] r1043 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1036">[ date ]</a>
+              <a href="thread.html#1036">[ thread ]</a>
+              <a href="subject.html#1036">[ subject ]</a>
+              <a href="author.html#1036">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-15 06:06:30 +0200 (Mon, 15 Oct 2007)
+New Revision: 1042
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Synced mainWindow with changes made to propertiesDialog. It also assumed that
+UpdateDocumentThread only operates on My Web Pages, which is incorrect.
+ResultsTree::updateResult() returns false if it failed.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-10-15 04:02:41 UTC (rev 1041)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-10-15 04:06:30 UTC (rev 1042)
+@@ -981,14 +981,14 @@
+ //
+ // Updates a result's properties.
+ //
+-void ResultsTree::updateResult(const DocumentInfo &amp;result)
++bool ResultsTree::updateResult(const DocumentInfo &amp;result)
+ {
+ 	unsigned int indexId = 0;
+ 	unsigned int docId = result.getIsIndexed(indexId);
+ 
+ 	if (docId == 0)
+ 	{
+-		return;
++		return false;
+ 	}
+ 
+ 	// Go through the list
+@@ -1006,9 +1006,12 @@
+ 				ResultsModelColumns::ROW_RESULT,
+ 				row[m_resultsColumns.m_indexed], row[m_resultsColumns.m_viewed],
+ 				row[m_resultsColumns.m_rankDiff]);
+-			break;
++
++			return true;
+ 		}
+ 	}
++
++	return false;
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2007-10-15 04:02:41 UTC (rev 1041)
++++ trunk/UI/GTK2/src/ResultsTree.h	2007-10-15 04:06:30 UTC (rev 1042)
+@@ -79,7 +79,7 @@
+ 		void setSelectionState(bool viewed);
+ 
+ 		/// Updates a result's properties.
+-		void updateResult(const DocumentInfo &amp;result);
++		bool updateResult(const DocumentInfo &amp;result);
+ 
+ 		/**
+ 		  * Deletes the current selection.
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-10-15 04:02:41 UTC (rev 1041)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-10-15 04:06:30 UTC (rev 1042)
+@@ -1597,18 +1597,17 @@
+ 			return;
+ 		}
+ 
+-		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(_(&quot;My Web Pages&quot;), NotebookPageBox::INDEX_PAGE));
++		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(pUpdateThread-&gt;getIndexName(), NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+ 			ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+-			if (pResultsTree != NULL)
++			if ((pResultsTree != NULL) &amp;&amp;
++				(pResultsTree-&gt;updateResult(pUpdateThread-&gt;getDocumentInfo()) == true))
+ 			{
+-				pResultsTree-&gt;updateResult(pUpdateThread-&gt;getDocumentInfo());
++				status = _(&quot;Updated document properties&quot;);
++				set_status(status);
+ 			}
+ 		}
+-
+-		status = _(&quot;Updated document properties&quot;);
+-		set_status(status);
+ 	}
+ 	else if (type == &quot;StartDaemonThread&quot;)
+ 	{
+@@ -2309,45 +2308,34 @@
+ 	propertiesBox.show();
+ 	// What labels will this show ?
+ 	const set&lt;string&gt; &amp;labels = propertiesBox.getLabels();
+-	bool hasNoLabels = labels.empty();
++	bool hadNoLabels = labels.empty();
+ 	if (propertiesBox.run() != RESPONSE_OK)
+ 	{
+ 		return;
+ 	}
+ 
+-	DocumentInfo docInfo(propertiesBox.getDocumentInfo());
+-	string newTitle(docInfo.getTitle());
+-	string newLanguage(docInfo.getLanguage());
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: properties changed to &quot;
+-		&lt;&lt; newTitle &lt;&lt; &quot;, &quot; &lt;&lt; newLanguage &lt;&lt; endl;
+-#endif
+-
+ 	// Now apply these labels to all the documents
+ 	// FIXME: do that only if something was modified
+-	if ((hasNoLabels == false) &amp;&amp;
++	if ((hadNoLabels == false) &amp;&amp;
+ 		(labels.empty() == false))
+ 	{
+ 		IndexInterface *pIndex = m_settings.getIndex(mapIter-&gt;second);
+ 		if (pIndex != NULL)
+ 		{
+-			if (pIndex-&gt;isGood() == true)
++			set&lt;unsigned int&gt; docIds;
++
++			for (vector&lt;DocumentInfo&gt;::iterator docIter = documentsList.begin();
++				docIter != documentsList.end(); ++docIter)
+ 			{
+-				set&lt;unsigned int&gt; docIds;
++				unsigned int indexId = 0;
+ 
+-				for (vector&lt;DocumentInfo&gt;::iterator docIter = documentsList.begin();
+-					docIter != documentsList.end(); ++docIter)
+-				{
+-					unsigned int indexId = 0;
+-
+-					docIds.insert(docIter-&gt;getIsIndexed(indexId));
+-				}
+-
+-				// Set the document's labels list
+-				// FIXME: this should be done by a thread
+-				pIndex-&gt;setDocumentsLabels(docIds, labels);
++				docIds.insert(docIter-&gt;getIsIndexed(indexId));
+ 			}
+ 
++			// Set the document's labels list
++			// FIXME: this should be done by a thread
++			pIndex-&gt;setDocumentsLabels(docIds, labels);
++
+ 			delete pIndex;
+ 		}
+ 	}
+@@ -2360,15 +2348,13 @@
+ 		unsigned int indexId = 0;
+ 		unsigned int docId = docIter-&gt;getIsIndexed(indexId);
+ 
+-		docIter-&gt;setLanguage(newLanguage);
+-
+ 		start_thread(new UpdateDocumentThread(indexName, docId, *docIter));
+ 	}
+ 
++	// Is the index list filtered with a query ?
+ 	if (queryName.empty() == false)
+ 	{
+-		// The current label may have been applied to or removed from
+-		// one or more of the selected documents, so refresh the list
++		// The query may filter on a label, so refresh the list
+ 		browse_index(indexName, queryName, 0, 0);
+ 	}
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001035.html">[Pinot-svn] r1041 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001037.html">[Pinot-svn] r1043 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1036">[ date ]</a>
+              <a href="thread.html#1036">[ thread ]</a>
+              <a href="subject.html#1036">[ subject ]</a>
+              <a href="author.html#1036">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r503 - in trunk: Collect Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r503%20-%20in%20trunk%3A%20Collect%20Utils&In-Reply-To=%3C200610061638.k96GcOnF024020%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000495.html">
+   <LINK REL="Next"  HREF="000497.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r503 - in trunk: Collect Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r503%20-%20in%20trunk%3A%20Collect%20Utils&In-Reply-To=%3C200610061638.k96GcOnF024020%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r503 - in trunk: Collect Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct  6 18:38:24 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000495.html">[Pinot-svn] r502 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000497.html">[Pinot-svn] r504 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#496">[ date ]</a>
+              <a href="thread.html#496">[ thread ]</a>
+              <a href="subject.html#496">[ subject ]</a>
+              <a href="author.html#496">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-06 18:38:23 +0200 (Fri, 06 Oct 2006)
+New Revision: 503
+
+Modified:
+   trunk/Collect/MboxCollector.cpp
+   trunk/Utils/MboxParser.cpp
+   trunk/Utils/MboxParser.h
+Log:
+MboxCollector can access any part of a message.
+Removed hash (&quot;h=...&quot;) from URL scheme.
+
+
+Modified: trunk/Collect/MboxCollector.cpp
+===================================================================
+--- trunk/Collect/MboxCollector.cpp	2006-10-06 14:45:04 UTC (rev 502)
++++ trunk/Collect/MboxCollector.cpp	2006-10-06 16:38:23 UTC (rev 503)
+@@ -42,6 +42,8 @@
+ {
+ 	Url thisUrl(docInfo.getLocation());
+ 	string protocol = thisUrl.getProtocol();
++	off_t messageOffset = 0;
++	int partNum = 0;
+ 
+ 	if (protocol != &quot;mailbox&quot;)
+ 	{
+@@ -55,7 +57,13 @@
+ 	{
+ 		return NULL;
+ 	}
+-	off_t messageOffset = (off_t)atol(offset.c_str());
++	messageOffset = (off_t)atol(offset.c_str());
++	// ...and the part number
++	string number = StringManip::extractField(thisUrl.getParameters(), &quot;p=&quot;, &quot;&quot;);
++	if (number.empty() == false)
++	{
++		partNum = atoi(number.c_str());
++	}
+ 
+ 	string directoryName = thisUrl.getLocation();
+ 	string fileName = thisUrl.getFile();
+@@ -64,7 +72,7 @@
+ 	fileLocation += fileName;
+ 
+ 	// Get a parser
+-	MboxParser boxParser(fileLocation, messageOffset);
++	MboxParser boxParser(fileLocation, messageOffset, partNum);
+ 	// The first document should be the message we are interested in
+ 	// FIXME: don't ignore the part number (p=...)
+ 	const Document *pMessage = boxParser.getDocument();
+
+Modified: trunk/Utils/MboxParser.cpp
+===================================================================
+--- trunk/Utils/MboxParser.cpp	2006-10-06 14:45:04 UTC (rev 502)
++++ trunk/Utils/MboxParser.cpp	2006-10-06 16:38:23 UTC (rev 503)
+@@ -24,7 +24,6 @@
+ 
+ #include &lt;gmime/gmime.h&gt;
+ 
+-#include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;MboxParser.h&quot;
+@@ -32,14 +31,14 @@
+ using std::cout;
+ using std::endl;
+ 
+-MboxParser::MboxParser(const string &amp;fileName, off_t mboxOffset) :
++MboxParser::MboxParser(const string &amp;fileName, off_t mboxOffset, int partNum) :
+ 	m_fileName(fileName),
+ 	m_fd(-1),
+ 	m_pMboxStream(NULL),
+ 	m_pParser(NULL),
+ 	m_pMimeMessage(NULL),
+ 	m_partsCount(-1),
+-	m_partNum(-1),
++	m_partNum(partNum),
+ 	m_messageStart(mboxOffset),
+ 	m_pCurrentDocument(NULL),
+ 	m_messageDate(0)
+@@ -252,7 +251,7 @@
+ 
+ bool MboxParser::extractMessage(const string &amp;subject)
+ {
+-	string fromLine, msgSubject(subject), contentType;
++	string msgSubject(subject), contentType;
+ 	char *pPart = NULL;
+ 	ssize_t partLength = 0;
+ 
+@@ -279,13 +278,6 @@
+ #endif
+ 			if (messageEnd &gt; m_messageStart)
+ 			{
+-				char *pFromLine = g_mime_parser_get_from(m_pParser);
+-				if (pFromLine != NULL)
+-				{
+-					fromLine = pFromLine;
+-					g_free(pFromLine);
+-				}
+-
+ 				// FIXME: this only applies to Mozilla
+ 				const char *pMozStatus = g_mime_message_get_header(m_pMimeMessage, &quot;X-Mozilla-Status&quot;);
+ 				if (pMozStatus != NULL)
+@@ -353,8 +345,6 @@
+ 					location += &quot;&amp;p=&quot;;
+ 					snprintf(posStr, 64, &quot;%d&quot;, max(m_partNum, 0));
+ 					location += posStr;
+-					location += &quot;&amp;h=&quot;;
+-					location += StringManip::hashString(fromLine);
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;MboxParser::extractMessage: message location is &quot; &lt;&lt; location &lt;&lt; endl;
+ #endif
+
+Modified: trunk/Utils/MboxParser.h
+===================================================================
+--- trunk/Utils/MboxParser.h	2006-10-06 14:45:04 UTC (rev 502)
++++ trunk/Utils/MboxParser.h	2006-10-06 16:38:23 UTC (rev 503)
+@@ -41,7 +41,7 @@
+ class MboxParser
+ {
+ 	public:
+-		MboxParser(const string &amp;fileName, off_t mboxOffset = 0);
++		MboxParser(const string &amp;fileName, off_t mboxOffset = 0, int partNum = -1);
+ 		virtual ~MboxParser();
+ 
+ 		/// Gets the current message's date.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000495.html">[Pinot-svn] r502 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000497.html">[Pinot-svn] r504 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#496">[ date ]</a>
+              <a href="thread.html#496">[ thread ]</a>
+              <a href="subject.html#496">[ subject ]</a>
+              <a href="author.html#496">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

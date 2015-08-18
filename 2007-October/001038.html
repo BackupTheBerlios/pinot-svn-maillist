@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1044 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1044%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710151347.l9FDldHn007193%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001037.html">
+   <LINK REL="Next"  HREF="001039.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1044 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1044%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710151347.l9FDldHn007193%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1044 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 15 15:47:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001037.html">[Pinot-svn] r1043 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001039.html">[Pinot-svn] r1045 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1038">[ date ]</a>
+              <a href="thread.html#1038">[ thread ]</a>
+              <a href="subject.html#1038">[ subject ]</a>
+              <a href="author.html#1038">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-15 15:47:38 +0200 (Mon, 15 Oct 2007)
+New Revision: 1044
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+UpdateDocumentThread can update labels too.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-15 05:40:56 UTC (rev 1043)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-15 13:47:38 UTC (rev 1044)
+@@ -1671,8 +1671,7 @@
+ 	// Are we supposed to remove documents based on labels ?
+ 	if (m_docIdList.empty() == true)
+ 	{
+-		// Yep
+-		// FIXME: better delete documents one label at a time
++		// Yep, delete documents one label at a time
+ 		for (set&lt;string&gt;::iterator iter = m_labelNames.begin(); iter != m_labelNames.end(); ++iter)
+ 		{
+ 			string labelName = (*iter);
+@@ -1733,12 +1732,13 @@
+ 	delete pIndex;
+ }
+ 
+-UpdateDocumentThread::UpdateDocumentThread(const string &amp;indexName,
+-	unsigned int docId, const DocumentInfo &amp;docInfo) :
++UpdateDocumentThread::UpdateDocumentThread(const string &amp;indexName, unsigned int docId,
++	const DocumentInfo &amp;docInfo, bool updateLabels) :
+ 	WorkerThread(),
+ 	m_indexName(indexName),
+ 	m_docId(docId),
+-	m_docInfo(docInfo)
++	m_docInfo(docInfo),
++	m_updateLabels(updateLabels)
+ {
+ }
+ 
+@@ -1793,12 +1793,26 @@
+ 			return;
+ 		}
+ 
++		// Update the DocumentInfo
+ 		if (pIndex-&gt;updateDocumentInfo(m_docId, m_docInfo) == false)
+ 		{
+ 			m_errorNum = UPDATE_FAILED;
++			m_errorParam = m_docInfo.getLocation();
++			return;
+ 		}
++		// ...and the labels if necessary
++		if (m_updateLabels == true)
++		{
++			if (pIndex-&gt;setDocumentLabels(m_docId, m_docInfo.getLabels()) == false)
++			{
++				m_errorNum = UPDATE_FAILED;
++				m_errorParam = m_docInfo.getLocation();
++				return;
++			}
++		}
++
+ 		// Flush the index ?
+-		else if (m_immediateFlush == true)
++		if (m_immediateFlush == true)
+ 		{
+ 			pIndex-&gt;flush();
+ 		}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-10-15 05:40:56 UTC (rev 1043)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-10-15 13:47:38 UTC (rev 1044)
+@@ -436,8 +436,8 @@
+ {
+ 	public:
+ 		// Update a document's properties
+-		UpdateDocumentThread(const std::string &amp;indexName,
+-			unsigned int docId, const DocumentInfo &amp;docInfo);
++		UpdateDocumentThread(const std::string &amp;indexName, unsigned int docId,
++			const DocumentInfo &amp;docInfo, bool updateLabels);
+ 		virtual ~UpdateDocumentThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -452,6 +452,7 @@
+ 		std::string m_indexName;
+ 		unsigned int m_docId;
+ 		DocumentInfo m_docInfo;
++		bool m_updateLabels;
+ 
+ 		virtual void doWork(void);
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-10-15 05:40:56 UTC (rev 1043)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-10-15 13:47:38 UTC (rev 1044)
+@@ -2316,7 +2316,7 @@
+ 
+ 	// Now apply these labels to all the documents
+ 	// FIXME: do that only if something was modified
+-	if ((hadNoLabels == false) &amp;&amp;
++	if ((hadNoLabels == false) ||
+ 		(labels.empty() == false))
+ 	{
+ 		IndexInterface *pIndex = m_settings.getIndex(mapIter-&gt;second);
+@@ -2348,7 +2348,7 @@
+ 		unsigned int indexId = 0;
+ 		unsigned int docId = docIter-&gt;getIsIndexed(indexId);
+ 
+-		start_thread(new UpdateDocumentThread(indexName, docId, *docIter));
++		start_thread(new UpdateDocumentThread(indexName, docId, *docIter, false));
+ 	}
+ 
+ 	// Is the index list filtered with a query ?
+@@ -3521,7 +3521,7 @@
+ 	ustring queryName = pIndexPage-&gt;getQueryName();
+ 	if (queryName.empty() == false)
+ 	{
+-		// FIXME: run th document through the query
++		// FIXME: run the document through the query
+ 		appendToList = false;
+ 	}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001037.html">[Pinot-svn] r1043 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001039.html">[Pinot-svn] r1045 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1038">[ date ]</a>
+              <a href="thread.html#1038">[ thread ]</a>
+              <a href="subject.html#1038">[ subject ]</a>
+              <a href="author.html#1038">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

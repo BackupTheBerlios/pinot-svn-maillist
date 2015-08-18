@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r698 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r698%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200701221350.l0MDoVPi026719%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000691.html">
+   <LINK REL="Next"  HREF="000693.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r698 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r698%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200701221350.l0MDoVPi026719%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r698 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 22 14:50:31 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000691.html">[Pinot-svn] r697 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000693.html">[Pinot-svn] r699 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#692">[ date ]</a>
+              <a href="thread.html#692">[ thread ]</a>
+              <a href="subject.html#692">[ subject ]</a>
+              <a href="author.html#692">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-01-22 14:50:31 +0100 (Mon, 22 Jan 2007)
+New Revision: 698
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+When Results, Index is selected, skip results already indexed.
+Clear the status bar when a notebook page is closed.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-01-22 13:30:38 UTC (rev 697)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-01-22 13:50:31 UTC (rev 698)
+@@ -787,7 +787,7 @@
+ //
+ // Gets a list of selected items.
+ //
+-bool ResultsTree::getSelection(vector&lt;DocumentInfo&gt; &amp;resultsList)
++bool ResultsTree::getSelection(vector&lt;DocumentInfo&gt; &amp;resultsList, bool skipIndexed)
+ {
+ 	list&lt;TreeModel::Path&gt; selectedItems = get_selection()-&gt;get_selected_rows();
+ 	if (selectedItems.empty() == true)
+@@ -802,7 +802,9 @@
+ 		TreeModel::iterator iter = m_refStore-&gt;get_iter(*itemPath);
+ 		TreeModel::Row row = *iter;
+ 
+-		if (row[m_resultsColumns.m_type] == ResultsModelColumns::RESULT_TITLE)
++		if ((row[m_resultsColumns.m_type] == ResultsModelColumns::RESULT_TITLE) &amp;&amp;
++			((skipIndexed == false) ||
++			(row[m_resultsColumns.m_indexed] = false)))
+ 		{
+ 			resultsList.push_back(DocumentInfo(from_utf8(row[m_resultsColumns.m_text]),
+ 				from_utf8(row[m_resultsColumns.m_url]), &quot;&quot;, &quot;&quot;));
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2007-01-22 13:30:38 UTC (rev 697)
++++ trunk/UI/GTK2/src/ResultsTree.h	2007-01-22 13:50:31 UTC (rev 698)
+@@ -71,7 +71,7 @@
+ 		void setGroupMode(bool groupBySearchEngine);
+ 
+ 		/// Gets a list of selected items.
+-		bool getSelection(std::vector&lt;DocumentInfo&gt; &amp;resultsList);
++		bool getSelection(std::vector&lt;DocumentInfo&gt; &amp;resultsList, bool skipIndexed = false);
+ 
+ 		/// Sets the selected items' state.
+ 		void setSelectionState(bool viewed, bool indexed);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-01-22 13:30:38 UTC (rev 697)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-01-22 13:50:31 UTC (rev 698)
+@@ -818,6 +818,9 @@
+ 		show_global_menuitems(false);
+ 		show_selectionbased_menuitems(false);
+ 	}
++
++	// Reset
++	set_status(&quot;&quot;);
+ }
+ 
+ //
+@@ -1823,13 +1826,6 @@
+ {
+ 	vector&lt;DocumentInfo&gt; resultsList;
+ 
+-	// Make sure this has been configured
+-	if (m_settings.m_docsIndexLocation.empty() == true)
+-	{
+-		set_status(_(&quot;Please set a location for the index first&quot;));
+-		return;
+-	}
+-
+ 	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+@@ -1839,7 +1835,7 @@
+ 			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+ 			if (pResultsTree != NULL)
+ 			{
+-				pResultsTree-&gt;getSelection(resultsList);
++				pResultsTree-&gt;getSelection(resultsList, true);
+ 
+ 				// Go through selected results
+ 				for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+@@ -1919,13 +1915,6 @@
+ {
+ 	vector&lt;IndexedDocument&gt; documentsList;
+ 
+-	// Make sure this has been configured
+-	if (m_settings.m_docsIndexLocation.empty() == true)
+-	{
+-		set_status(_(&quot;Please set a location for the index first&quot;));
+-		return;
+-	}
+-
+ 	// Get the current documents selection
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000691.html">[Pinot-svn] r697 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000693.html">[Pinot-svn] r699 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#692">[ date ]</a>
+              <a href="thread.html#692">[ thread ]</a>
+              <a href="subject.html#692">[ subject ]</a>
+              <a href="author.html#692">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

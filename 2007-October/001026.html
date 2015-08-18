@@ -1,0 +1,605 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1032 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1032%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710130654.l9D6sDh3022387%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001025.html">
+   <LINK REL="Next"  HREF="001027.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1032 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1032%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710130654.l9D6sDh3022387%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1032 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 13 08:54:13 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001025.html">[Pinot-svn] r1031 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="001027.html">[Pinot-svn] r1033 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1026">[ date ]</a>
+              <a href="thread.html#1026">[ thread ]</a>
+              <a href="subject.html#1026">[ subject ]</a>
+              <a href="author.html#1026">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-13 08:54:13 +0200 (Sat, 13 Oct 2007)
+New Revision: 1032
+
+Modified:
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+When something fails, thread record an error number, which can be converted into
+an error string by the caller if necessary.
+DirectoryScannerThread records scanning errors directly into CrawlHistory.
+
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-10-13 05:20:22 UTC (rev 1031)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-10-13 06:54:13 UTC (rev 1032)
+@@ -239,7 +239,7 @@
+ 	string location(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+ 	time_t itemDate;
+ 	struct stat fileStat;
+-	int statSuccess = 0;
++	int entryStatus = 0;
+ 	bool scanSuccess = true, reportFile = false, itemExists = false;
+ 
+ 	if (entryName.empty() == true)
+@@ -260,24 +260,25 @@
+ 		return false;
+ 	}
+ 
++	// Is this item in the database already ?
++	itemExists = history.hasItem(location, status, itemDate);
++
+ 	if (m_followSymLinks == false)
+ 	{
+-		statSuccess = lstat(entryName.c_str(), &amp;fileStat);
++		entryStatus = lstat(entryName.c_str(), &amp;fileStat);
+ 	}
+ 	else
+ 	{
+ 		// Stat the files pointed to by symlinks
+-		statSuccess = stat(entryName.c_str(), &amp;fileStat);
++		entryStatus = stat(entryName.c_str(), &amp;fileStat);
+ 	}
+ 
+-	// Is this item in the database already ?
+-	itemExists = history.hasItem(location, status, itemDate);
+-
+-	if (statSuccess == -1)
++	if (entryStatus == -1)
+ 	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: stat failed with error &quot; &lt;&lt; errno &lt;&lt; &quot; &quot; &lt;&lt; strerror(errno) &lt;&lt; endl;
++		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: stat failed with error &quot; &lt;&lt; errno &lt;&lt; endl;
+ #endif
++		entryStatus = errno;
+ 		scanSuccess = false;
+ 	}
+ 	// Is it a file or a directory ?
+@@ -365,8 +366,9 @@
+ 			else
+ 			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: opendir failed with error &quot; &lt;&lt; errno &lt;&lt; &quot; &quot; &lt;&lt; strerror(errno) &lt;&lt; endl;
++				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: opendir failed with error &quot; &lt;&lt; errno &lt;&lt; endl;
+ #endif
++				entryStatus = errno;
+ 				scanSuccess = false;
+ 			}
+ 		}
+@@ -376,6 +378,7 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: unknown entry type&quot; &lt;&lt; endl;
+ #endif
++		entryStatus = ENOENT;
+ 		scanSuccess = false;
+ 	}
+ 
+@@ -387,11 +390,11 @@
+ 		// Record this error
+ 		if (itemExists == false)
+ 		{
+-			history.insertItem(location, CrawlHistory::ERROR, m_sourceId, timeNow);
++			history.insertItem(location, CrawlHistory::ERROR, m_sourceId, timeNow, entryStatus);
+ 		}
+ 		else
+ 		{
+-			history.updateItem(location, CrawlHistory::ERROR, timeNow);
++			history.updateItem(location, CrawlHistory::ERROR, timeNow, entryStatus);
+ 		}
+ 	}
+ 	else if (reportFile == true)
+@@ -474,9 +477,8 @@
+ 
+ 	if (scanEntry(m_dirName, history) == false)
+ 	{
+-		m_status = _(&quot;Couldn't open directory&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_dirName;
++		m_errorNum = OPENDIR_FAILED;
++		m_errorParam = m_dirName;
+ 	}
+ 	flushUpdates(history);
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-13 05:20:22 UTC (rev 1031)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-13 06:54:13 UTC (rev 1032)
+@@ -73,6 +73,58 @@
+ pthread_mutex_t WorkerThread::m_dispatcherMutex = PTHREAD_MUTEX_INITIALIZER;
+ bool WorkerThread::m_immediateFlush = true;
+ 
++string WorkerThread::errorToString(int errorNum)
++{
++	if (errorNum == 0)
++	{
++		return &quot;&quot;;
++	}
++
++	if (errorNum &lt; INDEX_ERROR)
++	{
++		return strerror(errorNum);
++	}
++
++	// Internal error codes
++	switch (errorNum)
++	{
++		case INDEX_ERROR:
++			return _(&quot;Index error&quot;);
++		case INDEXING_FAILED:
++			return _(&quot;Couldn't index document&quot;);
++		case UPDATE_FAILED:
++			return _(&quot;Couldn't update document&quot;);
++		case UNINDEXING_FAILED:
++			return _(&quot;Couldn't unindex document(s)&quot;);
++		case QUERY_FAILED:
++			return _(&quot;Couldn't run query on search engine&quot;);
++		case HISTORY_FAILED:
++			return _(&quot;Couldn't get history for search engine&quot;);
++		case DOWNLOAD_FAILED:
++			return _(&quot;Couldn't retrieve document&quot;);
++		case MONITORING_FAILED:
++			return _(&quot;Couldn't initialize file monitor&quot;);
++		case OPENDIR_FAILED:
++			return _(&quot;Couldn't open directory&quot;);
++		case UNKNOWN_INDEX:
++			return _(&quot;Index doesn't exist&quot;);
++		case UNKNOWN_ENGINE:
++			return  _(&quot;Couldn't create search engine&quot;);
++		case UNSUPPORTED_TYPE:
++			return _(&quot;Cannot index document type&quot;);
++		case UNSUPPORTED_PROTOCOL:
++			return _(&quot;No downloader for this protocol&quot;);
++		case ROBOTS_FORBIDDEN:
++			return _(&quot;Robots META tag forbids indexing&quot;);
++		case NO_MONITORING:
++			return _(&quot;No monitoring handler&quot;);
++		default:
++			break;
++	}
++
++	return _(&quot;Unknown error&quot;);
++}
++
+ Dispatcher &amp;WorkerThread::getDispatcher(void)
+ {
+ 	return m_dispatcher;
+@@ -86,7 +138,8 @@
+ WorkerThread::WorkerThread() :
+ 	m_id(0),
+ 	m_background(false),
+-	m_done(false)
++	m_done(false),
++	m_errorNum(0)
+ {
+ }
+ 
+@@ -140,9 +193,24 @@
+ 	return m_done;
+ }
+ 
++int WorkerThread::getErrorNum(void) const
++{
++	return m_errorNum;
++}
++
+ string WorkerThread::getStatus(void) const
+ {
+-	return m_status;
++	string status(errorToString(m_errorNum));
++
++	if ((status.empty() == false) &amp;&amp;
++		(m_errorParam.empty() == false))
++	{
++		status += &quot; (&quot;;
++		status += m_errorParam;
++		status += &quot;)&quot;;
++	}
++
++	return status;
+ }
+ 
+ void WorkerThread::threadHandler(void)
+@@ -417,7 +485,8 @@
+ 		unlock_threads();
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;ThreadsManager::get_threads_count: &quot; &lt;&lt; count &lt;&lt; &quot; threads left&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;ThreadsManager::get_threads_count: &quot; &lt;&lt; count &lt;&lt; &quot;/&quot;
++		&lt;&lt; m_backgroundThreadsCount &lt;&lt; &quot; threads left&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	// A negative count would mean that a background thread
+@@ -676,11 +745,8 @@
+ 	map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(m_indexName);
+ 	if (mapIter == indexesMap.end())
+ 	{
+-		m_status = _(&quot;Index&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_indexName;
+-		m_status += &quot; &quot;;
+-		m_status += _(&quot;doesn't exist&quot;);
++		m_errorNum = UNKNOWN_INDEX;
++		m_errorParam = m_indexName;
+ 		return;
+ 	}
+ 
+@@ -689,9 +755,8 @@
+ 	if ((pIndex == NULL) ||
+ 		(pIndex-&gt;isGood() == false))
+ 	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += mapIter-&gt;second;
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = mapIter-&gt;second;
+ 		if (pIndex != NULL)
+ 		{
+ 			delete pIndex;
+@@ -964,9 +1029,8 @@
+ 	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
+ 	if (pEngine == NULL)
+ 	{
+-		m_status = _(&quot;Couldn't create search engine&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_engineDisplayableName;
++		m_errorNum = UNKNOWN_ENGINE;
++		m_errorParam = m_engineDisplayableName;
+ 		return;
+ 	}
+ 
+@@ -993,9 +1057,8 @@
+ 	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+ 	if (pEngine-&gt;runQuery(m_queryProps, m_startDoc) == false)
+ 	{
+-		m_status = _(&quot;Couldn't run query on search engine&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_engineDisplayableName;
++		m_errorNum = QUERY_FAILED;
++		m_errorParam = m_engineDisplayableName;
+ 	}
+ 	else
+ 	{
+@@ -1054,9 +1117,8 @@
+ 	if (history.getItems(m_queryProps.getName(), m_engineDisplayableName,
+ 		m_maxDocsCount, m_documentsList) == false)
+ 	{
+-		m_status = _(&quot;Couldn't get history for search engine&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_engineDisplayableName;
++		m_errorNum = HISTORY_FAILED;
++		m_errorParam = m_engineDisplayableName;
+ 	}
+ 	else if (m_documentsList.empty() == false)
+ 	{
+@@ -1100,9 +1162,8 @@
+ 	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;, &quot;MERGED&quot;);
+ 	if (pEngine == NULL)
+ 	{
+-		m_status = _(&quot;Couldn't create search engine&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_queryProps.getName();
++		m_errorNum = UNKNOWN_ENGINE;
++		m_errorParam = m_queryProps.getName();
+ 		return;
+ 	}
+ 
+@@ -1113,7 +1174,7 @@
+ 	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+ 	if (pEngine-&gt;runQuery(m_queryProps) == false)
+ 	{
+-		m_status = _(&quot;Couldn't run query on search engine&quot;);
++		m_errorNum = QUERY_FAILED;
+ 	}
+ 	else
+ 	{
+@@ -1161,18 +1222,16 @@
+ 	IndexInterface *pDocsIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
+ 	if (pDocsIndex == NULL)
+ 	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += PinotSettings::getInstance().m_docsIndexLocation;
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = PinotSettings::getInstance().m_docsIndexLocation;
+ 		return;
+ 	}
+ 
+ 	IndexInterface *pDaemonIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+ 	if (pDaemonIndex == NULL)
+ 	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += PinotSettings::getInstance().m_daemonIndexLocation;
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = PinotSettings::getInstance().m_daemonIndexLocation;
+ 		delete pDocsIndex;
+ 		return;
+ 	}
+@@ -1264,9 +1323,8 @@
+ 	m_pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+ 	if (m_pDownloader == NULL)
+ 	{
+-		m_status = _(&quot;Couldn't obtain downloader for protocol&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += thisUrl.getProtocol();
++		m_errorNum = UNSUPPORTED_PROTOCOL;
++		m_errorParam = thisUrl.getProtocol();
+ 	}
+ 	else if (m_done == false)
+ 	{
+@@ -1289,9 +1347,8 @@
+ 
+ 	if (m_pDoc == NULL)
+ 	{
+-		m_status = _(&quot;Couldn't retrieve&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_docInfo.getLocation();
++		m_errorNum = DOWNLOAD_FAILED;
++		m_errorParam = m_docInfo.getLocation();
+ 	}
+ }
+ 
+@@ -1345,9 +1402,8 @@
+ 	if ((pIndex == NULL) ||
+ 		(pIndex-&gt;isGood() == false))
+ 	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_indexLocation;
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = m_indexLocation;
+ 		if (pIndex != NULL)
+ 		{
+ 			delete pIndex;
+@@ -1375,13 +1431,8 @@
+ 		// Skip unsupported types ?
+ 		if (m_allowAllMIMETypes == false)
+ 		{
+-			m_status = _(&quot;Cannot index document type&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_docInfo.getType();
+-			m_status += &quot; &quot;;
+-			m_status += _(&quot;at&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_docInfo.getLocation();
++			m_errorNum = UNSUPPORTED_TYPE;
++			m_errorParam = m_docInfo.getType();
+ 			delete pIndex;
+ 
+ 			return;
+@@ -1456,13 +1507,8 @@
+ 			// Skip unsupported types ?
+ 			if (m_allowAllMIMETypes == false)
+ 			{
+-				m_status = _(&quot;Cannot index document type&quot;);
+-				m_status += &quot; &quot;;
+-				m_status += m_docInfo.getType();
+-				m_status += &quot; &quot;;
+-				m_status += _(&quot;at&quot;);
+-				m_status += &quot; &quot;;
+-				m_status += m_docInfo.getLocation();
++				m_errorNum = UNSUPPORTED_TYPE;
++				m_errorParam = m_docInfo.getType();
+ 				delete pIndex;
+ 
+ 				return;
+@@ -1494,9 +1540,8 @@
+ 						(pos2 != string::npos))
+ 					{
+ 						// No, it isn't
+-						m_status = _(&quot;Robots META tag forbids indexing&quot;);
+-						m_status += &quot; &quot;;
+-						m_status += m_docInfo.getLocation();
++						m_errorNum = ROBOTS_FORBIDDEN;
++						m_errorParam = m_docInfo.getLocation();
+ 						delete pIndex;
+ 
+ 						return;
+@@ -1550,9 +1595,8 @@
+ 
+ 			if (success == false)
+ 			{
+-				m_status = _(&quot;Couldn't index&quot;);
+-				m_status += &quot; &quot;;
+-				m_status += m_docInfo.getLocation();
++				m_errorNum = INDEXING_FAILED;
++				m_errorParam = m_docInfo.getLocation();
+ 			}
+ 			else
+ 			{
+@@ -1615,9 +1659,8 @@
+ 	if ((pIndex == NULL) ||
+ 		(pIndex-&gt;isGood() == false))
+ 	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_indexLocation;
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = m_indexLocation;
+ 		if (pIndex != NULL)
+ 		{
+ 			delete pIndex;
+@@ -1626,7 +1669,7 @@
+ 	}
+ 
+ 	// Be pessimistic and assume something will go wrong ;-)
+-	m_status = _(&quot;Couldn't unindex document(s)&quot;);
++	m_errorNum = UNINDEXING_FAILED;
+ 
+ 	// Are we supposed to remove documents based on labels ?
+ 	if (m_docIdList.empty() == true)
+@@ -1653,7 +1696,7 @@
+ 		}
+ 
+ 		// Nothing to report
+-		m_status = &quot;&quot;;
++		m_errorNum = 0;
+ 	}
+ 	else
+ 	{
+@@ -1687,7 +1730,7 @@
+ 		}
+ 
+ 		// Nothing to report
+-		m_status = &quot;&quot;;
++		m_errorNum = 0;
+ 	}
+ 
+ 	delete pIndex;
+@@ -1729,11 +1772,8 @@
+ 		map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(m_indexName);
+ 		if (mapIter == indexesMap.end())
+ 		{
+-			m_status = _(&quot;Index&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_indexName;
+-			m_status += &quot; &quot;;
+-			m_status += _(&quot;doesn't exist&quot;);
++			m_errorNum = UNKNOWN_INDEX;
++			m_errorParam = m_indexName;
+ 			return;
+ 		}
+ 
+@@ -1742,9 +1782,8 @@
+ 		if ((pIndex == NULL) ||
+ 			(pIndex-&gt;isGood() == false))
+ 		{
+-			m_status = _(&quot;Index error on&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += mapIter-&gt;second;
++			m_errorNum = INDEX_ERROR;
++			m_errorParam = mapIter-&gt;second;
+ 			if (pIndex != NULL)
+ 			{
+ 				delete pIndex;
+@@ -1754,7 +1793,7 @@
+ 
+ 		if (pIndex-&gt;updateDocumentInfo(m_docId, m_docInfo) == false)
+ 		{
+-			m_status = _(&quot;Couldn't update document&quot;);
++			m_errorNum = UPDATE_FAILED;
+ 		}
+ 		else
+ 		{
+@@ -1981,7 +2020,7 @@
+ 	if ((m_pHandler == NULL) ||
+ 		(m_pMonitor == NULL))
+ 	{
+-		m_status = _(&quot;No monitoring handler&quot;);
++		m_errorNum = NO_MONITORING;
+ 		return;
+ 	}
+ 
+@@ -2023,7 +2062,7 @@
+ 		FD_SET(monitorFd, &amp;listenSet);
+ 		if (monitorFd &lt; 0)
+ 		{
+-			m_status = _(&quot;Couldn't initialize file monitor&quot;);
++			m_errorNum = MONITORING_FAILED;
+ 			return;
+ 		}
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-10-13 05:20:22 UTC (rev 1031)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-10-13 06:54:13 UTC (rev 1032)
+@@ -45,6 +45,13 @@
+ 		WorkerThread();
+ 		virtual ~WorkerThread();
+ 
++		typedef enum { INDEX_ERROR = 10000, INDEXING_FAILED, UPDATE_FAILED, UNINDEXING_FAILED, \
++			QUERY_FAILED, HISTORY_FAILED, DOWNLOAD_FAILED, MONITORING_FAILED, OPENDIR_FAILED, \
++			UNKNOWN_INDEX, UNKNOWN_ENGINE, UNSUPPORTED_TYPE, UNSUPPORTED_PROTOCOL, \
++			ROBOTS_FORBIDDEN, NO_MONITORING } ThreadError;
++
++		static std::string errorToString(int errorNum);
++
+ 		static Glib::Dispatcher &amp;getDispatcher(void);
+ 
+ 		static void immediateFlush(bool doFlush);
+@@ -67,6 +74,8 @@
+ 
+ 		bool isDone(void) const;
+ 
++		int getErrorNum(void) const;
++
+ 		std::string getStatus(void) const;
+ 
+ 	protected:
+@@ -77,7 +86,8 @@
+ 		unsigned int m_id;
+ 		bool m_background;
+ 		bool m_done;
+-		std::string m_status;
++		int m_errorNum;
++		std::string m_errorParam;
+ 
+ 		void threadHandler(void);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001025.html">[Pinot-svn] r1031 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="001027.html">[Pinot-svn] r1033 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1026">[ date ]</a>
+              <a href="thread.html#1026">[ thread ]</a>
+              <a href="subject.html#1026">[ subject ]</a>
+              <a href="author.html#1026">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

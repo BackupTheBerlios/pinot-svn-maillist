@@ -1,0 +1,227 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r470 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r470%20-%20trunk/Monitor&In-Reply-To=%3C200609081139.k88BdwIb004606%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000462.html">
+   <LINK REL="Next"  HREF="000464.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r470 - trunk/Monitor</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r470%20-%20trunk/Monitor&In-Reply-To=%3C200609081139.k88BdwIb004606%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r470 - trunk/Monitor">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Sep  8 13:39:58 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000462.html">[Pinot-svn] r469 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000464.html">[Pinot-svn] r471 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#463">[ date ]</a>
+              <a href="thread.html#463">[ thread ]</a>
+              <a href="subject.html#463">[ subject ]</a>
+              <a href="author.html#463">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-08 13:39:57 +0200 (Fri, 08 Sep 2006)
+New Revision: 470
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/INotifyMonitor.h
+Log:
+Deal with IN_MOVE_SELF.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2006-09-07 15:03:01 UTC (rev 469)
++++ trunk/Monitor/INotifyMonitor.cpp	2006-09-08 11:39:57 UTC (rev 470)
+@@ -227,16 +227,16 @@
+ 			monEvent.m_location += pEvent-&gt;name;
+ 			monEvent.m_isWatch = false;
+ 		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: event on &quot;
+-			&lt;&lt; monEvent.m_location &lt;&lt; endl;
+-#endif
+ 
+-		map&lt;uint32_t, string&gt;::iterator movedIter = m_movedFrom.end();
++		map&lt;uint32_t, MonitorEvent&gt;::iterator movedIter = m_movedFrom.end();
+ 
+ 		// What type of event ?
+ 		if (pEvent-&gt;mask &amp; IN_CREATE)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: created &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; endl;
++#endif
+ 			// Skip regular files
+ 			if (monEvent.m_isDirectory == true)
+ 			{
+@@ -245,20 +245,32 @@
+ 		}
+ 		else if (pEvent-&gt;mask &amp; IN_CLOSE_WRITE)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: written and closed &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; endl;
++#endif
+ 			monEvent.m_type = MonitorEvent::WRITE_CLOSED;
+ 		}
+ 		else if (pEvent-&gt;mask &amp; IN_MOVED_FROM)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved from on &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; &quot; &quot; &lt;&lt; pEvent-&gt;cookie &lt;&lt; endl;
++#endif
+ 			// Store this until we receive a IN_MOVED_TO event
+-			m_movedFrom.insert(pair&lt;uint32_t, string&gt;(pEvent-&gt;cookie, monEvent.m_location));
++			m_movedFrom.insert(pair&lt;uint32_t, MonitorEvent&gt;(pEvent-&gt;cookie, monEvent));
+ 		}
+ 		else if (pEvent-&gt;mask &amp; IN_MOVED_TO)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved to on &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; &quot; &quot; &lt;&lt; pEvent-&gt;cookie &lt;&lt; endl;
++#endif
+ 			// What was the previous location ?
+ 			movedIter = m_movedFrom.find(pEvent-&gt;cookie);
+ 			if (movedIter != m_movedFrom.end())
+ 			{
+-				monEvent.m_previousLocation = movedIter-&gt;second;
++				monEvent.m_previousLocation = movedIter-&gt;second.m_location;
+ 				monEvent.m_type = MonitorEvent::MOVED;
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved from &quot;
+@@ -289,18 +301,53 @@
+ #endif
+ 			}
+ 		}
++		else if (pEvent-&gt;mask &amp; IN_MOVE_SELF)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved self on &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; &quot; &quot; &lt;&lt; pEvent-&gt;cookie &lt;&lt; endl;
++#endif
++			// It was moved somewhere not being monitored
++			if (pEvent-&gt;cookie == 0)
++			{
++				for (movedIter = m_movedFrom.begin(); movedIter != m_movedFrom.end(); ++movedIter)
++				{
++					if (movedIter-&gt;second.m_location == monEvent.m_location)
++					{
++						// For some reason, IN_ISDIR is not set when the cookie is 0
++						if (movedIter-&gt;second.m_isDirectory == true)
++						{
++							monEvent.m_isDirectory = true;
++						}
++						break;
++					}
++				}
++			}
++			else
++			{
++				movedIter = m_movedFrom.find(pEvent-&gt;cookie);
++			}
++
++			if (movedIter != m_movedFrom.end())
++			{
++				monEvent.m_type = MonitorEvent::DELETED;
++
++				m_movedFrom.erase(movedIter);
++			}
++		}
+ 		else if (pEvent-&gt;mask &amp; IN_DELETE)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: deleted &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; endl;
++#endif
+ 			monEvent.m_type = MonitorEvent::DELETED;
+ 		}
+-		else if (pEvent-&gt;mask &amp; IN_MOVE_SELF)
+-		{
+-			// FIXME: how do we find out where the watched location was moved to ?
+-		}
+ 		else if (pEvent-&gt;mask &amp; IN_DELETE_SELF)
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: watch moved or deleted itself&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: deleted self on &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; endl;
+ #endif
+ 			if (monEvent.m_isWatch == true)
+ 			{
+@@ -309,6 +356,10 @@
+ 		}
+ 		else if (pEvent-&gt;mask &amp; IN_UNMOUNT)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: unmounted on &quot;
++				&lt;&lt; monEvent.m_location &lt;&lt; endl;
++#endif
+ 			if (monEvent.m_isWatch == true)
+ 			{
+ 				// Watches are removed silently if the backing filesystem is unmounted
+@@ -319,7 +370,7 @@
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: ignoring event &quot;
+-				&lt;&lt; pEvent-&gt;mask &lt;&lt; endl;
++				&lt;&lt; pEvent-&gt;mask &lt;&lt; &quot; on &quot; &lt;&lt; monEvent.m_location &lt;&lt; endl;
+ #endif
+ 		}
+ 
+
+Modified: trunk/Monitor/INotifyMonitor.h
+===================================================================
+--- trunk/Monitor/INotifyMonitor.h	2006-09-07 15:03:01 UTC (rev 469)
++++ trunk/Monitor/INotifyMonitor.h	2006-09-08 11:39:57 UTC (rev 470)
+@@ -43,7 +43,7 @@
+ 		pthread_mutex_t m_mutex;
+ 		std::queue&lt;MonitorEvent&gt; m_internalEvents;
+ 		std::map&lt;std::string, int&gt; m_locations;
+-		std::map&lt;uint32_t, std::string&gt; m_movedFrom;
++		std::map&lt;uint32_t, MonitorEvent&gt; m_movedFrom;
+ 
+ 	private:
+ 		INotifyMonitor(const INotifyMonitor &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000462.html">[Pinot-svn] r469 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000464.html">[Pinot-svn] r471 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#463">[ date ]</a>
+              <a href="thread.html#463">[ thread ]</a>
+              <a href="subject.html#463">[ subject ]</a>
+              <a href="author.html#463">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

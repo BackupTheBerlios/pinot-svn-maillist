@@ -1,0 +1,806 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r971 - in trunk: Index Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r971%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709111328.l8BDSh1V020690%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000964.html">
+   <LINK REL="Next"  HREF="000966.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r971 - in trunk: Index Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r971%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709111328.l8BDSh1V020690%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r971 - in trunk: Index Search UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 11 15:28:43 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000964.html">[Pinot-svn] r970 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000966.html">[Pinot-svn] r972 - in trunk: Index Tokenize UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#965">[ date ]</a>
+              <a href="thread.html#965">[ thread ]</a>
+              <a href="subject.html#965">[ subject ]</a>
+              <a href="author.html#965">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-11 15:28:42 +0200 (Tue, 11 Sep 2007)
+New Revision: 971
+
+Modified:
+   trunk/Index/pinot-index.cpp
+   trunk/Search/pinot-search.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/Utils/MIMEScanner.cpp
+   trunk/Utils/MIMEScanner.h
+Log:
+Applied patch by Lee Marks. The contents of defaults.list has priority over that
+of mimeinfo.cache. User-specific settings found in ~/.local -which may point to
+desktop files in the same directory- are loaded before system-wide settings.
+Desktop files are cached for the duration of load() to avoid having to read the
+same file several times.
+While pinot and pinot-dbus-daemon fully initialize MIMEScanner, pinot-index and
+pinot-search don't, as they only need to query files' types, not launch viewers.
+Also added a getParentTypes() method that will be useful for filtering.
+
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2007-09-11 12:53:12 UTC (rev 970)
++++ trunk/Index/pinot-index.cpp	2007-09-11 13:28:42 UTC (rev 971)
+@@ -157,9 +157,7 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	string desktopFilesDirectory(SHARED_MIME_INFO_PREFIX);
+-	desktopFilesDirectory += &quot;/share/applications/&quot;;
+-	MIMEScanner::initialize(desktopFilesDirectory, desktopFilesDirectory + &quot;mimeinfo.cache&quot;);
++	MIMEScanner::initialize(&quot;&quot;, &quot;&quot;);
+ 	DownloaderInterface::initialize();
+ 	Dijon::HtmlFilter::initialize();
+ 	Dijon::FilterFactory::loadFilters(string(LIBDIR) + string(&quot;/pinot/filters&quot;));
+
+Modified: trunk/Search/pinot-search.cpp
+===================================================================
+--- trunk/Search/pinot-search.cpp	2007-09-11 12:53:12 UTC (rev 970)
++++ trunk/Search/pinot-search.cpp	2007-09-11 13:28:42 UTC (rev 971)
+@@ -198,9 +198,7 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	string desktopFilesDirectory(SHARED_MIME_INFO_PREFIX);
+-	desktopFilesDirectory += &quot;/share/applications/&quot;;
+-	MIMEScanner::initialize(desktopFilesDirectory, desktopFilesDirectory + &quot;mimeinfo.cache&quot;);
++	MIMEScanner::initialize(&quot;&quot;, &quot;&quot;);
+ 	DownloaderInterface::initialize();
+ 
+ 	engineType = argv[optind];
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-09-11 12:53:12 UTC (rev 970)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-09-11 13:28:42 UTC (rev 971)
+@@ -314,16 +314,9 @@
+ 	}
+ 
+ 	// Initialize utility classes
+-	string desktopFilesDirectory(SHARED_MIME_INFO_PREFIX);
+-	desktopFilesDirectory += &quot;/share/applications/&quot;;
+-	string homeDirectory(PinotSettings::getHomeDirectory());
+-	if (homeDirectory.empty() == true)
++	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local/share/applications/&quot;,
++		string(SHARED_MIME_INFO_PREFIX) + &quot;/share/applications/&quot;) == false)
+ 	{
+-		homeDirectory = &quot;~/&quot;;
+-	}
+-	MIMEScanner::initialize(desktopFilesDirectory, homeDirectory + &quot;/.local/share/applications/mimeinfo.cache&quot;, 10);
+-	if (MIMEScanner::initialize(desktopFilesDirectory, desktopFilesDirectory + &quot;mimeinfo.cache&quot;) == false)
+-	{
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+ 	DownloaderInterface::initialize();
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-09-11 12:53:12 UTC (rev 970)
++++ trunk/UI/GTK2/src/pinot.cc	2007-09-11 13:28:42 UTC (rev 971)
+@@ -238,16 +238,9 @@
+ 	}
+ 
+ 	// Initialize utility classes
+-	string desktopFilesDirectory(SHARED_MIME_INFO_PREFIX);
+-	desktopFilesDirectory += &quot;/share/applications/&quot;;
+-	string homeDirectory(PinotSettings::getHomeDirectory());
+-	if (homeDirectory.empty() == true)
++	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local/share/applications/&quot;,
++		string(SHARED_MIME_INFO_PREFIX) + &quot;/share/applications/&quot;) == false)
+ 	{
+-		homeDirectory = &quot;~/&quot;;
+-	}
+-	MIMEScanner::initialize(desktopFilesDirectory, homeDirectory + &quot;/.local/share/applications/mimeinfo.cache&quot;, 10);
+-	if (MIMEScanner::initialize(desktopFilesDirectory, desktopFilesDirectory + &quot;mimeinfo.cache&quot;) == false)
+-	{
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+ 
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2007-09-11 12:53:12 UTC (rev 970)
++++ trunk/Utils/MIMEScanner.cpp	2007-09-11 13:28:42 UTC (rev 971)
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include &lt;strings.h&gt;
++#include &lt;unistd.h&gt;
+ #include &lt;glib.h&gt;
+ #include &lt;iostream&gt;
+ 
+@@ -26,13 +27,18 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ 
+-// FIXME: &quot;Default Applications&quot; here ?
+-#define MIME_DEFAULTS_SECTION &quot;MIME Cache&quot;
++#define MIME_DEFAULTS_LIST	&quot;defaults.list&quot;
++#define MIME_DEFAULTS_SECTION	&quot;Default Applications&quot;
++#define MIME_CACHE		&quot;mimeinfo.cache&quot;
++#define MIME_CACHE_SECTION	&quot;MIME Cache&quot;
+ 
+ using std::cout;
+ using std::endl;
+ using std::string;
++using std::list;
++using std::map;
+ using std::multimap;
++using std::set;
+ using std::vector;
+ using std::pair;
+ 
+@@ -69,8 +75,7 @@
+ 
+ MIMEAction::MIMEAction() :
+ 	m_multipleArgs(false),
+-	m_localOnly(true),
+-	m_priority(0)
++	m_localOnly(true)
+ {
+ }
+ 
+@@ -78,8 +83,7 @@
+ 	m_multipleArgs(false),
+ 	m_localOnly(true),
+ 	m_name(name),
+-	m_exec(cmdLine),
+-	m_priority(0)
++	m_exec(cmdLine)
+ {
+ 	parseExec();
+ }
+@@ -87,34 +91,9 @@
+ MIMEAction::MIMEAction(const string &amp;desktopFile) :
+ 	m_multipleArgs(false),
+ 	m_localOnly(true),
+-	m_location(desktopFile),
+-	m_priority(0)
++	m_location(desktopFile)
+ {
+-	GKeyFile *pDesktopFile = g_key_file_new();
+-	GError *pError = NULL;
+-
+-	if (pDesktopFile != NULL)
+-	{
+-		g_key_file_load_from_file(pDesktopFile, (const gchar *)desktopFile.c_str(),
+-			G_KEY_FILE_NONE, &amp;pError);
+-		if (pError == NULL)
+-		{
+-			m_name = getKeyValue(pDesktopFile, &quot;Name&quot;);
+-			// This may contain parameters described here :
+-			// <A HREF="http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html">http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html</A>
+-			m_exec = getKeyValue(pDesktopFile, &quot;Exec&quot;);
+-			m_icon = getKeyValue(pDesktopFile, &quot;Icon&quot;);
+-			m_device = getKeyValue(pDesktopFile, &quot;Device&quot;);
+-
+-			parseExec();
+-		}
+-		else
+-		{
+-			g_error_free(pError);
+-		}
+-
+-		g_key_file_free(pDesktopFile);
+-	}
++	load();
+ }
+ 
+ MIMEAction::MIMEAction(const MIMEAction &amp;other) :
+@@ -124,8 +103,7 @@
+ 	m_location(other.m_location),
+ 	m_exec(other.m_exec),
+ 	m_icon(other.m_icon),
+-	m_device(other.m_device),
+-	m_priority(other.m_priority)
++	m_device(other.m_device)
+ {
+ }
+ 
+@@ -135,17 +113,10 @@
+ 
+ bool MIMEAction::operator&lt;(const MIMEAction &amp;other) const
+ {
+-	if (m_priority &lt; other.m_priority)
++	if (m_name &lt; other.m_name)
+ 	{
+ 		return true;
+ 	}
+-	else if (m_priority == other.m_priority)
+-	{
+-		if (m_name &lt; other.m_name)
+-		{
+-			return true;
+-		}
+-	}
+ 
+ 	return false;
+ }
+@@ -166,6 +137,34 @@
+ 	return *this;
+ }
+ 
++void MIMEAction::load(void)
++{
++	GKeyFile *pDesktopFile = g_key_file_new();
++	GError *pError = NULL;
++
++	if (pDesktopFile != NULL)
++	{
++		g_key_file_load_from_file(pDesktopFile, (const gchar *)m_location.c_str(),
++			G_KEY_FILE_NONE, &amp;pError);
++		if (pError == NULL)
++		{
++			m_name = getKeyValue(pDesktopFile, &quot;Name&quot;);
++			// This may contain parameters described here :
++			// <A HREF="http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html">http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html</A>
++			m_exec = getKeyValue(pDesktopFile, &quot;Exec&quot;);
++			m_icon = getKeyValue(pDesktopFile, &quot;Icon&quot;);
++			m_device = getKeyValue(pDesktopFile, &quot;Device&quot;);
++			parseExec();
++		}
++		else
++		{
++			g_error_free(pError);
++		}
++
++		g_key_file_free(pDesktopFile);
++	}
++}
++
+ void MIMEAction::parseExec(void)
+ {
+ 	// Does it support multiple arguments ?
+@@ -186,43 +185,119 @@
+ 	}
+ }
+ 
+-multimap&lt;string, MIMEAction&gt; MIMEScanner::m_defaultActions;
++MIMECache::MIMECache()
++{
++}
+ 
+-pthread_mutex_t MIMEScanner::m_mutex = PTHREAD_MUTEX_INITIALIZER;
++MIMECache::MIMECache(const string &amp;file, const string &amp;section) :
++	m_file(file),
++	m_section(section)
++{
++}
+ 
+-MIMEScanner::MIMEScanner()
++MIMECache::MIMECache(const MIMECache &amp;other) :
++	m_file(other.m_file),
++	m_section(other.m_section),
++	m_defaultActions(other.m_defaultActions)
+ {
+ }
+ 
+-MIMEScanner::~MIMEScanner()
++MIMECache::~MIMECache()
+ {
+ }
+ 
+-bool MIMEScanner::initialize(const string &amp;desktopFilesDirectory, const string &amp;mimeInfoCache,
+-	unsigned int priority)
++bool MIMECache::operator&lt;(const MIMECache &amp;other) const
+ {
+-	GError *pError = NULL;
+-	bool foundActions = false;
++	if (m_file &lt; other.m_file)
++	{
++		return true;
++	}
+ 
+-	if ((desktopFilesDirectory.empty() == true) ||
+-		(mimeInfoCache.empty() == true))
++	return false;
++}
++
++MIMECache&amp; MIMECache::operator=(const MIMECache &amp;other)
++{
++	if (this != &amp;other)
+ 	{
+-		return false;
++		m_file = other.m_file;
++		m_section = other.m_section;
++		m_defaultActions = other.m_defaultActions;
+ 	}
+ 
++	return *this;
++}
++
++bool MIMECache::findDesktopFile(const string &amp;desktopFile, const string &amp;mimeType,
++	map&lt;string, MIMEAction&gt; &amp;loadedActions)
++{
++	// Has already been loaded ?
++	map&lt;string, MIMEAction&gt;::const_iterator actionIter = loadedActions.find(desktopFile);
++	if (actionIter != loadedActions.end())
++	{
++		// Yes, it was so just copy it
++		m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, actionIter-&gt;second));
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMECache::findDesktopFile: copied &quot; &lt;&lt; desktopFile &lt;&lt; endl;
++#endif
++
++		return true;
++	}
++	// Does it exist in that path ?
++	else if (access(desktopFile.c_str(), F_OK) == 0)
++	{
++		// It's here, we need to read it off the disk
++		MIMEAction typeAction(desktopFile);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMECache::findDesktopFile: read &quot; &lt;&lt; desktopFile &lt;&lt; endl;
++#endif
++
++		if (typeAction.m_exec.empty() == false)
++		{
++			m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, typeAction));
++			loadedActions.insert(pair&lt;string, MIMEAction&gt;(desktopFile, typeAction));
++
++			return true;
++		}
++	}
++
++	return false;
++}
++
++void MIMECache::reload(const list&lt;string&gt; &amp;desktopFilesPaths)
++{
++	if (m_file.empty() == true)
++	{
++		// We can't reload anything !
++		return;
++	}
++
++	m_defaultActions.clear();
++	load(desktopFilesPaths);
++}
++
++bool MIMECache::load(const list&lt;string&gt; &amp;desktopFilesPaths)
++{
++	map&lt;string, MIMEAction&gt; loadedActions;
++	GError *pError = NULL;
++	bool foundActions = false;
++
+ 	GKeyFile *pDefaults = g_key_file_new();
+ 	if (pDefaults == NULL)
+ 	{
+ 		return false;
+ 	}
+ 
+-	g_key_file_load_from_file(pDefaults, (const gchar *)mimeInfoCache.c_str(),
++	g_key_file_load_from_file(pDefaults, (const gchar *)m_file.c_str(),
+ 		G_KEY_FILE_NONE, &amp;pError);
+ 	if (pError == NULL)
+ 	{
+-		gchar **pMimeTypes = g_key_file_get_keys(pDefaults, MIME_DEFAULTS_SECTION,
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMECache::load: loaded &quot; &lt;&lt; m_file &lt;&lt; endl;
++#endif
++
++		gchar **pMimeTypes = g_key_file_get_keys(pDefaults, m_section.c_str(),
+ 			NULL, &amp;pError);
+-
+ 		if (pMimeTypes != NULL)
+ 		{
+ 			if (pError == NULL)
+@@ -230,7 +305,7 @@
+ 				for (unsigned int i = 0; pMimeTypes[i] != NULL; ++i)
+ 				{
+ 					gchar **pDesktopFiles = g_key_file_get_string_list(pDefaults,
+-						MIME_DEFAULTS_SECTION, pMimeTypes[i], NULL, &amp;pError);
++						m_section.c_str(), pMimeTypes[i], NULL, &amp;pError);
+ 
+ 					if (pDesktopFiles == NULL)
+ 					{
+@@ -242,16 +317,19 @@
+ 						continue;
+ 					}
+ 
++					// Register all applications for that type
+ 					for (unsigned int j = 0; pDesktopFiles[j] != NULL; ++j)
+ 					{
+-						MIMEAction typeAction(desktopFilesDirectory + string(pDesktopFiles[j]));
+-
+-						// Register all applications for that type
+-						if (typeAction.m_exec.empty() == false)
++						// Search the paths for this desktop file
++						for (list&lt;string&gt;::const_iterator iter = desktopFilesPaths.begin();
++							iter != desktopFilesPaths.end(); ++iter)
+ 						{
+-							typeAction.m_priority = priority;
+-							m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(pMimeTypes[i], typeAction));
+-							foundActions = true;
++							if (findDesktopFile(*iter + pDesktopFiles[j], pMimeTypes[i],
++								loadedActions) == true)
++							{
++								foundActions = true;
++								break;
++							}
+ 						}
+ 					}
+ 
+@@ -268,6 +346,9 @@
+ 	}
+ 	else
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMECache::load: failed to load &quot; &lt;&lt; m_file &lt;&lt; endl;
++#endif
+ 		g_error_free(pError);
+ 	}
+ 	g_key_file_free(pDefaults);
+@@ -275,6 +356,70 @@
+ 	return foundActions;
+ }
+ 
++pthread_mutex_t MIMEScanner::m_mutex = PTHREAD_MUTEX_INITIALIZER;
++list&lt;MIMECache&gt; MIMEScanner::m_caches;
++
++MIMEScanner::MIMEScanner()
++{
++}
++
++MIMEScanner::~MIMEScanner()
++{
++}
++
++bool MIMEScanner::initialize(const string &amp;userDirectory, const string &amp;systemDirectory)
++{
++	list&lt;string&gt; desktopFilesPaths;
++	bool foundActions = false;
++
++	if (systemDirectory.empty() == false)
++	{
++		// User-specific actions may point to desktop files in this path, so add it in
++		desktopFilesPaths.push_front(systemDirectory);
++	}
++
++	// Load user-specific settings first
++	if (userDirectory.empty() == false)
++	{
++		// Add the user's directory to the paths list
++		desktopFilesPaths.push_front(userDirectory);
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMEScanner::initialize: user-specific directory &quot; &lt;&lt; userDirectory &lt;&lt; endl;
++#endif
++		foundActions |= addCache(userDirectory + MIME_DEFAULTS_LIST,
++			MIME_DEFAULTS_SECTION, desktopFilesPaths);
++		foundActions |= addCache(userDirectory + MIME_CACHE,
++			MIME_CACHE_SECTION, desktopFilesPaths);
++	}
++
++	// Then load system-wide settings
++	if (systemDirectory.empty() == false)
++	{
++		// Make sure only the system directory is in the list
++		desktopFilesPaths.clear();
++		desktopFilesPaths.push_front(systemDirectory);
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMEScanner::initialize: system-wide directory &quot; &lt;&lt; systemDirectory &lt;&lt; endl;
++#endif
++		foundActions |= addCache(systemDirectory + MIME_DEFAULTS_LIST,
++			MIME_DEFAULTS_SECTION, desktopFilesPaths);
++		foundActions |= addCache(systemDirectory + MIME_CACHE,
++			MIME_CACHE_SECTION, desktopFilesPaths);
++	}
++
++	return foundActions;
++}
++
++bool MIMEScanner::addCache(const string &amp;file, const string &amp;section,
++	const list&lt;string&gt; &amp;desktopFilesPaths)
++{
++	m_caches.push_back(MIMECache(file, section));
++
++	return m_caches.back().load(desktopFilesPaths);
++}
++
+ void MIMEScanner::shutdown(void)
+ {
+ 	xdg_mime_shutdown();
+@@ -380,21 +525,82 @@
+ 	return mimeType;
+ }
+ 
++/// Gets parent MIME types.
++bool MIMEScanner::getParentTypes(const string &amp;mimeType, set&lt;string&gt; &amp;parentMimeTypes)
++{
++	if (mimeType.empty() == true)
++	{
++		return false;
++	}
++
++	char **pParentTypes = xdg_mime_list_mime_parents(mimeType.c_str());
++	if ((pParentTypes != NULL) &amp;&amp;
++		(pParentTypes[0] != NULL))
++	{
++		for (unsigned int i = 0; pParentTypes[i] != NULL; ++i)
++		{
++			parentMimeTypes.insert(pParentTypes[i]);
++		}
++
++		free(pParentTypes);
++
++		return true;
++	}
++
++	return false;
++}
++
+ /// Adds a user-defined action for the given type.
+-void MIMEScanner::addDefaultAction(const std::string &amp;mimeType, const MIMEAction &amp;typeAction)
++void MIMEScanner::addDefaultAction(const string &amp;mimeType, const MIMEAction &amp;typeAction)
+ {
+-	m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, typeAction));
++	// Custom actions get stored in a cache object which is not connected to a file
++	// We need to create this object the first time a custom action gets added
++	if ((m_caches.empty() == true) ||
++		(m_caches.front().m_file.empty() == false))
++	{
++		m_caches.push_front(MIMECache());
++	}
++
++	m_caches.front().m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, typeAction));
+ }
+ 
++bool MIMEScanner::getDefaultActionsForType(const string &amp;mimeType, vector&lt;MIMEAction&gt; &amp;typeActions)
++{
++	bool foundAction = false;
++
++	// Each cache may have more than one action for this type
++	for (list&lt;MIMECache&gt;::iterator cacheIter = m_caches.begin(); cacheIter != m_caches.end(); ++cacheIter)
++	{
++		MIMECache &amp;cache = *cacheIter;
++		multimap&lt;string, MIMEAction&gt; &amp;defaultActions = cache.m_defaultActions;
++		multimap&lt;string, MIMEAction&gt;::const_iterator actionIter = defaultActions.lower_bound(mimeType);
++		multimap&lt;string, MIMEAction&gt;::const_iterator endActionIter = defaultActions.upper_bound(mimeType);
++
++		// Found anything ?
++		for (; actionIter != endActionIter; ++actionIter)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; actionIter-&gt;second.m_name
++				&lt;&lt; &quot; at &quot; &lt;&lt; actionIter-&gt;second.m_location &lt;&lt; endl;
++#endif
++			typeActions.push_back(actionIter-&gt;second);
++			foundAction = true;
++		}
++	}
++  
++	return foundAction;
++}
++
+ /// Determines the default action(s) for the given type.
+ bool MIMEScanner::getDefaultActions(const string &amp;mimeType, vector&lt;MIMEAction&gt; &amp;typeActions)
+ {
+-	multimap&lt;string, MIMEAction&gt;::const_iterator actionIter = m_defaultActions.lower_bound(mimeType);
+-	multimap&lt;string, MIMEAction&gt;::const_iterator endActionIter = m_defaultActions.upper_bound(mimeType);
+-	bool foundAction = false;
+-
+ 	typeActions.clear();
+-	if (actionIter == m_defaultActions.end())
++  
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: searching for &quot; &lt;&lt; mimeType &lt;&lt; endl;
++#endif
++	bool foundAction = getDefaultActionsForType(mimeType, typeActions);
++	if (foundAction == false)
+ 	{
+ 		// Is there an action for any of this type's parents ?
+ 		char **pParentTypes = xdg_mime_list_mime_parents(mimeType.c_str());
+@@ -403,14 +609,12 @@
+ 		{
+ 			for (unsigned int i = 0; pParentTypes[i] != NULL; ++i)
+ 			{
+-				actionIter = m_defaultActions.lower_bound(pParentTypes[i]);
+-				endActionIter = m_defaultActions.upper_bound(pParentTypes[i]);
+-				if (actionIter != m_defaultActions.end())
+-				{
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: &quot; &lt;&lt; mimeType &lt;&lt; &quot; has parent type &quot; &lt;&lt; pParentTypes[i] &lt;&lt; endl;
++				cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: searching for parent type &quot; &lt;&lt; pParentTypes[i] &lt;&lt; endl;
+ #endif
+-					typeActions.reserve(m_defaultActions.count(pParentTypes[i]));
++				foundAction = getDefaultActionsForType(string(pParentTypes[i]), typeActions);
++				if (foundAction)
++				{
+ 					break;
+ 				}
+ 			}
+@@ -421,21 +625,7 @@
+ 		else cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: &quot; &lt;&lt; mimeType &lt;&lt; &quot; has no parent types&quot; &lt;&lt; endl;
+ #endif
+ 	}
+-	else
+-	{
+-		typeActions.reserve(m_defaultActions.count(mimeType));
+-	}
+ 
+-	// Found anything ?
+-	for (; actionIter != endActionIter; ++actionIter)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; actionIter-&gt;second.m_name
+-			&lt;&lt; &quot;, &quot; &lt;&lt; actionIter-&gt;second.m_priority &lt;&lt; endl;
+-#endif
+-		typeActions.push_back(actionIter-&gt;second);
+-		foundAction = true;
+-	}
+-
+ 	return foundAction;
+ }
++
+
+Modified: trunk/Utils/MIMEScanner.h
+===================================================================
+--- trunk/Utils/MIMEScanner.h	2007-09-11 12:53:12 UTC (rev 970)
++++ trunk/Utils/MIMEScanner.h	2007-09-11 13:28:42 UTC (rev 971)
+@@ -21,7 +21,9 @@
+ 
+ #include &lt;pthread.h&gt;
+ #include &lt;string&gt;
++#include &lt;list&gt;
+ #include &lt;map&gt;
++#include &lt;set&gt;
+ #include &lt;vector&gt;
+ 
+ #include &quot;Url.h&quot;
+@@ -43,6 +45,7 @@
+ 
+ 		MIMEAction &amp;operator=(const MIMEAction &amp;other);
+ 
++		void load(void);
+ 		void parseExec(void);
+ 
+ 		bool m_multipleArgs;
+@@ -52,10 +55,37 @@
+ 		std::string m_exec;
+ 		std::string m_icon;
+ 		std::string m_device;
+-		unsigned int m_priority;
+ 
+ };
+ 
++/** Caching of MIME type information.
++  * A cache can be reloaded as required.
++  */
++class MIMECache
++{
++	public:
++		MIMECache();
++		MIMECache(const std::string &amp;file, const std::string &amp;section);
++		MIMECache(const MIMECache&amp; other);
++		~MIMECache();
++
++		bool operator&lt;(const MIMECache &amp;other) const;
++
++		MIMECache &amp;operator=(const MIMECache &amp;other);
++
++		bool load(const std::list&lt;std::string&gt; &amp;desktopFilesPaths);
++		void reload(const std::list&lt;std::string&gt; &amp;desktopFilesPaths);
++  
++		std::string m_file;
++		std::string m_section;
++		std::multimap&lt;std::string, MIMEAction&gt; m_defaultActions;
++
++	protected:
++		bool findDesktopFile(const std::string &amp;desktopFile, const std::string &amp;mimeType,
++			std::map&lt;std::string, MIMEAction&gt; &amp;loadedActions);
++
++};
++
+ /**
+   * Utility class to get a file's MIME type and the default application associated with it.
+   */
+@@ -65,9 +95,8 @@
+ 		~MIMEScanner();
+ 
+ 		/// Initializes the MIME system.
+-		static bool initialize(const std::string &amp;desktopFilesDirectory,
+-			const std::string &amp;mimeInfoCache, unsigned int priority = 0);
+-
++		static bool initialize(const std::string &amp;userDirectory, const std::string &amp;systemDirectory);
++  
+ 		/// Shutdowns the MIME system.
+ 		static void shutdown(void);
+ 
+@@ -77,6 +106,9 @@
+ 		/// Finds out the given URL's MIME type.
+ 		static std::string scanUrl(const Url &amp;urlObj);
+ 
++		/// Gets parent MIME types.
++		static bool getParentTypes(const std::string &amp;mimeType, std::set&lt;std::string&gt; &amp;parentMimeTypes);
++
+ 		/// Adds a user-defined action for the given type.
+ 		static void addDefaultAction(const std::string &amp;mimeType, const MIMEAction &amp;typeAction);
+ 
+@@ -84,12 +116,19 @@
+ 		static bool getDefaultActions(const std::string &amp;mimeType, std::vector&lt;MIMEAction&gt; &amp;typeActions);
+ 
+ 	protected:
++		/// Mutex to protect access to xdgmime.
+ 		static pthread_mutex_t m_mutex;
+-		static std::multimap&lt;std::string, MIMEAction&gt; m_defaultActions;
++		/// MIME type caches, ordered by decreasing priority.
++		static std::list&lt;MIMECache&gt; m_caches;
+ 
+ 		MIMEScanner();
+ 
+ 		static std::string scanFileType(const std::string &amp;fileName);
++  
++		static bool addCache(const std::string &amp;file, const std::string &amp;section,
++			const std::list&lt;std::string&gt; &amp;desktopFilesPaths);
++  
++		static bool getDefaultActionsForType(const std::string &amp;mimeType, std::vector&lt;MIMEAction&gt; &amp;typeActions);
+ 
+ 	private:
+ 		MIMEScanner(const MIMEScanner &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000964.html">[Pinot-svn] r970 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000966.html">[Pinot-svn] r972 - in trunk: Index Tokenize UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#965">[ date ]</a>
+              <a href="thread.html#965">[ thread ]</a>
+              <a href="subject.html#965">[ subject ]</a>
+              <a href="author.html#965">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

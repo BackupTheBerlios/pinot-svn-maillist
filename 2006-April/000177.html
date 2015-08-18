@@ -1,0 +1,902 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r179 - in trunk: . Search Search/Google
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r179%20-%20in%20trunk%3A%20.%20Search%20Search/Google&In-Reply-To=%3C200604041225.k34CPhLo005319%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000176.html">
+   <LINK REL="Next"  HREF="000178.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r179 - in trunk: . Search Search/Google</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r179%20-%20in%20trunk%3A%20.%20Search%20Search/Google&In-Reply-To=%3C200604041225.k34CPhLo005319%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r179 - in trunk: . Search Search/Google">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Apr  4 14:25:43 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000176.html">[Pinot-svn] r178 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000178.html">[Pinot-svn] r180 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#177">[ date ]</a>
+              <a href="thread.html#177">[ thread ]</a>
+              <a href="subject.html#177">[ subject ]</a>
+              <a href="author.html#177">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-04-04 14:25:39 +0200 (Tue, 04 Apr 2006)
+New Revision: 179
+
+Added:
+   trunk/Search/Google/Makefile.am
+   trunk/Search/SOAPEnv.h
+Modified:
+   trunk/Makefile.am
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/Google/GoogleSearch.h
+   trunk/Search/Makefile.am
+   trunk/Search/SearchEngineFactory.cpp
+   trunk/configure.in
+Log:
+Attempt at resurrecting support for the Google SOAP API. Option --with-soap=yes
+can be passed at configure time. This will use gsoap's utilities to generate
+stubs based on Search/Google/googleapi/GoogleSearch.wsdl.
+
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/Makefile.am	2006-04-04 12:25:39 UTC (rev 179)
+@@ -1,7 +1,7 @@
+ # generated 2005/12/14 20:48:47 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ # using glademm V2.6.0
+ 
+-SUBDIRS = po Utils Tokenize SQL Collect Search \
++SUBDIRS = po Utils Tokenize SQL Collect @SOAP_SUBDIRS@ Search \
+ 	Index UI/RenderHTML UI/GTK2/src
+ 
+ EXTRA_DIST = ChangeLog NEWS README TODO mkinstalldirs pinot.spec \
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2006-04-04 12:25:39 UTC (rev 179)
+@@ -14,6 +14,8 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;iostream&gt;
++
+ #include &quot;Url.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ 
+@@ -21,7 +23,8 @@
+ #include &quot;GAPIGoogleSearchBindingProxy.h&quot;
+ #include &quot;GAPI.nsmap&quot;
+ 
+-using namespace GAPI;
++using std::cout;
++using std::endl;
+ 
+ GoogleAPIEngine::GoogleAPIEngine() :
+ 	SearchEngineInterface()
+@@ -39,14 +42,13 @@
+ Document *GoogleAPIEngine::retrieveCachedUrl(const string &amp;url)
+ {
+ 	GoogleSearchBinding soapProxy;
+-	struct gapi1__doGetCachedPageResponse cacheOut;
++	xsd__base64Binary base64Page;
+ 
+-	if (soapProxy.gapi1__doGetCachedPage(m_key, url, cacheOut))
++	if (soapProxy.gapi1__doGetCachedPage(m_key, url, base64Page))
+ 	{
+ 		return NULL;
+ 	}
+ 
+-	xsd__base64Binary base64Page = cacheOut.return_;
+ 	if ((base64Page.__ptr != NULL) &amp;&amp;
+ 		(base64Page. __size &gt; 0))
+ 	{
+@@ -65,14 +67,14 @@
+ string GoogleAPIEngine::checkSpelling(const string &amp;text)
+ {
+ 	GoogleSearchBinding soapProxy;
+-	struct gapi1__doSpellingSuggestionResponse spellOut;
++	string spellOut;
+ 
+ 	if (soapProxy.gapi1__doSpellingSuggestion(m_key, text, spellOut))
+ 	{
+ 		return &quot;&quot;;
+ 	}
+ 
+-	return spellOut.return_;
++	return spellOut;
+ }
+ 
+ //
+@@ -90,6 +92,9 @@
+ 
+ 	if (m_key.empty() == true)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;GoogleAPIEngine::runQuery: no key&quot; &lt;&lt; endl;
++#endif
+ 		return false;
+ 	}
+ 
+@@ -109,9 +114,14 @@
+ 	struct gapi1__doGoogleSearchResponse queryOut;
+ 
+ 	// No filter, no safe search
+-	if (soapProxy.gapi1__doGoogleSearch(m_key, andTerms, 0, (m_maxResultsCount &gt; 10 ? 10 : m_maxResultsCount),
+-		((phrase.empty() == false) ? true : false), phrase, false, &quot;&quot;, &quot;latin1&quot;, &quot;latin1&quot;, queryOut))
++	// std::string key, std::string q, int start, int maxResults, bool filter, std::string restrict_, bool safeSearch, std::string lr, std::string ie, std::string oe, struct gapi1__doGoogleSearchResponse &amp;_param_1
++	int soapStatus = soapProxy.gapi1__doGoogleSearch(m_key, andTerms, 0, (int)(m_maxResultsCount &gt; 10 ? 10 : m_maxResultsCount),
++		((phrase.empty() == false) ? true : false), phrase, false, &quot;&quot;, &quot;utf-8&quot;, &quot;utf-8&quot;, queryOut);
++	if (soapStatus != SOAP_OK)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;GoogleAPIEngine::runQuery: search failed with status &quot; &lt;&lt; soapStatus &lt;&lt; endl;
++#endif
+ 		return false;
+ 	}
+ 
+
+Modified: trunk/Search/Google/GoogleSearch.h
+===================================================================
+--- trunk/Search/Google/GoogleSearch.h	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/Search/Google/GoogleSearch.h	2006-04-04 12:25:39 UTC (rev 179)
+@@ -1,141 +1,260 @@
+-namespace GAPI
+-{
+-/*  Web Services Definitions urn:GoogleSearch */
++/* GoogleSearch.h
++   Generated by wsdl2h 1.2.6e from googleapi/GoogleSearch.wsdl and typemap.dat
++   2006-04-02 07:30:36 GMT
++   Copyright (C) 2001-2005 Robert van Engelen, Genivia Inc. All Rights Reserved.
++   This part of the software is released under one of the following licenses:
++   GPL or Genivia's license for commercial use.
++*/
+ 
+-/*  Modify this file to customize the generated data type declarations */
++/* NOTE:
+ 
+-/*
++ - Compile this file with soapcpp2 to complete the code generation process.
++ - Use soapcpp2 option -I to specify paths for #import
++   To build with STL, 'stlvector.h' is imported from 'import' dir in package.
++ - Use wsdl2h options -c and -s to generate pure C code or C++ code without STL.
++ - Use 'typemap.dat' to control schema namespace bindings and type mappings.
++   It is strongly recommended to customize the names of the namespace prefixes
++   generated by wsdl2h. To do so, modify the prefix bindings in the Namespaces
++   section below and add the modified lines to 'typemap.dat' to rerun wsdl2h.
++ - Use Doxygen (www.doxygen.org) to browse this file.
++ - Use wsdl2h option -l to view the software license terms.
+ 
+-**  The gSOAP WSDL parser for C and C++ 1.1.2
+-**  Copyright (C) 2001-2004 Robert van Engelen, Genivia, Inc.
+-**  All Rights Reserved. This product is provided &quot;as is&quot;, without any warranty.
++*/
+ 
++/******************************************************************************\
++ *                                                                            *
++ * urn:GoogleSearch                                                           *
++ *                                                                            *
++\******************************************************************************/
+ 
+---------------------------------------------------------------------------------
+-gSOAP XML Web services tools
+-Copyright (C) 2001-2004, Robert van Engelen, Genivia, Inc. All Rights Reserved.
++//gsoapopt w
+ 
+-GPL license.
++/******************************************************************************\
++ *                                                                            *
++ * Import                                                                     *
++ *                                                                            *
++\******************************************************************************/
+ 
+-This program is free software; you can redistribute it and/or modify it under
+-the terms of the GNU General Public License as published by the Free Software
+-Foundation; either version 2 of the License, or (at your option) any later
+-version.
++#import &quot;stlvector.h&quot;
+ 
+-This program is distributed in the hope that it will be useful, but WITHOUT ANY
+-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+-PARTICULAR PURPOSE. See the GNU General Public License for more details.
++/******************************************************************************\
++ *                                                                            *
++ * Schema Namespaces                                                          *
++ *                                                                            *
++\******************************************************************************/
+ 
+-You should have received a copy of the GNU General Public License along with
+-this program; if not, write to the Free Software Foundation, Inc., 59 Temple
+-Place, Suite 330, Boston, MA 02111-1307 USA
+ 
+-Author contact information:
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">-engelen at genivia.com</A> / <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">engelen at acm.org</A>
+---------------------------------------------------------------------------------
+-*/
++/* NOTE:
+ 
+-//gsoapopt w
+-#import &quot;stl.h&quot;
+-// built-in type &quot;xs:base64Binary&quot;:
+-class xsd__base64Binary { unsigned char *__ptr; int __size; };
++It is strongly recommended to customize the names of the namespace prefixes
++generated by wsdl2h. To do so, modify the prefix bindings below and add the
++modified lines to typemap.dat to rerun wsdl2h:
+ 
+-/*
+-To customize the names of the namespace prefixes generated by wsdl2h, modify
+-the prefix names below and add the modified lines to typemap.dat to run wsdl2h:
++gapi1 = &quot;urn:GoogleSearch&quot;
+ 
+-gapi1 = urn:GoogleSearch
+ */
+ 
+ //gsoap gapi1 schema namespace:	urn:GoogleSearch
++//gsoap gapi1 schema form:	unqualified
+ 
+-// forward declarations
++/******************************************************************************\
++ *                                                                            *
++ * Schema Types                                                               *
++ *                                                                            *
++\******************************************************************************/
++
++
++/// Built-in type &quot;xs:base64Binary&quot;.
++class xsd__base64Binary
++{	unsigned char *__ptr;
++	int __size;
++	char *id, *type, *options; /* NOTE: for DIME and MTOM XOP attachments only */
++	struct soap *soap;
++};
++
++/// Built-in attribute &quot;SOAP-ENC:arrayType&quot;.
++typedef std::string _SOAP_ENC__arrayType;
++
++
++//  Forward declaration of class gapi1__GoogleSearchResult.
+ class gapi1__GoogleSearchResult;
++
++//  Forward declaration of class gapi1__ResultElement.
+ class gapi1__ResultElement;
+-class ResultElementArray;
+-class DirectoryCategoryArray;
++
++//  Forward declaration of class gapi1ResultElementArray.
++class gapi1ResultElementArray;
++
++//  Forward declaration of class gapi1DirectoryCategoryArray.
++class gapi1DirectoryCategoryArray;
++
++//  Forward declaration of class gapi1__DirectoryCategory.
+ class gapi1__DirectoryCategory;
+ 
+-
++/// &quot;urn:GoogleSearch&quot;:GoogleSearchResult is a complexType.
+ class gapi1__GoogleSearchResult
+ { public:
+-    bool                                 documentFiltering             ;
+-    std::string                          searchComments                ;
+-    int                                  estimatedTotalResultsCount    ;
+-    bool                                 estimateIsExact               ;
+-    ResultElementArray*                  resultElements                ;
+-    std::string                          searchQuery                   ;
+-    int                                  startIndex                    ;
+-    int                                  endIndex                      ;
+-    std::string                          searchTips                    ;
+-    DirectoryCategoryArray*              directoryCategories           ;
+-    double                               searchTime                    ;
++/// Element documentFiltering of type xs:boolean.
++    bool                                 documentFiltering              1;	///&lt; Required element.
++/// Element searchComments of type xs:string.
++    std::string                          searchComments                 1;	///&lt; Required element.
++/// Element estimatedTotalResultsCount of type xs:int.
++    int                                  estimatedTotalResultsCount     1;	///&lt; Required element.
++/// Element estimateIsExact of type xs:boolean.
++    bool                                 estimateIsExact                1;	///&lt; Required element.
++/// Element resultElements of type &quot;urn:GoogleSearch&quot;:ResultElementArray.
++    gapi1ResultElementArray*             resultElements                 1;	///&lt; Required element.
++/// Element searchQuery of type xs:string.
++    std::string                          searchQuery                    1;	///&lt; Required element.
++/// Element startIndex of type xs:int.
++    int                                  startIndex                     1;	///&lt; Required element.
++/// Element endIndex of type xs:int.
++    int                                  endIndex                       1;	///&lt; Required element.
++/// Element searchTips of type xs:string.
++    std::string                          searchTips                     1;	///&lt; Required element.
++/// Element directoryCategories of type &quot;urn:GoogleSearch&quot;:DirectoryCategoryArray.
++    gapi1DirectoryCategoryArray*         directoryCategories            1;	///&lt; Required element.
++/// Element searchTime of type xs:double.
++    double                               searchTime                     1;	///&lt; Required element.
++/// A handle to the soap struct that manages this instance (automatically set)
+     struct soap                         *soap                          ;
+ };
+ 
++/// &quot;urn:GoogleSearch&quot;:ResultElement is a complexType.
+ class gapi1__ResultElement
+ { public:
+-    std::string                          summary                       ;
+-    std::string                          URL                           ;
+-    std::string                          snippet                       ;
+-    std::string                          title                         ;
+-    std::string                          cachedSize                    ;
+-    bool                                 relatedInformationPresent     ;
+-    std::string                          hostName                      ;
+-    gapi1__DirectoryCategory*            directoryCategory             ;
+-    std::string                          directoryTitle                ;
++/// Element summary of type xs:string.
++    std::string                          summary                        1;	///&lt; Required element.
++/// Element URL of type xs:string.
++    std::string                          URL                            1;	///&lt; Required element.
++/// Element snippet of type xs:string.
++    std::string                          snippet                        1;	///&lt; Required element.
++/// Element title of type xs:string.
++    std::string                          title                          1;	///&lt; Required element.
++/// Element cachedSize of type xs:string.
++    std::string                          cachedSize                     1;	///&lt; Required element.
++/// Element relatedInformationPresent of type xs:boolean.
++    bool                                 relatedInformationPresent      1;	///&lt; Required element.
++/// Element hostName of type xs:string.
++    std::string                          hostName                       1;	///&lt; Required element.
++/// Element directoryCategory of type &quot;urn:GoogleSearch&quot;:DirectoryCategory.
++    gapi1__DirectoryCategory*            directoryCategory              1;	///&lt; Required element.
++/// Element directoryTitle of type xs:string.
++    std::string                          directoryTitle                 1;	///&lt; Required element.
++/// A handle to the soap struct that manages this instance (automatically set)
+     struct soap                         *soap                          ;
+ };
+ 
++/// &quot;urn:GoogleSearch&quot;:DirectoryCategory is a complexType.
+ class gapi1__DirectoryCategory
+ { public:
+-    std::string                          fullViewableName              ;
+-    std::string                          specialEncoding               ;
++/// Element fullViewableName of type xs:string.
++    std::string                          fullViewableName               1;	///&lt; Required element.
++/// Element specialEncoding of type xs:string.
++    std::string                          specialEncoding                1;	///&lt; Required element.
++/// A handle to the soap struct that manages this instance (automatically set)
+     struct soap                         *soap                          ;
+ };
+ 
+-// SOAP encoded array ResultElementArray
+-class ResultElementArray
++/// &quot;urn:GoogleSearch&quot;:ResultElementArray is a complexType with complexContent restriction of SOAP-ENC:Array.
++/// SOAP encoded array of &quot;urn:GoogleSearch&quot;:ResultElement
++class gapi1ResultElementArray
+ { public:
++/// Pointer to array of gapi1__ResultElement*.
+     gapi1__ResultElement*               *__ptr                         ;
++/// Size of the dynamic array.
+     int                                  __size                        ;
++/// Offset for partially transmitted arrays (uncomment only when required).
++//  int                                  __offset                      ;
++/// A handle to the soap struct that manages this instance (automatically set)
+     struct soap                         *soap                          ;
+ };
+ 
+-// SOAP encoded array DirectoryCategoryArray
+-class DirectoryCategoryArray
++/// &quot;urn:GoogleSearch&quot;:DirectoryCategoryArray is a complexType with complexContent restriction of SOAP-ENC:Array.
++/// SOAP encoded array of &quot;urn:GoogleSearch&quot;:DirectoryCategory
++class gapi1DirectoryCategoryArray
+ { public:
++/// Pointer to array of gapi1__DirectoryCategory*.
+     gapi1__DirectoryCategory*           *__ptr                         ;
++/// Size of the dynamic array.
+     int                                  __size                        ;
++/// Offset for partially transmitted arrays (uncomment only when required).
++//  int                                  __offset                      ;
++/// A handle to the soap struct that manages this instance (automatically set)
+     struct soap                         *soap                          ;
+ };
+ 
+-/* Service GoogleSearchBinding operations:
++/******************************************************************************\
++ *                                                                            *
++ * Services                                                                   *
++ *                                                                            *
++\******************************************************************************/
+ 
+-  gapi1__doGetCachedPage
+-  gapi1__doSpellingSuggestion
+-  gapi1__doGoogleSearch
+ 
+-*/
+-
+ //gsoap gapi1 service name:	GoogleSearchBinding 
+ //gsoap gapi1 service type:	GoogleSearchPort 
+ //gsoap gapi1 service port:	<A HREF="http://api.google.com/search/beta2">http://api.google.com/search/beta2</A> 
+ //gsoap gapi1 service namespace:	urn:GoogleSearch 
++//gsoap gapi1 service transport:	<A HREF="http://schemas.xmlsoap.org/soap/http">http://schemas.xmlsoap.org/soap/http</A> 
+ 
+-/* Service GoogleSearchBinding operation gapi1__doGetCachedPage
++/** @mainpage GoogleSearch Definitions
+ 
+-  C stub function (defined in soapClient.c[pp]):
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at section</A> GoogleSearch_bindings Bindings
++  - @ref GoogleSearchBinding
++
++*/
++
++/**
++
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at page</A> GoogleSearchBinding Binding &quot;GoogleSearchBinding&quot;
++
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at section</A> GoogleSearchBinding_operations Operations of Binding  &quot;GoogleSearchBinding&quot;
++  - @ref gapi1__doGetCachedPage
++  - @ref gapi1__doSpellingSuggestion
++  - @ref gapi1__doGoogleSearch
++
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at section</A> GoogleSearchBinding_ports Endpoints of Binding  &quot;GoogleSearchBinding&quot;
++  - <A HREF="http://api.google.com/search/beta2">http://api.google.com/search/beta2</A>
++
++*/
++
++/******************************************************************************\
++ *                                                                            *
++ * GoogleSearchBinding                                                        *
++ *                                                                            *
++\******************************************************************************/
++
++
++/******************************************************************************\
++ *                                                                            *
++ * gapi1__doGetCachedPage                                                     *
++ *                                                                            *
++\******************************************************************************/
++
++
++/// Operation &quot;gapi1__doGetCachedPage&quot; of service binding &quot;GoogleSearchBinding&quot;
++
++/**
++
++Operation details:
++
++  - SOAP RPC encodingStyle=&quot;<A HREF="http://schemas.xmlsoap.org/soap/encoding/">http://schemas.xmlsoap.org/soap/encoding/</A>&quot;
++  - SOAP action=&quot;urn:GoogleSearchAction&quot;
++
++C stub function (defined in soapClient.c[pp] after running soapcpp2):
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at code</A>
+   int soap_call_gapi1__doGetCachedPage(struct soap *soap,
+-    NULL, (char *endpoint = NULL selects default endpoint for this operation)
+-    NULL, (char *action = NULL selects default action for this operation)
++    NULL, // char *endpoint = NULL selects default endpoint for this operation
++    NULL, // char *action = NULL selects default action for this operation
++    // request parameters:
+     std::string                         key,
+     std::string                         url,
+-  struct gapi1__doGetCachedPageResponse {
+-    xsd__base64Binary                   return_;
+-  } &amp; );
++    // response parameters:
++    xsd__base64Binary                  &amp;return_
++  );
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at endcode</A>
+ 
+-  C++ proxy class (defined in soapGoogleSearchBindingProxy.h):
++C++ proxy class (defined in soapGoogleSearchBindingProxy.h):
+   class GoogleSearchBinding;
+ 
+ */
+@@ -144,25 +263,41 @@
+ //gsoap gapi1 service method-encoding:	doGetCachedPage <A HREF="http://schemas.xmlsoap.org/soap/encoding/">http://schemas.xmlsoap.org/soap/encoding/</A>
+ //gsoap gapi1 service method-action:	doGetCachedPage urn:GoogleSearchAction
+ int gapi1__doGetCachedPage(
+-    std::string                         key,
+-    std::string                         url,
+-  struct gapi1__doGetCachedPageResponse {
+-    xsd__base64Binary                   return_;
+-  } &amp; );
++    std::string                         key,	///&lt; Request parameter
++    std::string                         url,	///&lt; Request parameter
++    xsd__base64Binary                  &amp;return_	///&lt; Response parameter
++);
+ 
+-/* Service GoogleSearchBinding operation gapi1__doSpellingSuggestion
++/******************************************************************************\
++ *                                                                            *
++ * gapi1__doSpellingSuggestion                                                *
++ *                                                                            *
++\******************************************************************************/
+ 
+-  C stub function (defined in soapClient.c[pp]):
++
++/// Operation &quot;gapi1__doSpellingSuggestion&quot; of service binding &quot;GoogleSearchBinding&quot;
++
++/**
++
++Operation details:
++
++  - SOAP RPC encodingStyle=&quot;<A HREF="http://schemas.xmlsoap.org/soap/encoding/">http://schemas.xmlsoap.org/soap/encoding/</A>&quot;
++  - SOAP action=&quot;urn:GoogleSearchAction&quot;
++
++C stub function (defined in soapClient.c[pp] after running soapcpp2):
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at code</A>
+   int soap_call_gapi1__doSpellingSuggestion(struct soap *soap,
+-    NULL, (char *endpoint = NULL selects default endpoint for this operation)
+-    NULL, (char *action = NULL selects default action for this operation)
++    NULL, // char *endpoint = NULL selects default endpoint for this operation
++    NULL, // char *action = NULL selects default action for this operation
++    // request parameters:
+     std::string                         key,
+     std::string                         phrase,
+-  struct gapi1__doSpellingSuggestionResponse {
+-    std::string                         return_;
+-  } &amp; );
++    // response parameters:
++    std::string                        &amp;return_
++  );
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at endcode</A>
+ 
+-  C++ proxy class (defined in soapGoogleSearchBindingProxy.h):
++C++ proxy class (defined in soapGoogleSearchBindingProxy.h):
+   class GoogleSearchBinding;
+ 
+ */
+@@ -171,18 +306,38 @@
+ //gsoap gapi1 service method-encoding:	doSpellingSuggestion <A HREF="http://schemas.xmlsoap.org/soap/encoding/">http://schemas.xmlsoap.org/soap/encoding/</A>
+ //gsoap gapi1 service method-action:	doSpellingSuggestion urn:GoogleSearchAction
+ int gapi1__doSpellingSuggestion(
+-    std::string                         key,
+-    std::string                         phrase,
+-  struct gapi1__doSpellingSuggestionResponse {
+-    std::string                         return_;
+-  } &amp; );
++    std::string                         key,	///&lt; Request parameter
++    std::string                         phrase,	///&lt; Request parameter
++    std::string                        &amp;return_	///&lt; Response parameter
++);
+ 
+-/* Service GoogleSearchBinding operation gapi1__doGoogleSearch
++/******************************************************************************\
++ *                                                                            *
++ * gapi1__doGoogleSearch                                                      *
++ *                                                                            *
++\******************************************************************************/
+ 
+-  C stub function (defined in soapClient.c[pp]):
++/// Operation response struct &quot;gapi1__doGoogleSearchResponse&quot; of service binding &quot;GoogleSearchBinding&quot; operation &quot;gapi1__doGoogleSearch&quot;
++struct gapi1__doGoogleSearchResponse
++{
++    gapi1__GoogleSearchResult*          return_;
++};
++
++/// Operation &quot;gapi1__doGoogleSearch&quot; of service binding &quot;GoogleSearchBinding&quot;
++
++/**
++
++Operation details:
++
++  - SOAP RPC encodingStyle=&quot;<A HREF="http://schemas.xmlsoap.org/soap/encoding/">http://schemas.xmlsoap.org/soap/encoding/</A>&quot;
++  - SOAP action=&quot;urn:GoogleSearchAction&quot;
++
++C stub function (defined in soapClient.c[pp] after running soapcpp2):
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at code</A>
+   int soap_call_gapi1__doGoogleSearch(struct soap *soap,
+-    NULL, (char *endpoint = NULL selects default endpoint for this operation)
+-    NULL, (char *action = NULL selects default action for this operation)
++    NULL, // char *endpoint = NULL selects default endpoint for this operation
++    NULL, // char *action = NULL selects default action for this operation
++    // request parameters:
+     std::string                         key,
+     std::string                         q,
+     int                                 start,
+@@ -193,11 +348,12 @@
+     std::string                         lr,
+     std::string                         ie,
+     std::string                         oe,
+-  struct gapi1__doGoogleSearchResponse {
+-    gapi1__GoogleSearchResult*          return_;
+-  } &amp; );
++    // response parameters:
++    struct gapi1__doGoogleSearchResponse&amp;
++  );
+<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">+ at endcode</A>
+ 
+-  C++ proxy class (defined in soapGoogleSearchBindingProxy.h):
++C++ proxy class (defined in soapGoogleSearchBindingProxy.h):
+   class GoogleSearchBinding;
+ 
+ */
+@@ -206,19 +362,17 @@
+ //gsoap gapi1 service method-encoding:	doGoogleSearch <A HREF="http://schemas.xmlsoap.org/soap/encoding/">http://schemas.xmlsoap.org/soap/encoding/</A>
+ //gsoap gapi1 service method-action:	doGoogleSearch urn:GoogleSearchAction
+ int gapi1__doGoogleSearch(
+-    std::string                         key,
+-    std::string                         q,
+-    int                                 start,
+-    int                                 maxResults,
+-    bool                                filter,
+-    std::string                         restrict_,
+-    bool                                safeSearch,
+-    std::string                         lr,
+-    std::string                         ie,
+-    std::string                         oe,
+-  struct gapi1__doGoogleSearchResponse {
+-    gapi1__GoogleSearchResult*          return_;
+-  } &amp; );
++    std::string                         key,	///&lt; Request parameter
++    std::string                         q,	///&lt; Request parameter
++    int                                 start,	///&lt; Request parameter
++    int                                 maxResults,	///&lt; Request parameter
++    bool                                filter,	///&lt; Request parameter
++    std::string                         restrict_,	///&lt; Request parameter
++    bool                                safeSearch,	///&lt; Request parameter
++    std::string                         lr,	///&lt; Request parameter
++    std::string                         ie,	///&lt; Request parameter
++    std::string                         oe,	///&lt; Request parameter
++    struct gapi1__doGoogleSearchResponse&amp;	///&lt; Response struct parameter
++);
+ 
+-/*  End of Web Services Definitions urn:GoogleSearch */
+-}
++/* End of GoogleSearch.h */
+
+Added: trunk/Search/Google/Makefile.am
+===================================================================
+--- trunk/Search/Google/Makefile.am	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/Search/Google/Makefile.am	2006-04-04 12:25:39 UTC (rev 179)
+@@ -0,0 +1,25 @@
++# Process this file with automake to produce Makefile.in
++
++noinst_HEADERS = \
++	GAPIGoogleSearchBindingObject.h \
++	GAPIGoogleSearchBindingProxy.h \
++	GAPIH.h \
++	GAPIStub.h \
++	GoogleAPIEngine.h \
++	GoogleSearch.h
++
++noinst_LTLIBRARIES = libSearchGoogle.la
++
++libSearchGoogle_la_SOURCES = \
++	GAPIClientLib.cpp \
++	GoogleAPIEngine.cpp
++
++GoogleSearch.h : googleapi/GoogleSearch.wsdl
++	wsdl2c -n gapi -o GoogleSearch.h googleapi/GoogleSearch.wsdl
++
++GAPIClientLib.cpp : GoogleSearch.h
++	soapcpp2 -n -pGAPI -I /usr/include/gsoap/import GoogleSearch.h
++
++AM_CXXFLAGS = -I../../Utils -I../../Tokenize -I../../Collect -I.. \
++	@HTTP_CFLAGS@ @XML_CFLAGS@ @SOAP_CFLAGS@ @INDEX_CFLAGS@ @MIME_CFLAGS@
++
+
+Modified: trunk/Search/Makefile.am
+===================================================================
+--- trunk/Search/Makefile.am	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/Search/Makefile.am	2006-04-04 12:25:39 UTC (rev 179)
+@@ -11,10 +11,13 @@
+ 	PluginParsers.h \
+ 	PluginWebEngine.h \
+ 	SearchEngineInterface.h \
+-	SherlockParser.h
++	SherlockParser.h \
++	SOAPEnv.h
+ 
+-noinst_LTLIBRARIES = libSearch.la
++EXTRA_LTLIBRARIES = libSearch.la libSearchSOAP.la
+ 
++noinst_LTLIBRARIES = @SEARCH_LTLIBRARIES@
++
+ bin_PROGRAMS = pinot_search
+ 
+ libSearch_la_SOURCES = \
+@@ -29,13 +32,20 @@
+ 	SearchEngineInterface.cpp \
+ 	SherlockParser.cpp
+ 
++libSearchSOAP_la_SOURCES = \
++	SOAPEnvC.cpp \
++	SOAPEnvNS.cpp
++
+ pinot_search_SOURCES = \
+ 	senginetest.cpp
+ 
+-pinot_search_LDADD = -L../Utils -L../Tokenize -L../Collect \
+-	-lSearch -lCollect -lTokenize -lUtils \
+-	@INDEX_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
++pinot_search_LDADD = -L../Utils -L../Tokenize -L../Collect -LGoogle \
++	@SEARCH_LIBS@ -lCollect -lTokenize -lUtils \
++	@INDEX_LIBS@ @SOAP_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
+ 
+-AM_CXXFLAGS = -I../Utils -I../Tokenize -I../Collect \
+-	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @MIME_CFLAGS@
++SOAPEnvC.cpp : SOAPEnv.h
++	soapcpp2 -pSOAPEnv SOAPEnv.h
+ 
++AM_CXXFLAGS = -I../Utils -I../Tokenize -I../Collect -IGoogle \
++	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @SOAP_CFLAGS@ @MIME_CFLAGS@
++
+
+Added: trunk/Search/SOAPEnv.h
+===================================================================
+
+Modified: trunk/Search/SearchEngineFactory.cpp
+===================================================================
+--- trunk/Search/SearchEngineFactory.cpp	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/Search/SearchEngineFactory.cpp	2006-04-04 12:25:39 UTC (rev 179)
+@@ -17,9 +17,6 @@
+ #ifdef HAS_GOOGLEAPI
+ #include &quot;GoogleAPIEngine.h&quot;
+ #endif
+-#ifdef HAS_OSAPI
+-#include &quot;ObjectsSearchAPIEngine.h&quot;
+-#endif
+ #include &quot;PluginWebEngine.h&quot;
+ #include &quot;XapianEngine.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+@@ -54,12 +51,6 @@
+ 		myEngine-&gt;setKey(option);
+ 	}
+ #endif
+-#ifdef HAS_OSAPI
+-	else if (type == &quot;objectssearchapi&quot;)
+-	{
+-		myEngine = new ObjectsSearchAPIEngine();
+-	}
+-#endif
+ 
+ 	return myEngine;
+ }
+@@ -75,9 +66,6 @@
+ #ifdef HAS_GOOGLEAPI
+ 	engines.insert(&quot;googleapi&quot;);
+ #endif
+-#ifdef HAS_OSAPI
+-	engines.insert(&quot;objectssearchapi&quot;);
+-#endif
+ }
+ 
+ /// Indicates whether a search engine is supported or not.
+@@ -87,9 +75,6 @@
+ #ifdef HAS_GOOGLEAPI
+ 		(type == &quot;googleapi&quot;) ||
+ #endif
+-#ifdef HAS_OSAPI
+-		(type == &quot;objectssearchapi&quot;) ||
+-#endif
+ 		(type == &quot;sherlock&quot;) ||
+ 		(type == &quot;xapian&quot;))
+ 	{
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-04-04 11:23:31 UTC (rev 178)
++++ trunk/configure.in	2006-04-04 12:25:39 UTC (rev 179)
+@@ -50,22 +50,46 @@
+ 
+ AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
+ 
+-dnl Xapian
+-AC_PATH_PROG(XAPIAN_CONFIG, xapian-config, no)
+-if test &quot;$XAPIAN_CONFIG&quot; = &quot;no&quot; ; then
+-   AC_MSG_ERROR([Can't find xapian-config in $PATH.])
+-   exit 1
++dnl SOAP API support
++AC_MSG_CHECKING(whether to enable SOAP support)
++AC_ARG_WITH(soap, AS_HELP_STRING(--with-soap@&lt;:@=yes|no@:&gt;@,
++   whether to enable SOAP support (default: no)))
++soapsupport=$with_soap
++if test &quot;x$soapsupport&quot; = &quot;x&quot;; then
++   soapsupport=&quot;no&quot;
+ fi
+-XAPIAN_CFLAGS=`$XAPIAN_CONFIG --cxxflags`
+-XAPIAN_LIBS=`$XAPIAN_CONFIG --libs`
++AC_MSG_RESULT($soapsupport)
+ 
++case &quot;$soapsupport&quot; in
++yes)
++PKG_CHECK_MODULES(SOAP, gsoap)
++SOAP_CFLAGS=&quot;-DHAS_GOOGLEAPI $SOAP_CFLAGS&quot;
++SOAP_LIBS=&quot;$SOAP_LIBS -lSearchSOAP&quot;
++SOAP_SUBDIRS=&quot;Search/Google&quot;
++SEARCH_LTLIBRARIES=&quot;libSearch.la libSearchSOAP.la&quot;
++SEARCH_LIBS=&quot;-lSearch -lSearchGoogle&quot;
++;;
++no)
++SOAP_CFLAGS=&quot;&quot;
++SOAP_LIBS=&quot;&quot;
++SOAP_SUBDIRS=&quot;&quot;
++SEARCH_LTLIBRARIES=&quot;libSearch.la&quot;
++SEARCH_LIBS=&quot;-lSearch&quot;
++;;
++esac
++AC_SUBST(SOAP_CFLAGS)
++AC_SUBST(SOAP_LIBS)
++AC_SUBST(SOAP_SUBDIRS)
++AC_SUBST(SEARCH_LTLIBRARIES)
++AC_SUBST(SEARCH_LIBS)
++
+ dnl Neon or Curl ?
+ AC_MSG_CHECKING(which HTTP library to use)
+ AC_ARG_WITH(http, AS_HELP_STRING(--with-http@&lt;:@=neon|curl@:&gt;@,
+-	which HTTP library to use (default: curl)))
++   which HTTP library to use (default: curl)))
+ httplibrary=$with_http
+ if test &quot;x$httplibrary&quot; = &quot;x&quot;; then
+-	httplibrary=&quot;curl&quot;
++   httplibrary=&quot;curl&quot;
+ fi
+ AC_MSG_RESULT($httplibrary)
+ 
+@@ -90,6 +114,18 @@
+ esac
+ AC_SUBST(HTTP_DOWNLOADER)
+ 
++dnl Textcat
++AC_CHECK_HEADERS(textcat.h)
++
++dnl Xapian
++AC_PATH_PROG(XAPIAN_CONFIG, xapian-config, no)
++if test &quot;$XAPIAN_CONFIG&quot; = &quot;no&quot; ; then
++   AC_MSG_ERROR([Can't find xapian-config in $PATH.])
++   exit 1
++fi
++XAPIAN_CFLAGS=`$XAPIAN_CONFIG --cxxflags`
++XAPIAN_LIBS=`$XAPIAN_CONFIG --libs`
++
+ dnl Mozilla NSS and NSPR
+ AC_PATH_PROG(NSS_CONFIG, nss-config, no)
+ if test &quot;$NSS_CONFIG&quot; = &quot;no&quot; ; then
+@@ -116,7 +152,6 @@
+ PKG_CHECK_MODULES(XML, libxml++-2.6 &gt;= 2.12 )
+ AC_SUBST(XML_CFLAGS)
+ AC_SUBST(XML_LIBS)
+-dnl FIXME: check for libtextcat
+ INDEX_CFLAGS=&quot;$XAPIAN_CFLAGS&quot;
+ INDEX_LIBS=&quot;$XAPIAN_LIBS -ltextcat&quot;
+ AC_SUBST(INDEX_CFLAGS)
+@@ -140,6 +175,6 @@
+ AC_CHECK_FUNCS(mmap)
+ 
+ AC_OUTPUT( pinot.spec Makefile Utils/Makefile Tokenize/Makefile SQL/Makefile \
+-	po/Makefile.in Collect/Makefile Search/Makefile \
++	po/Makefile.in Collect/Makefile Search/Makefile Search/Google/Makefile \
+ 	Index/Makefile UI/RenderHTML/Makefile UI/GTK2/src/Makefile )
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000176.html">[Pinot-svn] r178 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000178.html">[Pinot-svn] r180 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#177">[ date ]</a>
+              <a href="thread.html#177">[ thread ]</a>
+              <a href="subject.html#177">[ subject ]</a>
+              <a href="author.html#177">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

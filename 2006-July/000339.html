@@ -1,0 +1,574 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r346 - in trunk: . UI/GTK2/src po
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r346%20-%20in%20trunk%3A%20.%20UI/GTK2/src%20po&In-Reply-To=%3C200607121215.k6CCFFXE003567%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000338.html">
+   <LINK REL="Next"  HREF="000340.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r346 - in trunk: . UI/GTK2/src po</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r346%20-%20in%20trunk%3A%20.%20UI/GTK2/src%20po&In-Reply-To=%3C200607121215.k6CCFFXE003567%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r346 - in trunk: . UI/GTK2/src po">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed Jul 12 14:15:15 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000338.html">[Pinot-svn] r345 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000340.html">[Pinot-svn] r347 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#339">[ date ]</a>
+              <a href="thread.html#339">[ thread ]</a>
+              <a href="subject.html#339">[ subject ]</a>
+              <a href="author.html#339">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-12 14:15:12 +0200 (Wed, 12 Jul 2006)
+New Revision: 346
+
+Added:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+Modified:
+   trunk/Makefile.am
+   trunk/configure.in
+   trunk/pinot.spec.in
+   trunk/po/POTFILES.in
+Log:
+First shot at writing a D-Bus daemon that supports the method
+de.berlios.Pinot.Index.
+Bindings can be generated from pinot-dbus-daemon.xml with dbus-binding-tool.
+
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2006-07-07 12:40:59 UTC (rev 345)
++++ trunk/Makefile.am	2006-07-12 12:15:12 UTC (rev 346)
+@@ -8,7 +8,8 @@
+ 	pinot.spec textcat_conf.txt Search/Plugins/*src Search/Plugins/*.xml \
+ 	Collect/pinot-collect.1 Search/pinot-search.1 UI/GTK2/src/pinot.1 \
+ 	globalconfig.xml UI/GTK2/xapian-powered.png UI/GTK2/pinot.png \
+-	UI/GTK2/metase-gtk2.glade UI/GTK2/metase-gtk2.gladep
++	UI/GTK2/metase-gtk2.glade UI/GTK2/metase-gtk2.gladep \
++	UI/GTK2/src/pinot-dbus-daemon.xml
+ 
+ man_MANS = Collect/pinot-collect.1 Search/pinot-search.1 UI/GTK2/src/pinot.1
+ 
+@@ -18,6 +19,7 @@
+ 	$(INSTALL_DATA) UI/GTK2/xapian-powered.png $(DESTDIR)$(datadir)/pinot/xapian-powered.png
+ 	$(INSTALL_DATA) UI/GTK2/metase-gtk2.glade $(DESTDIR)$(datadir)/pinot/metase-gtk2.glade
+ 	$(INSTALL_DATA) UI/GTK2/metase-gtk2.gladep $(DESTDIR)$(datadir)/pinot/metase-gtk2.gladep
++	$(INSTALL_DATA) UI/GTK2/src/pinot-dbus-daemon.xml $(DESTDIR)$(datadir)/pinot/pinot-dbus-daemon.xml
+ 	$(INSTALL_DATA) textcat_conf.txt $(DESTDIR)$(datadir)/pinot/textcat_conf.txt
+ 	$(mkinstalldirs) $(DESTDIR)$(datadir)/pinot/engines
+ 	$(INSTALL_DATA) Search/Plugins/*.src $(DESTDIR)$(datadir)/pinot/engines/
+
+Added: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-07-07 12:40:59 UTC (rev 345)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-07-12 12:15:12 UTC (rev 346)
+@@ -0,0 +1,398 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;stdlib.h&gt;
++#include &lt;signal.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;libintl.h&gt;
++#include &lt;getopt.h&gt;
++#include &lt;iostream&gt;
++#include &lt;fstream&gt;
++#include &lt;glibmm.h&gt;
++#include &lt;glibmm/thread.h&gt;
++#include &lt;glibmm/ustring.h&gt;
++#include &lt;glibmm/convert.h&gt;
++#include &lt;glibmm/object.h&gt;
++extern &quot;C&quot;
++{
++#define DBUS_API_SUBJECT_TO_CHANGE
++#include &lt;dbus/dbus.h&gt;
++#include &lt;dbus/dbus-glib.h&gt;
++#include &lt;dbus/dbus-glib-lowlevel.h&gt;
++}
++#include &lt;glibmm/main.h&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;TokenizerFactory.h&quot;
++#include &quot;Languages.h&quot;
++#include &quot;MIMEScanner.h&quot;
++#include &quot;XapianDatabase.h&quot;
++#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;QueryHistory.h&quot;
++#include &quot;ViewHistory.h&quot;
++#include &quot;DownloaderInterface.h&quot;
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
++#include &quot;PinotSettings.h&quot;
++
++using namespace std;
++
++static ofstream outputFile;
++static streambuf *coutBuf = NULL;
++static streambuf *cerrBuf = NULL;
++static struct option g_longOptions[] = {
++	{&quot;help&quot;, 0, 0, 'h'},
++	{&quot;version&quot;, 0, 0, 'v'},
++	{0, 0, 0, 0}
++};
++static const char *g_pinotDBusService = &quot;de.berlios.Pinot&quot;;
++static const char *g_pinotDBusObjectPath = &quot;/de/berlios/Pinot&quot;;
++static DBusHandlerResult objectPathHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData);
++static DBusObjectPathVTable g_callVTable = {
++	NULL,
++	objectPathHandler,
++	NULL,
++};
++static Glib::RefPtr&lt;Glib::MainLoop&gt; g_refMainLoop;
++
++static void closeAll(void)
++{
++	cout &lt;&lt; &quot;Exiting...&quot; &lt;&lt; endl;
++
++	// Close all indexes we may have opened
++	XapianDatabaseFactory::closeAll();
++
++	// Close the tokenizer libraries
++	TokenizerFactory::unloadTokenizers();
++
++	// Restore the stream buffers
++	if (coutBuf != NULL)
++	{
++		cout.rdbuf(coutBuf);
++	}
++	if (cerrBuf != NULL)
++	{
++		cerr.rdbuf(cerrBuf);
++	}
++	outputFile.close();
++
++	DownloaderInterface::shutdown();
++	MIMEScanner::shutdown();
++}
++
++static void quitAll(int sigNum)
++{
++	if (g_refMainLoop-&gt;is_running() == true)
++	{
++		cout &lt;&lt; &quot;Quitting...&quot; &lt;&lt; endl;
++
++		g_refMainLoop-&gt;quit();
++	}
++}
++
++static DBusHandlerResult objectPathHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
++{
++#ifdef DEBUG
++	cout &lt;&lt; &quot;objectPathHandler: called&quot; &lt;&lt; endl;
++#endif
++	if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;Index&quot;) == TRUE)
++	{
++		return DBUS_HANDLER_RESULT_HANDLED;
++	}
++
++	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
++}
++
++static DBusHandlerResult messageBusFilter(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
++{
++	DBusMessage *pReply = NULL;
++	bool processedMessage = false;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;messageBusFilter: called&quot; &lt;&lt; endl;
++#endif
++
++	// Are we about to be disconnected ?
++	if (dbus_message_is_signal(pMessage, DBUS_INTERFACE_LOCAL, &quot;Disconnected&quot;) == TRUE)
++	{
++		// FIXME: is this legal ?
++		Glib::RefPtr&lt;Glib::MainLoop&gt; g_refMainLoop = Glib::MainLoop::create(true);
++
++		// Tell the main loop to quit
++		g_refMainLoop-&gt;quit();
++
++		return DBUS_HANDLER_RESULT_HANDLED;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;Index&quot;) == TRUE)
++	{
++		DBusError error;
++		char *pTitle = NULL;
++		char *pLocation = NULL;
++		char *pType = NULL;
++		char *pLanguage = NULL;
++		char *pLabel = NULL;
++		dbus_uint64_t docId = 0;
++
++		// Simple types are returned as const references and don't need to be freed
++		dbus_error_init(&amp;error);
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_STRING, &amp;pTitle,
++			DBUS_TYPE_STRING, &amp;pLocation,
++			DBUS_TYPE_STRING, &amp;pType,
++			DBUS_TYPE_STRING, &amp;pLanguage,
++			DBUS_TYPE_STRING, &amp;pLabel,
++			DBUS_TYPE_UINT64, &amp;docId,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			DocumentInfo docInfo(pTitle, pLocation, pType, pLanguage);
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; pTitle &lt;&lt; &quot;, &quot; &lt;&lt; pLocation
++				&lt;&lt; &quot;, &quot; &lt;&lt; pType &lt;&lt; &quot;, &quot; &lt;&lt; pLanguage &lt;&lt; &quot;, &quot; &lt;&lt; pLabel
++				&lt;&lt; &quot;, &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			// FIXME: index docInfo
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_UINT64, &amp;docId, DBUS_TYPE_INVALID);
++			}
++		}
++		else
++		{
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
++		}
++		dbus_error_free(&amp;error);
++
++		processedMessage = true;
++	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;messageBusFilter: message for foreign object&quot; &lt;&lt; endl;
++#endif
++
++	// Send a reply ?
++	if (pReply != NULL)
++	{
++		if (dbus_message_get_no_reply(pMessage) == FALSE)
++		{
++			dbus_connection_send(pConnection, pReply, NULL);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: sent reply&quot; &lt;&lt; endl;
++#endif
++		}
++#ifdef DEBUG
++		else cout &lt;&lt; &quot;messageBusFilter: no need to send a reply&quot; &lt;&lt; endl;
++#endif
++
++		dbus_message_unref(pReply);
++	}
++
++	if (processedMessage == true)
++	{
++		return DBUS_HANDLER_RESULT_HANDLED;
++	}
++
++	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
++}
++
++int main(int argc, char **argv)
++{
++	string prefixDir(PREFIX);
++	struct sigaction newAction;
++	int longOptionIndex = 0;
++
++	// Look at the options
++	int optionChar = getopt_long(argc, argv, &quot;hv&quot;, g_longOptions, &amp;longOptionIndex);
++	while (optionChar != -1)
++	{
++		switch (optionChar)
++		{
++			case 'h':
++				// Help
++				cout &lt;&lt; &quot;pinot-dbus-daemon - D-Bus search and index daemon\n\n&quot;
++					&lt;&lt; &quot;Usage: pinot-dbus-daemon [OPTIONS]\n\n&quot;
++					&lt;&lt; &quot;Options:\n&quot;
++					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
++					&lt;&lt; &quot;  -v, --version		output version information and exit\n&quot;
++					&lt;&lt; &quot;\nReport bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
++				return EXIT_SUCCESS;
++			case 'v':
++				cout &lt;&lt; &quot;pinot-dbus-daemon - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot; 
++					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
++					&lt;&lt; &quot;the GNU General Public License &lt;<A HREF="http://www.gnu.org/licenses/gpl.html">http://www.gnu.org/licenses/gpl.html</A>&gt;.\n&quot;
++					&lt;&lt; &quot;There is NO WARRANTY, to the extent permitted by law.&quot; &lt;&lt; endl;
++				return EXIT_SUCCESS;
++			default:
++				return EXIT_FAILURE;
++		}
++
++		// Next option
++		optionChar = getopt_long(argc, argv, &quot;hv&quot;, g_longOptions, &amp;longOptionIndex);
++	}
++
++#if defined(ENABLE_NLS)
++	bindtextdomain(GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
++	bind_textdomain_codeset(GETTEXT_PACKAGE, &quot;UTF-8&quot;);
++	textdomain(GETTEXT_PACKAGE);
++#endif //ENABLE_NLS
++
++	MIMEScanner::initialize();
++	DownloaderInterface::initialize();
++	Glib::thread_init();
++
++	// This will create the necessary directories on the first run
++	PinotSettings &amp;settings = PinotSettings::getInstance();
++
++	string confDirectory = PinotSettings::getConfigurationDirectory();
++	chdir(confDirectory.c_str());
++
++	// Redirect cout and cerr to a file
++	string logFileName = confDirectory;
++	logFileName += &quot;/pinot-dbus-daemon.log&quot;;
++	outputFile.open(logFileName.c_str());
++	coutBuf = cout.rdbuf();
++	cerrBuf = cerr.rdbuf();
++	cout.rdbuf(outputFile.rdbuf());
++	cerr.rdbuf(outputFile.rdbuf());
++
++	// Localize language names
++	Languages::setIntlName(0, _(&quot;Unknown&quot;));
++	Languages::setIntlName(1, _(&quot;Danish&quot;));
++	Languages::setIntlName(2, _(&quot;Dutch&quot;));
++	Languages::setIntlName(3, _(&quot;English&quot;));
++	Languages::setIntlName(4, _(&quot;Finnish&quot;));
++	Languages::setIntlName(5, _(&quot;French&quot;));
++	Languages::setIntlName(6, _(&quot;German&quot;));
++	Languages::setIntlName(7, _(&quot;Italian&quot;));
++	Languages::setIntlName(8, _(&quot;Norwegian&quot;));
++	Languages::setIntlName(9, _(&quot;Portuguese&quot;));
++	Languages::setIntlName(10, _(&quot;Russian&quot;));
++	Languages::setIntlName(11, _(&quot;Spanish&quot;));
++	Languages::setIntlName(12, _(&quot;Swedish&quot;));
++
++	// Load search engines
++	settings.loadSearchEngines(prefixDir + string(&quot;/share/pinot/engines&quot;));
++	settings.loadSearchEngines(confDirectory + string(&quot;/engines&quot;));
++	// Load tokenizer libraries, if any
++	TokenizerFactory::loadTokenizers(prefixDir + string(&quot;/share/pinot/tokenizers&quot;));
++	TokenizerFactory::loadTokenizers(confDirectory + string(&quot;/tokenizers&quot;));
++	// Load the settings
++	settings.loadGlobal(prefixDir + string(&quot;/share/pinot/globalconfig.xml&quot;));
++	settings.load();
++
++	// Catch interrupts
++	sigemptyset(&amp;newAction.sa_mask);
++	newAction.sa_flags = 0;
++	newAction.sa_handler = quitAll;
++	sigaction(SIGINT, &amp;newAction, NULL);
++	sigaction(SIGQUIT, &amp;newAction, NULL);
++
++#if 0
++	// Ensure Xapian will be able to deal with internal indices
++	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(settings.m_indexLocation, false);
++	if ((pDb == NULL) ||
++		(pDb-&gt;isOpen() == false))
++	{
++		cerr &lt;&lt; _(&quot;Couldn't open index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_indexLocation &lt;&lt; endl;;
++	}
++	pDb = XapianDatabaseFactory::getDatabase(settings.m_mailIndexLocation, false);
++	if ((pDb == NULL) ||
++		(pDb-&gt;isOpen() == false))
++	{
++		cerr &lt;&lt; _(&quot;Couldn't open index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_mailIndexLocation &lt;&lt; endl;
++	}
++#endif
++
++	// Do the same for the history database
++	if ((settings.m_historyDatabase.empty() == true) ||
++		(QueryHistory::create(settings.m_historyDatabase) == false) ||
++		(ViewHistory::create(settings.m_historyDatabase) == false))
++	{
++		cerr &lt;&lt; _(&quot;Couldn't create history database&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_historyDatabase &lt;&lt; endl;
++	}
++	else
++	{
++		QueryHistory queryHistory(settings.m_historyDatabase);
++		ViewHistory viewHistory(settings.m_historyDatabase);
++		time_t timeNow = time(NULL);
++
++		// Expire items older than a month
++		queryHistory.expireItems(timeNow - 2592000);
++		viewHistory.expireItems(timeNow - 2592000);
++	}
++
++	atexit(closeAll);
++
++	// Initialize the D-Bus thread system
++	dbus_g_thread_init();
++
++	GError *pError = NULL;
++	DBusGConnection *pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
++	if (pBus == NULL)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;Couldn't open connection: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++
++		return EXIT_FAILURE;
++	}
++
++	// Listen for messages from all objects
++	DBusConnection *pConnection = dbus_g_connection_get_connection(pBus);
++	if (pConnection != NULL)
++	{
++		DBusError error;
++
++		dbus_error_init(&amp;error);
++		dbus_connection_set_exit_on_disconnect(pConnection, FALSE);
++		dbus_connection_setup_with_g_main(pConnection, NULL);
++
++		dbus_connection_add_filter(pConnection, messageBusFilter, NULL, NULL);
++		if (dbus_error_is_set(&amp;error) == FALSE)
++		{
++			// Request to be identified by this name
++			// FIXME: flags are currently broken ?
++			dbus_bus_request_name(pConnection, g_pinotDBusService, 0, &amp;error);
++			if ((dbus_error_is_set(&amp;error) == FALSE) &amp;&amp;
++				(dbus_connection_register_object_path(pConnection, g_pinotDBusObjectPath,
++					&amp;g_callVTable, NULL) == TRUE))
++			{
++				// Run the main loop
++				g_refMainLoop = Glib::MainLoop::create();
++				g_refMainLoop-&gt;run();
++			}
++			else
++			{
++				cerr &lt;&lt; &quot;Couldn't register object path: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			}
++		}
++		else
++		{
++			cerr &lt;&lt; &quot;Couldn't add filter: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++		}
++		dbus_error_free(&amp;error);
++	}
++	dbus_connection_close(pConnection);
++	dbus_g_connection_unref(pBus);
++
++	return EXIT_SUCCESS;
++}
+
+
+Property changes on: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2006-07-07 12:40:59 UTC (rev 345)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2006-07-12 12:15:12 UTC (rev 346)
+@@ -0,0 +1,15 @@
++&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; ?&gt;
++&lt;node name=&quot;/de/berlios/Pinot&quot;&gt;
++  &lt;interface name=&quot;de.berlios.Pinot&quot;&gt;
++    &lt;method name=&quot;Index&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.Index&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;title&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;location&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;type&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;language&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;label&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;currentId&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;newId&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++  &lt;/interface&gt;
++&lt;/node&gt;
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-07-07 12:40:59 UTC (rev 345)
++++ trunk/configure.in	2006-07-12 12:15:12 UTC (rev 346)
+@@ -162,6 +162,9 @@
+ INDEX_LIBS=&quot;$XAPIAN_LIBS -ltextcat&quot;
+ AC_SUBST(INDEX_CFLAGS)
+ AC_SUBST(INDEX_LIBS)
++PKG_CHECK_MODULES(DBUS, dbus-glib-1)
++AC_SUBST(DBUS_CFLAGS)
++AC_SUBST(DBUS_LIBS)
+ PKG_CHECK_MODULES(SIGCPP, sigc++-2.0 &gt;= 2.0 )
+ AC_SUBST(SIGCPP_CFLAGS)
+ AC_SUBST(SIGCPP_LIBS)
+
+Modified: trunk/pinot.spec.in
+===================================================================
+--- trunk/pinot.spec.in	2006-07-07 12:40:59 UTC (rev 345)
++++ trunk/pinot.spec.in	2006-07-12 12:15:12 UTC (rev 346)
+@@ -75,6 +75,7 @@
+ %{_datadir}/pinot/xapian-powered.png
+ %{_datadir}/pinot/metase-gtk2.glade
+ %{_datadir}/pinot/metase-gtk2.gladep
++%{_datadir}/pinot/pinot-dbus-daemon.xml
+ %{_datadir}/pinot/textcat_conf.txt
+ %{_datadir}/pinot/*.src
+ %dir %{_datadir}/pinot/engines/
+
+Modified: trunk/po/POTFILES.in
+===================================================================
+--- trunk/po/POTFILES.in	2006-07-07 12:40:59 UTC (rev 345)
++++ trunk/po/POTFILES.in	2006-07-12 12:15:12 UTC (rev 346)
+@@ -12,6 +12,7 @@
+ UI/GTK2/src/MboxHandler.cpp
+ UI/GTK2/src/Notebook.cpp
+ UI/GTK2/src/pinot.cc
++UI/GTK2/src/pinot-dbus-daemon.cc
+ UI/GTK2/src/PinotSettings.cpp
+ UI/GTK2/src/PinotUtils.cpp
+ UI/GTK2/src/prefsDialog.cc
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000338.html">[Pinot-svn] r345 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000340.html">[Pinot-svn] r347 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#339">[ date ]</a>
+              <a href="thread.html#339">[ thread ]</a>
+              <a href="subject.html#339">[ subject ]</a>
+              <a href="author.html#339">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

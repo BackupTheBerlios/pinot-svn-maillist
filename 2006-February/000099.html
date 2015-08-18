@@ -1,0 +1,288 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r100 - in trunk: . Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r100%20-%20in%20trunk%3A%20.%20Search&In-Reply-To=%3C200602071221.k17CLjX0009944%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000098.html">
+   <LINK REL="Next"  HREF="000100.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r100 - in trunk: . Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r100%20-%20in%20trunk%3A%20.%20Search&In-Reply-To=%3C200602071221.k17CLjX0009944%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r100 - in trunk: . Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Feb  7 13:21:45 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000098.html">[Pinot-svn] r99 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000100.html">[Pinot-svn] r101 - in trunk: . UI/GTK2/src UI/RenderHTML
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#99">[ date ]</a>
+              <a href="thread.html#99">[ thread ]</a>
+              <a href="subject.html#99">[ subject ]</a>
+              <a href="author.html#99">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-02-07 13:21:43 +0100 (Tue, 07 Feb 2006)
+New Revision: 100
+
+Modified:
+   trunk/Makefile
+   trunk/Search/SearchEngineFactory.cpp
+   trunk/Search/SearchEngineFactory.h
+   trunk/Search/senginetest.cpp
+   trunk/pinot.spec
+Log:
+Distribute senginetest as pinot_search as a shell based metasearch would
+be useful. SearchEngineFactory can list supported engine types.
+
+
+Modified: trunk/Makefile
+===================================================================
+--- trunk/Makefile	2006-02-07 12:18:54 UTC (rev 99)
++++ trunk/Makefile	2006-02-07 12:21:43 UTC (rev 100)
+@@ -41,6 +41,7 @@
+ install-pinot:
+ 	@mkdir -p $(PREFIX)/usr/bin/
+ 	install -m 755 ${BIN_DIR}/pinot $(PREFIX)/usr/bin/pinot
++	install -m 755 ${BIN_DIR}/senginetest $(PREFIX)/usr/bin/pinot_search
+ 	@mkdir -p $(PREFIX)/usr/share/pinot/engines/
+ 	@mkdir -p $(PREFIX)/usr/share/pinot/tokenizers/
+ 	install -m 644 index.html $(PREFIX)/usr/share/pinot/
+
+Modified: trunk/Search/SearchEngineFactory.cpp
+===================================================================
+--- trunk/Search/SearchEngineFactory.cpp	2006-02-07 12:18:54 UTC (rev 99)
++++ trunk/Search/SearchEngineFactory.cpp	2006-02-07 12:21:43 UTC (rev 100)
+@@ -64,6 +64,22 @@
+ 	return myEngine;
+ }
+ 
++void SearchEngineFactory::getSupportedEngines(set&lt;string&gt; &amp;engines)
++{
++	engines.clear();
++
++	// List supported engines
++	engines.insert(&quot;sherlock&quot;);
++	engines.insert(&quot;opensearch&quot;);
++	engines.insert(&quot;xapian&quot;);
++#ifdef HAS_GOOGLEAPI
++	engines.insert(&quot;googleapi&quot;);
++#endif
++#ifdef HAS_OSAPI
++	engines.insert(&quot;objectssearchapi&quot;);
++#endif
++}
++
+ /// Indicates whether a search engine is supported or not.
+ bool SearchEngineFactory::isSupported(const string &amp;type)
+ {
+
+Modified: trunk/Search/SearchEngineFactory.h
+===================================================================
+--- trunk/Search/SearchEngineFactory.h	2006-02-07 12:18:54 UTC (rev 99)
++++ trunk/Search/SearchEngineFactory.h	2006-02-07 12:21:43 UTC (rev 100)
+@@ -35,6 +35,9 @@
+ 		/// Returns a SearchEngine of the specified type; NULL if unavailable.
+ 		static SearchEngineInterface *getSearchEngine(const string &amp;type, const string &amp;option);
+ 
++		/// Returns all supported engines.
++		static void getSupportedEngines(set&lt;string&gt; &amp;engines);
++
+ 		/// Indicates whether a search engine is supported or not.
+ 		static bool isSupported(const string &amp;type);
+ 
+
+Modified: trunk/Search/senginetest.cpp
+===================================================================
+--- trunk/Search/senginetest.cpp	2006-02-07 12:18:54 UTC (rev 99)
++++ trunk/Search/senginetest.cpp	2006-02-07 12:21:43 UTC (rev 100)
+@@ -21,96 +21,32 @@
+ #include &lt;fstream&gt;
+ 
+ #include &quot;SearchEngineFactory.h&quot;
+-#ifdef HAS_GOOGLEAPI
+-#include &quot;GoogleAPIEngine.h&quot;
+-#endif
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+ 
+ using namespace std;
+ 
+-static void fetchCachedPage(const string &amp;url, const string &amp;file, const string &amp;key)
+-{
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;fetchCachedPage: attempting to save &quot; &lt;&lt; url &lt;&lt; &quot; to &quot; &lt;&lt; file &lt;&lt; endl;
+-#endif
+-
+-#ifdef HAS_GOOGLEAPI
+-	Url thisUrl(url);
+-	GoogleAPIEngine googleApiEngine;
+-	googleApiEngine.setKey(key);
+-
+-	Document *urlDoc = googleApiEngine.retrieveCachedUrl(url);
+-	if (urlDoc != NULL)
+-	{
+-		unsigned int urlContentLen;
+-		ofstream outputFile;
+-		outputFile.open(file.c_str(), ofstream::out | ofstream::trunc);
+-		outputFile &lt;&lt; urlDoc-&gt;getData(urlContentLen);
+-		outputFile.close();
+-
+-		delete urlDoc;
+-	}
+-	else
+-	{
+-		cerr &lt;&lt; &quot;fetchCachedPage: couldn't get &quot; &lt;&lt; url &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-	}
+-#endif
+-}
+-
+-static void fetchPage(const string &amp;url, const string &amp;file)
+-{
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;fetchPage: attempting to save &quot; &lt;&lt; url &lt;&lt; &quot; to &quot; &lt;&lt; file &lt;&lt; endl;
+-#endif
+-
+-	// Any type of downloader will do...
+-	Url thisUrl(url);
+-	DownloaderInterface *myDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol(), &quot;&quot;);
+-	if (myDownloader == NULL)
+-	{
+-		cerr &lt;&lt; &quot;fetchPage: couldn't obtain downloader instance (&quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-		return;
+-	}
+-
+-	DocumentInfo docInfo(&quot;Page&quot;, url, &quot;&quot;, &quot;&quot;);
+-	Document *urlDoc = myDownloader-&gt;retrieveUrl(docInfo);
+-	if (urlDoc != NULL)
+-	{
+-		unsigned int urlContentLen;
+-		ofstream outputFile;
+-		outputFile.open(file.c_str(), ofstream::out | ofstream::trunc);
+-		outputFile &lt;&lt; urlDoc-&gt;getData(urlContentLen);
+-		outputFile.close();
+-
+-		delete urlDoc;
+-	}
+-	else
+-	{
+-		cerr &lt;&lt; &quot;fetchPage: couldn't get &quot; &lt;&lt; url &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-	}
+-
+-	delete myDownloader;
+-}
+-
+ int main(int argc, char **argv)
+ {
+ 	string type, option;
+-	bool bDownloadResults = false;
+ 
+ 	if (argc &lt; 5)
+ 	{
+-		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; &lt;search engine name&gt; &lt;option&gt; &lt;search string&gt; &lt;max results&gt; [DOWNLOAD]&quot; &lt;&lt; endl;
+-		return EXIT_FAILURE;
+-	}
+-	if (argc &gt; 5)
+-	{
+-		string flag = argv[5];
+-		if (flag == &quot;DOWNLOAD&quot;)
++		set&lt;string&gt; engines;
++
++		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; &lt;search engine type&gt; &lt;name&gt;|&lt;key&gt; &lt;query string&gt; &lt;max results count&gt;&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Example: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; sherlock /usr/share/pinot/engines/Bozo.src \&quot;clowns\&quot; 10&quot; &lt;&lt; endl;
++
++		SearchEngineFactory::getSupportedEngines(engines);
++		cerr &lt;&lt; &quot;Supported search engine types:&quot;;
++		for (set&lt;string&gt;::iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 		{
+-			bDownloadResults = true;
++			cerr &lt;&lt; &quot; &quot; &lt;&lt; *engineIter;
+ 		}
++		cerr &lt;&lt; endl;
++
++		return EXIT_FAILURE;
+ 	}
+ 
+ 	// Which SearchEngine ?
+@@ -154,28 +90,6 @@
+ 				cout &lt;&lt; count &lt;&lt; &quot; Title    : &quot; &lt;&lt; HtmlTokenizer::stripTags((*resultIter).getTitle()) &lt;&lt; endl;
+ 				cout &lt;&lt; count &lt;&lt; &quot; Extract  : &quot; &lt;&lt; HtmlTokenizer::stripTags((*resultIter).getExtract()) &lt;&lt; endl;
+ 				cout &lt;&lt; count &lt;&lt; &quot; Score    : &quot; &lt;&lt; (*resultIter).getScore() &lt;&lt; endl;
+-
+-				if (bDownloadResults == true)
+-				{
+-					// Set the name of the file to which this page will be saved
+-					char num[16];
+-					sprintf(num, &quot;%d&quot;, count);
+-					string url = (*resultIter).getLocation();
+-					string file = num;
+-					file += &quot;_&quot;;
+-					file += thisUrl.getHost();
+-					file += &quot;.html&quot;;
+-
+-					if (type == &quot;googleapi&quot;)
+-					{
+-						// Fetch the page from the Google cache
+-						fetchCachedPage(url, file, option);
+-					}
+-					else
+-					{
+-						fetchPage(url, file);
+-					}
+-				}
+ 				count++;
+ 
+ 				// Next
+
+Modified: trunk/pinot.spec
+===================================================================
+--- trunk/pinot.spec	2006-02-07 12:18:54 UTC (rev 99)
++++ trunk/pinot.spec	2006-02-07 12:21:43 UTC (rev 100)
+@@ -77,6 +77,7 @@
+ %defattr(-, root, root, -)
+ %doc ChangeLog COPYING README TODO
+ %{_bindir}/pinot
++%{_bindir}/pinot_search
+ %{_datadir}/pinot/index.html
+ %{_datadir}/pinot/xapian-powered.png
+ %{_datadir}/pinot/metase-gtk2.glade
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000098.html">[Pinot-svn] r99 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000100.html">[Pinot-svn] r101 - in trunk: . UI/GTK2/src UI/RenderHTML
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#99">[ date ]</a>
+              <a href="thread.html#99">[ thread ]</a>
+              <a href="subject.html#99">[ subject ]</a>
+              <a href="author.html#99">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

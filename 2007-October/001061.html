@@ -1,0 +1,458 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1067 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1067%20-%20trunk/Index&In-Reply-To=%3C200710231442.l9NEgWTs014633%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001060.html">
+   <LINK REL="Next"  HREF="001062.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1067 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1067%20-%20trunk/Index&In-Reply-To=%3C200710231442.l9NEgWTs014633%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1067 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 23 16:42:32 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001060.html">[Pinot-svn] r1066 - in trunk: Index Search
+</A></li>
+        <LI>Next message: <A HREF="001062.html">[Pinot-svn] r1068 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1061">[ date ]</a>
+              <a href="thread.html#1061">[ thread ]</a>
+              <a href="subject.html#1061">[ subject ]</a>
+              <a href="author.html#1061">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-23 16:42:32 +0200 (Tue, 23 Oct 2007)
+New Revision: 1067
+
+Modified:
+   trunk/Index/pinot-index.cpp
+   trunk/Index/pinot-label.cpp
+Log:
+Process all parameters instead of stopping after the first one...
+Don't display internal labels.
+
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2007-10-23 14:39:08 UTC (rev 1066)
++++ trunk/Index/pinot-index.cpp	2007-10-23 14:42:32 UTC (rev 1067)
+@@ -51,7 +51,7 @@
+ {
+ 	// Help
+ 	cout &lt;&lt; &quot;pinot-index - Index documents from the command-line\n\n&quot;
+-		&lt;&lt; &quot;Usage: pinot-index [OPTIONS] URL\n\n&quot;
++		&lt;&lt; &quot;Usage: pinot-index [OPTIONS] URLS\n\n&quot;
+ 		&lt;&lt; &quot;Options:\n&quot;
+ 		&lt;&lt; &quot;  -c, --check               check whether the given URL is in the index\n&quot;
+ 		&lt;&lt; &quot;  -d, --db                  path to index to use (mandatory)\n&quot;
+@@ -143,7 +143,7 @@
+ 	}
+ 
+ 	if ((argc &lt; 2) ||
+-		(argc - optind != 1))
++		(argc - optind == 0))
+ 	{
+ 		cerr &lt;&lt; &quot;Not enough parameters&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+@@ -191,112 +191,116 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	string urlParam(argv[optind]);
++	while (optind &lt; argc)
++	{
++		string urlParam(argv[optind]);
+ 
+-	if (checkDocument == true)
+-	{
+-		if (pIndex-&gt;isGood() == true)
++		if (checkDocument == true)
+ 		{
+-			docId = pIndex-&gt;hasDocument(urlParam);
+-			if (docId &gt; 0)
++			if (pIndex-&gt;isGood() == true)
+ 			{
+-				cout &lt;&lt; urlParam &lt;&lt; &quot;: document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+-				success = true;
++				docId = pIndex-&gt;hasDocument(urlParam);
++				if (docId &gt; 0)
++				{
++					cout &lt;&lt; urlParam &lt;&lt; &quot;: document ID &quot; &lt;&lt; docId &lt;&lt; endl;
++					success = true;
++				}
+ 			}
+ 		}
+-	}
+-	if (indexDocument == true)
+-	{
+-		Url thisUrl(urlParam);
+-
+-		// Which Downloader ?
+-		DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+-		if (pDownloader == NULL)
++		if (indexDocument == true)
+ 		{
+-			cerr &lt;&lt; &quot;Couldn't obtain downloader for protocol &quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; endl;
++			Url thisUrl(urlParam);
+ 
+-			delete pIndex;
+-			XapianDatabaseFactory::closeAll();
+-			Dijon::FilterFactory::unloadFilters();
+-			Dijon::HtmlFilter::shutdown();
+-			DownloaderInterface::shutdown();
+-			MIMEScanner::shutdown();
++			// Which Downloader ?
++			DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
++			if (pDownloader == NULL)
++			{
++				cerr &lt;&lt; &quot;Couldn't obtain downloader for protocol &quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; endl;
+ 
+-			return EXIT_FAILURE;
+-		}
++				success = false;
++				continue;
++			}
+ 
+-		// Set up the proxy
+-		if ((proxyAddress.empty() == false) &amp;&amp;
+-			(proxyPort.empty() == false))
+-		{
+-			pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, proxyAddress);
+-			pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
+-			pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
+-		}
++			// Set up the proxy
++			if ((proxyAddress.empty() == false) &amp;&amp;
++				(proxyPort.empty() == false))
++			{
++				pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, proxyAddress);
++				pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
++				pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
++			}
+ 
+-		DocumentInfo docInfo(&quot;&quot;, urlParam, MIMEScanner::scanUrl(thisUrl), &quot;&quot;);
+-		Document *pDoc = pDownloader-&gt;retrieveUrl(docInfo);
+-		if (pDoc == NULL)
+-		{
+-			cerr &lt;&lt; &quot;Download operation failed !&quot; &lt;&lt; endl;
+-		}
+-		else
+-		{
+-			FilterWrapper wrapFilter(pIndex);
+-			set&lt;string&gt; labels;
+-
+-			// Update an existing document or add to the index ?
+-			docId = pIndex-&gt;hasDocument(urlParam);
+-			if (docId &gt; 0)
++			DocumentInfo docInfo(&quot;&quot;, urlParam, MIMEScanner::scanUrl(thisUrl), &quot;&quot;);
++			Document *pDoc = pDownloader-&gt;retrieveUrl(docInfo);
++			if (pDoc == NULL)
+ 			{
+-				// Update the document
+-				if (wrapFilter.updateDocument(*pDoc, docId) == true)
+-				{
+-					success = true;
+-				}
++				cerr &lt;&lt; &quot;Couldn't download &quot; &lt;&lt; urlParam &lt;&lt; endl;
+ 			}
+ 			else
+ 			{
+-				// Index the document
+-				success = wrapFilter.indexDocument(*pDoc, labels, docId);
+-			}
++				FilterWrapper wrapFilter(pIndex);
++				set&lt;string&gt; labels;
+ 
+-			if (success == true)
+-			{
+-				// Flush the index
+-				pIndex-&gt;flush();
+-			}
++				// Update an existing document or add to the index ?
++				docId = pIndex-&gt;hasDocument(urlParam);
++				if (docId &gt; 0)
++				{
++					// Update the document
++					if (wrapFilter.updateDocument(*pDoc, docId) == true)
++					{
++						success = true;
++					}
++				}
++				else
++				{
++					// Index the document
++					success = wrapFilter.indexDocument(*pDoc, labels, docId);
++				}
+ 
+-			delete pDoc;
+-		}
++				if (success == true)
++				{
++					// Flush the index
++					pIndex-&gt;flush();
++				}
+ 
+-		delete pDownloader;
+-	}
+-	if ((showInfo == true) &amp;&amp;
+-		(docId &gt; 0))
+-	{
+-		DocumentInfo docInfo;
+-		set&lt;string&gt; labels;
++				delete pDoc;
++			}
+ 
+-		if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+-		{
+-			cout &lt;&lt; &quot;Title: &quot; &lt;&lt; docInfo.getTitle() &lt;&lt; endl;
+-			cout &lt;&lt; &quot;Location: &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; endl;
+-			cout &lt;&lt; &quot;Type: &quot; &lt;&lt; docInfo.getType() &lt;&lt; endl;
+-			cout &lt;&lt; &quot;Language: &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
+-			cout &lt;&lt; &quot;Timestamp: &quot; &lt;&lt; docInfo.getTimestamp() &lt;&lt; endl;
+-			cout &lt;&lt; &quot;Size: &quot; &lt;&lt; docInfo.getSize() &lt;&lt; endl;
++			delete pDownloader;
+ 		}
+-		if (pIndex-&gt;getDocumentLabels(docId, labels) == true)
++		if ((showInfo == true) &amp;&amp;
++			(docId &gt; 0))
+ 		{
+-			cout &lt;&lt; &quot;Labels: &quot;;
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-				labelIter != labels.end(); ++labelIter)
++			DocumentInfo docInfo;
++			set&lt;string&gt; labels;
++
++			if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+ 			{
+-				cout &lt;&lt; &quot;[&quot; &lt;&lt; Url::escapeUrl(*labelIter) &lt;&lt; &quot;]&quot;;
++				cout &lt;&lt; &quot;Location : '&quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot;'&quot; &lt;&lt; endl;
++				cout &lt;&lt; &quot;Title    : &quot; &lt;&lt; docInfo.getTitle() &lt;&lt; endl;
++				cout &lt;&lt; &quot;Type     : &quot; &lt;&lt; docInfo.getType() &lt;&lt; endl;
++				cout &lt;&lt; &quot;Language : &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
++				cout &lt;&lt; &quot;Date     : &quot; &lt;&lt; docInfo.getTimestamp() &lt;&lt; endl;
++				cout &lt;&lt; &quot;Size     : &quot; &lt;&lt; docInfo.getSize() &lt;&lt; endl;
+ 			}
+-			cout &lt;&lt; endl;
++			if (pIndex-&gt;getDocumentLabels(docId, labels) == true)
++			{
++				cout &lt;&lt; &quot;Labels   : &quot;;
++				for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++					labelIter != labels.end(); ++labelIter)
++				{
++					if (labelIter-&gt;substr(0, 2) == &quot;X-&quot;)
++					{
++						continue;
++					}
++					cout &lt;&lt; &quot;[&quot; &lt;&lt; Url::escapeUrl(*labelIter) &lt;&lt; &quot;]&quot;;
++				}
++				cout &lt;&lt; endl;
++			}
+ 		}
++
++		// Next
++		++optind;
+ 	}
+ 	delete pIndex;
+ 
+
+Modified: trunk/Index/pinot-label.cpp
+===================================================================
+--- trunk/Index/pinot-label.cpp	2007-10-23 14:39:08 UTC (rev 1066)
++++ trunk/Index/pinot-label.cpp	2007-10-23 14:42:32 UTC (rev 1067)
+@@ -50,12 +50,21 @@
+ };
+ 
+ 
+-static void printLabels(const set&lt;string&gt; &amp;labels)
++static void printLabels(const set&lt;string&gt; &amp;labels, const string &amp;fileName)
+ {
++	if (fileName.empty() == false)
++	{
++		cout &lt;&lt; fileName &lt;&lt; endl;
++	}
+ 	cout &lt;&lt; &quot;Labels: &quot;;
++
+ 	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+ 		labelIter != labels.end(); ++labelIter)
+ 	{
++		if (labelIter-&gt;substr(0, 2) == &quot;X-&quot;)
++		{
++			continue;
++		}
+ 		cout &lt;&lt; &quot;[&quot; &lt;&lt; Url::escapeUrl(*labelIter) &lt;&lt; &quot;]&quot;;
+ 	}
+ 	cout &lt;&lt; endl;
+@@ -86,7 +95,7 @@
+ {
+ 	// Help
+ 	cout &lt;&lt; &quot;pinot-label - Label files from the command-line\n\n&quot;
+-		&lt;&lt; &quot;Usage: pinot-label [OPTIONS] [FILE]\n\n&quot;
++		&lt;&lt; &quot;Usage: pinot-label [OPTIONS] [FILES]\n\n&quot;
+ 		&lt;&lt; &quot;Options:\n&quot;
+ 		&lt;&lt; &quot;  -g, --get                 get the labels list for the given file\n&quot;
+ 		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
+@@ -152,6 +161,13 @@
+ 		return EXIT_SUCCESS;
+ 	}
+ 
++	if ((argc &lt; 2) ||
++		(argc - optind == 0))
++	{
++		cerr &lt;&lt; &quot;Not enough parameters&quot; &lt;&lt; endl;
++		return EXIT_FAILURE;
++	}
++
+ 	if ((setDocumentLabels == true) &amp;&amp;
+ 		(labelsString.empty() == true))
+ 	{
+@@ -176,68 +192,72 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	if ((getDocumentLabels == true) ||
+-		(setDocumentLabels == true))
+-	{
+-		string fileParam(argv[optind]);
+-
+-		docId = index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + fileParam);
+-		if (docId == 0)
+-		{
+-			cerr &lt;&lt; &quot;File is not indexed&quot; &lt;&lt; endl;
+-
+-			XapianDatabaseFactory::closeAll();
+-			MIMEScanner::shutdown();
+-
+-			return EXIT_FAILURE;
+-		}
+-	}
+-
+ 	if (getLabels == true)
+ 	{
+ 		if (index.getLabels(labels, true) == true)
+ 		{
+-			printLabels(labels);
++			printLabels(labels, &quot;&quot;);
+ 
+ 			success = true;
+ 		}
+ 	}
+ 
+-	if (getDocumentLabels == true)
++	while (optind &lt; argc)
+ 	{
+-		labels.clear();
++		string fileParam(argv[optind]);
+ 
+-		if (index.getDocumentLabels(docId, labels, true) == true)
++		if ((getDocumentLabels == true) ||
++			(setDocumentLabels == true))
+ 		{
+-			printLabels(labels);
++			docId = index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + fileParam);
++			if (docId == 0)
++			{
++				cerr &lt;&lt; fileParam &lt;&lt; &quot; is not indexed&quot; &lt;&lt; endl;
+ 
+-			success = true;
++				success = false;
++				continue;
++			}
+ 		}
+-	}
+ 
+-	if (setDocumentLabels == true)
+-	{
+-		string::size_type endPos = 0;
+-		string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
++		if (getDocumentLabels == true)
++		{
++			labels.clear();
+ 
+-		labels.clear();
++			if (index.getDocumentLabels(docId, labels, true) == true)
++			{
++				printLabels(labels, fileParam);
+ 
+-		// Parse labels
+-		while (label.empty() == false)
++				success = true;
++			}
++		}
++
++		if (setDocumentLabels == true)
+ 		{
+-			labels.insert(Url::unescapeUrl(label));
++			string::size_type endPos = 0;
++			string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
+ 
+-			if (endPos == string::npos)
++			labels.clear();
++
++			// Parse labels
++			while (label.empty() == false)
+ 			{
+-				break;
++				labels.insert(Url::unescapeUrl(label));
++
++				if (endPos == string::npos)
++				{
++					break;
++				}
++				label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
+ 			}
+-			label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
+-		}
+ 
+ #ifdef DEBUG
+-		printLabels(labels);
++			printLabels(labels, fileParam);
+ #endif
+-		success = index.setDocumentLabels(docId, labels);
++			success = index.setDocumentLabels(docId, labels);
++		}
++
++		// Next
++		++optind;
+ 	}
+ 
+ 	XapianDatabaseFactory::closeAll();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001060.html">[Pinot-svn] r1066 - in trunk: Index Search
+</A></li>
+	<LI>Next message: <A HREF="001062.html">[Pinot-svn] r1068 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1061">[ date ]</a>
+              <a href="thread.html#1061">[ thread ]</a>
+              <a href="subject.html#1061">[ subject ]</a>
+              <a href="author.html#1061">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,560 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r985 - in trunk: Search Search/Google Tokenize	UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r985%20-%20in%20trunk%3A%20Search%20Search/Google%20Tokenize%0A%09UI/GTK2/src&In-Reply-To=%3C200709231119.l8NBJfgj027450%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000978.html">
+   <LINK REL="Next"  HREF="000980.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r985 - in trunk: Search Search/Google Tokenize	UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r985%20-%20in%20trunk%3A%20Search%20Search/Google%20Tokenize%0A%09UI/GTK2/src&In-Reply-To=%3C200709231119.l8NBJfgj027450%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r985 - in trunk: Search Search/Google Tokenize	UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Sep 23 13:19:41 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000978.html">[Pinot-svn] r984 - in trunk: Index Search UI/GTK2 UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000980.html">[Pinot-svn] r986 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#979">[ date ]</a>
+              <a href="thread.html#979">[ thread ]</a>
+              <a href="subject.html#979">[ subject ]</a>
+              <a href="author.html#979">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-23 13:19:37 +0200 (Sun, 23 Sep 2007)
+New Revision: 985
+
+Modified:
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/WebEngine.cpp
+   trunk/Search/WebEngine.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Tokenize/Tokenizer.cpp
+   trunk/Tokenize/Tokenizer.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Don't bother extracting host and file filters from queries and applying them to
+Web results. A better way to do it would be to pass them directly to the Web
+engine, as most of them supports those filters natively. Hopefully, this will
+be implemented soon-ish.
+
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -97,8 +97,6 @@
+ 		return false;
+ 	}
+ 
+-	setHostNameFilter(queryProps.getHostFilter());
+-	setFileNameFilter(queryProps.getFileFilter());
+ 	setQuery(queryProps);
+ 
+ 	if (m_key.empty() == true)
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/PluginWebEngine.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -256,8 +256,6 @@
+ 		formattedQuery += m_properties.m_parametersRemainder;
+ 	}
+ 
+-	setHostNameFilter(queryProps.getHostFilter());
+-	setFileNameFilter(queryProps.getFileFilter());
+ 	setQuery(queryProps);
+ 
+ #ifdef DEBUG
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/QueryProperties.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -23,7 +23,6 @@
+ #include &lt;utility&gt;
+ 
+ #include &quot;Tokenizer.h&quot;
+-#include &quot;XapianEngine.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ QueryProperties::QueryProperties() :
+@@ -49,9 +48,6 @@
+ 	m_type(other.m_type),
+ 	m_freeQuery(other.m_freeQuery),
+ 	m_freeQueryWithoutFilters(other.m_freeQueryWithoutFilters),
+-	m_language(other.m_language),
+-	m_hostFilter(other.m_hostFilter),
+-	m_fileFilter(other.m_fileFilter),
+ 	m_resultsCount(other.m_resultsCount),
+ 	m_indexResults(other.m_indexResults),
+ 	m_labelName(other.m_labelName)
+@@ -70,9 +66,6 @@
+ 		m_type = other.m_type;
+ 		m_freeQuery = other.m_freeQuery;
+ 		m_freeQueryWithoutFilters = other.m_freeQueryWithoutFilters;
+-		m_language = other.m_language;
+-		m_hostFilter = other.m_hostFilter;
+-		m_fileFilter = other.m_fileFilter;
+ 		m_resultsCount = other.m_resultsCount;
+ 		m_indexResults = other.m_indexResults;
+ 		m_labelName = other.m_labelName;
+@@ -104,9 +97,6 @@
+ void QueryProperties::removeFilters(void)
+ {
+ 	m_freeQueryWithoutFilters.clear();
+-	m_language.clear();
+-	m_hostFilter.clear();
+-	m_fileFilter.clear();
+ 
+ 	if (m_freeQuery.empty() == true)
+ 	{
+@@ -116,50 +106,29 @@
+ 	if (m_type != XAPIAN_QP)
+ 	{
+ 		m_freeQueryWithoutFilters = m_freeQuery.substr(0, min(20, (int)m_freeQuery.length()));
++		return;
+ 	}
+ 
+-	vector&lt;string&gt; terms;
+-	if (XapianEngine::validateQuery(*this, true, terms) == true)
++	Document doc;
++
++	doc.setData(m_freeQuery.c_str(), m_freeQuery.length());
++	Tokenizer tokens(&amp;doc);
++
++	string token;
++	while (tokens.nextToken(token) == true)
+ 	{
+-		for (vector&lt;string&gt;::const_iterator termIter = terms.begin();
+-			termIter != terms.end(); ++termIter)
++		if ((token.find(':') != string::npos) ||
++			(token.find(&quot;..&quot;) != string::npos))
+ 		{
+-			string term(*termIter);
++			// It's a filter or a range
++			continue;
++		}
+ 
+-			if (term.empty() == true)
+-			{
+-				continue;
+-			}
+-
+-			// Is this a prefixed term ?
+-			// The query shouldn't have the same filter twice
+-			if (isupper((int)((*termIter)[0])) == 0)
+-			{
+-				// FIXME: operators have been lost !
+-				if (m_freeQueryWithoutFilters.empty() == false)
+-				{
+-					m_freeQueryWithoutFilters += &quot; &quot;;
+-				}
+-				m_freeQueryWithoutFilters += term;
+-			}
+-			else
+-			{
+-				switch (term[0])
+-				{
+-					case 'L':
+-						m_language = term.substr(1);
+-						break;
+-					case 'H':
+-						m_hostFilter = term.substr(1);
+-						break;
+-					case 'P':
+-						m_fileFilter = term.substr(1);
+-						break;
+-					default:
+-						break;
+-				}
+-			}
++		if (m_freeQueryWithoutFilters.empty() == false)
++		{
++			m_freeQueryWithoutFilters += &quot; &quot;;
+ 		}
++		m_freeQueryWithoutFilters += token;
+ 	}
+ }
+ 
+@@ -209,21 +178,37 @@
+ }
+ 
+ /// Gets the query's language.
+-string QueryProperties::getLanguage(void) const
++string QueryProperties::getFilter(const string &amp;filterStr)
+ {
+-	return m_language;
+-}
++	if ((m_freeQuery.empty() == true) ||
++		(filterStr.empty() == true))
++	{
++		return &quot;&quot;;
++	}
+ 
+-/// Gets the query's host filter.
+-string QueryProperties::getHostFilter(void) const
+-{
+-	return m_hostFilter;
+-}
++	Document doc;
+ 
+-/// Gets the query's file filter.
+-string QueryProperties::getFileFilter(void) const
+-{
+-	return m_fileFilter;
++	doc.setData(m_freeQuery.c_str(), m_freeQuery.length());
++	Tokenizer tokens(&amp;doc, true);
++
++	string token;
++	while (tokens.nextToken(token) == true)
++	{
++		string::size_type langPos = token.find(filterStr + &quot;:&quot;);
++
++		// Is it the language filter ?
++		if (langPos != string::npos)
++		{
++			string filterValue(token.substr(langPos + filterStr.length() + 1));
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;QueryProperties::getFilter: &quot; &lt;&lt; filterStr &lt;&lt; &quot;=&quot; &lt;&lt; filterValue &lt;&lt; endl;
++#endif
++			return filterValue;
++		}
++	}
++
++	return &quot;&quot;;
+ }
+ 
+ /// Sets the maximum number of results.
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/QueryProperties.h	2007-09-23 11:19:37 UTC (rev 985)
+@@ -55,15 +55,9 @@
+ 		/// Gets the query string.
+ 		string getFreeQuery(bool withoutFilters = false) const;
+ 
+-		/// Gets the query's language.
+-		string getLanguage(void) const;
++		/// Gets the value of a specific filter.
++		string getFilter(const string &amp;filterStr);
+ 
+-		/// Gets the query's host filter.
+-		string getHostFilter(void) const;
+-
+-		/// Gets the query's file filter.
+-		string getFileFilter(void) const;
+-
+ 		/// Sets the maximum number of results.
+ 		void setMaximumResultsCount(unsigned int count);
+ 		/// Gets the maximum number of results.
+@@ -90,9 +84,6 @@
+ 		QueryType m_type;
+ 		string m_freeQuery;
+ 		string m_freeQueryWithoutFilters;
+-		string m_language;
+-		string m_hostFilter;
+-		string m_fileFilter;
+ 		unsigned int m_resultsCount;
+ 		bool m_indexResults;
+ 		string m_labelName;
+
+Modified: trunk/Search/WebEngine.cpp
+===================================================================
+--- trunk/Search/WebEngine.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/WebEngine.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -95,16 +95,6 @@
+ 	return pDoc;
+ }
+ 
+-void WebEngine::setHostNameFilter(const string &amp;filter)
+-{
+-	m_hostFilter = filter;
+-}
+-
+-void WebEngine::setFileNameFilter(const string &amp;filter)
+-{
+-	m_fileFilter = filter;
+-}
+-
+ void WebEngine::setQuery(const QueryProperties &amp;queryProps)
+ {
+ 	queryProps.getTerms(m_queryTerms);
+@@ -144,24 +134,6 @@
+ 
+ 	Url resultUrlObj(resultUrl);
+ 
+-	if ((m_hostFilter.empty() == false) &amp;&amp;
+-		(resultUrlObj.getHost() != m_hostFilter))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;WebEngine::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	if ((m_fileFilter.empty() == false) &amp;&amp;
+-		(resultUrlObj.getFile() != m_fileFilter))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;WebEngine::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+ 	// Is the result's host name the same as the search engine's ?
+ 	// FIXME: not all TLDs have leafs at level 2
+ 	if (queryHost == Url::reduceHost(resultUrlObj.getHost(), 2))
+
+Modified: trunk/Search/WebEngine.h
+===================================================================
+--- trunk/Search/WebEngine.h	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/WebEngine.h	2007-09-23 11:19:37 UTC (rev 985)
+@@ -38,8 +38,6 @@
+ 
+ 	protected:
+ 		DownloaderInterface *m_pDownloader;
+-		std::string m_hostFilter;
+-		std::string m_fileFilter;
+ 		std::set&lt;std::string&gt; m_queryTerms;
+ 
+ 		Document *downloadPage(const DocumentInfo &amp;docInfo);
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Search/XapianEngine.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -336,43 +336,6 @@
+ 	return parsedQuery;
+ }
+ 
+-/// Validates a query and extracts its terms.
+-bool XapianEngine::validateQuery(QueryProperties&amp; queryProps, bool includePrefixed,
+-	vector&lt;string&gt; &amp;terms)
+-{
+-	bool goodQuery = false;
+-
+-	try
+-	{
+-		string correctedSpelling;
+-		// Do minimal parsing
+-		Xapian::Query fullQuery = parseQuery(NULL, queryProps, &quot;&quot;,
+-			DEFAULT_OP_AND, correctedSpelling, true);
+-
+-		if (fullQuery.empty() == false)
+-		{
+-			for (Xapian::TermIterator termIter = fullQuery.get_terms_begin();
+-				termIter != fullQuery.get_terms_end(); ++termIter)
+-			{
+-				// Skip prefixed terms unless instructed otherwise
+-				if ((includePrefixed == true) ||
+-					(isupper((int)((*termIter)[0])) == 0))
+-				{
+-					terms.push_back(*termIter);
+-				}
+-			}
+-
+-			goodQuery = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;XapianEngine::validateQuery: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-
+-	return goodQuery;
+-}
+-
+ bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+ 	unsigned int startDoc, unsigned int maxResultsCount)
+ {
+@@ -535,7 +498,7 @@
+ 	Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 	try
+ 	{
+-		string stemLanguage(queryProps.getLanguage());
++		string stemLanguage(queryProps.getFilter(&quot;lang&quot;));
+ 		unsigned int searchStep = 1;
+ 
+ 		// Searches are run in this order :
+
+Modified: trunk/Tokenize/Tokenizer.cpp
+===================================================================
+--- trunk/Tokenize/Tokenizer.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Tokenize/Tokenizer.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -32,7 +32,10 @@
+ using std::endl;
+ using std::string;
+ 
+-Tokenizer::Tokenizer(const Document *pDocument)
++Tokenizer::Tokenizer(const Document *pDocument, bool splitOnSpaces) :
++	m_pDocument(NULL),
++	m_splitOnSpaces(splitOnSpaces),
++	m_currentPos(0)
+ {
+ 	setDocument(pDocument);
+ 	rewind();
+@@ -92,7 +95,8 @@
+ #endif
+ 	while (pos &lt; dataLength)
+ 	{
+-		if (isalnum(pData[pos]) != 0)
++		if (((m_splitOnSpaces == false) &amp;&amp; (isalnum(pData[pos]) != 0)) ||
++			((m_splitOnSpaces == true) &amp;&amp; (isspace(pData[pos]) == 0)))
+ 		{
+ 			if (bStarted == false)
+ 			{
+
+Modified: trunk/Tokenize/Tokenizer.h
+===================================================================
+--- trunk/Tokenize/Tokenizer.h	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/Tokenize/Tokenizer.h	2007-09-23 11:19:37 UTC (rev 985)
+@@ -29,7 +29,8 @@
+ class Tokenizer
+ {
+ 	public:
+-		Tokenizer(const Document *pDocument);
++		Tokenizer(const Document *pDocument,
++			bool splitOnSpaces = false);
+ 		virtual ~Tokenizer();
+ 
+ 		/// Returns a pointer to the document being tokenized.
+@@ -43,6 +44,7 @@
+ 
+ 	protected:
+ 		const Document *m_pDocument;
++		bool m_splitOnSpaces;
+ 		unsigned int m_currentPos;
+ 
+ 		void setDocument(const Document *pDocument);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-23 10:30:25 UTC (rev 984)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-23 11:19:37 UTC (rev 985)
+@@ -840,18 +840,18 @@
+ 	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+ 		resultIter != resultsList.end(); ++resultIter)
+ 	{
+-		DocumentInfo current(*resultIter);
++		DocumentInfo currentDoc(*resultIter);
+ 		string title(_(&quot;No title&quot;));
+-		string location(current.getLocation());
+-		string language(current.getLanguage());
++		string location(currentDoc.getLocation());
++		string language(currentDoc.getLanguage());
+ 		unsigned int docId = 0;
+ 
+ 		// The title may contain formatting
+-		if (current.getTitle().empty() == false)
++		if (currentDoc.getTitle().empty() == false)
+ 		{
+-			title = FilterUtils::stripMarkup(current.getTitle());
++			title = FilterUtils::stripMarkup(currentDoc.getTitle());
+ 		}
+-		current.setTitle(title);
++		currentDoc.setTitle(title);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;QueryingThread::processResults: title is &quot; &lt;&lt; title &lt;&lt; endl;
+ #endif
+@@ -859,16 +859,16 @@
+ 		// Use the query's language if the result's is unknown
+ 		if (language.empty() == true)
+ 		{
+-			language = m_queryProps.getLanguage();
++			language = m_queryProps.getFilter(&quot;lang&quot;);
+ 		}
+-		current.setLanguage(language);
++		currentDoc.setLanguage(language);
+ 
+ 		if (isIndexQuery == true)
+ 		{
+ 			unsigned int tmpId = 0;
+ 
+ 			// The index engine should have set this
+-			docId = current.getIsIndexed(tmpId);
++			docId = currentDoc.getIsIndexed(tmpId);
+ 		}
+ 
+ 		// Is this in one of the indexes ?
+@@ -894,7 +894,7 @@
+ 
+ 		if (docId &gt; 0)
+ 		{
+-			current.setIsIndexed(indexId, docId);
++			currentDoc.setIsIndexed(indexId, docId);
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;QueryingThread::processResults: found in index &quot; &lt;&lt; indexId &lt;&lt; endl;
+ #endif
+@@ -903,7 +903,7 @@
+ 		else cout &lt;&lt; &quot;QueryingThread::processResults: not found in any index&quot; &lt;&lt; endl;
+ #endif
+ 
+-		m_documentsList.push_back(current);
++		m_documentsList.push_back(currentDoc);
+ 	}
+ 
+ 	if (pDocsIndex != NULL)
+@@ -925,13 +925,13 @@
+ 	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+ 		resultIter != resultsList.end(); ++resultIter)
+ 	{
+-		DocumentInfo current(*resultIter);
++		DocumentInfo currentDoc(*resultIter);
+ 
+ 		// The engine has no notion of index IDs
+-		unsigned int docId = current.getIsIndexed(zeroId);
+-		current.setIsIndexed(indexId, docId);
++		unsigned int docId = currentDoc.getIsIndexed(zeroId);
++		currentDoc.setIsIndexed(indexId, docId);
+ 
+-		m_documentsList.push_back(current);
++		m_documentsList.push_back(currentDoc);
+ 	}
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000978.html">[Pinot-svn] r984 - in trunk: Index Search UI/GTK2 UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000980.html">[Pinot-svn] r986 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#979">[ date ]</a>
+              <a href="thread.html#979">[ thread ]</a>
+              <a href="subject.html#979">[ subject ]</a>
+              <a href="author.html#979">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,1258 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r276 - trunk/Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r276%20-%20trunk/Tokenize&In-Reply-To=%3C200605301238.k4UCcjNb029162%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000269.html">
+   <LINK REL="Next"  HREF="000271.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r276 - trunk/Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r276%20-%20trunk/Tokenize&In-Reply-To=%3C200605301238.k4UCcjNb029162%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r276 - trunk/Tokenize">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue May 30 14:38:45 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000269.html">[Pinot-svn] r275 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000271.html">[Pinot-svn] r277 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#270">[ date ]</a>
+              <a href="thread.html#270">[ thread ]</a>
+              <a href="subject.html#270">[ subject ]</a>
+              <a href="author.html#270">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-30 14:38:39 +0200 (Tue, 30 May 2006)
+New Revision: 276
+
+Modified:
+   trunk/Tokenize/HtmlTokenizer.cpp
+   trunk/Tokenize/HtmlTokenizer.h
+   trunk/Tokenize/Makefile.am
+   trunk/Tokenize/OpenDocumentTokenizer.cpp
+   trunk/Tokenize/OpenDocumentTokenizer.h
+   trunk/Tokenize/PdfTokenizer.cpp
+   trunk/Tokenize/PdfTokenizer.h
+   trunk/Tokenize/RtfTokenizer.cpp
+   trunk/Tokenize/RtfTokenizer.h
+   trunk/Tokenize/XmlTokenizer.cpp
+   trunk/Tokenize/XmlTokenizer.h
+   trunk/Tokenize/tokenizertest.cpp
+Log:
+Revisited HTML parser. It now uses libxml2's HTMLparser. This is not yet
+wrapped by libxml++ by the way.
+Cleaned up other tokenizers.
+
+
+Modified: trunk/Tokenize/HtmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.cpp	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/HtmlTokenizer.cpp	2006-05-30 12:38:39 UTC (rev 276)
+@@ -17,379 +17,543 @@
+ #include &lt;string.h&gt;
+ #include &lt;strings.h&gt;
+ #include &lt;sys/types.h&gt;
+-#include &lt;regex.h&gt;
+-#include &lt;stack&gt;
++#include &lt;libxml/xmlerror.h&gt;
++#include &lt;libxml/HTMLparser.h&gt;
+ #include &lt;iostream&gt;
+-#include &lt;algorithm&gt;
+ 
+ #include &quot;StringManip.h&quot;
++#include &quot;XmlTokenizer.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+ 
+-//#define DEBUG_TOKENIZER
+-
+ using std::cout;
++using std::cerr;
+ using std::endl;
+ using std::string;
+ using std::map;
+ using std::set;
+-using std::stack;
+ 
+-HtmlTokenizer::HtmlTokenizer(const Document *pDocument, unsigned int linksStartAtPos) :
+-	Tokenizer(NULL),
+-	m_pHtmlDocument(NULL),
+-	m_linkPos(linksStartAtPos)
++Link::Link() :
++	m_index(0),
++	m_startPos(0),
++	m_endPos(0)
+ {
+-	initialize(pDocument);
+ }
+ 
+-HtmlTokenizer::HtmlTokenizer() :
+-	Tokenizer(NULL),
+-	m_pHtmlDocument(NULL),
+-	m_linkPos(0)
++Link::Link(const Link &amp;other) :
++	m_url(other.m_url),
++	m_name(other.m_name),
++	m_index(other.m_index),
++	m_startPos(other.m_startPos),
++	m_endPos(other.m_endPos)
+ {
+ }
+ 
+-HtmlTokenizer::~HtmlTokenizer()
++Link::~Link()
+ {
+-	if (m_pDocument != NULL)
+-	{
+-		// This should have been set by setDocument(),
+-		// called in initialize()
+-		delete m_pDocument;
+-	}
+ }
+ 
+-void HtmlTokenizer::initialize(const Document *pDocument)
++Link&amp; Link::operator=(const Link&amp; other)
+ {
+-	unsigned int length = 0;
++	m_url = other.m_url;
++	m_name = other.m_name;
++	m_index = other.m_index;
++	m_startPos = other.m_startPos;
++	m_endPos = other.m_endPos;
+ 
+-	if (pDocument == NULL)
+-	{
+-		return;
+-	}
++	return *this;
++}
+ 
+-	const char *data = pDocument-&gt;getData(length);
+-	if ((data != NULL) &amp;&amp;
+-		(length &gt; 0))
+-	{
+-		// Remove HTML tags
+-		string strippedData = parseHTML(data);
+-		// Append META keywords, if any were found
+-		strippedData += getMetaTag(&quot;keywords&quot;);
++bool Link::operator==(const Link &amp;other) const
++{
++	return m_url == other.m_url;
++}
+ 
+-		// Pass the result to the parent class
+-		Document *pStrippedDoc = new Document(pDocument-&gt;getTitle(),
+-			pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-			pDocument-&gt;getLanguage());
+-		pStrippedDoc-&gt;setData(strippedData.c_str(), strippedData.length());
+-		setDocument(pStrippedDoc);
++bool Link::operator&lt;(const Link &amp;other) const
++{
++	return m_index &lt; other.m_index;
++}
+ 
+-		m_pHtmlDocument = pDocument;
+-	}
++HtmlTokenizer::ParserState::ParserState() :
++	m_textPos(0),
++	m_inHead(false),
++	m_foundHead(false),
++	m_appendToTitle(false),
++	m_appendToText(false),
++	m_appendToLink(false),
++	m_skip(0)
++{
+ }
+ 
+-/// Parses HTML; the string without tags.
+-string HtmlTokenizer::parseHTML(const string &amp;str, bool stripAllBlocks)
++HtmlTokenizer::ParserState::~ParserState()
+ {
+-	stack&lt;string&gt; tagsStack;
+-	string stripped, link, linkName;
+-	string::size_type startPos = 0, linkOpenPos = 0;
+-	regex_t linksRegex, metaRegex;
+-	bool isHtml = false, skip = false, catText = stripAllBlocks;
+-	bool extractLinks = true, extractMetaTags = true, getLinkName = false;
++}
+ 
+-#ifdef DEBUG_TOKENIZER
+-	cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: start&quot; &lt;&lt; endl;
+-#endif
+-	// Prepare the regexps
+-	if (regcomp(&amp;linksRegex, &quot;a(.*)href=(.*)&quot;, REG_EXTENDED|REG_ICASE) != 0)
++static void startHandler(void *pData, const char *pElementName, const char **pAttributes)
++{
++	if ((pData == NULL) ||
++		(pElementName == NULL) ||
++		(strlen(pElementName) == 0))
+ 	{
+-#ifdef DEBUG_TOKENIZER
+-		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: couldn't compile links regexp&quot; &lt;&lt; endl;
+-#endif
+-		extractLinks = false;
++		return;
+ 	}
+-	if (regcomp(&amp;metaRegex, &quot;meta name=(.*) content=(.*)&quot;, REG_EXTENDED|REG_ICASE) != 0)
++
++	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
++	if (pState == NULL)
+ 	{
+-#ifdef DEBUG_TOKENIZER
+-		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: couldn't compile meta tag regexp&quot; &lt;&lt; endl;
+-#endif
+-		extractMetaTags = false;
++		return;
+ 	}
+ 
+-	// Tag start
+-	string::size_type pos = str.find(&quot;&lt;&quot;);
+-	while (pos != string::npos)
++	// Reset the text hash
++	pState-&gt;m_lastHash.clear();
++
++	// What tag is this ?
++	string tagName(StringManip::toLowerCase(pElementName));
++	if ((pState-&gt;m_foundHead == false) &amp;&amp;
++		(tagName == &quot;head&quot;))
+ 	{
+-		isHtml = true;
++		// Expect to find META tags and a title
++		pState-&gt;m_inHead = true;
++		// One head is enough :-)
++		pState-&gt;m_foundHead = true;
++	}
++	else if ((pState-&gt;m_inHead == true) &amp;&amp;
++		(tagName == &quot;meta&quot;))
++	{
++		string metaName, metaContent;
+ 
+-		if (skip == false)
++		// Get the META tag's name and content
++		for (unsigned int attrNum = 0;
++			(pAttributes[attrNum] != NULL) &amp;&amp; (pAttributes[attrNum + 1]); attrNum += 2)
+ 		{
+-			string text = str.substr(startPos, pos - startPos);
+-			if (catText == true)
++			if (strncasecmp(pAttributes[attrNum], &quot;name&quot;, 4) == 0)
+ 			{
+-				stripped += StringManip::replaceEntities(text);
+-				stripped += &quot; &quot;;
++				metaName = pAttributes[attrNum + 1];
+ 			}
+-
+-			// Is this part of the name of the last link we found ?
+-			if (getLinkName == true)
++			else if (strncasecmp(pAttributes[attrNum], &quot;content&quot;, 7) == 0)
+ 			{
+-				linkName += text;
+-#ifdef DEBUG_TOKENIZER
+-				cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: adding to name &quot; &lt;&lt; text &lt;&lt; endl;
+-#endif
++				metaContent = pAttributes[attrNum + 1];
+ 			}
++		}
+ 
+-			startPos = pos + 1;
+-			// Tag end
+-			if (str[pos] == '&lt;')
+-			{
+-				pos = str.find(&quot;&gt;&quot;, startPos);
+-			}
+-			// Skip stuff in the tag
+-			skip = true;
++		if ((metaName.empty() == false) &amp;&amp;
++			(metaContent.empty() == false))
++		{
++			// Store this META tag
++			pState-&gt;m_metaTags[metaName] = metaContent;
+ 		}
+-		else
++	}
++	else if ((pState-&gt;m_inHead == true) &amp;&amp;
++		(tagName == &quot;title&quot;))
++	{
++		// Extract title
++		pState-&gt;m_appendToTitle = true;
++	}
++	else if (tagName == &quot;body&quot;)
++	{
++		// Index text
++		pState-&gt;m_appendToText = true;
++	}
++	else if (tagName == &quot;a&quot;)
++	{
++		pState-&gt;m_currentLink.m_url.clear();
++		pState-&gt;m_currentLink.m_name.clear();
++
++		// Get the href
++		for (unsigned int attrNum = 0;
++			(pAttributes[attrNum] != NULL) &amp;&amp; (pAttributes[attrNum + 1]); attrNum += 2)
+ 		{
+-			regmatch_t pLinksMatches[3];
+-			regmatch_t pMetaMatches[3];
+-			int nLinksMatches = 3, nMetaMatches = 3;
+-
+-			// Found a tag from startPos to pos
+-			string tag(str.substr(startPos, pos - startPos));
+-			// Push it onto the stack
+-			tagsStack.push(tag);
+-#ifdef DEBUG_TOKENIZER
+-			cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: found &quot; &lt;&lt; tag &lt;&lt; endl;
+-#endif
+-
+-			if ((extractMetaTags == true) &amp;&amp;
+-				(regexec(&amp;metaRegex, tag.c_str(), nMetaMatches, pMetaMatches, 
+-					REG_NOTBOL|REG_NOTEOL) == 0) &amp;&amp;
+-				(pMetaMatches[nMetaMatches - 1].rm_so != -1))
++			if (strncasecmp(pAttributes[attrNum], &quot;href&quot;, 4) == 0)
+ 			{
+-				string tmp, metaName, metaContent;
+-
+-				// META tag name
+-				tmp = tag.substr(pMetaMatches[1].rm_so,
+-					pMetaMatches[1].rm_eo - pMetaMatches[1].rm_so);
+-				// Remove quotes
+-				metaName = StringManip::removeQuotes(tmp);
+-
+-				// META tag content
+-				tmp = tag.substr(pMetaMatches[2].rm_so,
+-					pMetaMatches[2].rm_eo - pMetaMatches[2].rm_so);
+-				// Remove quotes
+-				metaContent = StringManip::removeQuotes(tmp);
+-#ifdef DEBUG_TOKENIZER
+-				cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: found META tag &quot; &lt;&lt; metaName &lt;&lt; &quot;: &quot; &lt;&lt; metaContent &lt;&lt; endl;
+-#endif
+-				m_metaTags[metaName] = metaContent;
++				pState-&gt;m_currentLink.m_url = pAttributes[attrNum + 1];
++				break;
+ 			}
+-			// See if this tag is an anchor
+-			// pLinksMatches[0] will be something like 'a href=&quot;blah&quot;', pLinksMatches[1] will be ' ' and [2] will be '&quot;blah&quot;'
+-			else if ((extractLinks == true) &amp;&amp;
+-				(regexec(&amp;linksRegex, tag.c_str(), nLinksMatches, pLinksMatches, REG_NOTBOL|REG_NOTEOL) == 0) &amp;&amp;
+-				(pLinksMatches[nLinksMatches - 1].rm_so != -1))
+-			{
+-				string quotedLink = tag.substr(pLinksMatches[2].rm_so,
+-					pLinksMatches[2].rm_eo - pLinksMatches[2].rm_so);
++		}
+ 
+-#ifdef DEBUG_TOKENIZER
+-				cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: found link start &quot; &lt;&lt; tag &lt;&lt; endl;
++		if (pState-&gt;m_currentLink.m_url.empty() == false)
++		{
++			// FIXME: get the NodeInfo to find out the position of this link
++			pState-&gt;m_currentLink.m_startPos = pState-&gt;m_textPos;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;HtmlTokenizer::startHandler: found link to &quot; &lt;&lt; pState-&gt;m_currentLink.m_url &lt;&lt; endl;
+ #endif
+-				if (link.empty() == false)
+-				{
+-					// The previous link's anchor's end couldn't be found ?
+-					m_links.insert(Link(stripTags(link), linkName, m_linkPos, linkOpenPos, startPos - 1));
+-					m_linkPos++;
+-					linkName = &quot;&quot;;
+-#ifdef DEBUG_TOKENIZER
+-					cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: previous link wasn't closed properly&quot; &lt;&lt; endl;
+-#endif
+-				}
+ 
+-				// Remove quotes
+-				link = StringManip::removeQuotes(quotedLink);
+-				linkOpenPos = startPos - 1;
++			// Extract link
++			pState-&gt;m_appendToLink = true;
++		}
++	}
++	else if (tagName == &quot;frame&quot;)
++	{
++		Link frame;
+ 
+-				// Remember to get the name of the link
+-				getLinkName = true;
+-			}
+-			// Maybe it's the anchor's end ?
+-			else if ((extractLinks == true) &amp;&amp;
+-				(strncasecmp(tag.c_str(), &quot;/a&quot;, 2) == 0))
++		// Get the name and source
++		for (unsigned int attrNum = 0;
++			(pAttributes[attrNum] != NULL) &amp;&amp; (pAttributes[attrNum + 1]); attrNum += 2)
++		{
++			if (strncasecmp(pAttributes[attrNum], &quot;name&quot;, 4) == 0)
+ 			{
+-				if (getLinkName == true)
+-				{
+-#ifdef DEBUG_TOKENIZER
+-					cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: &quot; &lt;&lt; pos &lt;&lt; &quot; link &quot; &lt;&lt; m_linkPos &lt;&lt; &quot; is &quot; &lt;&lt; link &lt;&lt; &quot;, name &quot; &lt;&lt; linkName &lt;&lt; endl;
+-#endif
+-					// New link
+-					m_links.insert(Link(stripTags(link), linkName, m_linkPos, linkOpenPos, pos + 1));
+-					m_linkPos++;
+-					getLinkName = false;
+-					link = linkName = &quot;&quot;;
+-				}
++				frame.m_name = pAttributes[attrNum + 1];
+ 			}
+-			else if (stripAllBlocks == false)
++			else if (strncasecmp(pAttributes[attrNum], &quot;src&quot;, 3) == 0)
+ 			{
+-				if (textBlockStart(tag) == true)
+-				{
+-					catText = true;
+-#ifdef DEBUG_TOKENIZER
+-					cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: start text cat&quot; &lt;&lt; endl;
+-#endif
+-				}
+-				else if (textBlockEnd(tag) == true)
+-				{
+-					catText = false;
+-#ifdef DEBUG_TOKENIZER
+-					cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: end text cat&quot; &lt;&lt; endl;
+-#endif
+-				}
+-				else
+-				{
+-					string parentTag = tagsStack.top();
+-
+-					if ((strncasecmp(tag.c_str(), &quot;script&quot;, 6) == 0) ||
+-						(strncasecmp(tag.c_str(), &quot;style&quot;, 5) == 0))
+-					{
+-#ifdef DEBUG_TOKENIZER
+-						cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: skip script&quot; &lt;&lt; endl;
+-#endif
+-						catText = false;
+-					}
+-					else if (((strncasecmp(tag.c_str(), &quot;/script&quot;, 7) == 0) ||
+-						(strncasecmp(tag.c_str(), &quot;/style&quot;, 6) == 0)) &amp;&amp;
+-						(textBlockStart(parentTag) == false))
+-					{
+-#ifdef DEBUG_TOKENIZER
+-						cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: stop skip script&quot; &lt;&lt; endl;
+-#endif
+-						catText = true;
+-					}
+-				}
++				frame.m_url = pAttributes[attrNum + 1];
+ 			}
++		}
+ 
+-			startPos = pos + 1;
+-			pos = str.find(&quot;&lt;&quot;, startPos);
+-			skip = false;
++		if (frame.m_url.empty() == false)
++		{
++			// Store this frame
++			pState-&gt;m_frames.insert(frame);
+ 		}
+ 	}
+-	if ((startPos &lt; str.length()) &amp;&amp;
+-		(catText == true))
++	else if ((tagName == &quot;frameset&quot;) ||
++		(tagName == &quot;script&quot;) ||
++		(tagName == &quot;style&quot;))
+ 	{
+-		stripped  += StringManip::replaceEntities(str.substr(startPos));
++		// Skip
++		++pState-&gt;m_skip;
+ 	}
++}
+ 
+-	// Free the compiled regexps
+-	regfree(&amp;linksRegex);
+-	regfree(&amp;metaRegex);
++static void endHandler(void *pData, const char *pElementName)
++{
++	if ((pData == NULL) ||
++		(pElementName == NULL) ||
++		(strlen(pElementName) == 0))
++	{
++		return;
++	}
+ 
+-	if (isHtml == false)
++	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
++	if (pState == NULL)
+ 	{
+-		return str;
++		return;
+ 	}
+ 
+-	return stripped;
++	// Reset state
++	string tagName(StringManip::toLowerCase(pElementName));
++	if (tagName == &quot;head&quot;)
++	{
++		pState-&gt;m_inHead = false;
++	}
++	else if (tagName == &quot;title&quot;)
++	{
++		StringManip::removeCharacters(pState-&gt;m_title, &quot;\t\r\n&quot;);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;HtmlTokenizer::endHandler: title is &quot; &lt;&lt; pState-&gt;m_title &lt;&lt; endl;
++#endif
++		pState-&gt;m_appendToTitle = false;
++	}
++	else if (tagName == &quot;body&quot;)
++	{
++		pState-&gt;m_appendToText = false;
++	}
++	else if (tagName == &quot;a&quot;)
++	{
++		if (pState-&gt;m_currentLink.m_url.empty() == false)
++		{
++			// FIXME: get the NodeInfo to find out the position of this link
++			pState-&gt;m_currentLink.m_endPos = pState-&gt;m_textPos;
++
++			// Store this link
++			pState-&gt;m_links.insert(pState-&gt;m_currentLink);
++			++pState-&gt;m_currentLink.m_index;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;HtmlTokenizer::endHandler: link was &quot; &lt;&lt; pState-&gt;m_currentLink.m_name &lt;&lt; endl;
++#endif
++		}
++
++		pState-&gt;m_appendToLink = false;
++	}
++	else if ((tagName == &quot;frameset&quot;) ||
++		(tagName == &quot;script&quot;) ||
++		(tagName == &quot;style&quot;))
++	{
++		--pState-&gt;m_skip;
++	}
+ }
+ 
+-/// Returns true if the tag corresponds to a text block.
+-bool HtmlTokenizer::textBlockStart(const string &amp;tag)
++static void charactersHandler(void *pData, const char *pText, int textLen)
+ {
+-	if ((strncasecmp(tag.c_str(), &quot;body&quot;, 4) == 0) ||
+-		(strncasecmp(tag.c_str(), &quot;title&quot;, 5) == 0))
++	if ((pData == NULL) ||
++		(pText == NULL) ||
++		(textLen == 0))
+ 	{
+-		return true;
++		return;
+ 	}
+ 
+-	return false;
+-}
++	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
++	if (pState == NULL)
++	{
++		return;
++	}
+ 
+-/// Returns true if the tag corresponds to the end of a text block.
+-bool HtmlTokenizer::textBlockEnd(const string &amp;tag)
+-{
+-	if ((strncasecmp(tag.c_str(), &quot;/body&quot;, 5) == 0) ||
+-		(strncasecmp(tag.c_str(), &quot;/title&quot;, 6) == 0))
++	pState-&gt;m_textPos += textLen;
++	if (pState-&gt;m_skip &gt; 0)
+ 	{
+-		return true;
++		// Skip this
++		return;
+ 	}
+ 
+-	return false;
++	string text(pText, textLen);
++
++	// For some reason, this handler might be called twice for the same text !
++	// See <A HREF="http://mail.gnome.org/archives/xml/2002-September/msg00089.html">http://mail.gnome.org/archives/xml/2002-September/msg00089.html</A>
++	string textHash(StringManip::hashString(text));
++	if (pState-&gt;m_lastHash == textHash)
++	{
++		// Ignore this
++#ifdef DEBUG
++		cout &lt;&lt; &quot;HtmlTokenizer::charactersHandler: ignoring duplicate text&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++	pState-&gt;m_lastHash = textHash;
++
++	// Append current text
++	// FIXME: convert to UTF-8 or Latin 1 ?
++	if (pState-&gt;m_appendToTitle == true)
++	{
++		pState-&gt;m_title += text;
++	}
++	else
++	{
++		if (pState-&gt;m_appendToText == true)
++		{
++			pState-&gt;m_text += text;
++		}
++
++		// Appending to text and to link are not mutually exclusive operations
++		if (pState-&gt;m_appendToLink == true)
++		{
++			pState-&gt;m_currentLink.m_name += text;
++		}
++	}
+ }
+ 
+-/// Gets the specified META tag content.
+-string HtmlTokenizer::getMetaTag(const string &amp;name)
++static void cDataHandler(void *pData, const char *pText, int textLen)
+ {
+-	if (name.empty() == true)
++	// Nothing to do
++}
++
++static void whitespaceHandler(void *pData, const xmlChar *pText, int txtLen)
++{
++	if (pData == NULL)
+ 	{
+-		return &quot;&quot;;
++		return;
+ 	}
+ 
+-	map&lt;string, string&gt;::const_iterator iter = m_metaTags.find(name);
+-	if (iter != m_metaTags.end())
++	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
++	if (pState == NULL)
+ 	{
+-		return iter-&gt;second;
++		return;
+ 	}
+ 
+-	return &quot;&quot;;
++	if (pState-&gt;m_skip &gt; 0)
++	{
++		// Skip this
++		return;
++	}
++
++	// Append a single space
++	if (pState-&gt;m_appendToTitle == true)
++	{
++		pState-&gt;m_title += &quot; &quot;;
++	}
++	else
++	{
++		if (pState-&gt;m_appendToText == true)
++		{
++			pState-&gt;m_text += &quot; &quot;;
++		}
++
++		// Appending to text and to link are not mutually exclusive operations
++		if (pState-&gt;m_appendToLink == true)
++		{
++			pState-&gt;m_currentLink.m_name += &quot; &quot;;
++		}
++	}
+ }
+ 
+-/// Gets the links map.
+-set&lt;Link&gt; &amp;HtmlTokenizer::getLinks(void)
++static void commentHandler(void *pData, const char *pText)
+ {
+-	return m_links;
++	// FIXME: take comments into account, eg on terms position ?
+ }
+ 
+-/// Utility method that strips HTML tags off; the string without tags.
+-string HtmlTokenizer::stripTags(const string &amp;str)
++static void errorHandler(void *pData, const char *pMsg, ...)
+ {
+-	HtmlTokenizer tokens;
++	va_list args;
++	char pErr[1000];
+ 
+-	return tokens.parseHTML(str, true);
++	va_start(args, pMsg);
++	vsnprintf(pErr, 1000, pMsg, args );
++	va_end(args);
++
++	cerr &lt;&lt; &quot;HtmlTokenizer::errorHandler: &quot; &lt;&lt; pErr &lt;&lt; endl;
++
++	// Be lenient as much as possible
++	xmlResetLastError();
+ }
+ 
+-Link::Link(const string &amp;url, const string &amp;name, unsigned int pos, unsigned int openPos, unsigned int closePos) :
+-	m_url(url),
+-	m_name(name),
+-	m_pos(pos),
+-	m_open(openPos),
+-	m_close(closePos)
++static void warningHandler(void *pData, const char *pMsg, ...)
+ {
++	va_list args;
++	char pErr[1000];
++
++	va_start(args, pMsg);
++	vsnprintf(pErr, 1000, pMsg, args );
++	va_end(args);
++
++	cerr &lt;&lt; &quot;HtmlTokenizer::warningHandler: &quot; &lt;&lt; pErr &lt;&lt; endl;
+ }
+ 
+-Link::Link(const Link &amp;other) :
+-	m_url(other.m_url),
+-	m_name(other.m_name),
+-	m_pos(other.m_pos),
+-	m_open(other.m_open),
+-	m_close(other.m_close)
++HtmlTokenizer::HtmlTokenizer(const Document *pDocument, unsigned int linksStartAtPos) :
++	Tokenizer(NULL)
+ {
++	if (pDocument != NULL)
++	{
++		unsigned int length = 0;
++		const char *pData = pDocument-&gt;getData(length);
++
++		if ((pData != NULL) &amp;&amp;
++			(length &gt; 0) &amp;&amp;
++			(parseHTML(pData) == true))
++		{
++			// Append META keywords, if any were found
++			m_state.m_text += getMetaTag(&quot;keywords&quot;);
++
++			// Did we find a title ?
++			if (m_state.m_title.empty() == true)
++			{
++				m_state.m_title = pDocument-&gt;getTitle();
++			}
++
++			// Pass the result to the parent class
++			Document *pStrippedDoc = new Document(m_state.m_title,
++				pDocument-&gt;getLocation(), pDocument-&gt;getType(),
++				pDocument-&gt;getLanguage());
++			pStrippedDoc-&gt;setData(m_state.m_text.c_str(), m_state.m_text.length());
++
++			setDocument(pStrippedDoc);
++		}
++	}
+ }
+ 
+-Link::~Link()
++HtmlTokenizer::~HtmlTokenizer()
+ {
++	if (m_pDocument != NULL)
++	{
++		// This should have been set by setDocument(),
++		// called in initialize()
++		delete m_pDocument;
++	}
+ }
+ 
+-Link&amp; Link::operator=(const Link&amp; other)
++bool HtmlTokenizer::parseHTML(const string &amp;str)
+ {
+-	m_url = other.m_url;
+-	m_name = other.m_name;
+-	m_pos = other.m_pos;
+-	m_open = other.m_open;
+-	m_close = other.m_close;
++	string htmlChunk(str);
++	htmlSAXHandler saxHandler;
+ 
+-	return *this;
++	if (str.empty() == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: no input&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	xmlInitParser();
++
++	// Setup the SAX handler
++	memset((void*)&amp;saxHandler, 0, sizeof(htmlSAXHandler));
++	saxHandler.startElement = (startElementSAXFunc)&startHandler;
++	saxHandler.endElement = (endElementSAXFunc)&endHandler;
++	saxHandler.characters = (charactersSAXFunc)&charactersHandler;
++	saxHandler.cdataBlock = (charactersSAXFunc)&cDataHandler;
++	saxHandler.ignorableWhitespace = (ignorableWhitespaceSAXFunc)&whitespaceHandler;
++	saxHandler.comment = (commentSAXFunc)&commentHandler;
++	saxHandler.fatalError = (fatalErrorSAXFunc)&errorHandler;
++	saxHandler.error = (errorSAXFunc)&errorHandler;
++	saxHandler.warning = (warningSAXFunc)&warningHandler;
++
++	// Try to cope with pages that have scripts or other rubbish prepended
++	string::size_type htmlPos = htmlChunk.find(&quot;&lt;!DOCTYPE&quot;);
++	if (htmlPos == string::npos)
++	{
++		htmlPos = htmlChunk.find(&quot;&lt;!doctype&quot;);
++	}
++	if ((htmlPos != string::npos) &amp;&amp;
++		(htmlPos &gt; 0))
++	{
++		htmlChunk.erase(0, htmlPos);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: removed &quot; &lt;&lt; htmlPos &lt;&lt; &quot; characters&quot; &lt;&lt; endl;
++#endif
++	}
++
++	// Wrap input with a dummy tag to avoid the characters handler being called with twice the same text
++	htmlPos = htmlChunk.find(&quot;&lt;HTML&quot;);
++	if (htmlPos == string::npos)
++	{
++		htmlPos = htmlChunk.find(&quot;&lt;html&quot;);
++	}
++	if (htmlPos == string::npos)
++	{
++		string dummyHtml(&quot;&lt;html&gt;&quot;);
++		dummyHtml += htmlChunk;
++		dummyHtml += &quot;&lt;/html&gt;&quot;;
++		htmlChunk = dummyHtml;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: wrapped input&quot; &lt;&lt; endl;
++#endif
++	}
++
++#ifndef _DONT_USE_PUSH_INTERFACE
++	htmlParserCtxtPtr pContext = htmlCreatePushParserCtxt(&amp;saxHandler, (void*)&amp;m_state,
++		htmlChunk.c_str(), (int)htmlChunk.length(), &quot;&quot;, XML_CHAR_ENCODING_NONE);
++	if (pContext != NULL)
++	{
++		// Parse
++		htmlParseChunk(pContext, htmlChunk.c_str(), (int)htmlChunk.length(), 0);
++
++		// Free
++		htmlParseChunk(pContext, NULL, 0, 1);
++		htmlFreeParserCtxt(pContext);
++	}
++#else
++	htmlDocPtr pDoc = htmlSAXParseDoc((xmlChar *)htmlChunk.c_str(), &quot;&quot;, &amp;saxHandler, (void*)&amp;m_state);
++	if (pDoc != NULL)
++	{
++		xmlFreeDoc(pDoc);
++	}
++#endif
++	else
++	{
++		cerr &lt;&lt; &quot;HtmlTokenizer::parseHTML: couldn't create parser context&quot; &lt;&lt; endl;
++	}
++	xmlCleanupParser();
++
++	return true;
+ }
+ 
+-bool Link::operator==(const Link &amp;other) const
++/// Gets the specified META tag content.
++string HtmlTokenizer::getMetaTag(const string &amp;name)
+ {
+-	return m_url == other.m_url;
++	if (name.empty() == true)
++	{
++		return &quot;&quot;;
++	}
++
++	map&lt;string, string&gt;::const_iterator iter = m_state.m_metaTags.find(name);
++	if (iter != m_state.m_metaTags.end())
++	{
++		return iter-&gt;second;
++	}
++
++	return &quot;&quot;;
+ }
+ 
+-bool Link::operator&lt;(const Link &amp;other) const
++/// Gets the links map.
++set&lt;Link&gt; &amp;HtmlTokenizer::getLinks(void)
+ {
+-	return m_pos &lt; other.m_pos;
++	return m_state.m_links;
+ }
+
+Modified: trunk/Tokenize/HtmlTokenizer.h
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.h	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/HtmlTokenizer.h	2006-05-30 12:38:39 UTC (rev 276)
+@@ -28,8 +28,7 @@
+ class Link
+ {
+ 	public:
+-		Link(const std::string &amp;url, const std::string &amp;name,
+-			unsigned int pos, unsigned int openPos, unsigned int closePos);
++		Link();
+ 		Link(const Link &amp;other);
+ 		~Link();
+ 
+@@ -39,9 +38,9 @@
+ 
+ 		std::string m_url;
+ 		std::string m_name;
+-		unsigned int m_pos;
+-		unsigned int m_open;
+-		unsigned int m_close;
++		unsigned int m_index;
++		unsigned int m_startPos;
++		unsigned int m_endPos;
+ 
+ };
+ 
+@@ -57,28 +56,33 @@
+ 		/// Gets the links map.
+ 		std::set&lt;Link&gt; &amp;getLinks(void);
+ 
+-		/// Utility method that strips HTML tags off; the string without tags.
+-		static std::string stripTags(const std::string &amp;str);
++		class ParserState
++		{
++			public:
++				ParserState();
++				~ParserState();
+ 
++				unsigned int m_textPos;
++				std::string m_lastHash;
++				bool m_inHead;
++				bool m_foundHead;
++				bool m_appendToTitle;
++				bool m_appendToText;
++				bool m_appendToLink;
++				unsigned int m_skip;
++				std::string m_title;
++				std::string m_text;
++				Link m_currentLink;
++				std::set&lt;Link&gt; m_links;
++				std::set&lt;Link&gt; m_frames;
++				std::map&lt;std::string, std::string&gt; m_metaTags;
++		};
++
+ 	protected:
+-		const Document *m_pHtmlDocument;
+-		unsigned int m_linkPos;
+-		std::map&lt;std::string, std::string&gt; m_metaTags;
+-		std::set&lt;Link&gt; m_links;
++		ParserState m_state;
+ 
+-		HtmlTokenizer();
++		bool parseHTML(const std::string &amp;str);
+ 
+-		void initialize(const Document *pDocument);
+-
+-		/// Parses HTML; the string without tags.
+-		std::string parseHTML(const std::string &amp;str, bool stripAllBlocks = false);
+-
+-		/// Returns true if the tag corresponds to a text block.
+-		static bool textBlockStart(const std::string &amp;tag);
+-
+-		/// Returns true if the tag corresponds to the end of a text block.
+-		static bool textBlockEnd(const std::string &amp;tag);
+-
+ };
+ 
+ #endif // _HTML_TOKENIZER_H
+
+Modified: trunk/Tokenize/Makefile.am
+===================================================================
+--- trunk/Tokenize/Makefile.am	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/Makefile.am	2006-05-30 12:38:39 UTC (rev 276)
+@@ -1,7 +1,6 @@
+ # Process this file with automake to produce Makefile.in
+ 
+ UTILS_OBJS = ../Utils/Document.o \
+-	../Utils/HtmlDocument.o \
+ 	../Utils/StringManip.o \
+ 	../Utils/DocumentInfo.o \
+ 	../Utils/TimeConverter.o \
+@@ -74,5 +73,5 @@
+ 	UnknownTypeTokenizer.cpp \
+ 	XmlTokenizer.cpp
+ 
+-AM_CXXFLAGS = -fPIC -I../Utils @TAGLIB_CFLAGS@
++AM_CXXFLAGS = -fPIC -I../Utils @XML_CFLAGS@ @TAGLIB_CFLAGS@
+ 
+
+Modified: trunk/Tokenize/OpenDocumentTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/OpenDocumentTokenizer.cpp	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/OpenDocumentTokenizer.cpp	2006-05-30 12:38:39 UTC (rev 276)
+@@ -61,23 +61,11 @@
+ }
+ 
+ OpenDocumentTokenizer::OpenDocumentTokenizer(const Document *pDocument) :
+-	XmlTokenizer(NULL)
++	XmlTokenizer(runHelperProgram(pDocument, &quot;unzip -p&quot;, &quot;content.xml&quot;))
+ {
+ 	// FIXME: unzip meta.xml and extract document information
+-	// Unip content.xml
+-	Document *pOutputDocument = runHelperProgram(pDocument, &quot;unzip -p&quot;, &quot;content.xml&quot;);
+-	if (pOutputDocument != NULL)
+-	{
+-		// Give the result to the parent class
+-		initialize(pOutputDocument);
+-	}
+ }
+ 
+-OpenDocumentTokenizer::OpenDocumentTokenizer() :
+-	XmlTokenizer()
+-{
+-}
+-
+ OpenDocumentTokenizer::~OpenDocumentTokenizer()
+ {
+ }
+
+Modified: trunk/Tokenize/OpenDocumentTokenizer.h
+===================================================================
+--- trunk/Tokenize/OpenDocumentTokenizer.h	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/OpenDocumentTokenizer.h	2006-05-30 12:38:39 UTC (rev 276)
+@@ -34,9 +34,6 @@
+ 		OpenDocumentTokenizer(const Document *pDocument);
+ 		virtual ~OpenDocumentTokenizer();
+ 
+-	protected:
+-		OpenDocumentTokenizer();
+-
+ 	private:
+ 		OpenDocumentTokenizer(const OpenDocumentTokenizer &amp;other);
+ 		OpenDocumentTokenizer&amp; operator=(const OpenDocumentTokenizer&amp; other);
+
+Modified: trunk/Tokenize/PdfTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/PdfTokenizer.cpp	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/PdfTokenizer.cpp	2006-05-30 12:38:39 UTC (rev 276)
+@@ -38,22 +38,10 @@
+ }
+ 
+ PdfTokenizer::PdfTokenizer(const Document *pDocument) :
+-	HtmlTokenizer(NULL)
++	HtmlTokenizer(runHelperProgram(pDocument, &quot;pdftohtml -stdout&quot;))
+ {
+-	// Run pdftohtml
+-	Document *pOutputDocument = runHelperProgram(pDocument, &quot;pdftohtml -stdout&quot;);
+-	if (pOutputDocument != NULL)
+-	{
+-		// Give the result to the parent class
+-		initialize(pOutputDocument);
+-	}
+ }
+ 
+-PdfTokenizer::PdfTokenizer() :
+-	HtmlTokenizer()
+-{
+-}
+-
+ PdfTokenizer::~PdfTokenizer()
+ {
+ }
+
+Modified: trunk/Tokenize/PdfTokenizer.h
+===================================================================
+--- trunk/Tokenize/PdfTokenizer.h	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/PdfTokenizer.h	2006-05-30 12:38:39 UTC (rev 276)
+@@ -34,9 +34,6 @@
+ 		PdfTokenizer(const Document *pDocument);
+ 		virtual ~PdfTokenizer();
+ 
+-	protected:
+-		PdfTokenizer();
+-
+ 	private:
+ 		PdfTokenizer(const PdfTokenizer &amp;other);
+ 		PdfTokenizer&amp; operator=(const PdfTokenizer&amp; other);
+
+Modified: trunk/Tokenize/RtfTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/RtfTokenizer.cpp	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/RtfTokenizer.cpp	2006-05-30 12:38:39 UTC (rev 276)
+@@ -39,22 +39,10 @@
+ }
+ 
+ RtfTokenizer::RtfTokenizer(const Document *pDocument) :
+-	HtmlTokenizer(NULL)
++	HtmlTokenizer(runHelperProgram(pDocument, &quot;unrtf --nopict --html&quot;))
+ {
+-	// Run unrtf
+-	Document *pOutputDocument = runHelperProgram(pDocument, &quot;unrtf --nopict --html&quot;);
+-	if (pOutputDocument != NULL)
+-	{
+-		// Give the result to the parent class
+-		initialize(pOutputDocument);
+-	}
+ }
+ 
+-RtfTokenizer::RtfTokenizer() :
+-	HtmlTokenizer()
+-{
+-}
+-
+ RtfTokenizer::~RtfTokenizer()
+ {
+ }
+
+Modified: trunk/Tokenize/RtfTokenizer.h
+===================================================================
+--- trunk/Tokenize/RtfTokenizer.h	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/RtfTokenizer.h	2006-05-30 12:38:39 UTC (rev 276)
+@@ -36,8 +36,6 @@
+ 
+ 	protected:
+ 		RtfTokenizer();
+-
+-	private:
+ 		RtfTokenizer(const RtfTokenizer &amp;other);
+ 		RtfTokenizer&amp; operator=(const RtfTokenizer&amp; other);
+ 
+
+Modified: trunk/Tokenize/XmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/XmlTokenizer.cpp	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/XmlTokenizer.cpp	2006-05-30 12:38:39 UTC (rev 276)
+@@ -27,16 +27,27 @@
+ using std::string;
+ 
+ XmlTokenizer::XmlTokenizer(const Document *pDocument) :
+-	Tokenizer(NULL),
+-	m_pXmlDocument(NULL)
++	Tokenizer(NULL)
+ {
+-	initialize(pDocument);
+-}
++	if (pDocument != NULL)
++	{
++		unsigned int length = 0;
++		const char *data = pDocument-&gt;getData(length);
+ 
+-XmlTokenizer::XmlTokenizer() :
+-	Tokenizer(NULL),
+-	m_pXmlDocument(NULL)
+-{
++		if ((data != NULL) &amp;&amp;
++			(length &gt; 0))
++		{
++			// Remove XML tags
++			string strippedData = parseXML(data);
++
++			// Pass the result to the parent class
++			Document *pStrippedDoc = new Document(pDocument-&gt;getTitle(),
++				pDocument-&gt;getLocation(), pDocument-&gt;getType(),
++				pDocument-&gt;getLanguage());
++			pStrippedDoc-&gt;setData(strippedData.c_str(), strippedData.length());
++			setDocument(pStrippedDoc);
++		}
++	}
+ }
+ 
+ XmlTokenizer::~XmlTokenizer()
+@@ -49,33 +60,6 @@
+ 	}
+ }
+ 
+-void XmlTokenizer::initialize(const Document *pDocument)
+-{
+-	unsigned int length = 0;
+-
+-	if (pDocument == NULL)
+-	{
+-		return;
+-	}
+-
+-	const char *data = pDocument-&gt;getData(length);
+-	if ((data != NULL) &amp;&amp;
+-		(length &gt; 0))
+-	{
+-		// Remove XML tags
+-		string strippedData = parseXML(data);
+-
+-		// Pass the result to the parent class
+-		Document *pStrippedDoc = new Document(pDocument-&gt;getTitle(),
+-			pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-			pDocument-&gt;getLanguage());
+-		pStrippedDoc-&gt;setData(strippedData.c_str(), strippedData.length());
+-		setDocument(pStrippedDoc);
+-
+-		m_pXmlDocument = pDocument;
+-	}
+-}
+-
+ /// Parses XML; the string without tags.
+ string XmlTokenizer::parseXML(const string &amp;str)
+ {
+@@ -128,7 +112,5 @@
+ /// Utility method that strips XML tags off; the string without tags.
+ string XmlTokenizer::stripTags(const string &amp;str)
+ {
+-	XmlTokenizer tokens;
+-
+-	return tokens.parseXML(str);
++	return parseXML(str);
+ }
+
+Modified: trunk/Tokenize/XmlTokenizer.h
+===================================================================
+--- trunk/Tokenize/XmlTokenizer.h	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/XmlTokenizer.h	2006-05-30 12:38:39 UTC (rev 276)
+@@ -32,14 +32,10 @@
+ 		static std::string stripTags(const std::string &amp;str);
+ 
+ 	protected:
+-		const Document *m_pXmlDocument;
+-
+-		XmlTokenizer();
+-
+ 		void initialize(const Document *pDocument);
+ 
+ 		/// Parses XML; the string without tags.
+-		std::string parseXML(const std::string &amp;str);
++		static std::string parseXML(const std::string &amp;str);
+ 
+ };
+ 
+
+Modified: trunk/Tokenize/tokenizertest.cpp
+===================================================================
+--- trunk/Tokenize/tokenizertest.cpp	2006-05-30 11:02:43 UTC (rev 275)
++++ trunk/Tokenize/tokenizertest.cpp	2006-05-30 12:38:39 UTC (rev 276)
+@@ -22,6 +22,7 @@
+ #include &lt;string&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
++#include &quot;XmlTokenizer.h&quot;
+ #include &quot;UnknownTypeTokenizer.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;StringManip.h&quot;
+@@ -82,7 +83,7 @@
+ 		const char *pData = doc.getData(length);
+ 
+ 		cout &lt;&lt; &quot;Stripped text is :&quot; &lt;&lt; endl;
+-		cout &lt;&lt; HtmlTokenizer::stripTags(string(pData, length)) &lt;&lt; endl;
++		cout &lt;&lt; XmlTokenizer::stripTags(string(pData, length)) &lt;&lt; endl;
+ 	}
+ 	else if ((strncmp(argv[2], &quot;LISTLINKS&quot;, 9) == 0) &amp;&amp;
+ 		(pHtmlTokens != NULL))
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000269.html">[Pinot-svn] r275 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000271.html">[Pinot-svn] r277 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#270">[ date ]</a>
+              <a href="thread.html#270">[ thread ]</a>
+              <a href="subject.html#270">[ subject ]</a>
+              <a href="author.html#270">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

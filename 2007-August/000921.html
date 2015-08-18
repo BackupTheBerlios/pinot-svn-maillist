@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r927 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r927%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708151349.l7FDnHia022885%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000920.html">
+   <LINK REL="Next"  HREF="000922.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r927 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r927%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708151349.l7FDnHia022885%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r927 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug 15 15:49:17 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000920.html">[Pinot-svn] r926 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000922.html">[Pinot-svn] r928 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#921">[ date ]</a>
+              <a href="thread.html#921">[ thread ]</a>
+              <a href="subject.html#921">[ subject ]</a>
+              <a href="author.html#921">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-15 15:49:17 +0200 (Wed, 15 Aug 2007)
+New Revision: 927
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Preliminary support for queries' spelling correction. No user feedback yet.
+When a stored query is selected, scroll to it in the list.
+A query with no text is not necessarily empty (eg, if a start date is provided)
+so check isEmpty() to decide if a query can be run.
+Get all programs associated with a file type, but only use the first one, which
+should have the highest priority. Eventually, we'll pop up a menu to let the
+user select.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-08-15 13:44:40 UTC (rev 926)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-08-15 13:49:17 UTC (rev 927)
+@@ -261,9 +261,10 @@
+ 		if ((selectedQueryName.empty() == false) &amp;&amp;
+ 			(queryName == selectedQueryName))
+ 		{
+-			// Select this query
++			// Select and scroll to this query
+ 			TreeModel::Path path = m_refQueryTree-&gt;get_path(iter);
+ 			queryTreeview-&gt;get_selection()-&gt;select(path);
++			queryTreeview-&gt;scroll_to_row(path);
+ 		}
+ 	}
+ }
+@@ -917,7 +918,8 @@
+ 			return;
+ 		}
+ 
+-		QueryProperties queryProps(pQueryThread-&gt;getQuery());
++		bool wasCorrected;
++		QueryProperties queryProps(pQueryThread-&gt;getQuery(wasCorrected));
+ 		ustring queryName = to_utf8(queryProps.getName());
+ 		ustring engineName = to_utf8(pQueryThread-&gt;getEngineName());
+ 		string resultsCharset(pQueryThread-&gt;getCharset());
+@@ -987,6 +989,8 @@
+ 			pResultsTree-&gt;deleteResults(engineName);
+ 			pResultsTree-&gt;addResults(engineName, resultsList,
+ 				resultsCharset);
++
++			// FIXME: if wasCorrected is true, suggest the correction to the user
+ 		}
+ 
+ 		// Index results ?
+@@ -2908,7 +2912,7 @@
+ //
+ void mainWindow::run_search(const QueryProperties &amp;queryProps)
+ {
+-	if (queryProps.getFreeQuery().empty() == true)
++	if (queryProps.isEmpty() == true)
+ 	{
+ 		set_status(_(&quot;Query is not set&quot;));
+ 		return;
+@@ -3158,8 +3162,9 @@
+ 		locationsByType.insert(pair&lt;string, string&gt;(mimeType, url));
+ 	}
+ 
++	vector&lt;MIMEAction&gt; actionsList;
++	vector&lt;string&gt; arguments;
+ 	MIMEAction action;
+-	vector&lt;string&gt; arguments;
+ 	string currentType;
+ 
+ 	arguments.reserve(documentsList.size());
+@@ -3200,17 +3205,16 @@
+ 				cout &lt;&lt; &quot;mainWindow::view_documents: defaulting to text/html&quot; &lt;&lt; endl;
+ #endif
+ 			}
+-			if (MIMEScanner::getDefaultAction(type, action) == false)
++			bool foundAction = MIMEScanner::getDefaultActions(type, actionsList);
++			if (foundAction == false)
+ 			{
+-				bool foundAction = false;
+-
+ 				if ((type.length() &gt; 5) &amp;&amp;
+ 					(type.substr(0, 5) == &quot;text/&quot;))
+ 				{
+ 					// It's a subtype of text
+ 					// FIXME: MIMEScanner should return parent types !
+ 					type = &quot;text/plain&quot;;
+-					foundAction = MIMEScanner::getDefaultAction(type, action);
++					foundAction = MIMEScanner::getDefaultActions(type, actionsList);
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;mainWindow::view_documents: defaulting to text/plain&quot; &lt;&lt; endl;
+ #endif
+@@ -3247,6 +3251,11 @@
+ 					}
+ 				}
+ 			}
++
++			if (foundAction == true)
++			{
++				action = actionsList.front();
++			}
+ 		}
+ 		currentType = type;
+ 
+@@ -3259,17 +3268,15 @@
+ 		}
+ 	}
+ 
+-	if ((action.m_exec.empty() == false) &amp;&amp;
+-		(arguments.empty() == false))
++	// Run the default program for this type
++	if ((action.m_exec.empty() == true) ||
++		(arguments.empty() == true) ||
++		(CommandLine::runAsync(action, arguments) == false))
+ 	{
+-		// Run the default program for this type
+-		if (CommandLine::runAsync(action, arguments) == false)
+-		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::view_documents: couldn't view type &quot;
+-				&lt;&lt; currentType &lt;&lt; endl;
++		cout &lt;&lt; &quot;mainWindow::view_documents: couldn't view type &quot;
++			&lt;&lt; currentType &lt;&lt; endl;
+ #endif
+-		}
+ 	}
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000920.html">[Pinot-svn] r926 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000922.html">[Pinot-svn] r928 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#921">[ date ]</a>
+              <a href="thread.html#921">[ thread ]</a>
+              <a href="subject.html#921">[ subject ]</a>
+              <a href="author.html#921">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

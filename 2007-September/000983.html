@@ -1,0 +1,257 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r989 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r989%20-%20trunk/Search&In-Reply-To=%3C200709251329.l8PDTX2P014175%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000982.html">
+   <LINK REL="Next"  HREF="000984.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r989 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r989%20-%20trunk/Search&In-Reply-To=%3C200709251329.l8PDTX2P014175%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r989 - trunk/Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 25 15:29:33 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000982.html">[Pinot-svn] r988 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000984.html">[Pinot-svn] r990 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#983">[ date ]</a>
+              <a href="thread.html#983">[ thread ]</a>
+              <a href="subject.html#983">[ subject ]</a>
+              <a href="author.html#983">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-25 15:29:33 +0200 (Tue, 25 Sep 2007)
+New Revision: 989
+
+Modified:
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+Log:
+Reworked query expansion a tad. We now use an ExpandDecider, and capitalized
+terms as well as subject terms are not skipped.
+
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2007-09-24 12:50:16 UTC (rev 988)
++++ trunk/Search/SearchEngineInterface.cpp	2007-09-25 13:29:33 UTC (rev 989)
+@@ -42,8 +42,8 @@
+ 	m_key = key;
+ }
+ 
+-/// Sets whether the query should be expanded.
+-bool SearchEngineInterface::setQueryExpansion(set&lt;unsigned int&gt; &amp;relevantDocuments)
++/// Sets the set of documents to expand from.
++bool SearchEngineInterface::setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet)
+ {
+ 	// Not all engines support this
+ 	return false;
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2007-09-24 12:50:16 UTC (rev 988)
++++ trunk/Search/SearchEngineInterface.h	2007-09-25 13:29:33 UTC (rev 989)
+@@ -39,8 +39,8 @@
+ 		/// Sets the search engine's key, if applicable.
+ 		virtual void setKey(const string &amp;key);
+ 
+-		/// Sets whether the query should be expanded.
+-		virtual bool setQueryExpansion(set&lt;unsigned int&gt; &amp;relevantDocuments);
++		/// Sets the set of documents to expand from.
++		virtual bool setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet);
+ 
+ 		typedef enum { DEFAULT_OP_AND = 0, DEFAULT_OP_OR } DefaultOperator;
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-24 12:50:16 UTC (rev 988)
++++ trunk/Search/XapianEngine.cpp	2007-09-25 13:29:33 UTC (rev 989)
+@@ -82,9 +82,10 @@
+ class TimeValueRangeProcessor : public Xapian::ValueRangeProcessor
+ {
+ 	public:
+-		TimeValueRangeProcessor(Xapian::valueno valno) : Xapian::ValueRangeProcessor(), m_valueNumber(valno) { }
++		TimeValueRangeProcessor(Xapian::valueno valueNumber) : Xapian::ValueRangeProcessor(), m_valueNumber(valueNumber) { }
++		~TimeValueRangeProcessor() { }
+ 
+-		Xapian::valueno operator()(string &amp;begin, string &amp;end)
++		virtual Xapian::valueno operator()(string &amp;begin, string &amp;end)
+ 		{
+ 			if ((begin.size() == 6) &amp;&amp;
+ 					(end.size() == 6))
+@@ -121,6 +122,31 @@
+ 
+ };
+ 
++class PrefixDecider : public Xapian::ExpandDecider
++{
++	public:
++		PrefixDecider(const string &amp;allowedPrefixes) : Xapian::ExpandDecider(), m_allowedPrefixes(allowedPrefixes) { }
++		~PrefixDecider() { }
++
++		virtual bool operator()(const std::string &amp;term) const
++		{
++			if ((isupper((int)(term[0])) == 0) ||
++				(m_allowedPrefixes.find(term[0]) != string::npos))
++			{
++				return true;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;PrefixDecider::operator: rejecting &quot; &lt;&lt; term &lt;&lt; endl;
++#endif
++
++			return false;
++		}
++
++	protected:
++		string m_allowedPrefixes;
++
++};
++
+ XapianEngine::XapianEngine(const string &amp;database) :
+ 	SearchEngineInterface()
+ {
+@@ -363,7 +389,7 @@
+ 		{
+ 			m_resultsCountEstimate = matches.get_matches_estimated();
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; m_resultsCountEstimate &lt;&lt; &quot;/&quot;
++			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.size() &lt;&lt; &quot;/&quot; &lt;&lt; m_resultsCountEstimate &lt;&lt; &quot;/&quot;
+ 				&lt;&lt; maxResultsCount &lt;&lt; &quot; results found from position &quot; &lt;&lt; startDoc &lt;&lt; endl;
+ #endif
+ 
+@@ -418,27 +444,38 @@
+ 		m_expandTerms.clear();
+ 
+ 		// Expand the query ?
+-		if (m_relevantDocuments.empty() == false)
++		if (m_expandDocuments.empty() == false)
+ 		{
+-			Xapian::RSet relevantDocs;
++			Xapian::RSet expandDocs;
+ 			unsigned int count = 0;
+ 
+-			for (set&lt;unsigned int&gt;::const_iterator docIter = m_relevantDocuments.begin();
+-				docIter != m_relevantDocuments.end(); ++docIter)
++			for (set&lt;unsigned int&gt;::const_iterator docIter = m_expandDocuments.begin();
++				docIter != m_expandDocuments.end(); ++docIter)
+ 			{
+-				relevantDocs.add_document(*docIter);
++				expandDocs.add_document(*docIter);
+ 			}
+ 
+ 			// Get 10 non-prefixed terms
+-			Xapian::ESet expandTerms = enquire.get_eset(20, relevantDocs);
++			PrefixDecider expandDecider(&quot;RS&quot;);
++			Xapian::ESet expandTerms = enquire.get_eset(20, expandDocs, &amp;expandDecider);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; expandTerms.size() &lt;&lt; &quot; expand terms&quot; &lt;&lt; endl;
++#endif
+ 			for (Xapian::ESetIterator termIter = expandTerms.begin();
+ 				(termIter != expandTerms.end()) &amp;&amp; (count &lt; 10); ++termIter)
+ 			{
+-				if (isupper((int)((*termIter)[0])) == 0)
++				char firstChar = (*termIter)[0];
++
++				if ((firstChar == 'R') ||
++					(firstChar == 'S'))
+ 				{
++					m_expandTerms.insert((*termIter).substr(1));
++				}
++				else
++				{
+ 					m_expandTerms.insert(*termIter);
+-					++count;
+ 				}
++				++count;
+ 			}
+ 		}
+ 	}
+@@ -461,11 +498,14 @@
+ // Implementation of SearchEngineInterface
+ //
+ 
+-/// Sets whether the query should be expanded.
+-bool XapianEngine::setQueryExpansion(set&lt;unsigned int&gt; &amp;relevantDocuments)
++/// Sets the set of documents to expand from.
++bool XapianEngine::setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet)
+ {
+-	copy(relevantDocuments.begin(), relevantDocuments.end(),
+-		inserter(m_relevantDocuments, m_relevantDocuments.begin()));
++	copy(docsSet.begin(), docsSet.end(),
++		inserter(m_expandDocuments, m_expandDocuments.begin()));
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianEngine::setExpandSet: &quot; &lt;&lt; m_expandDocuments.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
++#endif
+ 
+ 	return true;
+ }
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2007-09-24 12:50:16 UTC (rev 988)
++++ trunk/Search/XapianEngine.h	2007-09-25 13:29:33 UTC (rev 989)
+@@ -50,8 +50,8 @@
+ 		XapianEngine(const std::string &amp;database);
+ 		virtual ~XapianEngine();
+ 
+-		/// Sets whether the query should be expanded.
+-		bool setQueryExpansion(std::set&lt;unsigned int&gt; &amp;relevantDocuments);
++		/// Sets the set of documents to expand from.
++		virtual bool setExpandSet(const std::set&lt;unsigned int&gt; &amp;docsSet);
+ 
+ 		/// Runs a query; true if success.
+ 		virtual bool runQuery(QueryProperties&amp; queryProps,
+@@ -59,7 +59,7 @@
+ 
+ 	protected:
+ 		std::string m_databaseName;
+-		std::set&lt;unsigned int&gt; m_relevantDocuments;
++		std::set&lt;Xapian::docid&gt; m_expandDocuments;
+ 
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+ 			unsigned int startDoc, unsigned int maxResultsCount);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000982.html">[Pinot-svn] r988 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000984.html">[Pinot-svn] r990 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#983">[ date ]</a>
+              <a href="thread.html#983">[ thread ]</a>
+              <a href="subject.html#983">[ subject ]</a>
+              <a href="author.html#983">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

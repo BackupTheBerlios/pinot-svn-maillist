@@ -1,0 +1,214 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r524 - in trunk: Index Search UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r524%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src&In-Reply-To=%3C200610171334.k9HDY46m009992%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000516.html">
+   <LINK REL="Next"  HREF="000518.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r524 - in trunk: Index Search UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r524%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src&In-Reply-To=%3C200610171334.k9HDY46m009992%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r524 - in trunk: Index Search UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 17 15:34:04 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000516.html">[Pinot-svn] r523 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000518.html">[Pinot-svn] r525 - trunk/Utils/xdgmime
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#517">[ date ]</a>
+              <a href="thread.html#517">[ thread ]</a>
+              <a href="subject.html#517">[ subject ]</a>
+              <a href="author.html#517">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-17 15:34:03 +0200 (Tue, 17 Oct 2006)
+New Revision: 524
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Finally woke up to the fact that :
+- abstracts were most of the time bogus because term position wasn't incremented
+ correctly at indexing time.
+- updates didn't happen correctly, most of the time ? It seems to be due to the
+ call to setDocumentLabels right after updateDocument. It was extraneous anyway
+ since updateDocument preserves labels.
+Doh !
+Abstracts are generated for all documents, even if they have a sample field, as
+produced by omindex. Some tweaks to the QueryParser setup.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-10-16 13:59:29 UTC (rev 523)
++++ trunk/Index/XapianIndex.cpp	2006-10-17 13:34:03 UTC (rev 524)
+@@ -234,13 +234,13 @@
+ 		if ((mode == STORE_UNSTEM) ||
+ 			(pStemmer == NULL))
+ 		{
+-			doc.add_posting(limitTermLength(prefix + term), termPos++);
++			doc.add_posting(limitTermLength(prefix + term), termPos);
+ 		}
+ 		else if (mode == STORE_STEM)
+ 		{
+ 			string stemmedTerm = pStemmer-&gt;stem_word(term);
+ 
+-			doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos++);
++			doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos);
+ 		}
+ 		else if (mode == STORE_BOTH)
+ 		{
+@@ -251,9 +251,11 @@
+ 			if (stemmedTerm != term)
+ 			{
+ 				// No point adding the same term twice
+-				doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos++);
++				doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos);
+ 			}
+ 		}
++
++		++termPos;
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: added &quot; &lt;&lt; termPos &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
+@@ -524,6 +526,9 @@
+ 	char timeStr[64];
+ 	time_t timeT = TimeConverter::fromTimestamp(timestamp);
+ 
++	// Add this value to allow sorting by date
++	doc.add_value(0, StringManip::integerToBinaryString((uint32_t)timeT));
++
+ 	// Set the document data omindex-style
+ 	string record = &quot;url=&quot;;
+ 	record += info.getLocation();
+@@ -557,9 +562,6 @@
+ 	cout &lt;&lt; &quot;XapianIndex::setDocumentData: document data is &quot; &lt;&lt; record &lt;&lt; endl;
+ #endif
+ 	doc.set_data(record);
+-
+-	// Add this value to allow sorting by date
+-	doc.add_value(0, StringManip::integerToBinaryString((uint32_t)timeT));
+ }
+ 
+ //
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-10-16 13:59:29 UTC (rev 523)
++++ trunk/Search/XapianEngine.cpp	2006-10-17 13:34:03 UTC (rev 524)
+@@ -113,12 +113,16 @@
+ 	Xapian::QueryParser parser;
+ 	Xapian::Stem stemmer;
+ 
++	// Set things up
+ 	if (stemLanguage.empty() == false)
+ 	{
+ 		stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
++		parser.set_stemming_strategy(Xapian::QueryParser::STEM_NONE);
+ 	}
+-
+-	// Set things up
++	else
++	{
++		parser.set_stemming_strategy(Xapian::QueryParser::STEM_ALL);
++	}
+ 	parser.set_stemmer(stemmer);
+ 	if (followOperators == true)
+ 	{
+@@ -231,6 +235,7 @@
+ 				{
+ 					Xapian::docid docId = *mIter;
+ 					Xapian::Document doc(mIter.get_document());
++					AbstractGenerator abstractGen(pIndex, 50);
+ 					string record = doc.get_data();
+ 
+ 					// Get the title
+@@ -259,16 +264,9 @@
+ 					// ...and the language, if available
+ 					string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
+ 
+-					// Finally, get a summary
+-					string summary = StringManip::extractField(record, &quot;sample=&quot;, &quot;\n&quot;);
+-					if (summary.empty() == true)
+-					{
+-						AbstractGenerator abstractGen(pIndex, 50);
++					// Generate an abstract based on the query's terms
++					string summary = abstractGen.generateAbstract(seedTerms, docId);
+ 
+-						// Generate an abstract based on the query's terms
+-						summary = abstractGen.generateAbstract(seedTerms, docId);
+-					}
+-
+ 					// Add this result
+ 					Result thisResult(url, title, summary, language, (float)mIter.get_percent());
+ 					m_resultsList.push_back(thisResult);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-10-16 13:59:29 UTC (rev 523)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-10-17 13:34:03 UTC (rev 524)
+@@ -1186,8 +1186,6 @@
+ 
+ 		if (m_done == false)
+ 		{
+-			const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+-
+ 			pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
+ 
+ 			// Update an existing document or add to the index ?
+@@ -1198,12 +1196,10 @@
+ 				{
+ 					success = true;
+ 				}
+-
+-				// Set the document's labels
+-				pIndex-&gt;setDocumentLabels(m_docId, labels, false);
+ 			}
+ 			else
+ 			{
++				const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+ 				unsigned int docId = 0;
+ 
+ 				// Index the document
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000516.html">[Pinot-svn] r523 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000518.html">[Pinot-svn] r525 - trunk/Utils/xdgmime
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#517">[ date ]</a>
+              <a href="thread.html#517">[ thread ]</a>
+              <a href="subject.html#517">[ subject ]</a>
+              <a href="author.html#517">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

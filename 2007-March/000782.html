@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r788 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r788%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703240418.l2O4I0Pb013929%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000781.html">
+   <LINK REL="Next"  HREF="000783.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r788 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r788%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703240418.l2O4I0Pb013929%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r788 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 24 05:18:00 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000781.html">[Pinot-svn] r787 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000783.html">[Pinot-svn] r789 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#782">[ date ]</a>
+              <a href="thread.html#782">[ thread ]</a>
+              <a href="subject.html#782">[ subject ]</a>
+              <a href="author.html#782">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-24 05:18:00 +0100 (Sat, 24 Mar 2007)
+New Revision: 788
+
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+The daemon checks the version of My Documents and performs an upgrade if
+necessary. The D-Bus connection is not explicitely closed at exit time in case
+a servlet thread is still running.
+The UI also checks the version of My Web Pages but only advises to update all
+documents.
+
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-03-24 04:14:35 UTC (rev 787)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-03-24 04:18:00 UTC (rev 788)
+@@ -360,6 +360,35 @@
+ 		cerr &lt;&lt; &quot;Couldn't set scheduling priority to &quot; &lt;&lt; priority &lt;&lt; endl;
+ 	}
+ 
++	// What version of the daemon is this ?
++	double daemonVersion = atof(VERSION);
++	// What version is the index at ?
++	XapianIndex daemonIndex(settings.m_daemonIndexLocation);
++	double indexVersion = daemonIndex.getVersion();
++	// Is an upgrade necessary ?
++	if (indexVersion &lt;= 0.70)
++	{
++		cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; daemonVersion &lt;&lt; endl;
++
++		// Yes, it is
++		// Reset the index
++		if (daemonIndex.unindexAllDocuments() == true)
++		{
++			CrawlHistory history(settings.m_historyDatabase);
++			map&lt;unsigned int, string&gt; sources;
++
++			// ...and the history
++			history.getSources(sources);
++			for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
++				sourceIter != sources.end(); ++sourceIter)
++			{
++				history.deleteItems(sourceIter-&gt;first);
++				history.deleteSource(sourceIter-&gt;first);
++			}
++		}
++	}
++	daemonIndex.setVersion(daemonVersion);
++
+ 	GError *pError = NULL;
+ 	DBusGConnection *pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+ 	if (pBus == NULL)
+@@ -430,19 +459,11 @@
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't register object path: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+ 	}
++	dbus_error_free(&amp;error);
+ 
+-	// Stop everything before closing the connection
++	// Stop everything
+ 	server.disconnect();
+ 	server.stop_threads();
+ 
+-	dbus_error_free(&amp;error);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;Closing connection...&quot; &lt;&lt; endl;
+-#endif
+-#if DBUS_VERSION &lt; 33000
+-	dbus_connection_disconnect(pConnection);
+-#endif
+-	dbus_g_connection_unref(pBus);
+-
+ 	return EXIT_SUCCESS;
+ }
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-03-24 04:14:35 UTC (rev 787)
++++ trunk/UI/GTK2/src/pinot.cc	2007-03-24 04:18:00 UTC (rev 788)
+@@ -49,6 +49,7 @@
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
++#include &quot;XapianIndex.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -295,6 +296,20 @@
+ 
+ 	atexit(closeAll);
+ 
++	// What version of the UI is this ?
++	double uiVersion = atof(VERSION);
++	// What version is the index at ?
++	XapianIndex docsIndex(settings.m_docsIndexLocation);
++	double indexVersion = docsIndex.getVersion();
++	// Is an upgrade necessary ?
++	if (indexVersion &lt;= 0.70)
++	{
++		// Yes, it is
++		// FIXME: use a popup ! 
++		errorMsg = _(&quot;Updating all documents in My Web Pages is recommended&quot;);
++	}
++	docsIndex.setVersion(uiVersion);
++
+ 	try
+ 	{
+ 		// Set an icon for all windows
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000781.html">[Pinot-svn] r787 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000783.html">[Pinot-svn] r789 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#782">[ date ]</a>
+              <a href="thread.html#782">[ thread ]</a>
+              <a href="subject.html#782">[ subject ]</a>
+              <a href="author.html#782">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

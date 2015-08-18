@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1449 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1449%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200812291752.mBTHqCxx022195%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001438.html">
+   <LINK REL="Next"  HREF="001440.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1449 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1449%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200812291752.mBTHqCxx022195%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1449 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec 29 18:52:12 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001438.html">[Pinot-svn] r1448 - trunk/IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001440.html">[Pinot-svn] r1450 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1439">[ date ]</a>
+              <a href="thread.html#1439">[ thread ]</a>
+              <a href="subject.html#1439">[ subject ]</a>
+              <a href="author.html#1439">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-29 18:52:02 +0100 (Mon, 29 Dec 2008)
+New Revision: 1449
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+Log:
+Renamed PrefixDecider to TermDecider.
+Reject terms that stem to the same as a previously validated term.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-12-19 14:13:14 UTC (rev 1448)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-12-29 17:52:02 UTC (rev 1449)
+@@ -137,10 +137,10 @@
+ 
+ };
+ 
+-class PrefixDecider : public Xapian::ExpandDecider
++class TermDecider : public Xapian::ExpandDecider
+ {
+ 	public:
+-		PrefixDecider(Xapian::Database *pIndex,
++		TermDecider(Xapian::Database *pIndex,
+ 			Xapian::Stem *pStemmer,
+ 			Xapian::Stopper *pStopper,
+ 			const string &amp;allowedPrefixes,
+@@ -149,8 +149,11 @@
+ 			m_pIndex(pIndex),
+ 			m_pStemmer(pStemmer),
+ 			m_pStopper(pStopper),
+-			m_allowedPrefixes(allowedPrefixes)
++			m_allowedPrefixes(allowedPrefixes),
++			m_pTermsToAvoid(NULL)
+ 		{
++			m_pTermsToAvoid = new set&lt;string&gt;();
++
+ 			for (Xapian::TermIterator termIter = query.get_terms_begin();
+ 				termIter != query.get_terms_end(); ++termIter)
+ 			{
+@@ -158,24 +161,28 @@
+ 
+ 				if (isupper((int)(term[0])) == 0)
+ 				{
+-					m_termsToAvoid.insert(term);
++					m_pTermsToAvoid-&gt;insert(term);
+ 					if (m_pStemmer != NULL)
+ 					{
+ 						string stem((*m_pStemmer)(term));
+-						m_termsToAvoid.insert(stem);
++						m_pTermsToAvoid-&gt;insert(stem);
+ 					}
+ 				}
+ 				else if (term[0] == 'Z')
+ 				{
+-					m_termsToAvoid.insert(term.substr(1));
++					m_pTermsToAvoid-&gt;insert(term.substr(1));
+ 				}
+ 			}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;PrefixDecider: avoiding &quot; &lt;&lt; m_termsToAvoid.size() &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;TermDecider: avoiding &quot; &lt;&lt; m_pTermsToAvoid-&gt;size() &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
+ #endif
+ 		}
+-		~PrefixDecider()
++		~TermDecider()
+ 		{
++			if (m_pTermsToAvoid != NULL)
++			{
++				delete m_pTermsToAvoid;
++			}
+ 		}
+ 
+ 		virtual bool operator()(const std::string &amp;term) const
+@@ -222,13 +229,13 @@
+ 			}
+ 
+ 			// Stop here if there's no specific terms to avoid
+-			if (m_termsToAvoid.empty() == true)
++			if (m_pTermsToAvoid-&gt;empty() == true)
+ 			{
+ 				return true;
+ 			}
+ 
+ 			// Reject query terms
+-			if (m_termsToAvoid.find(term) != m_termsToAvoid.end())
++			if (m_pTermsToAvoid-&gt;find(term) != m_pTermsToAvoid-&gt;end())
+ 			{
+ 				return false;
+ 			}
+@@ -240,6 +247,7 @@
+ 			}
+ 
+ 			// Reject terms that stem to the same as query terms
++			// or previously validated terms
+ 			string stem;
+ 			if (isPrefixed == true)
+ 			{
+@@ -249,10 +257,11 @@
+ 			{
+ 				stem = (*m_pStemmer)(term);
+ 			}
+-			if (m_termsToAvoid.find(stem) != m_termsToAvoid.end())
++			if (m_pTermsToAvoid-&gt;find(stem) != m_pTermsToAvoid-&gt;end())
+ 			{
+ 				return false;
+ 			}
++			m_pTermsToAvoid-&gt;insert(stem);
+ 
+ 			return true;
+ 		}
+@@ -262,7 +271,7 @@
+ 		Xapian::Stem *m_pStemmer;
+ 		Xapian::Stopper *m_pStopper;
+ 		string m_allowedPrefixes;
+-		set&lt;string&gt; m_termsToAvoid;
++		set&lt;string&gt; *m_pTermsToAvoid;
+ 
+ };
+ 
+@@ -1011,7 +1020,7 @@
+ 
+ 			// Get 10 non-prefixed terms
+ 			string allowedPrefixes(&quot;RS&quot;);
+-			PrefixDecider expandDecider(pIndex, ((stemLanguage.empty() == true) ? NULL : &amp;m_stemmer),
++			TermDecider expandDecider(pIndex, ((stemLanguage.empty() == true) ? NULL : &amp;m_stemmer),
+ 				FileStopper::get_stopper(Languages::toCode(stemLanguage)),
+ 				allowedPrefixes, query);
+ 			Xapian::ESet expandTerms = enquire.get_eset(10, expandDocs, &amp;expandDecider);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001438.html">[Pinot-svn] r1448 - trunk/IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001440.html">[Pinot-svn] r1450 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1439">[ date ]</a>
+              <a href="thread.html#1439">[ thread ]</a>
+              <a href="subject.html#1439">[ subject ]</a>
+              <a href="author.html#1439">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,646 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1466 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1466%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200901061609.n06G9nGR021998%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001455.html">
+   <LINK REL="Next"  HREF="001457.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1466 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1466%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200901061609.n06G9nGR021998%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1466 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jan  6 17:09:49 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001455.html">[Pinot-svn] r1465 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001457.html">[Pinot-svn] r1467 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1456">[ date ]</a>
+              <a href="thread.html#1456">[ thread ]</a>
+              <a href="subject.html#1456">[ subject ]</a>
+              <a href="author.html#1456">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-06 17:09:40 +0100 (Tue, 06 Jan 2009)
+New Revision: 1466
+
+Modified:
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+Log:
+Keep track of what's being crawled. Read symlinks, resolve where they point to
+and skip those that point to places that have already been crawled, or places
+we know will be crawled.
+This should prevent from following symlinks that point to the directory they are
+in, as well as crawling the same files twice even though some perfectly fine
+symlinks won't be followed.
+Removed unused PinotSettings::TimestampedItem, made sure IndexableLocation's
+&quot;is source&quot; flag is set.
+
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2009-01-02 18:37:35 UTC (rev 1465)
++++ trunk/SQL/CrawlHistory.cpp	2009-01-06 16:09:40 UTC (rev 1466)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -49,6 +49,9 @@
+ 		case UNKNOWN:
+ 			text = &quot;UNKNOWN&quot;;
+ 			break;
++		case TO_CRAWL:
++			text = &quot;TO_CRAWL&quot;;
++			break;
+ 		case CRAWLING:
+ 			text = &quot;CRAWLING&quot;;
+ 			break;
+@@ -73,6 +76,10 @@
+ 	{
+ 		status = CRAWLING;
+ 	}
++	else if (text == &quot;TO_CRAWL&quot;)
++	{
++		status = TO_CRAWL;
++	}
+ 	else if (text == &quot;CRAWLED&quot;)
+ 	{
+ 		status = CRAWLED;
+@@ -326,8 +333,8 @@
+ }
+ 
+ /// Updates the status of items en masse.
+-bool CrawlHistory::updateItemsStatus(CrawlStatus currentStatus, CrawlStatus newStatus,
+-	unsigned int sourceId, bool allSources)
++bool CrawlHistory::updateItemsStatus(CrawlStatus newStatus, unsigned int sourceId,
++	bool allSources)
+ {
+ 	SQLResults *results = NULL;
+ 	bool success = false;
+@@ -335,17 +342,15 @@
+ 	if (allSources == false)
+ 	{
+ 		results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q' WHERE SourceId='%u' AND Status='%q';&quot;,
+-			statusToText(newStatus).c_str(), sourceId,
+-			statusToText(currentStatus).c_str());
++			SET Status='%q' WHERE SourceId='%u';&quot;,
++			statusToText(newStatus).c_str(), sourceId);
+ 	}
+ 	else
+ 	{
+ 		// Ignore the source
+ 		results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q' WHERE Status='%q';&quot;,
+-			statusToText(newStatus).c_str(),
+-			statusToText(currentStatus).c_str());
++			SET Status='%q';&quot;,
++			statusToText(newStatus).c_str());
+ 	}
+ 
+ 	if (results != NULL)
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2009-01-02 18:37:35 UTC (rev 1465)
++++ trunk/SQL/CrawlHistory.h	2009-01-06 16:09:40 UTC (rev 1466)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -33,7 +33,7 @@
+ 		CrawlHistory(const std::string &amp;database);
+ 		virtual ~CrawlHistory();
+ 
+-		typedef enum { UNKNOWN, CRAWLING, CRAWLED, CRAWL_ERROR } CrawlStatus;
++		typedef enum { UNKNOWN, TO_CRAWL, CRAWLING, CRAWLED, CRAWL_ERROR } CrawlStatus;
+ 
+ 		/// Creates the CrawlHistory table in the database.
+ 		static bool create(const std::string &amp;database);
+@@ -64,8 +64,8 @@
+ 		bool updateItems(const std::map&lt;std::string, time_t&gt; urls, CrawlStatus status);
+ 
+ 		/// Updates the status of items en masse.
+-		bool updateItemsStatus(CrawlStatus currentStatus, CrawlStatus newStatus,
+-			unsigned int sourceId, bool allSources = false);
++		bool updateItemsStatus(CrawlStatus newStatus, unsigned int sourceId,
++			bool allSources = false);
+ 
+ 		/// Gets the error number and date for a URL.
+ 		int getErrorDetails(const std::string &amp;url, time_t &amp;date);
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2009-01-02 18:37:35 UTC (rev 1465)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2009-01-06 16:09:40 UTC (rev 1466)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -514,7 +514,7 @@
+ 		CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 
+ 		// Update all items status so that we can get rid of files from deleted sources
+-		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::CRAWLING, 0, true);
++		crawlHistory.updateItemsStatus(CrawlHistory::TO_CRAWL, 0, true);
+ 	}
+ 
+ 	// Initiate crawling
+@@ -551,9 +551,9 @@
+ 				CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 				set&lt;string&gt; deletedFiles;
+ 
+-				// All files left with status CRAWLING belong to deleted sources
++				// All files left with status TO_CRAWL belong to deleted sources
+ 				if ((m_pDiskHandler != NULL) &amp;&amp;
+-					(crawlHistory.getItems(CrawlHistory::CRAWLING, deletedFiles) &gt; 0))
++					(crawlHistory.getItems(CrawlHistory::TO_CRAWL, deletedFiles) &gt; 0))
+ 				{
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;DaemonState::start_crawling: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; orphaned files&quot; &lt;&lt; endl;
+@@ -562,11 +562,10 @@
+ 						fileIter != deletedFiles.end(); ++fileIter)
+ 					{
+ 						// Inform the MonitorHandler
+-						if (m_pDiskHandler-&gt;fileDeleted(fileIter-&gt;substr(7)) == true)
+-						{
+-							// Delete this item
+-							crawlHistory.deleteItem(*fileIter);
+-						}
++						m_pDiskHandler-&gt;fileDeleted(fileIter-&gt;substr(7));
++
++						// Delete this item
++						crawlHistory.deleteItem(*fileIter);
+ 					}
+ 				}
+ 			}
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2009-01-02 18:37:35 UTC (rev 1465)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2009-01-06 16:09:40 UTC (rev 1466)
+@@ -1282,6 +1282,8 @@
+ 
+ 	if (location.m_name.empty() == false)
+ 	{
++		location.m_isSource = true;
++
+ 		m_indexableLocations.insert(location);
+ 	}
+ 
+@@ -2013,9 +2015,6 @@
+ 	{
+ 		if (fnmatch(patternIter-&gt;c_str(), fileName.c_str(), FNM_NOESCAPE) == 0)
+ 		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;PinotSettings::isBlackListed: &quot; &lt;&lt; fileName &lt;&lt; &quot; matches &quot; &lt;&lt; *patternIter &lt;&lt; endl;
+-#endif
+ 			// Fail if it's in the blacklist, let the file through otherwise
+ 			return m_isBlackList;
+ 		}
+@@ -2025,52 +2024,6 @@
+ 	return !m_isBlackList;
+ }
+ 
+-PinotSettings::TimestampedItem::TimestampedItem() :
+-	m_modTime(0)
+-{
+-}
+-
+-PinotSettings::TimestampedItem::TimestampedItem(const TimestampedItem &amp;other) :
+-	m_name(other.m_name),
+-	m_modTime(other.m_modTime)
+-{
+-}
+-
+-PinotSettings::TimestampedItem::~TimestampedItem()
+-{
+-}
+-
+-PinotSettings::TimestampedItem &amp;PinotSettings::TimestampedItem::operator=(const TimestampedItem &amp;other)
+-{
+-	if (this != &amp;other)
+-	{
+-		m_name = other.m_name;
+-		m_modTime = other.m_modTime;
+-	}
+-
+-	return *this;
+-}
+-
+-bool PinotSettings::TimestampedItem::operator&lt;(const TimestampedItem &amp;other) const
+-{
+-	if (m_name &lt; other.m_name)
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-bool PinotSettings::TimestampedItem::operator==(const TimestampedItem &amp;other) const
+-{
+-	if (m_name == other.m_name)
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+ PinotSettings::IndexableLocation::IndexableLocation() :
+ 	m_monitor(false),
+ 	m_isSource(true)
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2009-01-02 18:37:35 UTC (rev 1465)
++++ trunk/UI/GTK2/src/PinotSettings.h	2009-01-06 16:09:40 UTC (rev 1466)
+@@ -122,21 +122,6 @@
+ 		/// Determines if a file matches the blacklist.
+ 		bool isBlackListed(const std::string &amp;fileName);
+ 
+-		class TimestampedItem
+-		{
+-			public:
+-				TimestampedItem();
+-				TimestampedItem(const TimestampedItem &amp;other);
+-				~TimestampedItem();
+-
+-				TimestampedItem &amp;operator=(const TimestampedItem &amp;other);
+-				bool operator&lt;(const TimestampedItem &amp;other) const;
+-				bool operator==(const TimestampedItem &amp;other) const;
+-
+-				Glib::ustring m_name;
+-				time_t m_modTime;
+-		};
+-
+ 		class IndexableLocation 
+ 		{
+ 			public:
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2009-01-02 18:37:35 UTC (rev 1465)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2009-01-06 16:09:40 UTC (rev 1466)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -31,6 +31,7 @@
+ #include &lt;fstream&gt;
+ #include &lt;sstream&gt;
+ #include &lt;glibmm/miscutils.h&gt;
++#include &lt;glibmm/convert.h&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -273,11 +274,10 @@
+ 
+ bool DirectoryScannerThread::scanEntry(const string &amp;entryName, CrawlHistory &amp;crawlHistory)
+ {
+-	CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
+ 	string location(&quot;<A HREF="file://">file://</A>&quot; + entryName);
++	CrawlHistory::CrawlStatus itemStatus = CrawlHistory::UNKNOWN;
+ 	time_t itemDate;
+ 	struct stat fileStat;
+-	int entryStatus = 0;
+ 	bool scanSuccess = true, reportFile = false, itemExists = false;
+ 
+ 	if (entryName.empty() == true)
+@@ -297,20 +297,30 @@
+ #endif
+ 		return false;
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: checking &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
+ 
+ 	// Is this item in the database already ?
+-	itemExists = crawlHistory.hasItem(location, status, itemDate);
++	itemExists = crawlHistory.hasItem(location, itemStatus, itemDate);
++	if (itemExists == true)
++	{
++		if (itemStatus &gt; CrawlHistory::TO_CRAWL)
++		{
++			// At this stage, this shouldn't happen
++			cout &lt;&lt; &quot;Skipping &quot; &lt;&lt; entryName &lt;&lt; &quot;: it has already been crawled&quot; &lt;&lt; endl;
++			return false;
++		}
+ 
+-	if (m_followSymLinks == false)
+-	{
+-		entryStatus = lstat(entryName.c_str(), &amp;fileStat);
++		crawlHistory.updateItem(location, CrawlHistory::CRAWLING, itemDate);
+ 	}
+ 	else
+ 	{
+-		// Stat the files pointed to by symlinks
+-		entryStatus = stat(entryName.c_str(), &amp;fileStat);
++		// Record it
++		crawlHistory.insertItem(location, CrawlHistory::CRAWLING, m_sourceId, itemDate);
+ 	}
+ 
++	int entryStatus = lstat(entryName.c_str(), &amp;fileStat);
+ 	if (entryStatus == -1)
+ 	{
+ 		entryStatus = errno;
+@@ -322,16 +332,105 @@
+ 	// Is it a file or a directory ?
+ 	else if (S_ISLNK(fileStat.st_mode))
+ 	{
+-		// This won't happen when m_followSymLinks is true
++		string trueEntryName;
++
++		if (m_followSymLinks == false)
++		{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: skipped symlink&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: skipped symlink &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+-		return false;
++			return false;
++		}
++
++		char *pBuf = g_file_read_link(entryName.c_str(), NULL);
++		if (pBuf != NULL)
++		{
++			string linkLocation(filename_to_utf8(pBuf));
++			if (path_is_absolute(linkLocation) == true)
++			{
++				trueEntryName = linkLocation;
++			}
++			else
++			{
++				string entryDir(path_get_dirname(entryName));
++				string::size_type prevSlashPos = 0, slashPos = linkLocation.find('/');
++
++				while (slashPos != string::npos)
++				{
++					string path(linkLocation.substr(prevSlashPos, slashPos - prevSlashPos));
++
++					if (path == &quot;..&quot;)
++					{
++						string upDir(path_get_dirname(entryDir));
++						entryDir = upDir;
++					}
++					else if (path != &quot;.&quot;)
++					{
++						entryDir += &quot;/&quot;;
++						entryDir += path;
++					}
++#ifdef DEBUG
++					cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: symlink resolved to &quot; &lt;&lt; entryDir &lt;&lt; endl;
++#endif
++
++					if (slashPos + 1 &gt;= linkLocation.length())
++					{
++						// Nothing behind
++						prevSlashPos = string::npos;
++						break;
++					}
++
++					// Next
++					prevSlashPos = slashPos + 1;
++					slashPos = linkLocation.find('/', prevSlashPos);
++				}
++
++				// Remainder
++				if (prevSlashPos != string::npos)
++				{
++					string path(linkLocation.substr(prevSlashPos));
++
++					if (path == &quot;..&quot;)
++					{
++						string upDir(path_get_dirname(entryDir));
++						entryDir = upDir;
++					}
++					else if (path != &quot;.&quot;)
++					{
++						entryDir += &quot;/&quot;;
++						entryDir += path;
++					}
++				}
++#ifdef DEBUG
++				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: symlink resolved to &quot; &lt;&lt; entryDir &lt;&lt; endl;
++#endif
++
++				trueEntryName = entryDir;
++			}
++
++			g_free(pBuf);
++		}
++
++		string trueLocation(&quot;<A HREF="file://">file://</A>&quot; + trueEntryName);
++		CrawlHistory::CrawlStatus trueItemStatus = CrawlHistory::UNKNOWN;
++		time_t trueItemDate;
++
++		// Check whether this will be, or has already been crawled
++		if (crawlHistory.hasItem(trueLocation, trueItemStatus, trueItemDate) == false)
++		{
++			if (PinotSettings::getInstance().isBlackListed(entryName) == false)
++			{
++				// Proceed as per regular files
++				reportFile = true;
++			}
++		}
++		else cout &lt;&lt; &quot;Skipping &quot; &lt;&lt; entryName &lt;&lt; &quot;: it links to &quot; &lt;&lt; trueEntryName
++			&lt;&lt; &quot; which will be crawled, or has already been crawled&quot; &lt;&lt; endl;
+ 	}
+ 	else if (S_ISREG(fileStat.st_mode))
+ 	{
+ 		// Is this file blacklisted ?
+-		// We have to check early so that if necessary the file's status stays at CRAWLING 
++		// We have to check early so that if necessary the file's status stays at TO_CRAWL
+ 		// and it is removed from the index at the end of this crawl
+ 		if (PinotSettings::getInstance().isBlackListed(entryName) == false)
+ 		{
+@@ -385,13 +484,7 @@
+ 						subEntryName += pEntryName;
+ 
+ 						// Scan this entry
+-						if (scanEntry(subEntryName, crawlHistory) == false)
+-						{
+-#ifdef DEBUG
+-							cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: failed to open &quot;
+-								&lt;&lt; subEntryName &lt;&lt; endl;
+-#endif
+-						}
++						scanEntry(subEntryName, crawlHistory);
+ 					}
+ 
+ 					// Next entry
+@@ -428,36 +521,24 @@
+ 	// If a major error occured, this won't be true
+ 	if (reportFile == true)
+ 	{
+-		if (itemExists == false)
++		// Was it modified after the last crawl ?
++		if ((itemExists == true) &amp;&amp;
++			(itemDate &gt;= fileStat.st_mtime))
+ 		{
+-			// Record it
+-			crawlHistory.insertItem(location, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
+-			itemExists = true;
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
++			// No, it wasn't
++			reportFile = false;
+ 		}
+-		else
++
++		// History of modified files, especially the timestamp, is always updated
++		// Others' are updated only if we are doing a full scan because
++		// the status has to be reset to CRAWLED, so that they are not unindexed
++		if ((reportFile == true) ||
++			(m_fullScan == true))
+ 		{
+-			// Was it modified after the last crawl ?
+-			if (itemDate &gt;= fileStat.st_mtime)
+-			{
+-				// No, it wasn't
+-				reportFile = false;
+-			}
+-
+-			// History of modified files, especially the timestamp, is always updated
+-			// Others' are updated only if we are doing a full scan because
+-			// the status has to be reset to CRAWLED, so that they are not unindexed
+-			if ((reportFile == true) ||
+-				(m_fullScan == true))
+-			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: updating &quot; &lt;&lt; entryName &lt;&lt; endl;
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: updating &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+-				cacheUpdate(location, fileStat.st_mtime, crawlHistory);
+-			}
+-
++			cacheUpdate(location, fileStat.st_mtime, crawlHistory);
+ 		}
+ 
+ 		if (reportFile == true)
+@@ -492,14 +573,7 @@
+ 		time_t timeNow = time(NULL);
+ 
+ 		// Record this error
+-		if (itemExists == false)
+-		{
+-			crawlHistory.insertItem(location, CrawlHistory::CRAWL_ERROR, m_sourceId, timeNow, entryStatus);
+-		}
+-		else
+-		{
+-			crawlHistory.updateItem(location, CrawlHistory::CRAWL_ERROR, timeNow, entryStatus);
+-		}
++		crawlHistory.updateItem(location, CrawlHistory::CRAWL_ERROR, timeNow, entryStatus);
+ 	}
+ 
+ 	return scanSuccess;
+@@ -519,16 +593,16 @@
+ 	}
+ 	scanTimer.start();
+ 
++	// Remove errors
++	crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_ERROR);
++
+ 	if (m_fullScan == true)
+ 	{
+ 		cout &lt;&lt; &quot;Doing a full scan on &quot; &lt;&lt; m_dirName &lt;&lt; endl;
+ 
+ 		// Update this source's items status so that we can detect files that have been deleted
+-		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::CRAWLING,
+-			m_sourceId);
++		crawlHistory.updateItemsStatus(CrawlHistory::TO_CRAWL, m_sourceId);
+ 	}
+-	// Remove errors
+-	crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_ERROR);
+ 
+ 	if (scanEntry(m_dirName, crawlHistory) == false)
+ 	{
+@@ -550,22 +624,21 @@
+ 	{
+ 		scanTimer.start();
+ 
+-		// All files left with status CRAWLING were not found in this crawl
++		// All files left with status TO_CRAWL were not found in this crawl
+ 		// Chances are they were removed after the last full scan
+ 		while ((m_pHandler != NULL) &amp;&amp;
+-			(crawlHistory.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, urls,
++			(crawlHistory.getSourceItems(m_sourceId, CrawlHistory::TO_CRAWL, urls,
+ 				currentOffset, currentOffset + 100) &gt; 0))
+ 		{
+ 			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
+ 				urlIter != urls.end(); ++urlIter)
+ 			{
+ 				// Inform the MonitorHandler
+-				if (m_pHandler-&gt;fileDeleted(urlIter-&gt;substr(7)) == true)
+-				{
+-					// Delete this item
+-					crawlHistory.deleteItem(*urlIter);
+-					metaData.deleteItem(DocumentInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;), DocumentInfo::SERIAL_ALL);
+-				}
++				m_pHandler-&gt;fileDeleted(urlIter-&gt;substr(7));
++
++				// Delete this item
++				crawlHistory.deleteItem(*urlIter);
++				metaData.deleteItem(DocumentInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;), DocumentInfo::SERIAL_ALL);
+ 			}
+ 
+ 			// Next
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001455.html">[Pinot-svn] r1465 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001457.html">[Pinot-svn] r1467 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1456">[ date ]</a>
+              <a href="thread.html#1456">[ thread ]</a>
+              <a href="subject.html#1456">[ subject ]</a>
+              <a href="author.html#1456">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

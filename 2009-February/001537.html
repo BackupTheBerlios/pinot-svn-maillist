@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1547 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1547%20-%20trunk/Core&In-Reply-To=%3C200902061450.n16Eo0bw005007%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001536.html">
+   <LINK REL="Next"  HREF="001538.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1547 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1547%20-%20trunk/Core&In-Reply-To=%3C200902061450.n16Eo0bw005007%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1547 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb  6 15:50:00 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001536.html">[Pinot-svn] r1546 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001538.html">[Pinot-svn] r1548 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1537">[ date ]</a>
+              <a href="thread.html#1537">[ thread ]</a>
+              <a href="subject.html#1537">[ subject ]</a>
+              <a href="author.html#1537">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-06 15:49:54 +0100 (Fri, 06 Feb 2009)
+New Revision: 1547
+
+Modified:
+   trunk/Core/DaemonState.cpp
+Log:
+Swapped DirectoryScanner for Crawler threads.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-02-06 14:47:31 UTC (rev 1546)
++++ trunk/Core/DaemonState.cpp	2009-02-06 14:49:54 UTC (rev 1547)
+@@ -111,19 +111,19 @@
+ 	return availableMbSize;
+ }
+ 
+-// A function object to stop DirectoryScanner threads with for_each()
+-struct StopScannerThreadFunc
++// A function object to stop Crawler threads with for_each()
++struct StopCrawlerThreadFunc
+ {
+ public:
+ 	void operator()(map&lt;unsigned int, WorkerThread *&gt;::value_type &amp;p)
+ 	{
+ 		string type(p.second-&gt;getType());
+ 
+-		if (type == &quot;DirectoryScannerThread&quot;)
++		if (type == &quot;CrawlerThread&quot;)
+ 		{
+ 			p.second-&gt;stop();
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;StopScannerThreadFunc: stopped thread &quot; &lt;&lt; p.second-&gt;getId() &lt;&lt; endl;
++			cout &lt;&lt; &quot;StopCrawlerThreadFunc: stopped thread &quot; &lt;&lt; p.second-&gt;getId() &lt;&lt; endl;
+ #endif
+ 		}
+ 	}
+@@ -421,7 +421,7 @@
+ 	string locationToCrawl(location.m_name);
+ 	bool doMonitoring = location.m_monitor;
+ 	bool isSource = location.m_isSource;
+-	DirectoryScannerThread *pScannerThread = NULL;
++	CrawlerThread *pCrawlerThread = NULL;
+ 
+ 	// Can we go ahead and crawl ?
+ 	if ((is_flag_set(LOW_DISK_SPACE) == true) ||
+@@ -442,17 +442,17 @@
+ 	{
+ 		// Monitoring is not necessary, but we still have to pass the handler
+ 		// so that we can act on documents that have been deleted
+-		pScannerThread = new DirectoryScannerThread(locationToCrawl, isSource,
++		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+ 			m_fullScan, m_isReindex, NULL, m_pDiskHandler);
+ 	}
+ 	else
+ 	{
+-		pScannerThread = new DirectoryScannerThread(locationToCrawl, isSource,
++		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+ 			m_fullScan, m_isReindex, m_pDiskMonitor, m_pDiskHandler);
+ 	}
+-	pScannerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
++	pCrawlerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
+ 
+-	if (start_thread(pScannerThread, true) == true)
++	if (start_thread(pCrawlerThread, true) == true)
+ 	{
+ 		++m_crawlers;
+ 		set_flag(CRAWLING);
+@@ -582,8 +582,8 @@
+ 	{
+ 		if (m_threads.empty() == false)
+ 		{
+-			// Stop all DirectoryScanner threads
+-			for_each(m_threads.begin(), m_threads.end(), StopScannerThreadFunc());
++			// Stop all Crawler threads
++			for_each(m_threads.begin(), m_threads.end(), StopCrawlerThreadFunc());
+ 		}
+ 
+ 		unlock_threads();
+@@ -606,17 +606,17 @@
+ #endif
+ 
+ 	// What type of thread was it ?
+-	if (type == &quot;DirectoryScannerThread&quot;)
++	if (type == &quot;CrawlerThread&quot;)
+ 	{
+-		DirectoryScannerThread *pScannerThread = dynamic_cast&lt;DirectoryScannerThread *&gt;(pThread);
+-		if (pScannerThread == NULL)
++		CrawlerThread *pCrawlerThread = dynamic_cast&lt;CrawlerThread *&gt;(pThread);
++		if (pCrawlerThread == NULL)
+ 		{
+ 			delete pThread;
+ 			return;
+ 		}
+ 		--m_crawlers;
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::on_thread_end: done crawling &quot; &lt;&lt; pScannerThread-&gt;getDirectory() &lt;&lt; endl;
++		cout &lt;&lt; &quot;DaemonState::on_thread_end: done crawling &quot; &lt;&lt; pCrawlerThread-&gt;getDirectory() &lt;&lt; endl;
+ #endif
+ 
+ 		// Explicitely flush the index once a directory has been crawled
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001536.html">[Pinot-svn] r1546 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001538.html">[Pinot-svn] r1548 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1537">[ date ]</a>
+              <a href="thread.html#1537">[ thread ]</a>
+              <a href="subject.html#1537">[ subject ]</a>
+              <a href="author.html#1537">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

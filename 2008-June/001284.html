@@ -1,0 +1,482 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1290 - in trunk: . IndexSearch IndexSearch/XesamGLib
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1290%20-%20in%20trunk%3A%20.%20IndexSearch%20IndexSearch/XesamGLib&In-Reply-To=%3C200806281234.m5SCYR29015245%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001282.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1290 - in trunk: . IndexSearch IndexSearch/XesamGLib</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1290%20-%20in%20trunk%3A%20.%20IndexSearch%20IndexSearch/XesamGLib&In-Reply-To=%3C200806281234.m5SCYR29015245%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1290 - in trunk: . IndexSearch IndexSearch/XesamGLib">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jun 28 14:34:27 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001282.html">[Pinot-svn] r1289 - tags
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1284">[ date ]</a>
+              <a href="thread.html#1284">[ thread ]</a>
+              <a href="subject.html#1284">[ subject ]</a>
+              <a href="author.html#1284">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-06-28 14:34:01 +0200 (Sat, 28 Jun 2008)
+New Revision: 1290
+
+Added:
+   trunk/IndexSearch/XesamGLib/
+   trunk/IndexSearch/XesamGLib/Makefile.am
+   trunk/IndexSearch/XesamGLib/XesamEngine.cpp
+   trunk/IndexSearch/XesamGLib/XesamEngine.h
+Modified:
+   trunk/Makefile.am
+   trunk/configure.in
+   trunk/pinot.spec.in
+Log:
+Experimental backend based on xesam-glib to query Xesam servers. Pass
+&quot;--enable-xesam-glib=yes&quot; to configure and &quot;--with xesam-glib&quot; to rpmbuild.
+
+
+Added: trunk/IndexSearch/XesamGLib/Makefile.am
+===================================================================
+--- trunk/IndexSearch/XesamGLib/Makefile.am	2008-06-21 10:28:08 UTC (rev 1289)
++++ trunk/IndexSearch/XesamGLib/Makefile.am	2008-06-28 12:34:01 UTC (rev 1290)
+@@ -0,0 +1,29 @@
++# Process this file with automake to produce Makefile.in
++
++noinst_HEADERS = \
++	XesamEngine.h
++
++if HAVE_XESAM_GLIB
++lib_LTLIBRARIES = libxesamglibbackend.la
++
++libxesamglibbackend_la_SOURCES = \
++	ModuleExports.cpp \
++	XesamEngine.cpp
++
++libxesamglibbackend_la_LDFLAGS = -module -shared -nostartfiles
++
++libxesamglibbackend_la_LIBADD = \
++	@XESAMGLIB_LIBS@ @MISC_LIBS@ \
++	-L$(top_builddir)/Utils \
++	-lBasicUtils 
++
++AM_CXXFLAGS = \
++	-fPIC \
++	-I$(top_srcdir)/Utils \
++	-I$(top_srcdir)/Tokenize \
++	-I$(top_srcdir)/Tokenize/filters \
++	-I$(top_srcdir)/Collect \
++	-I$(top_srcdir)/IndexSearch \
++	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @GLIBMM_CFLAGS@ @XESAMGLIB_CFLAGS@
++endif
++
+
+Added: trunk/IndexSearch/XesamGLib/XesamEngine.cpp
+===================================================================
+--- trunk/IndexSearch/XesamGLib/XesamEngine.cpp	2008-06-21 10:28:08 UTC (rev 1289)
++++ trunk/IndexSearch/XesamGLib/XesamEngine.cpp	2008-06-28 12:34:01 UTC (rev 1290)
+@@ -0,0 +1,202 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;glib.h&gt;
++#include &lt;xesam-glib/xesam-glib.h&gt;
++#include &lt;vector&gt;
++#include &lt;iostream&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;StringManip.h&quot;
++#include &quot;XesamEngine.h&quot;
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::vector;
++
++class CallbackData
++{
++	public:
++		CallbackData(GMainLoop *pMainLoop,
++			vector&lt;DocumentInfo&gt; &amp;resultsList,
++			unsigned int &amp;resultsCountEstimate) :
++			m_pMainLoop(pMainLoop),
++			m_resultsList(resultsList),
++			m_resultsCountEstimate(resultsCountEstimate),
++			m_gettingHits(false)
++		{
++		}
++		~CallbackData()
++		{
++		}
++
++		GMainLoop *m_pMainLoop;
++		vector&lt;DocumentInfo&gt; &amp;m_resultsList;
++		unsigned int &amp;m_resultsCountEstimate;
++		bool m_gettingHits;
++
++};
++
++static void hitsReady(XesamGSearch *pSearch, XesamGHits *pHits, gpointer pUserData)
++{
++	if ((pHits == NULL) ||
++		(pUserData == NULL))
++	{
++		return;
++	}
++
++	CallbackData *pData = (CallbackData *)pUserData;
++	pData-&gt;m_gettingHits = true;
++
++	for (guint i = 0; i &lt; xesam_g_hits_get_count(pHits); ++i)
++	{
++		XesamGHit *pHit = xesam_g_hits_get(pHits, i);
++
++		if (pHit == NULL)
++		{
++			continue;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XesamEngine::runQuery: hit ID &quot; &lt;&lt; xesam_g_hit_get_id(pHit)
++			&lt;&lt; &quot;, URL &quot; &lt;&lt; xesam_g_hit_get_string(pHit, &quot;xesam:url&quot;) &lt;&lt; endl;
++#endif
++
++		// FIXME: push into pData-&gt;m_resultsList
++	}
++
++	pData-&gt;m_gettingHits = false;
++}
++
++static void searchDone(XesamGSearch *pSearch, gpointer pUserData)
++{
++	if (pUserData == NULL)
++	{
++		return;
++	}
++
++	CallbackData *pData = (CallbackData *)pUserData;
++
++	// Check we are not in the middle of retrieving stuff
++	while (pData-&gt;m_gettingHits == true);
++	g_main_loop_quit(pData-&gt;m_pMainLoop);
++}
++
++XesamEngine::XesamEngine(const string &amp;dbusObject) :
++	SearchEngineInterface(),
++	m_dbusObject(dbusObject)
++{
++}
++
++XesamEngine::~XesamEngine()
++{
++}
++
++bool XesamEngine::runQuery(QueryProperties&amp; queryProps,
++	unsigned int startDoc)
++{
++	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
++	QueryProperties::QueryType type = queryProps.getType();
++	bool ranQuery = false;
++
++        m_resultsList.clear();
++        m_resultsCountEstimate = 0;
++
++	// FIXME: creating a main loop here might not be such a hot idea...
++	g_type_init();
++
++	// Was an object name specified ?
++	XesamGSearcher *pSearcher = NULL;
++	if (m_dbusObject.empty() == false)
++	{
++		pSearcher = XESAM_G_SEARCHER(xesam_g_dbus_searcher_new(XESAM_G_SERVER_DBUS_NAME, m_dbusObject.c_str()));
++	}
++	else
++	{
++		pSearcher = XESAM_G_SEARCHER(xesam_g_dbus_searcher_new_default());
++	}
++	if (pSearcher == NULL)
++	{
++		return false;
++	}
++
++	XesamGSession *pSession = xesam_g_session_new(pSearcher);
++	if (pSession == NULL)
++	{
++		g_object_unref(pSearcher);
++		return false;
++	}
++	// FIXME: set session properties here
++
++        // What type of query is this ?
++	XesamGQuery *pQuery = NULL;
++	if (type == QueryProperties::XESAM_QL)
++	{
++		pQuery = xesam_g_query_new_from_text(queryProps.getFreeQuery().c_str());
++	}
++	else if (type == QueryProperties::XESAM_UL)
++	{
++		pQuery = xesam_g_query_new_from_xml(queryProps.getFreeQuery().c_str());
++	}
++	if (pQuery == NULL)
++	{
++		g_object_unref(pSession);
++		g_object_unref(pSearcher);
++		return false;
++	}
++
++	XesamGSearch *pSearch = xesam_g_session_new_search(pSession, pQuery);
++	if (pSearch == NULL)
++	{
++		g_object_unref(pQuery);
++		g_object_unref(pSession);
++		g_object_unref(pSearcher);
++		return false;
++	}
++
++	GMainLoop *pMainLoop = g_main_loop_new(NULL, FALSE);
++	if (pMainLoop != NULL)
++	{
++		CallbackData *pData = new CallbackData(pMainLoop, m_resultsList, m_resultsCountEstimate);
++
++		g_signal_connect(pSearch, &quot;hits-ready&quot;, G_CALLBACK(hitsReady), pData);
++		g_signal_connect(pSearch, &quot;done&quot;, G_CALLBACK(searchDone), pData);
++
++		// Start
++		xesam_g_search_start(pSearch);
++		g_main_loop_run(pMainLoop);
++
++		// Stop
++		xesam_g_search_close(pSearch);
++
++		m_resultsCountEstimate = m_resultsList.size();
++
++		delete pData;
++		g_main_loop_unref(pMainLoop);
++		ranQuery = true;
++	}
++
++	// Unreference all objects
++	g_object_unref(pSearch);
++	g_object_unref(pQuery);
++	g_object_unref(pSession);
++	g_object_unref(pSearcher);
++
++	return ranQuery;
++}
++
+
+Added: trunk/IndexSearch/XesamGLib/XesamEngine.h
+===================================================================
+--- trunk/IndexSearch/XesamGLib/XesamEngine.h	2008-06-21 10:28:08 UTC (rev 1289)
++++ trunk/IndexSearch/XesamGLib/XesamEngine.h	2008-06-28 12:34:01 UTC (rev 1290)
+@@ -0,0 +1,47 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _XESAM_ENGINE_H
++#define _XESAM_ENGINE_H
++
++#include &lt;string&gt;
++
++#include &quot;QueryProperties.h&quot;
++#include &quot;SearchEngineInterface.h&quot;
++
++/// A search engine that acts as a client to the Xesam D-Bus interface.
++class XesamEngine : public SearchEngineInterface
++{
++	public:
++		XesamEngine(const std::string &amp;dbusObject);
++		virtual ~XesamEngine();
++
++		/// Runs a query; true if success.
++		virtual bool runQuery(QueryProperties&amp; queryProps,
++			unsigned int startDoc = 0);
++
++	protected:
++		std::string m_dbusObject;
++
++	private:
++		XesamEngine(const XesamEngine &amp;other);
++		XesamEngine &amp;operator=(const XesamEngine &amp;other);
++
++};
++
++#endif // _XESAM_ENGINE_H
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2008-06-21 10:28:08 UTC (rev 1289)
++++ trunk/Makefile.am	2008-06-28 12:34:01 UTC (rev 1290)
+@@ -1,5 +1,5 @@
+ 
+-SUBDIRS = po Utils Tokenize SQL Collect IndexSearch/Google IndexSearch IndexSearch/Xapian Monitor UI/GTK2/src
++SUBDIRS = po Utils Tokenize SQL Collect IndexSearch/Google IndexSearch IndexSearch/Xapian IndexSearch/XesamGLib Monitor UI/GTK2/src
+ 
+ # TODO: Fix that when cleaning up for distcheck! - crazy -
+ EXTRA_DIST = AUTHORS ChangeLog ChangeLog-dijon FAQ NEWS README TODO \
+@@ -48,8 +48,8 @@
+ 	@rm $(DESTDIR)$(libdir)/lib*filter.a $(DESTDIR)$(libdir)/lib*filter.la
+ 	@mv $(DESTDIR)$(libdir)/lib*filter* $(DESTDIR)$(libdir)/pinot/filters/
+ 	@mkdir -p $(DESTDIR)$(libdir)/pinot/backends
+-	@rm $(DESTDIR)$(libdir)/libxapianbackend.a $(DESTDIR)$(libdir)/libxapianbackend.la
+-	@mv $(DESTDIR)$(libdir)/libxapianbackend* $(DESTDIR)$(libdir)/pinot/backends/
++	@rm $(DESTDIR)$(libdir)/lib*backend.a $(DESTDIR)$(libdir)/lib*backend.la
++	@mv $(DESTDIR)$(libdir)/lib*backend* $(DESTDIR)$(libdir)/pinot/backends/
+ 	@mkdir -p $(DESTDIR)$(datadir)/icons/hicolor/48x48/apps/
+ 	$(INSTALL_DATA) $(srcdir)/UI/icons/48x48/pinot.png $(DESTDIR)$(datadir)/icons/hicolor/48x48/apps/pinot.png
+ 	@mkdir -p $(DESTDIR)$(datadir)/icons/hicolor/32x32/apps/
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2008-06-21 10:28:08 UTC (rev 1289)
++++ trunk/configure.in	2008-06-28 12:34:01 UTC (rev 1290)
+@@ -106,6 +106,25 @@
+ AC_SUBST(SOAP_CFLAGS)
+ AC_SUBST(SOAP_LIBS)
+ 
++dnl Xesam GLib
++AC_MSG_CHECKING(whether to enable Xesam GLib support)
++AC_ARG_ENABLE(xesam-glib,
++   [AS_HELP_STRING([--enable-xesam-glib], [enable Xesam GLib support [default=no]])],
++   ,[enable_xesam_glib=no])
++if test &quot;x$enable_xesam_glib&quot; != &quot;xyes&quot;; then
++   XESAMGLIB_CFLAGS=&quot;&quot;
++   XESAMGLIB_LIBS=&quot;&quot;
++   enable_xesam_glib=no
++fi
++AC_MSG_RESULT($enable_xesam_glib)
++AM_CONDITIONAL(HAVE_XESAM_GLIB, false)
++if test &quot;x$enable_xesam_glib&quot; = &quot;xyes&quot;; then
++   PKG_CHECK_MODULES(XESAMGLIB, xesam-glib)
++   AM_CONDITIONAL(HAVE_XESAM_GLIB, true)
++fi
++AC_SUBST(XESAMGLIB_CFLAGS)
++AC_SUBST(XESAMGLIB_LIBS)
++
+ dnl Neon or Curl ?
+ AC_MSG_CHECKING(which HTTP library to use)
+ AC_ARG_WITH(http,
+@@ -318,6 +337,6 @@
+ 
+ AC_OUTPUT( pinot.spec UI/GTK2/src/de.berlios.Pinot.service Makefile \
+ 	Utils/Makefile Tokenize/Makefile SQL/Makefile po/Makefile.in Collect/Makefile \
+-	IndexSearch/Google/Makefile IndexSearch/Xapian/Makefile IndexSearch/Makefile \
+-	Monitor/Makefile UI/GTK2/src/Makefile )
++	IndexSearch/Google/Makefile IndexSearch/Xapian/Makefile IndexSearch/XesamGLib/Makefile \
++	IndexSearch/Makefile Monitor/Makefile UI/GTK2/src/Makefile )
+ 
+
+Modified: trunk/pinot.spec.in
+===================================================================
+--- trunk/pinot.spec.in	2008-06-21 10:28:08 UTC (rev 1289)
++++ trunk/pinot.spec.in	2008-06-28 12:34:01 UTC (rev 1290)
+@@ -24,17 +24,20 @@
+ Source: %{name}-%{version}.tar.gz
+ URL: <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A>
+ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
+-Requires: xapian-core-libs &gt;= 1.0.3, libtextcat &gt;= 2.2, sqlite &gt;= 3.3.1, curl &gt;= 7.13, gmime &gt;= 2.1
++Requires: xapian-core-libs &gt;= 1.0.3, libtextcat &gt;= 2.2, sqlite &gt;= 3.3.1, libcurl &gt;= 7.13, gmime &gt;= 2.1
+ Requires: gtkmm24 &gt;= 2.10, libxml++ &gt;= 2.12, %{dbus_pkg} &gt;= 0.60, shared-mime-info
+ Requires: taglib &gt;= 1.4, libexif &gt;= 0.6, unzip, antiword, unrtf, %{pftotext_pkg}
+ #Suggests: xapian-omega
+-BuildRequires: xapian-core-devel &gt;= 1.0.3, libtextcat-devel &gt;= 2.2, sqlite-devel &gt;= 3.3.1, curl-devel &gt;= 7.13, gmime-devel &gt;= 2.1, boost-devel &gt;= 1.32
++BuildRequires: xapian-core-devel &gt;= 1.0.3, libtextcat-devel &gt;= 2.2, sqlite-devel &gt;= 3.3.1, libcurl-devel &gt;= 7.13, gmime-devel &gt;= 2.1, boost-devel &gt;= 1.32
+ BuildRequires: gtkmm24-devel &gt;= 2.10, libxml++-devel &gt;= 2.12, %{dbus_dev_pkg} &gt;= 0.60, gettext-devel, desktop-file-utils
+ BuildRequires: taglib-devel &gt;= 1.4, libexif-devel &gt;= 0.6
+ BuildRequires: gcc-c++
+ %if 0%{?_with_soap:1}
+ BuildRequires: gsoap &gt;= 2.7.9e
+ %endif
++%if 0%{?_with_xesam_glib:1}
++BuildRequires: xesam-glib &gt;= 0.3.0
++%endif
+ # These used to be independant packages
+ Obsoletes: pinot-audio-docs
+ Obsoletes: pinot-omega
+@@ -58,7 +61,7 @@
+ %setup -q
+ 
+ %build
+-%configure %{?_with_soap:--enable-soap=yes} %{?_with_debug:--enable-debug=yes}
++%configure %{?_with_soap:--enable-soap=yes} %{?_with_xesam_glib:--enable-xesam-glib=yes} %{?_with_debug:--enable-debug=yes}
+ make %{?_smp_mflags}
+ 
+ %install
+@@ -94,7 +97,7 @@
+ %{_libdir}/pinot/filters/libexternalfilter.so*
+ %{_libdir}/pinot/filters/libmboxfilter.so*
+ %{_libdir}/pinot/filters/libtaglibfilter.so*
+-%{_libdir}/pinot/backends/libxapianbackend.so*
++%{_libdir}/pinot/backends/lib*backend.so*
+ %{_datadir}/dbus-1/services/de.berlios.Pinot.service
+ %{_datadir}/pinot/
+ %{_datadir}/icons/hicolor/48x48/apps/pinot.png
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001282.html">[Pinot-svn] r1289 - tags
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1284">[ date ]</a>
+              <a href="thread.html#1284">[ thread ]</a>
+              <a href="subject.html#1284">[ subject ]</a>
+              <a href="author.html#1284">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,1058 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r717 - in trunk: UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r717%20-%20in%20trunk%3A%20UI/GTK2/src%20Utils&In-Reply-To=%3C200702170929.l1H9TOGO003066%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000710.html">
+   <LINK REL="Next"  HREF="000712.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r717 - in trunk: UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r717%20-%20in%20trunk%3A%20UI/GTK2/src%20Utils&In-Reply-To=%3C200702170929.l1H9TOGO003066%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r717 - in trunk: UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb 17 10:29:24 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000710.html">[Pinot-svn] r716 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000712.html">[Pinot-svn] r718 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#711">[ date ]</a>
+              <a href="thread.html#711">[ thread ]</a>
+              <a href="subject.html#711">[ subject ]</a>
+              <a href="author.html#711">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-17 10:29:23 +0100 (Sat, 17 Feb 2007)
+New Revision: 717
+
+Modified:
+   trunk/UI/GTK2/src/ModelColumns.cpp
+   trunk/UI/GTK2/src/ModelColumns.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/Utils/Result.cpp
+   trunk/Utils/Result.h
+Log:
+Avoid peeking at the indexes from the main UI thread.
+- IndexingThread determines whether the document should be updated.
+- QueryingThread finds which results are in one of the indexes.
+- ExpandQueryThread gets the document IDs of the relevant documents.
+- LabelUpdateThread can set labels on documents.
+
+
+Modified: trunk/UI/GTK2/src/ModelColumns.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.cpp	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/ModelColumns.cpp	2007-02-17 09:29:23 UTC (rev 717)
+@@ -65,6 +65,7 @@
+ 	add(m_scoreText);
+ 	add(m_engines);
+ 	add(m_indexes);
++	add(m_docId);
+ 	add(m_type);
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/ModelColumns.h
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.h	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/ModelColumns.h	2007-02-17 09:29:23 UTC (rev 717)
+@@ -88,6 +88,7 @@
+ 	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_scoreText;
+ 	Gtk::TreeModelColumn&lt;unsigned int&gt; m_engines;
+ 	Gtk::TreeModelColumn&lt;unsigned int&gt; m_indexes;
++	Gtk::TreeModelColumn&lt;unsigned int&gt; m_docId;
+ 	typedef enum { RESULT_ROOT = 0, RESULT_TITLE, RESULT_HOST, RESULT_OTHER } ResultType;
+ 	Gtk::TreeModelColumn&lt;ResultType&gt; m_type;
+ 
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-02-17 09:29:23 UTC (rev 717)
+@@ -475,7 +475,7 @@
+ 			indexId = m_settings.getIndexId(engineName);
+ 			engineId = m_settings.getEngineId(&quot;Xapian&quot;);
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;ResultsTree::addResults: engine is index &quot; &lt;&lt; engineName &lt;&lt; endl;
++			cout &lt;&lt; &quot;ResultsTree::addResults: engine is index &quot; &lt;&lt; engineName &lt;&lt; &quot; &quot; &lt;&lt; indexId &lt;&lt; endl;
+ #endif
+ 		}
+ #ifdef DEBUG
+@@ -550,11 +550,21 @@
+ 			}
+ 
+ 			++count;
+-			if (appendResult(title, location, (int)currentScore, rankDiff,
+-				engineId, indexId, titleIter, &amp;(*groupIter), true) == true)
++
++			unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
++			bool isIndexed = false;
++
++			if (docId &gt; 0)
+ 			{
++				isIndexed = true;
++			}
++
++			if (appendResult(title, location, (int)currentScore, rankDiff, isIndexed,
++				docId, engineId, indexId, titleIter, &amp;(*groupIter), true) == true)
++			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count &lt;&lt; &quot;, &quot; &lt;&lt; currentScore &lt;&lt; endl;
++				cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count
++					&lt;&lt; &quot;, &quot; &lt;&lt; currentScore &lt;&lt; &quot;, &quot; &lt;&lt; isIndexed &lt;&lt; &quot; &quot; &lt;&lt; indexId &lt;&lt; endl;
+ #endif
+ 
+ 				// Update this map, so that we know which groups need updating
+@@ -682,7 +692,10 @@
+ 							childRow[m_resultsColumns.m_url],
+ 							childRow[m_resultsColumns.m_score],
+ 							childRow[m_resultsColumns.m_rankDiff],
+-							engineIds, indexIds, newIter, &amp;(*groupIter), true);
++							childRow[m_resultsColumns.m_indexed],
++							childRow[m_resultsColumns.m_docId],
++							engineIds, indexIds,
++							newIter, &amp;(*groupIter), true);
+ 					}
+ 				}
+ 				else
+@@ -693,7 +706,7 @@
+ 					if (engineNames.empty() == false)
+ 					{
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;ResultsTree::setGroupMode: row is for &quot; &lt;&lt; engineNames.size() &lt;&lt; endl;
++						cout &lt;&lt; &quot;ResultsTree::setGroupMode: row is for &quot; &lt;&lt; engineNames.size() &lt;&lt; &quot; engine(s)&quot; &lt;&lt; endl;
+ #endif
+ 						// Are there indexes in the list ?
+ 						set&lt;string&gt;::iterator xapianIter = engineNames.find(&quot;Xapian&quot;);
+@@ -702,6 +715,9 @@
+ 						{
+ 							// Erase this
+ 							engineNames.erase(xapianIter);
++#ifdef DEBUG
++							cout &lt;&lt; &quot;ResultsTree::setGroupMode: row is for index(es)&quot; &lt;&lt; indexIds &lt;&lt; endl;
++#endif
+ 
+ 							// Add entries for each index name so that we can loop once on engine names
+ 							set&lt;string&gt; indexNames;
+@@ -730,7 +746,13 @@
+ 								{
+ 									engineId = m_settings.getEngineId(&quot;Xapian&quot;);
+ 								}
++#ifdef DEBUG
++								cout &lt;&lt; &quot;ResultsTree::setGroupMode: index &quot; &lt;&lt; indexId &lt;&lt; endl;
++#endif
+ 							}
++#ifdef DEBUG
++							else cout &lt;&lt; &quot;ResultsTree::setGroupMode: no index&quot; &lt;&lt; endl;
++#endif
+ 
+ 							// Add group
+ 							if (appendGroup(engineName, newType, groupIter) == true)
+@@ -740,6 +762,8 @@
+ 									childRow[m_resultsColumns.m_url],
+ 									childRow[m_resultsColumns.m_score],
+ 									childRow[m_resultsColumns.m_rankDiff],
++									childRow[m_resultsColumns.m_indexed],
++									childRow[m_resultsColumns.m_docId],
+ 									engineId, indexId,
+ 									newIter, &amp;(*groupIter), true);
+ #ifdef DEBUG
+@@ -818,6 +842,58 @@
+ }
+ 
+ //
++// Gets a list of selected items.
++//
++bool ResultsTree::getSelection(vector&lt;Result&gt; &amp;resultsList)
++{
++	list&lt;TreeModel::Path&gt; selectedItems = get_selection()-&gt;get_selected_rows();
++	if (selectedItems.empty() == true)
++	{
++		return false;
++	}
++
++	// Go through selected items
++	for (list&lt;TreeModel::Path&gt;::iterator itemPath = selectedItems.begin();
++		itemPath != selectedItems.end(); ++itemPath)
++	{
++		TreeModel::iterator iter = m_refStore-&gt;get_iter(*itemPath);
++		TreeModel::Row row = *iter;
++
++		if (row[m_resultsColumns.m_type] == ResultsModelColumns::RESULT_TITLE)
++		{
++			bool isIndexed = row[m_resultsColumns.m_indexed];
++
++			Result current(from_utf8(row[m_resultsColumns.m_text]),
++				from_utf8(row[m_resultsColumns.m_url]), &quot;&quot;, &quot;&quot;);
++
++			if (isIndexed == true)
++			{
++				set&lt;string&gt; indexNames;
++				unsigned int indexIds = row[m_resultsColumns.m_indexes];
++
++				m_settings.getIndexNames(indexIds, indexNames);
++				// Any internal index in there ?
++				for (set&lt;string&gt;::iterator indexIter = indexNames.begin(); indexIter != indexNames.end(); ++indexIter)
++				{
++					if  (m_settings.isInternalIndex(*indexIter) == true)
++					{
++						current.setIsIndexed(m_settings.getIndexId(*indexIter), row[m_resultsColumns.m_docId]);
++						break;
++					}
++				}
++			}
++
++			resultsList.push_back(current);
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ResultsTree::getSelection: &quot; &lt;&lt; resultsList.size() &lt;&lt; &quot; results selected&quot; &lt;&lt; endl;
++#endif
++
++	return true;
++}
++
++//
+ // Sets the selected items' state.
+ //
+ void ResultsTree::setSelectionState(bool viewed, bool indexed)
+@@ -1064,7 +1140,8 @@
+ // Adds a new row in the results tree.
+ //
+ bool ResultsTree::appendResult(const ustring &amp;text, const ustring &amp;url,
+-	int score, int rankDiff, unsigned int engineId, unsigned int indexId,
++	int score, int rankDiff, bool isIndexed, unsigned int docId,
++	unsigned int engineId, unsigned int indexId,
+ 	TreeModel::iterator &amp;newRowIter, const TreeModel::Row *parentRow, bool noDuplicates)
+ {
+ 	if (parentRow == NULL)
+@@ -1103,27 +1180,13 @@
+ 		newRowIter = m_refStore-&gt;append(parentRow-&gt;children());
+ 	}
+ 
+-	IndexInterface *pIndex = m_settings.getIndex(&quot;MERGED&quot;);
++	// Has it been already viewed ?
+ 	ViewHistory viewHistory(m_settings.m_historyDatabase);
+-	bool isIndexed = false;
+-
+-	// Is this document indexed ?
+-	if (pIndex != NULL)
+-	{
+-		if (pIndex-&gt;hasDocument(url) &gt; 0)
+-		{
+-			isIndexed = true;
+-		}
+-
+-		delete pIndex;
+-	}
+-
+-	// Has it been already viewed ?
+ 	bool wasViewed = viewHistory.hasItem(url);
+ 
+ 	TreeModel::Row childRow = *newRowIter;
+ 	updateRow(childRow, text, url, score, engineId, indexId,
+-		ResultsModelColumns::RESULT_TITLE, isIndexed,
++		docId, ResultsModelColumns::RESULT_TITLE, isIndexed,
+ 		wasViewed, rankDiff);
+ 
+ 	return true;
+@@ -1145,7 +1208,7 @@
+ 		groupIter = m_refStore-&gt;append();
+ 		TreeModel::Row groupRow = *groupIter;
+ 		updateRow(groupRow, to_utf8(groupName),
+-			&quot;&quot;, 0, 0, 0, groupType,
++			&quot;&quot;, 0, 0, 0, 0, groupType,
+ 			false, false, false);
+ 
+ 		// Update the map
+@@ -1212,8 +1275,9 @@
+ // Updates a row.
+ //
+ void ResultsTree::updateRow(TreeModel::Row &amp;row, const ustring &amp;text,
+-	const ustring &amp;url, int score, unsigned int engineId,  unsigned int indexId,
+-	ResultsModelColumns::ResultType type, bool indexed, bool viewed, int rankDiff)
++	const ustring &amp;url, int score, unsigned int engineId, unsigned int indexId,
++	unsigned int docId, ResultsModelColumns::ResultType type,
++	bool indexed, bool viewed, int rankDiff)
+ {
+ 	try
+ 	{
+@@ -1223,6 +1287,7 @@
+ 		row[m_resultsColumns.m_scoreText] = &quot;&quot;;
+ 		row[m_resultsColumns.m_engines] = engineId;
+ 		row[m_resultsColumns.m_indexes] = indexId;
++		row[m_resultsColumns.m_docId] = docId;
+ 		row[m_resultsColumns.m_type] = type;
+ 
+ 		row[m_resultsColumns.m_indexed] = indexed;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/ResultsTree.h	2007-02-17 09:29:23 UTC (rev 717)
+@@ -73,6 +73,9 @@
+ 		/// Gets a list of selected items.
+ 		bool getSelection(std::vector&lt;DocumentInfo&gt; &amp;resultsList, bool skipIndexed = false);
+ 
++		/// Gets a list of selected items.
++		bool getSelection(std::vector&lt;Result&gt; &amp;resultsList);
++
+ 		/// Sets the selected items' state.
+ 		void setSelectionState(bool viewed, bool indexed);
+ 
+@@ -148,9 +151,10 @@
+ 
+ 		/// Adds a new row in the results tree.
+ 		bool appendResult(const Glib::ustring &amp;text, const Glib::ustring &amp;url,
+-			int score, int rankDiff, unsigned int engineId, unsigned int indexId,
+-			Gtk::TreeModel::iterator &amp;newRowIter,
+-			const Gtk::TreeModel::Row *parentRow = NULL, bool noDuplicates = false);
++			int score, int rankDiff, bool isIndexed, unsigned int docId,
++			unsigned int engineId, unsigned int indexId,
++			Gtk::TreeModel::iterator &amp;newRowIter, const Gtk::TreeModel::Row *parentRow = NULL,
++			bool noDuplicates = false);
+ 
+ 		/// Updates a results group.
+ 		void updateGroup(Gtk::TreeModel::iterator &amp;groupIter);
+@@ -158,7 +162,8 @@
+ 		/// Updates a row.
+ 		void updateRow(Gtk::TreeModel::Row &amp;row, const Glib::ustring &amp;text,
+ 			const Glib::ustring &amp;url, int score, unsigned int engineId, unsigned int indexId,
+-			ResultsModelColumns::ResultType type, bool indexed, bool viewed, int rankDiff);
++			unsigned int indexId, ResultsModelColumns::ResultType type,
++			bool indexed, bool viewed, int rankDiff);
+ 
+ 		/// Retrieves the extract to show for the given row.
+ 		Glib::ustring findResultsExtract(const Gtk::TreeModel::Row &amp;row);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-17 09:29:23 UTC (rev 717)
+@@ -36,6 +36,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;HtmlFilter.h&quot;
+ #include &quot;FilterFactory.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;ActionQueue.h&quot;
+@@ -352,29 +353,8 @@
+ 		return status;
+ 	}
+ 
+-	// Is it an update ?
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_defaultIndexLocation);
+-	if (pIndex == NULL)
+-	{
+-		ustring status = _(&quot;Index error on&quot;);
+-		status += &quot; &quot;;
+-		status += m_defaultIndexLocation;
+-		return status;
+-	}
++	start_thread(new IndexingThread(docInfo, m_defaultIndexLocation));
+ 
+-	unsigned int docId = pIndex-&gt;hasDocument(docInfo.getLocation());
+-	if (docId &gt; 0)
+-	{
+-		// Yes, it is
+-		start_thread(new IndexingThread(docInfo, docId, m_defaultIndexLocation));
+-	}
+-	else
+-	{
+-		// This is a new document
+-		start_thread(new IndexingThread(docInfo, docId, m_defaultIndexLocation));
+-	}
+-	delete pIndex;
+-
+ 	return &quot;&quot;;
+ }
+ 
+@@ -820,22 +800,42 @@
+ 	else
+ 	{
+ 		const vector&lt;Result&gt; &amp;resultsList = pEngine-&gt;getResults();
++		PinotSettings &amp;settings = PinotSettings::getInstance();
+ 
+ 		m_resultsList.clear();
+ 		m_resultsList.reserve(resultsList.size());
+ 		m_resultsCharset = pEngine-&gt;getResultsCharset();
+ 
++		IndexInterface *pDocsIndex = settings.getIndex(settings.m_docsIndexLocation);
++		if ((pDocsIndex != NULL) &amp;&amp;
++			(pDocsIndex-&gt;isGood() == false))
++		{
++			delete pDocsIndex;
++			pDocsIndex = NULL;
++		}
++
++		IndexInterface *pDaemonIndex = settings.getIndex(settings.m_daemonIndexLocation);
++		if ((pDaemonIndex != NULL) &amp;&amp;
++			(pDaemonIndex-&gt;isGood() == false))
++		{
++			delete pDaemonIndex;
++			pDaemonIndex = NULL;
++		}
++
++
+ 		// Copy the results list
+ 		for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
+ 			string title(_(&quot;No title&quot;));
++			string location(resultIter-&gt;getLocation());
+ 			string language(resultIter-&gt;getLanguage());
++			unsigned int indexId = 0, docId = 0;
+ 
+ 			// The title may contain formatting
+ 			if (resultIter-&gt;getTitle().empty() == false)
+ 			{
+-				title = FilterWrapper::stripMarkup(resultIter-&gt;getTitle());
++				title = FilterUtils::stripMarkup(resultIter-&gt;getTitle());
+ 			}
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;QueryingThread::doWork: title is &quot; &lt;&lt; title &lt;&lt; endl;
+@@ -847,23 +847,53 @@
+ 				language = m_queryProps.getLanguage();
+ 			}
+ 
+-			m_resultsList.push_back(Result(resultIter-&gt;getLocation(),
+-				title,
+-				resultIter-&gt;getExtract(),
+-				language,
+-				resultIter-&gt;getScore()));
++			Result current(location, title, resultIter-&gt;getExtract(),
++				language, resultIter-&gt;getScore());
++
++			// Is this in one of the indexes ?
++			if (pDocsIndex != NULL)
++			{
++				docId = pDocsIndex-&gt;hasDocument(location);
++				if (docId &gt; 0)
++				{
++					indexId = settings.getIndexId(_(&quot;My Web Pages&quot;));
++				}
++			}
++			if (pDaemonIndex != NULL)
++			{
++				docId = pDaemonIndex-&gt;hasDocument(location);
++				if (docId &gt; 0)
++				{
++					indexId = settings.getIndexId(_(&quot;My Documents&quot;));
++				}
++			}
++			if (docId &gt; 0)
++			{
++				current.setIsIndexed(indexId, docId);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;QueryingThread::doWork: found in index &quot; &lt;&lt; indexId &lt;&lt; endl;
++#endif
++			}
++
++			m_resultsList.push_back(current);
+ 		}
++
++		if (pDocsIndex != NULL)
++		{
++			delete pDocsIndex;
++		}
++		if (pDaemonIndex != NULL)
++		{
++			delete pDaemonIndex;
++		}
+ 	}
+ 
+ 	delete pEngine;
+ }
+ 
+-ExpandQueryThread::ExpandQueryThread(const string &amp;engineName,
+-	const string &amp;engineOption, const QueryProperties &amp;queryProps,
+-	const set&lt;unsigned int&gt; &amp;relevantDocs) :
++ExpandQueryThread::ExpandQueryThread(const QueryProperties &amp;queryProps,
++	const set&lt;string&gt; &amp;relevantDocs) :
+ 	WorkerThread(),
+-	m_engineName(engineName),
+-	m_engineOption(engineOption),
+ 	m_queryProps(queryProps)
+ {
+ 	copy(relevantDocs.begin(), relevantDocs.end(),
+@@ -897,8 +927,31 @@
+ 
+ void ExpandQueryThread::doWork(void)
+ {
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(&quot;MERGED&quot;);
++	set&lt;unsigned int&gt; relevantDocIds;
++
++	if ((pIndex == NULL) ||
++		(pIndex-&gt;isGood() == false))
++	{
++		m_status = _(&quot;Index error on&quot;);
++		m_status += &quot; MERGED&quot;;
++		if (pIndex != NULL)
++		{
++			delete pIndex;
++		}
++		return;
++	}
++
++	for (set&lt;string&gt;::iterator locationIter = m_relevantDocs.begin();
++		locationIter != m_relevantDocs.end(); ++locationIter)
++	{
++		relevantDocIds.insert(pIndex-&gt;hasDocument(*locationIter));
++	}
++
++	delete pIndex;
++
+ 	// Get the SearchEngine
+-	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
++	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;, &quot;MERGED&quot;);
+ 	if (pEngine == NULL)
+ 	{
+ 		m_status = _(&quot;Couldn't create search engine&quot;);
+@@ -910,14 +963,13 @@
+ 	// Set the maximum number of results
+ 	pEngine-&gt;setMaxResultsCount(m_queryProps.getMaximumResultsCount());
+ 	// Set whether to expand the query
+-	pEngine-&gt;setQueryExpansion(m_relevantDocs);
++	pEngine-&gt;setQueryExpansion(relevantDocIds);
+ 
+ 	// Run the query
+ 	if (pEngine-&gt;runQuery(m_queryProps) == false)
+ 	{
+ 		m_status = _(&quot;Couldn't run query on search engine&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_engineName;
++		m_status += &quot; xapian&quot;;
+ 	}
+ 	else
+ 	{
+@@ -931,12 +983,22 @@
+ }
+ 
+ LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToDelete,
+-	const map&lt;string, string&gt; &amp;labelsToRename)
++	const map&lt;string, string&gt; &amp;labelsToRename) :
++	WorkerThread()
+ {
+ 	copy(labelsToDelete.begin(), labelsToDelete.end(), inserter(m_labelsToDelete, m_labelsToDelete.begin()));
+ 	copy(labelsToRename.begin(), labelsToRename.end(), inserter(m_labelsToRename, m_labelsToRename.begin()));
+ }
+ 
++LabelUpdateThread::LabelUpdateThread(const string &amp;labelName,
++	const set&lt;unsigned int&gt; &amp;docsIds, const set&lt;unsigned int&gt; &amp;daemonIds) :
++	WorkerThread(),
++	m_labelName(labelName)
++{
++	copy(docsIds.begin(), docsIds.end(), inserter(m_docsIds, m_docsIds.begin()));
++	copy(daemonIds.begin(), daemonIds.end(), inserter(m_daemonIds, m_daemonIds.begin()));
++}
++
+ LabelUpdateThread::~LabelUpdateThread()
+ {
+ }
+@@ -973,6 +1035,21 @@
+ 		return;
+ 	}
+ 
++	// Apply the new label to existing documents
++	if (m_labelName.empty() == false)
++	{
++		set&lt;string&gt; labels;
++
++		labels.insert(m_labelName);
++		if (m_docsIds.empty() == false)
++		{
++			pDocsIndex-&gt;setDocumentsLabels(m_docsIds, labels, false);
++		}
++		if (m_daemonIds.empty() == false)
++		{
++			pDaemonIndex-&gt;setDocumentsLabels(m_daemonIds, labels, false);
++		}
++	}
+ 	// Delete labels
+ 	for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
+ 	{
+@@ -1062,26 +1139,15 @@
+ 	}
+ }
+ 
+-IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId,
+-	const string &amp;indexLocation, bool allowAllMIMETypes) :
++IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, const string &amp;indexLocation,
++	bool allowAllMIMETypes) :
+ 	DownloadingThread(docInfo),
+ 	m_docInfo(docInfo),
+-	m_docId(docId),
++	m_docId(0),
+ 	m_indexLocation(indexLocation),
+-	m_allowAllMIMETypes(allowAllMIMETypes)
++	m_allowAllMIMETypes(allowAllMIMETypes),
++	m_update(false)
+ {
+-	if (m_docId &gt; 0)
+-	{
+-		// Ignore robots directives on updates
+-		m_ignoreRobotsDirectives = true;
+-		m_update = true;
+-	}
+-	else
+-	{
+-		m_ignoreRobotsDirectives = PinotSettings::getInstance().m_ignoreRobotsDirectives;
+-		// This is not an update
+-		m_update = false;
+-	}
+ }
+ 
+ IndexingThread::~IndexingThread()
+@@ -1144,6 +1210,14 @@
+ 		return;
+ 	}
+ 
++	// Is it an update ?
++	m_docId = pIndex-&gt;hasDocument(m_docInfo.getLocation());
++	if (m_docId &gt; 0)
++	{
++		// Ignore robots directives on updates
++		m_update = true;
++	}
++
+ 	// We may not have to download the document
+ 	// If coming from a crawl, this will be empty
+ 	if (m_docInfo.getType().empty() == true)
+@@ -1189,6 +1263,9 @@
+ 	else
+ 	{
+ 		m_pDoc = new Document(m_docInfo);
++
++		m_pDoc-&gt;setTimestamp(m_docInfo.getTimestamp());
++		m_pDoc-&gt;setSize(m_docInfo.getSize());
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;IndexingThread::doWork: skipped download of &quot; &lt;&lt; m_docInfo.getLocation() &lt;&lt; endl;
+ #endif
+@@ -1252,7 +1329,7 @@
+ 		{
+ 			// Is indexing allowed ?
+ 			HtmlFilter *pHtmlFilter = dynamic_cast&lt;HtmlFilter*&gt;(pFilter);
+-			if ((m_ignoreRobotsDirectives == false) &amp;&amp;
++			if ((m_update == false) &amp;&amp;
+ 				(pHtmlTokens != NULL))
+ 			{
+ 		// See if the document has a ROBOTS META tag
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-02-17 09:29:23 UTC (rev 717)
+@@ -222,8 +222,8 @@
+ class ExpandQueryThread : public WorkerThread
+ {
+ 	public:
+-		ExpandQueryThread(const std::string &amp;engineName, const std::string &amp;engineOption,
+-			const QueryProperties &amp;queryProps, const std::set&lt;unsigned int&gt; &amp;relevantDocs);
++		ExpandQueryThread(const QueryProperties &amp;queryProps,
++			const std::set&lt;std::string&gt; &amp;relevantDocs);
+ 		virtual ~ExpandQueryThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -235,10 +235,8 @@
+ 		virtual bool stop(void);
+ 
+ 	protected:
+-		std::string m_engineName;
+-		std::string m_engineOption;
+ 		QueryProperties m_queryProps;
+-		std::set&lt;unsigned int&gt; m_relevantDocs;
++		std::set&lt;std::string&gt; m_relevantDocs;
+ 		std::set&lt;std::string&gt; m_expandTerms;
+ 
+ 		virtual void doWork(void);
+@@ -254,6 +252,10 @@
+ 	public:
+ 		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToDelete,
+ 			const std::map&lt;std::string, std::string&gt; &amp;labelsToRename);
++		LabelUpdateThread(const std::string &amp;labelName,
++			const std::set&lt;unsigned int&gt; &amp;docsIds,
++			const std::set&lt;unsigned int&gt; &amp;daemonIds);
++
+ 		virtual ~LabelUpdateThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -263,6 +265,9 @@
+ 	protected:
+ 		std::set&lt;std::string&gt; m_labelsToDelete;
+ 		std::map&lt;std::string, std::string&gt; m_labelsToRename;
++		std::string m_labelName;
++		std::set&lt;unsigned int&gt; m_docsIds;
++		std::set&lt;unsigned int&gt; m_daemonIds;
+ 
+ 		virtual void doWork(void);
+ 
+@@ -302,8 +307,8 @@
+ class IndexingThread : public DownloadingThread
+ {
+ 	public:
+-		IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId,
+-			const std::string &amp;indexLocation, bool allowAllMIMETypes = true);
++		IndexingThread(const DocumentInfo &amp;docInfo, const std::string &amp;indexLocation,
++			bool allowAllMIMETypes = true);
+ 		virtual ~IndexingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -323,7 +328,6 @@
+ 		unsigned int m_docId;
+ 		std::string m_indexLocation;
+ 		bool m_allowAllMIMETypes;
+-		bool m_ignoreRobotsDirectives;
+ 		bool m_update;
+ 
+ 		virtual void doWork(void);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-02-17 09:29:23 UTC (rev 717)
+@@ -437,7 +437,7 @@
+ //
+ void mainWindow::on_resultsTreeviewSelection_changed(ustring queryName)
+ {
+-	vector&lt;DocumentInfo&gt; resultsList;
++	vector&lt;Result&gt; resultsList;
+ 	string url;
+ 	bool hasSelection = false;
+ 
+@@ -458,10 +458,9 @@
+ 	if ((hasSelection == true) &amp;&amp;
+ 		(resultsList.empty() == false))
+ 	{
+-		IndexInterface *pIndex = m_settings.getIndex(&quot;MERGED&quot;);
+ 		bool firstResult = true, isViewable = true, isCached = false, isIndexed = false, isIndexable = true;
+ 
+-		for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
++		for (vector&lt;Result&gt;::iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
+ 			string url(resultIter-&gt;getLocation());
+@@ -495,14 +494,7 @@
+ 					isCached = true;
+ 				}
+ 
+-				if ((pIndex != NULL) &amp;&amp;
+-					(pIndex-&gt;isGood() == true))
+-				{
+-					if (pIndex-&gt;hasDocument(url) &gt; 0)
+-					{
+-						isIndexed = true;
+-					}
+-				}
++				isIndexed = resultIter-&gt;getIsIndexed();
+ 			}
+ 		}
+ 
+@@ -511,11 +503,6 @@
+ 		viewcache1-&gt;set_sensitive(isCached);
+ 		morelikethis1-&gt;set_sensitive(isIndexed);
+ 		indexresults1-&gt;set_sensitive(isIndexable);
+-
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+ 	}
+ 	else
+ 	{
+@@ -997,15 +984,13 @@
+ 		if ((queryProps.getIndexResults() == true) &amp;&amp;
+ 			(resultsList.empty() == false))
+ 		{
+-			IndexInterface *pDocsIndex = m_settings.getIndex(m_settings.m_docsIndexLocation);
+-			IndexInterface *pDaemonIndex = m_settings.getIndex(m_settings.m_daemonIndexLocation);
+ 			set&lt;string&gt; labels;
+ 			set&lt;unsigned int&gt; docsIds, daemonIds;
+ 			string labelName(queryProps.getLabelName());
+ 
++			// Set the list of labels
+ 			if (labelName.empty() == false)
+ 			{
+-				// Queue this
+ 				labels.insert(labelName);
+ 			}
+ 
+@@ -1015,50 +1000,40 @@
+ 			for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 				resultIter != resultsList.end(); ++resultIter)
+ 			{
+-				unsigned int docId = 0;
++				unsigned int indexId;
++				unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
+ 
+-				if ((pDocsIndex != NULL) &amp;&amp;
+-					(pDocsIndex-&gt;isGood() == true) &amp;&amp;
+-					((docId = pDocsIndex-&gt;hasDocument(resultIter-&gt;getLocation())) &gt; 0))
++				if (docId == 0)
+ 				{
++					DocumentInfo docInfo(resultIter-&gt;getTitle(), resultIter-&gt;getLocation(),
++						resultIter-&gt;getType(), resultIter-&gt;getLanguage());
++
++					// Set/reset labels
++					docInfo.setLabels(labels);
++
++					// This document is not in either index
++					m_state.queue_index(docInfo);
++				}
++				else if (indexId == m_settings.getIndexId(m_settings.m_docsIndexLocation))
++				{
+ 					if (labelName.empty() == false)
+ 					{
+ 						docsIds.insert(docId);
+ 					}
+ 				}
+-				// Is this a document the daemon indexed ?
+-				else if ((pDaemonIndex != NULL) &amp;&amp;
+-					(pDaemonIndex-&gt;isGood() == true) &amp;&amp;
+-					((docId = pDaemonIndex-&gt;hasDocument(resultIter-&gt;getLocation())) &gt; 0))
++				else if (indexId == m_settings.getIndexId(m_settings.m_daemonIndexLocation))
+ 				{
+ 					if (labelName.empty() == false)
+ 					{
+ 						daemonIds.insert(docId);
+ 					}
+ 				}
+-				else
+-				{
+-					DocumentInfo docInfo(resultIter-&gt;getTitle(), resultIter-&gt;getLocation(),
+-						resultIter-&gt;getType(), resultIter-&gt;getLanguage());
+-
+-					docInfo.setLabels(labels);
+-
+-					// No, this is a new document not found in either index
+-					m_state.queue_index(docInfo);
+-				}
+ 			}
+ 
+-			// Apply the new label to existing documents
+ 			if (labelName.empty() == false)
+ 			{
+-				if (pDocsIndex != NULL)
+-				{
+-					pDocsIndex-&gt;setDocumentsLabels(docsIds, labels, false);
+-				}
+-				if (pDaemonIndex != NULL)
+-				{
+-					pDaemonIndex-&gt;setDocumentsLabels(daemonIds, labels, false);
+-				}
++				// Apply the new label to existing documents
++				start_thread(new LabelUpdateThread(labelName, docsIds, daemonIds));
+ 			}
+ 		}
+ 	}
+@@ -1755,7 +1730,7 @@
+ void mainWindow::on_morelikethis_activate()
+ {
+ 	QueryProperties queryProps;
+-	vector&lt;DocumentInfo&gt; resultsList;
++	vector&lt;Result&gt; resultsList;
+ 	string queryName;
+ 
+ 	NotebookPageBox *pNotebookPage = get_current_page();
+@@ -1809,29 +1784,20 @@
+ 		}
+ 	}
+ 
+-	IndexInterface *pIndex = m_settings.getIndex(&quot;MERGED&quot;);
+-        if (pIndex != NULL)
++	set&lt;string&gt; locations;
++	for (vector&lt;Result&gt;::const_iterator docIter = resultsList.begin();
++		docIter != resultsList.end(); ++docIter)
+ 	{
+-       	set&lt;unsigned int&gt; docIdList;
+-
+-		if (pIndex-&gt;isGood() == true)
++		if (docIter-&gt;getIsIndexed() == true)
+ 		{
+-			for (vector&lt;DocumentInfo&gt;::const_iterator docIter = resultsList.begin();
+-				docIter != resultsList.end(); ++docIter)
+-			{
+-				unsigned int docId = pIndex-&gt;hasDocument(docIter-&gt;getLocation());
+-				if (docId &gt; 0)
+-				{
+-					docIdList.insert(docId);
+-				}
+-			}
+-
+-			// Spawn a new thread
+-			start_thread(new ExpandQueryThread(&quot;xapian&quot;, &quot;MERGED&quot;,
+-				queryProps, docIdList));
++			locations.insert(docIter-&gt;getLocation());
+ 		}
++	}
+ 
+-		delete pIndex;
++	if (locations.empty() == false)
++	{
++		// Spawn a new thread
++		start_thread(new ExpandQueryThread(queryProps, locations));
+ 	}
+ }
+ 
+@@ -2002,7 +1968,7 @@
+ 		pIndexTree = pIndexPage-&gt;getTree();
+ 	}
+ 
+-	const std::map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
++	const std::map&lt;string, string&gt; &amp;indexesMap = m_settings.getIndexes();
+ 	std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);	
+ 	if (mapIter == indexesMap.end())
+ 	{
+@@ -3198,7 +3164,7 @@
+ 	ustring labelName = pIndexPage-&gt;getLabelName();
+ 	if (labelName.empty() == false)
+ 	{
+-		const std::map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
++		const std::map&lt;string, string&gt; &amp;indexesMap = m_settings.getIndexes();
+ 		std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
+ 		if (mapIter != indexesMap.end())
+ 		{
+
+Modified: trunk/Utils/Result.cpp
+===================================================================
+--- trunk/Utils/Result.cpp	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/Utils/Result.cpp	2007-02-17 09:29:23 UTC (rev 717)
+@@ -31,7 +31,9 @@
+ Result::Result(const Result &amp;other) :
+ 	DocumentInfo(other),
+ 	m_extract(other.m_extract),
+-	m_score(other.m_score)
++	m_score(other.m_score),
++	m_indexId(other.m_indexId),
++	m_docId(other.m_docId)
+ {
+ }
+ 
+@@ -46,6 +48,8 @@
+ 		DocumentInfo::operator=(other);
+ 		m_extract = other.m_extract;
+ 		m_score = other.m_score;
++		m_indexId = other.m_indexId;
++		m_docId = other.m_docId;
+ 	}
+ 
+ 	return *this;
+@@ -78,8 +82,41 @@
+ 	return m_extract;
+ }
+ 
+-/// Returns the result score.
++/// Gets the result score.
+ float Result::getScore(void) const
+ {
+ 	return m_score;
+ }
++
++/// Sets that the result is indexed.
++void Result::setIsIndexed(unsigned int indexId, unsigned int docId)
++{
++	m_indexId = indexId;
++	m_docId = docId;
++}
++
++/// Sets that the result is not indexed.
++void Result::setIsNotIndexed(void)
++{
++	m_indexId = 0;
++	m_docId = 0;
++}
++
++/// Gets whether the result is indexed.
++bool Result::getIsIndexed(void) const
++{
++	if (m_docId &gt; 0)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++/// Gets whether the result is indexed.
++unsigned int Result::getIsIndexed(unsigned int &amp;indexId) const
++{
++	indexId = m_indexId;
++
++	return m_docId;
++}
+
+Modified: trunk/Utils/Result.h
+===================================================================
+--- trunk/Utils/Result.h	2007-02-17 09:23:09 UTC (rev 716)
++++ trunk/Utils/Result.h	2007-02-17 09:29:23 UTC (rev 717)
+@@ -43,12 +43,26 @@
+ 		/// Gets the result extract.
+ 		std::string getExtract(void) const;
+ 
+-		/// Returns the result score.
++		/// Gets the result score.
+ 		float getScore(void) const;
+ 
++		/// Sets that the result is indexed.
++		void setIsIndexed(unsigned int indexId, unsigned int docId);
++
++		/// Sets that the result is not indexed.
++		void setIsNotIndexed(void);
++
++		/// Gets whether the result is indexed.
++		bool getIsIndexed(void) const;
++
++		/// Gets whether the result is indexed.
++		unsigned int getIsIndexed(unsigned int &amp;indexId) const;
++
+ 	protected:
+ 		std::string m_extract;
+ 		float m_score;
++		unsigned int m_indexId;
++		unsigned int m_docId;
+ 
+ };
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000710.html">[Pinot-svn] r716 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000712.html">[Pinot-svn] r718 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#711">[ date ]</a>
+              <a href="thread.html#711">[ thread ]</a>
+              <a href="subject.html#711">[ subject ]</a>
+              <a href="author.html#711">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

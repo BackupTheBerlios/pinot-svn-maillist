@@ -1,0 +1,689 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r571 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r571%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611120508.kAC58nGv020417%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000563.html">
+   <LINK REL="Next"  HREF="000565.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r571 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r571%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611120508.kAC58nGv020417%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r571 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov 12 06:08:49 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000563.html">[Pinot-svn] r570 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000565.html">[Pinot-svn] r572 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#564">[ date ]</a>
+              <a href="thread.html#564">[ thread ]</a>
+              <a href="subject.html#564">[ subject ]</a>
+              <a href="author.html#564">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-12 06:08:48 +0100 (Sun, 12 Nov 2006)
+New Revision: 571
+
+Modified:
+   trunk/UI/GTK2/src/EnginesTree.cpp
+   trunk/UI/GTK2/src/IndexTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+In ResultsTree, don't re-parse the abstract, just rely on included markup.
+Replaced the extract text view with a list to make this easier. Groups are
+highlighted (search engine/host name).
+Let columns autoresize in the results, index, engines and query trees.
+
+
+Modified: trunk/UI/GTK2/src/EnginesTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/EnginesTree.cpp	2006-11-12 05:03:36 UTC (rev 570)
++++ trunk/UI/GTK2/src/EnginesTree.cpp	2006-11-12 05:08:48 UTC (rev 571)
+@@ -49,9 +49,11 @@
+ 	// This is the actual engines tree
+ 	set_events(Gdk::BUTTON_PRESS_MASK);
+ 	set_flags(CAN_FOCUS);
++	set_headers_clickable(true);
+ 	set_headers_visible(true);
+ 	set_reorderable(false);
+ 	set_enable_search(false);
++	get_selection()-&gt;set_mode(SELECTION_MULTIPLE);
+ 	enginesScrolledwindow-&gt;set_flags(CAN_FOCUS);
+ 	enginesScrolledwindow-&gt;set_shadow_type(SHADOW_NONE);
+ 	enginesScrolledwindow-&gt;set_policy(POLICY_AUTOMATIC, POLICY_AUTOMATIC);
+@@ -71,13 +73,9 @@
+ 	pColumn-&gt;pack_start(*manage(pIconRenderer), false);
+ 	pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;EnginesTree::renderEngineIcon));
+ 	pColumn-&gt;pack_end(m_enginesColumns.m_name, false);
++	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 	append_column(*manage(pColumn));
+ 
+-	// Make headers clickable
+-	set_headers_clickable(true);
+-	// Allow multiple selection
+-	get_selection()-&gt;set_mode(SELECTION_MULTIPLE);
+-
+ 	// Handle button presses
+ 	signal_button_press_event().connect_notify(SigC::slot(*this, &amp;EnginesTree::onButtonPressEvent));
+ 	// Control which rows can be selected
+
+Modified: trunk/UI/GTK2/src/IndexTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.cpp	2006-11-12 05:03:36 UTC (rev 570)
++++ trunk/UI/GTK2/src/IndexTree.cpp	2006-11-12 05:08:48 UTC (rev 571)
+@@ -47,10 +47,12 @@
+ 	// This is the actual index tree
+ 	set_events(Gdk::BUTTON_PRESS_MASK);
+ 	set_flags(CAN_FOCUS);
++	set_headers_clickable(true);
+ 	set_headers_visible(true);
+ 	set_rules_hint(true);
+ 	set_reorderable(false);
+ 	set_enable_search(true);
++	get_selection()-&gt;set_mode(SELECTION_MULTIPLE);
+ 	m_pIndexScrolledwindow-&gt;set_flags(Gtk::CAN_FOCUS);
+ 	m_pIndexScrolledwindow-&gt;set_border_width(4);
+ 	m_pIndexScrolledwindow-&gt;set_shadow_type(Gtk::SHADOW_NONE);
+@@ -66,24 +68,22 @@
+ 	TreeViewColumn *pColumn = create_column(_(&quot;Title&quot;), m_indexColumns.m_text, true, true, m_indexColumns.m_text);
+ 	if (pColumn != NULL)
+ 	{
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 		append_column(*manage(pColumn));
+ 	}
+ 	pColumn = create_column(_(&quot;URL&quot;), m_indexColumns.m_liveUrl, true, true, m_indexColumns.m_liveUrl);
+ 	if (pColumn != NULL)
+ 	{
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 		append_column(*manage(pColumn));
+ 	}
+ 	pColumn = create_column(_(&quot;Timestamp&quot;), m_indexColumns.m_timestamp, false, true, m_indexColumns.m_timestampTime);
+ 	if (pColumn != NULL)
+ 	{
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 		append_column(*manage(pColumn));
+ 	}
+ 
+-	// Make headers clickable
+-	set_headers_clickable(true);
+-	// Allow multiple selection
+-	get_selection()-&gt;set_mode(SELECTION_MULTIPLE);
+-
+ 	// Connect the signals
+ 	signal_button_press_event().connect_notify(
+ 		SigC::slot(*this, &amp;IndexTree::onButtonPressEvent));
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-11-12 05:03:36 UTC (rev 570)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-11-12 05:08:48 UTC (rev 571)
+@@ -25,7 +25,6 @@
+ #include &lt;gtkmm/image.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/stock.h&gt;
+-#include &lt;gtkmm/textbuffer.h&gt;
+ #include &lt;gtkmm/cellrendererprogress.h&gt;
+ 
+ #include &quot;StringManip.h&quot;
+@@ -52,21 +51,23 @@
+ 	m_pResultsScrolledwindow(NULL),
+ 	m_settings(settings),
+ 	m_pExtractScrolledwindow(NULL),
+-	m_extractTextview(NULL),
++	m_extractTreeView(NULL),
+ 	m_showExtract(true),
+ 	m_groupBySearchEngine(true)
+ {
+ 	m_pResultsScrolledwindow = manage(new ScrolledWindow());
+ 	m_pExtractScrolledwindow = manage(new ScrolledWindow());
+-	m_extractTextview = manage(new TextView());
++	m_extractTreeView = manage(new TreeView());
+ 
+ 	// This is the actual results tree
+ 	set_events(Gdk::BUTTON_PRESS_MASK);
+ 	set_flags(CAN_FOCUS);
++	set_headers_clickable(true);
+ 	set_headers_visible(true);
+ 	set_rules_hint(true);
+ 	set_reorderable(false);
+ 	set_enable_search(true);
++	get_selection()-&gt;set_mode(SELECTION_MULTIPLE);
+ 	m_pResultsScrolledwindow-&gt;set_flags(CAN_FOCUS);
+ 	m_pResultsScrolledwindow-&gt;set_border_width(4);
+ 	m_pResultsScrolledwindow-&gt;set_shadow_type(SHADOW_NONE);
+@@ -75,29 +76,21 @@
+ 	m_pResultsScrolledwindow-&gt;add(*this);
+ 
+ 	// That's for the extract view
+-	m_extractTextview-&gt;set_flags(CAN_FOCUS);
+-	m_extractTextview-&gt;set_editable(false);
+-	m_extractTextview-&gt;set_cursor_visible(false);
+-	m_extractTextview-&gt;set_pixels_above_lines(0);
+-	m_extractTextview-&gt;set_pixels_below_lines(0);
+-	m_extractTextview-&gt;set_pixels_inside_wrap(0);
+-	m_extractTextview-&gt;set_left_margin(0);
+-	m_extractTextview-&gt;set_right_margin(0);
+-	m_extractTextview-&gt;set_indent(0);
+-	m_extractTextview-&gt;set_wrap_mode(WRAP_WORD);
+-	m_extractTextview-&gt;set_justification(JUSTIFY_LEFT);
++	m_extractTreeView-&gt;set_events(Gdk::BUTTON_PRESS_MASK);
++	m_extractTreeView-&gt;set_flags(CAN_FOCUS);
++	m_extractTreeView-&gt;set_headers_clickable(false);
++	m_extractTreeView-&gt;set_headers_visible(false);
++	m_extractTreeView-&gt;set_rules_hint(true);
++	m_extractTreeView-&gt;set_reorderable(false);
++	m_extractTreeView-&gt;set_enable_search(true);
++	m_extractTreeView-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	m_pExtractScrolledwindow-&gt;set_flags(CAN_FOCUS);
+ 	m_pExtractScrolledwindow-&gt;set_border_width(4);
+ 	m_pExtractScrolledwindow-&gt;set_shadow_type(SHADOW_NONE);
+ 	m_pExtractScrolledwindow-&gt;set_policy(POLICY_AUTOMATIC, POLICY_AUTOMATIC);
+ 	m_pExtractScrolledwindow-&gt;property_window_placement().set_value(CORNER_TOP_LEFT);
+-	m_pExtractScrolledwindow-&gt;add(*m_extractTextview);
++	m_pExtractScrolledwindow-&gt;add(*m_extractTreeView);
+ 
+-	// Create a blod text tag to highlight extract terms with
+-	RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
+-	RefPtr&lt;TextBuffer::Tag&gt; refBoldTag = refBuffer-&gt;create_tag(&quot;bold-text&quot;);
+-	refBoldTag-&gt;property_weight() = Pango::WEIGHT_BOLD;
+-
+ 	// Associate the columns model to the results tree
+ 	m_refStore = TreeStore::create(m_resultsColumns);
+ 	set_model(m_refStore);
+@@ -117,6 +110,7 @@
+ 	pColumn-&gt;pack_start(*manage(pIconRenderer), false);
+ 	pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderRanking));
+ 	pColumn-&gt;set_resizable(true);
++	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 	append_column(*manage(pColumn));
+ 
+ 	// This is the score column
+@@ -126,6 +120,7 @@
+ 	pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_text(), m_resultsColumns.m_scoreText);
+ 	pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_value(), m_resultsColumns.m_score);
+ 	pColumn-&gt;set_resizable(true);
++	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 	pColumn-&gt;set_sort_column(m_resultsColumns.m_score);
+ 	append_column(*manage(pColumn));
+ 
+@@ -133,9 +128,10 @@
+ 	pColumn = new TreeViewColumn(_(&quot;Title&quot;));
+ 	CellRendererText *pTextRenderer = new CellRendererText();
+ 	pColumn-&gt;pack_start(*manage(pTextRenderer));
+-	pColumn-&gt;set_cell_data_func(*pTextRenderer, SigC::slot(*this, &amp;ResultsTree::renderBackgroundColour));
++	pColumn-&gt;set_cell_data_func(*pTextRenderer, SigC::slot(*this, &amp;ResultsTree::renderTitleColumn));
+ 	pColumn-&gt;add_attribute(pTextRenderer-&gt;property_text(), m_resultsColumns.m_text);
+ 	pColumn-&gt;set_resizable(true);
++	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 	pColumn-&gt;set_sort_column(m_resultsColumns.m_text);
+ 	append_column(*manage(pColumn));
+ 
+@@ -143,14 +139,10 @@
+ 	pColumn = create_column(_(&quot;URL&quot;), m_resultsColumns.m_url, false, true, m_resultsColumns.m_url);
+ 	if (pColumn != NULL)
+ 	{
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 		append_column(*manage(pColumn));
+ 	}
+ 
+-	// Make headers clickable
+-	set_headers_clickable(true);
+-	// Allow multiple selection
+-	get_selection()-&gt;set_mode(SELECTION_MULTIPLE);
+-
+ 	// Connect the signals
+ 	signal_button_press_event().connect_notify(
+ 		SigC::slot(*this, &amp;ResultsTree::onButtonPressEvent));
+@@ -170,10 +162,21 @@
+ 	m_upIconPixbuf = render_icon(Stock::GO_UP, ICON_SIZE_MENU, &quot;MetaSE-pinot&quot;);
+ 	m_downIconPixbuf = render_icon(Stock::GO_DOWN, ICON_SIZE_MENU, &quot;MetaSE-pinot&quot;);
+ 
++	// Associate the columns model to the extract tree
++	m_refExtractStore = ListStore::create(m_extractColumns);
++	m_extractTreeView-&gt;set_model(m_refExtractStore);
++	pColumn = new TreeViewColumn(_(&quot;Extract&quot;));
++	pTextRenderer = new CellRendererText();
++	pColumn-&gt;pack_start(*manage(pTextRenderer));
++	pColumn-&gt;set_cell_data_func(*pTextRenderer, SigC::slot(*this, &amp;ResultsTree::renderExtractColumn));
++	pColumn-&gt;add_attribute(pTextRenderer-&gt;property_text(), m_extractColumns.m_name);
++	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
++	m_extractTreeView-&gt;append_column(*manage(pColumn));
++
+ 	// Show all
+ 	show();
+ 	m_pResultsScrolledwindow-&gt;show();
+-	m_extractTextview-&gt;show();
++	m_extractTreeView-&gt;show();
+ 	m_pExtractScrolledwindow-&gt;show();
+ }
+ 
+@@ -181,16 +184,16 @@
+ {
+ }
+ 
+-void ResultsTree::renderViewStatus(CellRenderer *renderer, const TreeModel::iterator &amp;iter)
++void ResultsTree::renderViewStatus(CellRenderer *pRenderer, const TreeModel::iterator &amp;iter)
+ {
+ 	TreeModel::Row row = *iter;
+ 
+-	if (renderer == NULL)
++	if (pRenderer == NULL)
+ 	{
+ 		return;
+ 	}
+ 
+-	CellRendererPixbuf *pIconRenderer = dynamic_cast&lt;CellRendererPixbuf*&gt;(renderer);
++	CellRendererPixbuf *pIconRenderer = dynamic_cast&lt;CellRendererPixbuf*&gt;(pRenderer);
+ 	if (pIconRenderer != NULL)
+ 	{
+ 		// Has this result been already viewed ?
+@@ -206,16 +209,16 @@
+ 	}
+ }
+ 
+-void ResultsTree::renderIndexStatus(CellRenderer *renderer, const TreeModel::iterator &amp;iter)
++void ResultsTree::renderIndexStatus(CellRenderer *pRenderer, const TreeModel::iterator &amp;iter)
+ {
+ 	TreeModel::Row row = *iter;
+ 
+-	if (renderer == NULL)
++	if (pRenderer == NULL)
+ 	{
+ 		return;
+ 	}
+ 
+-	CellRendererPixbuf *pIconRenderer = dynamic_cast&lt;CellRendererPixbuf*&gt;(renderer);
++	CellRendererPixbuf *pIconRenderer = dynamic_cast&lt;CellRendererPixbuf*&gt;(pRenderer);
+ 	if (pIconRenderer != NULL)
+ 	{
+ 		// Is this result indexed ?
+@@ -231,16 +234,16 @@
+ 	}
+ }
+ 
+-void ResultsTree::renderRanking(CellRenderer *renderer, const TreeModel::iterator &amp;iter)
++void ResultsTree::renderRanking(CellRenderer *pRenderer, const TreeModel::iterator &amp;iter)
+ {
+ 	TreeModel::Row row = *iter;
+ 
+-	if (renderer == NULL)
++	if (pRenderer == NULL)
+ 	{
+ 		return;
+ 	}
+ 
+-	CellRendererPixbuf *pIconRenderer = dynamic_cast&lt;CellRendererPixbuf*&gt;(renderer);
++	CellRendererPixbuf *pIconRenderer = dynamic_cast&lt;CellRendererPixbuf*&gt;(pRenderer);
+ 	if (pIconRenderer != NULL)
+ 	{
+ 		int rankDiff = row[m_resultsColumns.m_rankDiff];
+@@ -262,16 +265,16 @@
+ 	}
+ }
+ 
+-void ResultsTree::renderBackgroundColour(CellRenderer *renderer, const TreeModel::iterator &amp;iter)
++void ResultsTree::renderTitleColumn(CellRenderer *pRenderer, const TreeModel::iterator &amp;iter)
+ {
+ 	TreeModel::Row row = *iter;
+ 
+-	if (renderer == NULL)
++	if (pRenderer == NULL)
+ 	{
+ 		return;
+ 	}
+ 
+-	CellRendererText *pTextRenderer = dynamic_cast&lt;CellRendererText*&gt;(renderer);
++	CellRendererText *pTextRenderer = dynamic_cast&lt;CellRendererText*&gt;(pRenderer);
+ 	if (pTextRenderer != NULL)
+ 	{
+ 		// Is this result new ?
+@@ -290,9 +293,38 @@
+ 		{
+ 			pTextRenderer-&gt;property_background_gdk().reset_value();
+ 		}
++
++		ResultsModelColumns::ResultType type = row[m_resultsColumns.m_type];
++		if ((type == ResultsModelColumns::RESULT_ROOT) ||
++			(type == ResultsModelColumns::RESULT_HOST))
++		{
++			ustring markup(&quot;&lt;b&gt;&quot;);
++			markup += row[m_resultsColumns.m_text];
++			markup += &quot;&lt;/b&gt;&quot;;
++			pTextRenderer-&gt;property_markup() = markup;
++		}
+ 	}
+ }
+ 
++void ResultsTree::renderExtractColumn(CellRenderer *pRenderer, const TreeModel::iterator &amp;iter)
++{
++	TreeModel::Row row = *iter;
++
++	if (pRenderer == NULL)
++	{
++		return;
++	}
++
++	CellRendererText *pTextRenderer = dynamic_cast&lt;CellRendererText*&gt;(pRenderer);
++	if (pTextRenderer != NULL)
++	{
++		ustring markup(row[m_extractColumns.m_name]);
++		pTextRenderer-&gt;property_markup() = markup;
++		pTextRenderer-&gt;property_wrap_mode() = Pango::WRAP_WORD;
++		pTextRenderer-&gt;property_wrap_width() = m_pExtractScrolledwindow-&gt;get_width();
++	}
++}
++
+ void ResultsTree::onButtonPressEvent(GdkEventButton *ev)
+ {
+ 	// Check for popup click
+@@ -329,85 +361,21 @@
+ 
+ 	if (path_currently_selected == false)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;ResultsTree::onSelectionSelect: selected entry &quot; &lt;&lt; row[m_resultsColumns.m_text] &lt;&lt; endl;
+-#endif
++		// Clear the extract
++		m_extractTreeView-&gt;get_selection()-&gt;unselect_all();
++		m_refExtractStore-&gt;clear();
+ 
+ 		// Is this an actual result ?
+ 		ResultsModelColumns::ResultType type = row[m_resultsColumns.m_type];
+ 		if (type == ResultsModelColumns::RESULT_TITLE)
+ 		{
+-			QueryHistory history(m_settings.m_historyDatabase);
+-			set&lt;string&gt; engineNames, indexNames;
+-			string extract;
+-
+-			string url = from_utf8(row[m_resultsColumns.m_url]);
+-			unsigned int engineIds = row[m_resultsColumns.m_engines];
+-			unsigned int indexIds = row[m_resultsColumns.m_indexes];
+-
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;ResultsTree::onSelectionSelect: selected result (&quot; &lt;&lt; engineIds &lt;&lt; &quot;,&quot; &lt;&lt; indexIds &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;ResultsTree::onSelectionSelect: extract for &quot; &lt;&lt; row[m_resultsColumns.m_text] &lt;&lt; endl;
+ #endif
+-			m_settings.getEngineNames(engineIds, engineNames);
+-			if (engineNames.empty() == false)
+-			{
+-				// Get the first engine this result was obtained from
+-				string engineName = (*engineNames.begin());
+-				if (engineName == &quot;Xapian&quot;)
+-				{
+-					m_settings.getIndexNames(indexIds, indexNames);
+-					if (indexNames.empty() == false)
+-					{
+-						// Use the name of the first index as engine name
+-						engineName = (*indexNames.begin());
+ 
+-						// Any internal index in there ?
+-						for (set&lt;string&gt;::iterator indexIter = indexNames.begin(); indexIter != indexNames.end(); ++indexIter)
+-						{
+-							if  (m_settings.isInternalIndex(*indexIter) == true)
+-							{
+-								m_indexNames.insert(*indexIter);
+-							}
+-						}
+-					}
+-				}
+-
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;ResultsTree::onSelectionSelect: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
+-#endif
+-				extract = history.getItemExtract(from_utf8(m_queryName), engineName, url);
+-			}
+-
+-			RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
+-			refBuffer-&gt;set_text(to_utf8(extract));
+-
+-			// Highlight the query's terms in the extract
+-			ustring lowerExtract(StringManip::toLowerCase(to_utf8(extract)));
+-			for (set&lt;string&gt;::iterator termIter = m_queryTerms.begin();
+-				termIter != m_queryTerms.end(); ++termIter)
+-			{
+-				ustring term(to_utf8(StringManip::toLowerCase(*termIter)));
+-
+-				ustring::size_type pos = lowerExtract.find(term);
+-				while (pos != ustring::npos)
+-				{
+-					if (((pos &gt; 0) &amp;&amp; (isspace(lowerExtract[pos - 1]) != 0)) ||
+-						((pos + termIter-&gt;length() &lt; lowerExtract.length() - 1) &amp;&amp;
+-							(isspace(lowerExtract[pos + termIter-&gt;length()]) != 0)))
+-					{
+-						// Apply the tag
+-						refBuffer-&gt;apply_tag_by_name(&quot;bold-text&quot;, refBuffer-&gt;get_iter_at_offset(pos),
+-							refBuffer-&gt;get_iter_at_offset(pos + termIter-&gt;length()));
+-					}
+-
+-					// Next
+-					pos = lowerExtract.find(term, pos + 1);
+-				}
+-			}
+-
+-			// The extract is not editable
+-			m_extractTextview-&gt;set_editable(false);
+-			m_extractTextview-&gt;set_cursor_visible(false);
++			TreeModel::iterator iter = m_refExtractStore-&gt;append();
++			TreeModel::Row extractRow = *iter;
++			extractRow[m_extractColumns.m_name] = findResultsExtract(row);
+ 		}
+ 	}
+ 
+@@ -1045,11 +1013,9 @@
+ 		}
+ 		m_refStore-&gt;clear();
+ 
+-		// Clear the extract field
+-		RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
+-		refBuffer-&gt;set_text(&quot;&quot;);
+-		m_extractTextview-&gt;set_editable(false);
+-		m_extractTextview-&gt;set_cursor_visible(false);
++		// Clear the extract
++		m_extractTreeView-&gt;get_selection()-&gt;unselect_all();
++		m_refExtractStore-&gt;clear();
+ 
+ 		onSelectionChanged();
+ 	}
+@@ -1263,3 +1229,51 @@
+ 	row[m_resultsColumns.m_viewed] = viewed;
+ 	row[m_resultsColumns.m_rankDiff] = rankDiff;
+ }
++
++//
++// Retrieves the extract to show for the given row.
++//
++string ResultsTree::findResultsExtract(const Gtk::TreeModel::Row &amp;row)
++{
++	QueryHistory history(m_settings.m_historyDatabase);
++	set&lt;string&gt; engineNames, indexNames;
++	string url(from_utf8(row[m_resultsColumns.m_url]));
++	string extract;
++	unsigned int engineIds = row[m_resultsColumns.m_engines];
++	unsigned int indexIds = row[m_resultsColumns.m_indexes];
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ResultsTree::getExtract: engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
++#endif
++	m_settings.getEngineNames(engineIds, engineNames);
++	if (engineNames.empty() == false)
++	{
++		// Get the first engine this result was obtained from
++		string engineName = (*engineNames.begin());
++		if (engineName == &quot;Xapian&quot;)
++		{
++			m_settings.getIndexNames(indexIds, indexNames);
++			if (indexNames.empty() == false)
++			{
++				// Use the name of the first index as engine name
++				engineName = (*indexNames.begin());
++
++				// Any internal index in there ?
++				for (set&lt;string&gt;::iterator indexIter = indexNames.begin(); indexIter != indexNames.end(); ++indexIter)
++				{
++					if  (m_settings.isInternalIndex(*indexIter) == true)
++					{
++						m_indexNames.insert(*indexIter);
++					}
++				}
++			}
++		}
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ResultsTree::getExtract: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
++#endif
++		extract = history.getItemExtract(from_utf8(m_queryName), engineName, url);
++	}
++
++	return extract;
++}
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2006-11-12 05:03:36 UTC (rev 570)
++++ trunk/UI/GTK2/src/ResultsTree.h	2006-11-12 05:08:48 UTC (rev 571)
+@@ -30,8 +30,8 @@
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/menu.h&gt;
+ #include &lt;gtkmm/scrolledwindow.h&gt;
+-#include &lt;gtkmm/textview.h&gt;
+ #include &lt;gtkmm/treestore.h&gt;
++#include &lt;gtkmm/liststore.h&gt;
+ #include &lt;gtkmm/treeview.h&gt;
+ #include &lt;gtkmm/treeselection.h&gt;
+ 
+@@ -112,20 +112,24 @@
+ 		std::map&lt;std::string, Gtk::TreeModel::iterator&gt; m_resultsGroups;
+ 		ResultsModelColumns m_resultsColumns;
+ 		Gtk::ScrolledWindow *m_pExtractScrolledwindow;
+-		Gtk::TextView *m_extractTextview;
++		Gtk::TreeView *m_extractTreeView;
++		Glib::RefPtr&lt;Gtk::ListStore&gt; m_refExtractStore;
++		ComboModelColumns m_extractColumns;
+ 		std::set&lt;std::string&gt; m_indexNames;
+ 		bool m_showExtract;
+ 		bool m_groupBySearchEngine;
+ 		std::set&lt;std::string&gt; m_queryTerms;
+ 
+-		void renderViewStatus(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
++		void renderViewStatus(Gtk::CellRenderer *pRenderer, const Gtk::TreeModel::iterator &amp;iter);
+ 
+-		void renderIndexStatus(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
++		void renderIndexStatus(Gtk::CellRenderer *pRenderer, const Gtk::TreeModel::iterator &amp;iter);
+ 
+-		void renderRanking(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
++		void renderRanking(Gtk::CellRenderer *pRenderer, const Gtk::TreeModel::iterator &amp;iter);
+ 
+-		void renderBackgroundColour(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
++		void renderTitleColumn(Gtk::CellRenderer *pRenderer, const Gtk::TreeModel::iterator &amp;iter);
+ 
++		void renderExtractColumn(Gtk::CellRenderer *pRenderer, const Gtk::TreeModel::iterator &amp;iter);
++
+ 		void onButtonPressEvent(GdkEventButton *ev);
+ 
+ 		void onSelectionChanged(void);
+@@ -154,6 +158,9 @@
+ 			const Glib::ustring &amp;url, int score, unsigned int engineId, unsigned int indexId,
+ 			ResultsModelColumns::ResultType type, bool indexed, bool viewed, int rankDiff);
+ 
++		/// Retrieves the extract to show for the given row.
++		std::string findResultsExtract(const Gtk::TreeModel::Row &amp;row);
++
+ 	private:
+ 		ResultsTree(const ResultsTree &amp;other);
+ 		ResultsTree &amp;operator=(const ResultsTree &amp;other);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-12 05:03:36 UTC (rev 570)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-12 05:08:48 UTC (rev 571)
+@@ -797,7 +797,6 @@
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
+ 			string title(_(&quot;No title&quot;));
+-			string extract(XmlTokenizer::stripTags(resultIter-&gt;getExtract()));
+ 			string language(resultIter-&gt;getLanguage());
+ 
+ 			// The title may contain formatting
+@@ -817,7 +816,7 @@
+ 
+ 			m_resultsList.push_back(Result(resultIter-&gt;getLocation(),
+ 				title,
+-				extract,
++				resultIter-&gt;getExtract(),
+ 				language,
+ 				resultIter-&gt;getScore()));
+ 		}
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-11-12 05:03:36 UTC (rev 570)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-11-12 05:08:48 UTC (rev 571)
+@@ -140,11 +140,13 @@
+ 	TreeViewColumn *pColumn = create_column(_(&quot;Query Name&quot;), m_queryColumns.m_name, true, true, m_queryColumns.m_name);
+ 	if (pColumn != NULL)
+ 	{
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 		queryTreeview-&gt;append_column(*manage(pColumn));
+ 	}
+ 	pColumn = create_column(_(&quot;Last Run&quot;), m_queryColumns.m_lastRun, true, true, m_queryColumns.m_lastRunTime);
+ 	if (pColumn != NULL)
+ 	{
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+ 		queryTreeview-&gt;append_column(*manage(pColumn));
+ 	}
+ 	queryTreeview-&gt;append_column(_(&quot;Summary&quot;), m_queryColumns.m_summary);
+@@ -775,10 +777,10 @@
+ #endif
+ 	}
+ 
++	show_global_menuitems(showResultsMenuitems);
+ 	// Did the page change ?
+ 	if (m_state.m_currentPage != p1)
+ 	{
+-		show_global_menuitems(showResultsMenuitems);
+ 		show_selectionbased_menuitems(false);
+ 	}
+ 	m_state.m_currentPage = p1;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000563.html">[Pinot-svn] r570 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000565.html">[Pinot-svn] r572 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#564">[ date ]</a>
+              <a href="thread.html#564">[ thread ]</a>
+              <a href="subject.html#564">[ subject ]</a>
+              <a href="author.html#564">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

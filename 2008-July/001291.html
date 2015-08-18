@@ -1,0 +1,826 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1297 - in trunk/IndexSearch: . Plugins
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1297%20-%20in%20trunk/IndexSearch%3A%20.%20Plugins&In-Reply-To=%3C200807131347.m6DDlrCG027139%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001290.html">
+   <LINK REL="Next"  HREF="001292.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1297 - in trunk/IndexSearch: . Plugins</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1297%20-%20in%20trunk/IndexSearch%3A%20.%20Plugins&In-Reply-To=%3C200807131347.m6DDlrCG027139%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1297 - in trunk/IndexSearch: . Plugins">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jul 13 15:47:53 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001290.html">[Pinot-svn] r1296 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001292.html">[Pinot-svn] r1298 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1291">[ date ]</a>
+              <a href="thread.html#1291">[ thread ]</a>
+              <a href="subject.html#1291">[ subject ]</a>
+              <a href="author.html#1291">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-13 15:46:53 +0200 (Sun, 13 Jul 2008)
+New Revision: 1297
+
+Added:
+   trunk/IndexSearch/Plugins/YahooBOSS.src
+Modified:
+   trunk/IndexSearch/ModuleFactory.cpp
+   trunk/IndexSearch/OpenSearchParser.cpp
+   trunk/IndexSearch/OpenSearchParser.h
+   trunk/IndexSearch/PluginParsers.h
+   trunk/IndexSearch/PluginWebEngine.cpp
+   trunk/IndexSearch/PluginWebEngine.h
+   trunk/IndexSearch/Plugins/A9.src
+   trunk/IndexSearch/Plugins/AmazonAPI.src
+   trunk/IndexSearch/SearchPluginProperties.cpp
+   trunk/IndexSearch/SearchPluginProperties.h
+   trunk/IndexSearch/SherlockParser.cpp
+   trunk/IndexSearch/SherlockParser.h
+   trunk/IndexSearch/WebEngine.cpp
+   trunk/IndexSearch/WebEngine.h
+Log:
+Plugins may define user-editable parameters by setting values to
+EDIT:description. This is designed to let the user specify his/her own ID or
+key for the Amazon API or the new Yahoo! BOSS API without having to edit
+plugins.
+For Sherlock plugins that don't specify a USER INPUT, append the query terms to
+the action URL.
+Always set input and output encodings, if defined, to UTF-8.
+
+
+Modified: trunk/IndexSearch/ModuleFactory.cpp
+===================================================================
+--- trunk/IndexSearch/ModuleFactory.cpp	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/ModuleFactory.cpp	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -385,11 +385,11 @@
+ #endif
+ 		(type == &quot;opensearch&quot;))
+ 	{
+-		string name, channel;
++		SearchPluginProperties properties;
+ 
+-		if (PluginWebEngine::getDetails(option, name, channel) == true)
++		if (PluginWebEngine::getDetails(option, properties) == true)
+ 		{
+-			return name;
++			return properties.m_name;
+ 		}
+ 
+ 		return &quot;&quot;;
+
+Modified: trunk/IndexSearch/OpenSearchParser.cpp
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.cpp	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/OpenSearchParser.cpp	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -293,7 +293,7 @@
+ }
+ 
+ ResponseParserInterface *OpenSearchParser::parse(SearchPluginProperties &amp;properties,
+-	bool extractSearchParams)
++	bool minimal)
+ {
+ 	struct stat fileStat;
+ 	bool rssResponse = true, success = true;
+@@ -447,7 +447,7 @@
+ 								{
+ 									string paramName(parameter.substr(0, equalPos));
+ 									string paramValue(parameter.substr(equalPos + 1));
+-									SearchPluginProperties::Parameter param = SearchPluginProperties::UNKNOWN_PARAM;
++									SearchPluginProperties::ParameterVariable param = SearchPluginProperties::UNKNOWN_PARAM;
+ 
+ 									if (paramValue == &quot;{searchTerms}&quot;)
+ 									{
+@@ -480,18 +480,29 @@
+ 
+ 									if (param != SearchPluginProperties::UNKNOWN_PARAM)
+ 									{
+-										properties.m_parameters[param] = paramName;
++										properties.m_variableParameters[param] = paramName;
+ 									}
+ 									else
+ 									{
+-										// Append to the remainder
+-										if (properties.m_parametersRemainder.empty() == false)
++#ifdef DEBUG
++										cout &lt;&lt; &quot;OpenSearchParser::parse: &quot; &lt;&lt; paramName &lt;&lt; &quot;=&quot; &lt;&lt; paramValue &lt;&lt; endl;
++#endif
++										if (paramValue.substr(0, 5) == &quot;EDIT:&quot;)
+ 										{
+-											properties.m_parametersRemainder += &quot;&amp;&quot;;
++											// This is user editable
++											properties.m_editableParameters[paramName] = paramValue.substr(5);
+ 										}
+-										properties.m_parametersRemainder += paramName;
+-										properties.m_parametersRemainder += &quot;=&quot;;
+-										properties.m_parametersRemainder += paramValue;
++										else
++										{
++											// Append to the remainder
++											if (properties.m_remainder.empty() == false)
++											{
++												properties.m_remainder += &quot;&amp;&quot;;
++											}
++											properties.m_remainder += paramName;
++											properties.m_remainder += &quot;=&quot;;
++											properties.m_remainder += paramValue;
++										}
+ 									}
+ 								}
+ 
+@@ -524,14 +535,6 @@
+ 				{
+ 					properties.m_languages.insert(nodeContent);
+ 				}
+-				else if (nodeName == &quot;OutputEncoding&quot;)
+-				{
+-					properties.m_outputEncodings.insert(nodeContent);
+-				}
+-				else if (nodeName == &quot;InputEncoding&quot;)
+-				{
+-					properties.m_inputEncodings.insert(nodeContent);
+-				}
+ 			}
+ 		}
+ 	}
+@@ -551,7 +554,7 @@
+ 	// Scrolling
+ 	properties.m_nextIncrement = 1;
+ 	properties.m_nextBase = 1;
+-	if (properties.m_parameters.find(SearchPluginProperties::START_PAGE_PARAM) != properties.m_parameters.end())
++	if (properties.m_variableParameters.find(SearchPluginProperties::START_PAGE_PARAM) != properties.m_variableParameters.end())
+ 	{
+ 		properties.m_scrolling = SearchPluginProperties::PER_PAGE;
+ 	}
+
+Modified: trunk/IndexSearch/OpenSearchParser.h
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.h	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/OpenSearchParser.h	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -58,7 +58,7 @@
+ 
+ 		/// Parses the plugin and returns a response parser.
+ 		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
+-			bool extractSearchParams = false);
++			bool minimal = false);
+ 
+ 	private:
+ 		OpenSearchParser(const OpenSearchParser &amp;other);
+
+Modified: trunk/IndexSearch/PluginParsers.h
+===================================================================
+--- trunk/IndexSearch/PluginParsers.h	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/PluginParsers.h	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -54,7 +54,7 @@
+ 
+ 		/// Parses the plugin and returns a response parser.
+ 		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
+-			bool extractSearchParams = false) = 0;
++			bool minimal = false) = 0;
+ 
+ 	protected:
+ 		std::string m_fileName;
+
+Modified: trunk/IndexSearch/PluginWebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.cpp	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/PluginWebEngine.cpp	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -169,7 +169,7 @@
+ 	return NULL;
+ }
+ 
+-bool PluginWebEngine::getDetails(const string &amp;fileName, string &amp;name, string &amp;channel)
++bool PluginWebEngine::getDetails(const string &amp;fileName, SearchPluginProperties &amp;properties)
+ {
+ 	if (fileName.empty() == true)
+ 	{
+@@ -182,7 +182,6 @@
+ 		return false;
+ 	}
+ 
+-	SearchPluginProperties properties;
+ 	ResponseParserInterface *pResponseParser = pParser-&gt;parse(properties, true);
+ 	if (pResponseParser == NULL)
+ 	{
+@@ -204,9 +203,6 @@
+ 		return false;
+ 	}
+ 
+-	name = properties.m_name;
+-	channel = properties.m_channel;
+-
+ 	return true;
+ }
+ 
+@@ -240,32 +236,69 @@
+ 		return false;
+ 	}
+ 
+-	map&lt;SearchPluginProperties::Parameter, string&gt;::iterator paramIter = m_properties.m_parameters.find(SearchPluginProperties::SEARCH_TERMS_PARAM);
+-	if (paramIter == m_properties.m_parameters.end())
++	string formattedQuery = m_properties.m_baseUrl;
++
++	map&lt;SearchPluginProperties::ParameterVariable, string&gt;::iterator paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::SEARCH_TERMS_PARAM);
++	if (paramIter != m_properties.m_variableParameters.end())
+ 	{
++		formattedQuery += &quot;?&quot;;
++		formattedQuery += paramIter-&gt;second;
++		formattedQuery += &quot;=&quot;;
++	}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;PluginWebEngine::runQuery: no user input tag&quot; &lt;&lt; endl;
++	else cout &lt;&lt; &quot;PluginWebEngine::runQuery: no user input tag&quot; &lt;&lt; endl;
+ #endif
+-		return false;
+-	}
+ 
+-	string userInputTag(paramIter-&gt;second);
+-	string formattedQuery = m_properties.m_baseUrl;
+-	formattedQuery += &quot;?&quot;;
+-	formattedQuery += userInputTag;
+-	formattedQuery += &quot;=&quot;;
+ 	formattedQuery += queryString;
+-	if (m_properties.m_parametersRemainder.empty() == false)
++	if (m_properties.m_remainder.empty() == false)
+ 	{
+ 		formattedQuery += &quot;&amp;&quot;;
+-		formattedQuery += m_properties.m_parametersRemainder;
++		formattedQuery += m_properties.m_remainder;
+ 	}
+ 
++	// Encodings ?
++	paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::OUTPUT_ENCODING_PARAM);
++	if ((paramIter != m_properties.m_variableParameters.end()) &amp;&amp;
++		(paramIter-&gt;second.empty() == false))
++	{
++		// Output encoding
++		formattedQuery += &quot;&amp;&quot;;
++		formattedQuery += paramIter-&gt;second;
++		formattedQuery += &quot;=UTF-8&quot;;
++	}
++	paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::INPUT_ENCODING_PARAM);
++	if ((paramIter != m_properties.m_variableParameters.end()) &amp;&amp;
++		(paramIter-&gt;second.empty() == false))
++	{
++		// Input encoding
++		formattedQuery += &quot;&amp;&quot;;
++		formattedQuery += paramIter-&gt;second;
++		formattedQuery += &quot;=UTF-8&quot;;
++	}
++
++	// Editable parameters ?
++	for (map&lt;string, string&gt;::const_iterator editableIter = m_properties.m_editableParameters.begin();
++		editableIter != m_properties.m_editableParameters.end(); ++editableIter)
++	{
++		map&lt;string, string&gt;::const_iterator valueIter = m_editableValues.find(editableIter-&gt;second);
++		if (valueIter == m_editableValues.end())
++		{
++			continue;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;PluginWebEngine::runQuery: editable &quot; &lt;&lt; valueIter-&gt;first &lt;&lt; &quot; set to &quot; &lt;&lt; valueIter-&gt;second &lt;&lt; endl;
++#endif
++
++		formattedQuery += &quot;&amp;&quot;;
++		formattedQuery += editableIter-&gt;first;
++		formattedQuery += &quot;=&quot;;
++		formattedQuery += valueIter-&gt;second;
++	}
++
+ 	setQuery(queryProps);
+ 
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot;
+-		&lt;&lt; m_properties.m_name &lt;&lt; endl;
++	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot; &lt;&lt; m_properties.m_name &lt;&lt; endl;
+ #endif
+ 	while (count &lt; maxResultsCount)
+ 	{
+@@ -274,8 +307,8 @@
+ 		// How do we scroll ?
+ 		if (m_properties.m_scrolling == SearchPluginProperties::PER_INDEX)
+ 		{
+-			paramIter = m_properties.m_parameters.find(SearchPluginProperties::COUNT_PARAM);
+-			if ((paramIter != m_properties.m_parameters.end()) &amp;&amp;
++			paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::COUNT_PARAM);
++			if ((paramIter != m_properties.m_variableParameters.end()) &amp;&amp;
+ 				(paramIter-&gt;second.empty() == false))
+ 			{
+ 				// Number of results requested
+@@ -286,8 +319,8 @@
+ 				pageQuery += countStr;
+ 			}
+ 
+-			paramIter = m_properties.m_parameters.find(SearchPluginProperties::START_INDEX_PARAM);
+-			if ((paramIter != m_properties.m_parameters.end()) &amp;&amp;
++			paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::START_INDEX_PARAM);
++			if ((paramIter != m_properties.m_variableParameters.end()) &amp;&amp;
+ 				(paramIter-&gt;second.empty() == false))
+ 			{
+ 				// The offset of the first result (typically 1 or 0)
+@@ -300,8 +333,8 @@
+ 		}
+ 		else
+ 		{
+-			paramIter = m_properties.m_parameters.find(SearchPluginProperties::START_PAGE_PARAM);
+-			if ((paramIter != m_properties.m_parameters.end()) &amp;&amp;
++			paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::START_PAGE_PARAM);
++			if ((paramIter != m_properties.m_variableParameters.end()) &amp;&amp;
+ 				(paramIter-&gt;second.empty() == false))
+ 			{
+ 				// The offset of the page
+@@ -343,6 +376,7 @@
+ 		}
+ 		count = m_resultsList.size();
+ 	}
++	m_resultsCountEstimate = m_resultsList.size();
+ 
+ 	return true;
+ }
+
+Modified: trunk/IndexSearch/PluginWebEngine.h
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.h	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/PluginWebEngine.h	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -16,8 +16,8 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#ifndef _XML_WEB_ENGINE_H
+-#define _XML_WEB_ENGINE_H
++#ifndef _PLUGIN_WEB_ENGINE_H
++#define _PLUGIN_WEB_ENGINE_H
+ 
+ #include &lt;string&gt;
+ 
+@@ -33,7 +33,7 @@
+ 		virtual ~PluginWebEngine();
+ 
+ 		/// Utility method that returns a search plugin's name and channel.
+-		static bool getDetails(const std::string &amp;fileName, std::string &amp;name, std::string &amp;channel);
++		static bool getDetails(const std::string &amp;fileName, SearchPluginProperties &amp;properties);
+ 
+ 		/// Runs a query; true if success.
+ 		virtual bool runQuery(QueryProperties&amp; queryProps,
+@@ -55,4 +55,4 @@
+ 
+ };
+ 
+-#endif // _XML_WEB_ENGINE_H
++#endif // _PLUGIN_WEB_ENGINE_H
+
+Modified: trunk/IndexSearch/Plugins/A9.src
+===================================================================
+--- trunk/IndexSearch/Plugins/A9.src	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/Plugins/A9.src	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -9,7 +9,7 @@
+ 	routeType=&quot;The Web&quot;
+ &gt;
+ 
+-&lt;INPUT NAME=&quot;q&quot; USER&gt;
++# Append query terms to the action URL &lt;INPUT NAME=&quot;&quot; USER&gt;
+ &lt;INPUT NAME=&quot;p&quot; VALUE=&quot;0&quot;&gt;
+ # The next line sets pw to 1 + results_count/10
+ &lt;INPUTNEXT NAME=&quot;pw&quot; FACTOR=&quot;1&quot; VALUE=&quot;1&quot;&gt;
+
+Modified: trunk/IndexSearch/Plugins/AmazonAPI.src
+===================================================================
+--- trunk/IndexSearch/Plugins/AmazonAPI.src	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/Plugins/AmazonAPI.src	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -11,7 +11,7 @@
+ 
+ &lt;INPUT NAME=&quot;Service&quot; VALUE=&quot;AWSECommerceService&quot;&gt;
+ # Edit this field's value to set to your subscription ID
+-&lt;INPUT NAME=&quot;SubscriptionId&quot; VALUE=&quot;&quot;&gt;
++&lt;INPUT NAME=&quot;SubscriptionId&quot; VALUE=&quot;EDIT:Amazon API ID&quot;&gt;
+ &lt;INPUT NAME=&quot;Operation&quot; VALUE=&quot;ItemSearch&quot;&gt;
+ &lt;INPUT NAME=&quot;SearchIndex&quot; VALUE=&quot;Blended&quot;&gt;
+ &lt;INPUT NAME=&quot;Keywords&quot; USER&gt;
+
+Added: trunk/IndexSearch/Plugins/YahooBOSS.src
+===================================================================
+--- trunk/IndexSearch/Plugins/YahooBOSS.src	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/Plugins/YahooBOSS.src	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -0,0 +1,34 @@
++# Yahoo! REST API Search Plugin
++
++&lt;SEARCH
++	version=&quot;1.0&quot;
++	name=&quot;Yahoo! BOSS&quot;
++	description=&quot;Yahoo! BOSS API&quot;
++	method=&quot;GET&quot;
++	action=&quot;<A HREF="http://boss.yahooapis.com/ysearch/web/v1/">http://boss.yahooapis.com/ysearch/web/v1/</A>&quot;
++	routeType=&quot;The Web&quot;
++&gt;
++
++# Edit this field's value to set to your application ID
++&lt;INPUT NAME=&quot;appid&quot; VALUE=&quot;EDIT:Yahoo! Boss ID&quot;&gt;
++# Append query terms to the action URL &lt;INPUT NAME=&quot;&quot; USER&gt;
++&lt;INPUT NAME=&quot;count&quot; VALUE=&quot;10&quot;&gt;
++&lt;INPUT NAME=&quot;format&quot; VALUE=&quot;xml&quot;&gt;
++
++&lt;INTERPRET
++resultListStart=&quot;&lt;resultset_web&quot;
++resultListEnd=&quot;&lt;/resultset_web&gt;&quot;
++resultItemStart=&quot;&lt;result&gt;&quot;
++resultItemEnd=&quot;&lt;/result&gt;&quot;
++# The following attributes are specific to Pinot
++resultTitleStart=&quot;&lt;title&gt;&quot;
++resultTitleEnd=&quot;&lt;/title&gt;&quot;
++resultLinkStart=&quot;&lt;url&gt;&quot;
++resultLinkEnd=&quot;&lt;/url&gt;&quot;
++resultExtractStart=&quot;&lt;abstract&gt;&quot;
++resultExtractEnd=&quot;&lt;/abstract&gt;&quot;
++&gt;
++
++&lt;/SEARCH&gt;
++
++
+
+Modified: trunk/IndexSearch/SearchPluginProperties.cpp
+===================================================================
+--- trunk/IndexSearch/SearchPluginProperties.cpp	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/SearchPluginProperties.cpp	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -36,23 +36,18 @@
+ 	m_longName(other.m_longName),
+ 	m_description(other.m_description),
+ 	m_channel(other.m_channel),
++	m_languages(other.m_languages),
+ 	m_baseUrl(other.m_baseUrl),
+ 	m_method(other.m_method),
+-	m_parametersRemainder(other.m_parametersRemainder),
++	m_variableParameters(other.m_variableParameters),
++	m_editableParameters(other.m_editableParameters),
++	m_remainder(other.m_remainder),
+ 	m_outputType(other.m_outputType),
+ 	m_scrolling(other.m_scrolling),
+ 	m_nextIncrement(other.m_nextIncrement),
+ 	m_nextBase(other.m_nextBase),
+ 	m_response(other.m_response)
+ {
+-	copy(other.m_languages.begin(), other.m_languages.end(),
+-		inserter(m_languages, m_languages.begin()));
+-	copy(other.m_outputEncodings.begin(), other.m_outputEncodings.end(),
+-		inserter(m_outputEncodings, m_outputEncodings.begin()));
+-	copy(other.m_inputEncodings.begin(), other.m_inputEncodings.end(),
+-		inserter(m_inputEncodings, m_inputEncodings.begin()));
+-	copy(other.m_parameters.begin(), other.m_parameters.end(),
+-		inserter(m_parameters, m_parameters.begin()));
+ }
+ 
+ SearchPluginProperties::~SearchPluginProperties()
+@@ -67,27 +62,17 @@
+ 		m_longName = other.m_longName;
+ 		m_description = other.m_description;
+ 		m_channel = other.m_channel;
++		m_languages = other.m_languages;
+ 		m_baseUrl = other.m_baseUrl;
+ 		m_method = other.m_method;
+-		m_parametersRemainder = other.m_parametersRemainder;
++		m_variableParameters = other.m_variableParameters;
++		m_editableParameters = other.m_editableParameters;
++		m_remainder = other.m_remainder;
+ 		m_outputType = other.m_outputType;
+ 		m_scrolling = other.m_scrolling;
+ 		m_nextIncrement = other.m_nextIncrement;
+ 		m_nextBase = other.m_nextBase;
+ 		m_response = other.m_response;
+-
+-		m_languages.clear();
+-		copy(other.m_languages.begin(), other.m_languages.end(),
+-			inserter(m_languages, m_languages.begin()));
+-		m_outputEncodings.clear();
+-		copy(other.m_outputEncodings.begin(), other.m_outputEncodings.end(),
+-			inserter(m_outputEncodings, m_outputEncodings.begin()));
+-		m_inputEncodings.clear();
+-		copy(other.m_inputEncodings.begin(), other.m_inputEncodings.end(),
+-			inserter(m_inputEncodings, m_inputEncodings.begin()));
+-		m_parameters.clear();
+-		copy(other.m_parameters.begin(), other.m_parameters.end(),
+-			inserter(m_parameters, m_parameters.begin()));
+ 	}
+ 
+ 	return *this;
+
+Modified: trunk/IndexSearch/SearchPluginProperties.h
+===================================================================
+--- trunk/IndexSearch/SearchPluginProperties.h	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/SearchPluginProperties.h	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -39,7 +39,7 @@
+ 
+ 		typedef enum { UNKNOWN_PARAM = 0, SEARCH_TERMS_PARAM,
+ 			 COUNT_PARAM,START_INDEX_PARAM, START_PAGE_PARAM, LANGUAGE_PARAM,
+-			OUTPUT_ENCODING_PARAM, INPUT_ENCODING_PARAM } Parameter;
++			OUTPUT_ENCODING_PARAM, INPUT_ENCODING_PARAM } ParameterVariable;
+ 
+ 		typedef enum { PER_PAGE = 0, PER_INDEX } Scrolling;
+ 
+@@ -52,13 +52,12 @@
+ 		std::string m_description;
+ 		std::string m_channel;
+ 		std::set&lt;std::string&gt; m_languages;
+-		std::set&lt;std::string&gt; m_outputEncodings;
+-		std::set&lt;std::string&gt; m_inputEncodings;
+ 		// Query
+ 		std::string m_baseUrl;
+ 		Method m_method;
+-		std::map&lt;Parameter, std::string&gt; m_parameters;
+-		std::string m_parametersRemainder;
++		std::map&lt;ParameterVariable, std::string&gt; m_variableParameters;
++		std::map&lt;std::string, std::string&gt; m_editableParameters;
++		std::string m_remainder;
+ 		std::string m_outputType;
+ 		// Scrolling
+ 		Scrolling m_scrolling;
+
+Modified: trunk/IndexSearch/SherlockParser.cpp
+===================================================================
+--- trunk/IndexSearch/SherlockParser.cpp	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/SherlockParser.cpp	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -84,61 +84,6 @@
+ };
+ 
+ /**
+-  * A minimal grammar for Sherlock plugins.
+-  * This only checks for the existence of the SEARCH tag.
+-  * It is used to quickly extract SEARCH attributes.
+-  */
+-struct plugin_min_grammar : public grammar&lt;plugin_min_grammar&gt;
+-{
+-	 plugin_min_grammar(map&lt;string, string&gt; &amp;searchParams) :
+-		m_searchParams(searchParams)
+-	{
+-	}
+-
+-	template &lt;typename ScannerT&gt;
+-	struct definition
+-	{
+-		definition(plugin_min_grammar const &amp;self)
+-		{
+-			// Start
+-			search_plugin = search_header &gt;&gt; rest;
+-
+-			// All items have a name and an optionally-quoted value, separated by =
+-			end_of_name = ch_p('=');
+-			any_name = *(~ch_p('&gt;') - end_of_name);
+-			any_value_without_quotes = lexeme_d[*(~ch_p('&gt;') - ch_p('\n'))];
+-			any_value = ch_p('\'') &gt;&gt; (*(~ch_p('\'')))[assign_a(unquotedValue)] &gt;&gt; ch_p('\'') |
+-				ch_p('&quot;') &gt;&gt; (*(~ch_p('&quot;')))[assign_a(unquotedValue)] &gt;&gt; ch_p('&quot;') |
+-				any_value_without_quotes[assign_a(unquotedValue)];
+-
+-			// SEARCH attributes are items
+-			// There should be only one SEARCH tag
+-			search_item = (any_name[assign_a(itemName)]
+-				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
+-				[insert_at_a(self.m_searchParams, itemName, itemValue)];
+-
+-			// SEARCH may have any number of attributes
+-			search_header = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; *search_item &gt;&gt; ch_p('&gt;');
+-
+-			// Rest
+-			rest = *anychar_p;
+-		}
+-
+-		string unquotedValue, itemName, itemValue;		
+-		rule&lt;ScannerT&gt; search_plugin, search_header, rest;
+-		rule&lt;ScannerT&gt; end_of_name, any_name, any_value_without_quotes, any_value, search_item;
+-
+-		rule&lt;ScannerT&gt; const&amp; start() const
+-		{
+-			return search_plugin;
+-		}
+-	};
+-
+-	map&lt;string, string&gt; &amp;m_searchParams;
+-
+-};
+-
+-/**
+   * A complete but lax grammar for Sherlock plugins.
+   * For instance, it doesn't mind if INPUT has a NAME but no VALUE.
+   * More importantly, it doesn't enforce types, eg FACTOR should be an integer.
+@@ -496,7 +441,7 @@
+ }
+ 
+ ResponseParserInterface *SherlockParser::parse(SearchPluginProperties &amp;properties,
+-	bool extractSearchParams)
++	bool minimal)
+ {
+ 	FileCollector fileCollect;
+ 	DocumentInfo docInfo(&quot;Sherlock Source&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + m_fileName,
+@@ -529,23 +474,12 @@
+ 	{
+ 		try
+ 		{
+-			if (extractSearchParams == false)
+-			{
+-				plugin_skip_grammar skip;
+-				plugin_grammar plugin(searchParams, interpretParams, inputItems,
+-					userInput, nextInput, nextFactor, nextValue);
++			plugin_skip_grammar skip;
++			plugin_grammar plugin(searchParams, interpretParams, inputItems,
++				userInput, nextInput, nextFactor, nextValue);
+ 
+-				parse_info&lt;&gt; parseInfo = boost::spirit::parse(pData, plugin, skip);
+-				parsedPlugin = parseInfo.hit;
+-			}
+-			else
+-			{
+-				plugin_skip_grammar skip;
+-				plugin_min_grammar plugin(searchParams);
+-
+-				parse_info&lt;&gt; parseInfo = boost::spirit::parse(pData, plugin, skip);
+-				parsedPlugin = parseInfo.hit;
+-			}
++			parse_info&lt;&gt; parseInfo = boost::spirit::parse(pData, plugin, skip);
++			parsedPlugin = parseInfo.hit;
+ 		}
+ 		catch (const exception &amp;e)
+ 		{
+@@ -609,40 +543,48 @@
+ 			properties.m_channel = mapIter-&gt;second;
+ 		}
+ 
+-		if (extractSearchParams == false)
++		if (userInput.empty() == false)
+ 		{
+-			if (userInput.empty() == false)
+-			{
+-				string lowUserInput(StringManip::toLowerCase(userInput));
++			string lowUserInput(StringManip::toLowerCase(userInput));
+ 
+-				// Remove the user input tag from the input tags map
+-				mapIter = lowInputItems.find(lowUserInput);
+-				if (mapIter != lowInputItems.end())
+-				{
+-					lowInputItems.erase(mapIter);
+-				}
++			// Remove the user input tag from the input tags map
++			mapIter = lowInputItems.find(lowUserInput);
++			if (mapIter != lowInputItems.end())
++			{
++				lowInputItems.erase(mapIter);
++			}
+ #ifdef DEBUG
+-				else cout &lt;&lt; &quot;SherlockParser::parse: couldn't remove user input item&quot; &lt;&lt; endl;
++			else cout &lt;&lt; &quot;SherlockParser::parse: couldn't remove user input item&quot; &lt;&lt; endl;
+ #endif
+ 
+-				properties.m_parameters[SearchPluginProperties::SEARCH_TERMS_PARAM] = lowUserInput;
++			properties.m_variableParameters[SearchPluginProperties::SEARCH_TERMS_PARAM] = lowUserInput;
++		}
++		for (map&lt;string, string&gt;::iterator iter = lowInputItems.begin();
++			iter != lowInputItems.end(); ++iter)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;SherlockParser::parse: &quot; &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
++#endif
++			if (iter-&gt;second.substr(0, 5) == &quot;EDIT:&quot;)
++			{
++				// This is user editable
++				properties.m_editableParameters[iter-&gt;first] = iter-&gt;second.substr(5);
+ 			}
+-			for (map&lt;string, string&gt;::iterator iter = lowInputItems.begin();
+-				iter != lowInputItems.end(); ++iter)
++			else
+ 			{
+ 				// Append to the remainder
+-				if (properties.m_parametersRemainder.empty() == false)
++				if (properties.m_remainder.empty() == false)
+ 				{
+-					properties.m_parametersRemainder += &quot;&amp;&quot;;
++					properties.m_remainder += &quot;&amp;&quot;;
+ 				}
+-				properties.m_parametersRemainder += iter-&gt;first;
+-				properties.m_parametersRemainder += &quot;=&quot;;
+-				properties.m_parametersRemainder += iter-&gt;second;
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;SherlockParser::parse: input item &quot; &lt;&lt; iter-&gt;first &lt;&lt; endl;
+-#endif
++				properties.m_remainder += iter-&gt;first;
++				properties.m_remainder += &quot;=&quot;;
++				properties.m_remainder += iter-&gt;second;
+ 			}
++		}
+ 
++		if (minimal == false)
++		{
+ 			// URL
+ 			mapIter = lowSearchParams.find(&quot;action&quot;);
+ 			if (mapIter != lowSearchParams.end())
+@@ -725,7 +667,7 @@
+ 			// as the parameter's initial value
+ 			if (nextFactor.empty() == false)
+ 			{
+-				properties.m_parameters[SearchPluginProperties::START_PAGE_PARAM] = nextInput;
++				properties.m_variableParameters[SearchPluginProperties::START_PAGE_PARAM] = nextInput;
+ 				properties.m_scrolling = SearchPluginProperties::PER_PAGE;
+ 				// What Sherlock calls a factor is actually an increment
+ 				properties.m_nextIncrement = (unsigned int)atoi(nextFactor.c_str());
+@@ -734,7 +676,7 @@
+ 			{
+ 				// Assume INPUTNEXT allows to specify a number of results
+ 				// Not sure if this is how Sherlock/Mozilla interpret this
+-				properties.m_parameters[SearchPluginProperties::COUNT_PARAM] = nextInput;
++				properties.m_variableParameters[SearchPluginProperties::COUNT_PARAM] = nextInput;
+ 				properties.m_scrolling = SearchPluginProperties::PER_INDEX;
+ 				properties.m_nextIncrement = 0;
+ 			}
+
+Modified: trunk/IndexSearch/SherlockParser.h
+===================================================================
+--- trunk/IndexSearch/SherlockParser.h	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/SherlockParser.h	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -67,7 +67,7 @@
+ 
+ 		/// Parses the plugin and returns a response parser.
+ 		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
+-			bool extractSearchParams = false);
++			bool minimal = false);
+ 
+ 	protected:
+ 		static pthread_mutex_t m_mutex;
+
+Modified: trunk/IndexSearch/WebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/WebEngine.cpp	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/WebEngine.cpp	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -283,3 +283,10 @@
+ {
+ 	return m_pDownloader;
+ }
++
++/// Specifies values for editable parameters.
++void WebEngine::setEditableValues(const std::map&lt;std::string, std::string&gt; &amp;editableValues)
++{
++	m_editableValues = editableValues;
++}
++
+
+Modified: trunk/IndexSearch/WebEngine.h
+===================================================================
+--- trunk/IndexSearch/WebEngine.h	2008-07-11 06:21:03 UTC (rev 1296)
++++ trunk/IndexSearch/WebEngine.h	2008-07-13 13:46:53 UTC (rev 1297)
+@@ -21,6 +21,7 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;set&gt;
++#include &lt;map&gt;
+ 
+ #include &quot;Document.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+@@ -37,8 +38,12 @@
+ 		/// Returns the downloader used if any.
+ 		DownloaderInterface *getDownloader(void);
+ 
++		/// Specifies values for editable parameters.
++		void setEditableValues(const std::map&lt;std::string, std::string&gt; &amp;editableValues);
++
+ 	protected:
+ 		DownloaderInterface *m_pDownloader;
++		std::map&lt;std::string, std::string&gt; m_editableValues;
+ 		std::set&lt;std::string&gt; m_queryTerms;
+ 
+ 		Document *downloadPage(const DocumentInfo &amp;docInfo);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001290.html">[Pinot-svn] r1296 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001292.html">[Pinot-svn] r1298 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1291">[ date ]</a>
+              <a href="thread.html#1291">[ thread ]</a>
+              <a href="subject.html#1291">[ subject ]</a>
+              <a href="author.html#1291">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

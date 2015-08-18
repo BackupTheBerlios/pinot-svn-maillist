@@ -1,0 +1,319 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1387 - trunk/IndexSearch
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1387%20-%20trunk/IndexSearch&In-Reply-To=%3C200810181033.m9IAXPBD004163%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001377.html">
+   <LINK REL="Next"  HREF="001379.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1387 - trunk/IndexSearch</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1387%20-%20trunk/IndexSearch&In-Reply-To=%3C200810181033.m9IAXPBD004163%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1387 - trunk/IndexSearch">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 18 12:33:25 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001377.html">[Pinot-svn] r1386 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001379.html">[Pinot-svn] r1388 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1378">[ date ]</a>
+              <a href="thread.html#1378">[ thread ]</a>
+              <a href="subject.html#1378">[ subject ]</a>
+              <a href="author.html#1378">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-10-18 12:33:19 +0200 (Sat, 18 Oct 2008)
+New Revision: 1387
+
+Modified:
+   trunk/IndexSearch/FilterWrapper.cpp
+   trunk/IndexSearch/FilterWrapper.h
+Log:
+Added method reduceToText() and the ReducedAction class.
+
+
+Modified: trunk/IndexSearch/FilterWrapper.cpp
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.cpp	2008-10-15 13:46:31 UTC (rev 1386)
++++ trunk/IndexSearch/FilterWrapper.cpp	2008-10-18 10:33:19 UTC (rev 1387)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007 Fabrice Colin
++ *  Copyright 2007-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -42,6 +42,74 @@
+ 	return converter.toUTF8(pData, dataLen, charset);
+ }
+ 
++ReducedAction::ReducedAction()
++{
++}
++
++ReducedAction::~ReducedAction()
++{
++}
++
++class IndexAction : public ReducedAction
++{
++	public:
++		IndexAction(IndexInterface *pIndex, const set&lt;string&gt; &amp;labels,
++			unsigned int docId, bool doUpdate) :
++			ReducedAction(),
++			m_pIndex(pIndex),
++			m_labels(labels),
++			m_docId(docId),
++			m_doUpdate(doUpdate)
++		{
++		}
++
++		virtual ~IndexAction()
++		{
++		}
++
++		virtual bool takeAction(Document &amp;doc, bool isNested)
++		{
++			bool docSuccess = false;
++
++			// Nested documents can't be updated because they are unindexed
++			// and the ID is that of the base document anyway
++			if ((m_doUpdate == true) &amp;&amp;
++				(isNested == false))
++			{
++				docSuccess = m_pIndex-&gt;updateDocument(m_docId, doc);
++			}
++			else
++			{
++				unsigned int newDocId = m_docId;
++
++				docSuccess = m_pIndex-&gt;indexDocument(doc, m_labels, newDocId);
++				// Make sure we return the base document's ID, not the last nested document's ID
++				if (isNested == false)
++				{
++					m_docId = newDocId;
++				}
++			}
++
++			return docSuccess;
++		}
++
++		unsigned int getId(void) const
++		{
++			return m_docId;
++		}
++
++	public:
++		IndexInterface *m_pIndex;
++		const set&lt;string&gt; &amp;m_labels;
++		unsigned int m_docId;
++		bool m_doUpdate;
++
++	private:
++		IndexAction(const IndexAction &amp;other);
++		IndexAction &amp;operator=(const IndexAction &amp;other);
++
++};
++
+ FilterWrapper::FilterWrapper(IndexInterface *pIndex) :
+ 	m_pIndex(pIndex)
+ {
+@@ -51,6 +119,14 @@
+ {
+ }
+ 
++bool FilterWrapper::reduceToText(const Document &amp;doc, ReducedAction &amp;action)
++{
++	string originalType(doc.getType());
++	unsigned int indexId = 0;
++
++	return filterDocument(doc, originalType, action);
++}
++
+ bool FilterWrapper::indexDocument(const Document &amp;doc, const set&lt;string&gt; &amp;labels, unsigned int &amp;docId)
+ {
+ 	string originalType(doc.getType());
+@@ -62,7 +138,12 @@
+ 
+ 	unindexNestedDocuments(doc.getLocation());
+ 
+-	return filterDocument(doc, originalType, labels, docId, false);
++	IndexAction action(m_pIndex, labels, docId, false);
++
++	bool filteredDoc = filterDocument(doc, originalType, action);
++	docId = action.getId();
++
++	return filteredDoc;
+ }
+ 
+ bool FilterWrapper::updateDocument(const Document &amp;doc, unsigned int docId)
+@@ -77,7 +158,9 @@
+ 
+ 	unindexNestedDocuments(doc.getLocation());
+ 
+-	return filterDocument(doc, originalType, labels, docId, true);
++	IndexAction action(m_pIndex, labels, docId, true);
++
++	return filterDocument(doc, originalType, action);
+ }
+ 
+ bool FilterWrapper::unindexDocument(const string &amp;location)
+@@ -93,7 +176,7 @@
+ }
+ 
+ bool FilterWrapper::filterDocument(const Document &amp;doc, const string &amp;originalType,
+-	const set&lt;string&gt; &amp;labels, unsigned int &amp;docId, bool doUpdate)
++	ReducedAction &amp;action)
+ {
+ 	Filter *pFilter = FilterUtils::getFilter(doc.getType());
+ 	bool fedFilter = false, docSuccess = false, finalSuccess = false;
+@@ -129,7 +212,11 @@
+ 		return false;
+ 	}
+ 
+-	while (pFilter-&gt;has_documents() == true)
++	bool hasDocs = pFilter-&gt;has_documents();
++#ifdef DEBUG
++	cout &lt;&lt; &quot;FilterWrapper::filterDocument: has documents &quot; &lt;&lt; hasDocs &lt;&lt; endl;
++#endif
++	while (hasDocs == true)
+ 	{
+ 		string actualType(originalType);
+ 		bool isNested = false;
+@@ -152,6 +239,7 @@
+ 
+ 		if (FilterUtils::populateDocument(filteredDoc, pFilter) == false)
+ 		{
++			hasDocs = pFilter-&gt;has_documents();
+ 			continue;
+ 		}
+ 
+@@ -193,28 +281,12 @@
+ 			// No, it's been reduced to plain text
+ 			filteredDoc.setType(actualType);
+ 
+-			// Nested documents can't be updated because they are unindexed
+-			// and the ID is that of the base document anyway
+-			if ((doUpdate == true) &amp;&amp;
+-				(isNested == false))
+-			{
+-				docSuccess = m_pIndex-&gt;updateDocument(docId, filteredDoc);
+-			}
+-			else
+-			{
+-				unsigned int newDocId = docId;
+-
+-				docSuccess = m_pIndex-&gt;indexDocument(filteredDoc, labels, newDocId);
+-				// Make sure we return the base document's ID, not the last nested document's ID
+-				if (isNested == false)
+-				{
+-					docId = newDocId;
+-				}
+-			}
++			// Take the appropriate action
++			docSuccess = action.takeAction(filteredDoc, isNested);
+ 		}
+ 		else
+ 		{
+-			docSuccess = filterDocument(filteredDoc, actualType, labels, docId, doUpdate);
++			docSuccess = filterDocument(filteredDoc, actualType, action);
+ 		}
+ 
+ 		// Consider indexing anything a success
+@@ -222,6 +294,9 @@
+ 		{
+ 			finalSuccess = true;
+ 		}
++
++		// Next
++		hasDocs = pFilter-&gt;has_documents();
+ 	}
+ 
+ 	delete pFilter;
+
+Modified: trunk/IndexSearch/FilterWrapper.h
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.h	2008-10-15 13:46:31 UTC (rev 1386)
++++ trunk/IndexSearch/FilterWrapper.h	2008-10-18 10:33:19 UTC (rev 1387)
+@@ -27,14 +27,31 @@
+ #include &quot;Filter.h&quot;
+ #include &quot;IndexInterface.h&quot;
+ 
++/// Takes action on a document that's been reduced to text.
++class PINOT_EXPORT ReducedAction
++{
++	public:
++		ReducedAction();
++		virtual ~ReducedAction();
++
++		virtual bool takeAction(Document &amp;doc, bool isNested) = 0;
++
++	private:
++		ReducedAction(const ReducedAction &amp;other);
++		ReducedAction &amp;operator=(const ReducedAction &amp;other);
++
++};
++
+ /// A wrapper around Dijon filters.
+ class PINOT_EXPORT FilterWrapper
+ {
+ 	public:
+-		/// Builds a FilterWrapper object.
+ 		FilterWrapper(IndexInterface *pIndex);
+ 		virtual ~FilterWrapper();
+ 
++		/// Reduces a document to text.
++		bool reduceToText(const Document &amp;doc, ReducedAction &amp;action);
++
+ 		/// Indexes the given data.
+ 		bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
+ 			unsigned int &amp;docId);
+@@ -49,8 +66,7 @@
+ 		IndexInterface *m_pIndex;
+ 
+ 		bool filterDocument(const Document &amp;doc, const std::string &amp;originalType,
+-			const std::set&lt;std::string&gt; &amp;labels, unsigned int &amp;docId,
+-			bool doUpdate);
++			ReducedAction &amp;action);
+ 
+ 		bool unindexNestedDocuments(const std::string &amp;url);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001377.html">[Pinot-svn] r1386 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001379.html">[Pinot-svn] r1388 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1378">[ date ]</a>
+              <a href="thread.html#1378">[ thread ]</a>
+              <a href="subject.html#1378">[ subject ]</a>
+              <a href="author.html#1378">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

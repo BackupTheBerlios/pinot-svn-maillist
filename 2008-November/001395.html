@@ -1,0 +1,1292 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1404 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1404%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811091253.mA9Cr3xY021048%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001394.html">
+   <LINK REL="Next"  HREF="001396.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1404 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1404%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811091253.mA9Cr3xY021048%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1404 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov  9 13:53:03 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001394.html">[Pinot-svn] r1403 - trunk/scripts/python
+</A></li>
+        <LI>Next message: <A HREF="001396.html">[Pinot-svn] r1405 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1395">[ date ]</a>
+              <a href="thread.html#1395">[ thread ]</a>
+              <a href="subject.html#1395">[ subject ]</a>
+              <a href="author.html#1395">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-09 13:52:37 +0100 (Sun, 09 Nov 2008)
+New Revision: 1404
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+Log:
+DBusServletInfo encapsulates information required to reply to D-Bus requests,
+and allows running another thread, for instance an EngineQueryThread to reply
+to queries.
+The D-Bus interface now includes a Query method similar to C. Scott Ananian's
+JournalQuery. This will eventually replace SimpleQuery.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-11-09 12:36:47 UTC (rev 1403)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-11-09 12:52:37 UTC (rev 1404)
+@@ -60,6 +60,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;CrawlHistory.h&quot;
++#include &quot;DBusIndex.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -125,6 +126,183 @@
+ 	}
+ };
+ 
++DBusServletInfo::DBusServletInfo(DBusConnection *pConnection, DBusMessage *pRequest) :
++	m_pConnection(pConnection),
++	m_pRequest(pRequest),
++	m_pReply(NULL),
++	m_pArray(NULL),
++	m_queryName(&quot;&quot;),
++	m_simpleQuery(true),
++	m_pThread(NULL),
++	m_replied(false)
++{
++}
++
++DBusServletInfo::~DBusServletInfo()
++{
++	if (m_pReply != NULL)
++	{
++		dbus_message_unref(m_pReply);
++	}
++	if (m_pRequest != NULL)
++	{
++		dbus_message_unref(m_pRequest);
++	}
++	if (m_pConnection != NULL)
++	{
++		dbus_connection_unref(m_pConnection);
++	}
++	if (m_pArray != NULL)
++	{
++		// Free the array
++		g_ptr_array_free(m_pArray, TRUE);
++	}
++}
++
++bool DBusServletInfo::newReply(void)
++{
++        if (m_pRequest == NULL) 
++        {
++                return false;
++        }
++
++        m_pReply = dbus_message_new_method_return(m_pRequest);
++        if (m_pReply != NULL)
++        {
++                return true;
++        }
++
++        return false;
++}
++
++bool DBusServletInfo::newErrorReply(const string &amp;name, const string &amp;message)
++{
++        if (m_pRequest == NULL) 
++        {
++                return false;
++        }
++
++	if (m_pReply != NULL)
++	{
++		dbus_message_unref(m_pReply);
++		m_pReply = NULL;
++	}
++
++	m_pReply = dbus_message_new_error(m_pRequest,
++		name.c_str(), message.c_str());
++        if (m_pReply != NULL)
++        {
++                return true;
++        }
++
++        return false;
++}
++
++bool DBusServletInfo::newReplyWithArray(void)
++{
++	if (newReply() == true)
++	{
++		dbus_message_append_args(m_pReply,
++			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;m_pArray-&gt;pdata, m_pArray-&gt;len,
++			DBUS_TYPE_INVALID);
++
++		return true;
++	}
++
++	return false;
++}
++
++bool DBusServletInfo::newQueryReply(const vector&lt;DocumentInfo&gt; &amp;resultsList,
++	unsigned int resultsEstimate)
++{
++	DBusMessageIter iter, subIter;
++
++	if (m_simpleQuery == false)
++	{
++		// Create the reply
++		if (newReply() == false)
++		{
++			return false;
++		}
++
++		// ...and attach a container
++		dbus_message_iter_init_append(m_pReply, &amp;iter);
++		dbus_message_iter_append_basic(&amp;iter, DBUS_TYPE_UINT32,
++			&amp;resultsEstimate);
++		dbus_message_iter_open_container(&amp;iter, DBUS_TYPE_ARRAY,
++			 DBUS_TYPE_ARRAY_AS_STRING \
++			 DBUS_STRUCT_BEGIN_CHAR_AS_STRING \
++			 DBUS_TYPE_STRING_AS_STRING \
++			 DBUS_TYPE_STRING_AS_STRING \
++			 DBUS_STRUCT_END_CHAR_AS_STRING, &amp;subIter);
++	}
++	else
++	{
++		// Create an array
++		// FIXME: use a container for this too
++		m_pArray = g_ptr_array_new();
++	}
++
++	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
++		resultIter != resultsList.end(); ++resultIter)
++	{
++		unsigned int indexId = 0;
++		unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletInfo::newQueryReply: adding result &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++		if (m_simpleQuery == false)
++		{
++			// The document ID isn't needed here
++			if (DBusIndex::documentInfoToDBus(&amp;subIter, 0, *resultIter) == false)
++			{
++				newErrorReply(&quot;de.berlios.Pinot.Query&quot;, &quot;Unknown error&quot;);
++				return false;
++			}
++		}
++		else if (docId &gt; 0)
++		{
++			char docIdStr[64];
++
++			// We only need the document ID
++			snprintf(docIdStr, 64, &quot;%u&quot;, docId);
++			g_ptr_array_add(m_pArray, const_cast&lt;char*&gt;(docIdStr));
++		}
++	}
++
++	if (m_simpleQuery == false)
++	{
++		// Close the container
++		dbus_message_iter_close_container(&amp;iter, &amp;subIter);
++		return true;
++	}
++
++	// Attach the array to the reply
++	return newReplyWithArray();
++}
++
++bool DBusServletInfo::reply(void)
++{
++	// Send a reply ?
++	if ((m_pConnection != NULL) &amp;&amp;
++		(m_pReply != NULL) &amp;&amp;
++		(m_replied == false))
++	{
++		m_replied = true;
++
++		dbus_connection_send(m_pConnection, m_pReply, NULL);
++		dbus_connection_flush(m_pConnection);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletInfo::reply: sent reply&quot; &lt;&lt; endl;
++#endif
++
++		return true;
++	}
++
++	return false;
++}
++
+ DaemonState::DaemonState() :
+ 	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 10),
+ 	m_fullScan(false),
+@@ -334,6 +512,7 @@
+ 		// Update all items status so that we can get rid of files from deleted sources
+ 		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::CRAWLING, 0, true);
+ 	}
++
+ 	// Initiate crawling
+ 	start_crawling();
+ }
+@@ -493,6 +672,27 @@
+ 			return;
+ 		}
+ 
++		// Send the reply ?
++		DBusServletInfo *pInfo = pDBusThread-&gt;getServletInfo();
++		if (pInfo != NULL)
++		{
++			if (pInfo-&gt;m_pThread != NULL)
++			{
++				m_queryServlets.insert(pInfo);
++
++#ifdef DEBUG
++				cout &lt;&lt; &quot;DaemonState::on_thread_end: running query &quot; &lt;&lt; pInfo-&gt;m_queryName &lt;&lt; endl;
++#endif
++				start_thread(pInfo-&gt;m_pThread);
++			}
++			else
++			{
++				pInfo-&gt;reply();
++
++				delete pInfo;
++			}
++		}
++
+ 		if (pDBusThread-&gt;mustQuit() == true)
+ 		{
+ 			// Disconnect the timeout signal
+@@ -504,7 +704,43 @@
+ 			m_signalQuit(0);
+ 		}
+ 	}
++	else if (type == &quot;QueryingThread&quot;)
++	{
++		QueryingThread *pQueryThread = dynamic_cast&lt;QueryingThread *&gt;(pThread);
++		if (pQueryThread == NULL)
++		{
++			delete pThread;
++			return;
++		}
+ 
++		bool wasCorrected = false;
++		QueryProperties queryProps(pQueryThread-&gt;getQuery(wasCorrected));
++		const vector&lt;DocumentInfo&gt; &amp;resultsList = pQueryThread-&gt;getDocuments();
++
++		// Find the servlet info
++		for (set&lt;DBusServletInfo *&gt;::const_iterator servIter = m_queryServlets.begin();
++			servIter != m_queryServlets.end(); ++servIter)
++		{
++			DBusServletInfo *pInfo = const_cast&lt;DBusServletInfo *&gt;(*servIter);
++
++			if ((pInfo != NULL) &amp;&amp;
++				(pInfo-&gt;m_queryName == queryProps.getName()))
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;DaemonState::on_thread_end: ran query &quot; &lt;&lt; pInfo-&gt;m_queryName &lt;&lt; endl;
++#endif
++				// Prepare and send the reply
++				pInfo-&gt;newQueryReply(resultsList, pQueryThread-&gt;getDocumentsCount());
++				pInfo-&gt;reply();
++
++				m_queryServlets.erase(servIter);
++				delete pInfo;
++
++				break;
++			}
++		}
++	}
++
+ 	// Delete the thread
+ 	delete pThread;
+ 
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-11-09 12:36:47 UTC (rev 1403)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-11-09 12:52:37 UTC (rev 1404)
+@@ -23,6 +23,15 @@
+ #include &lt;string&gt;
+ #include &lt;queue&gt;
+ #include &lt;set&gt;
++extern &quot;C&quot;
++{
++#if DBUS_VERSION &lt; 1000000
++#define DBUS_API_SUBJECT_TO_CHANGE
++#endif
++#include &lt;dbus/dbus.h&gt;
++#include &lt;dbus/dbus-glib.h&gt;
++#include &lt;dbus/dbus-glib-lowlevel.h&gt;
++}
+ #include &lt;sigc++/sigc++.h&gt;
+ 
+ #include &quot;MonitorInterface.h&quot;
+@@ -30,6 +39,36 @@
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ 
++class DBusServletInfo
++{
++	public:
++		DBusServletInfo(DBusConnection *pConnection, DBusMessage *pRequest);
++		~DBusServletInfo();
++
++		bool newReply(void);
++
++		bool newErrorReply(const std::string &amp;name, const std::string &amp;message);
++
++		bool newReplyWithArray(void);
++
++		bool newQueryReply(const vector&lt;DocumentInfo&gt; &amp;resultsList,
++			unsigned int resultsEstimate);
++
++		bool reply(void);
++
++		DBusConnection *m_pConnection;
++		DBusMessage *m_pRequest;
++		DBusMessage *m_pReply;
++		GPtrArray *m_pArray;
++		std::string m_queryName;
++		bool m_simpleQuery;
++		WorkerThread *m_pThread;
++
++	protected:
++		bool m_replied;
++
++};
++
+ class DaemonState : public ThreadsManager
+ {
+ 	public:
+@@ -69,6 +108,7 @@
+ 		sigc::signal1&lt;void, int&gt; m_signalQuit;
+ 		unsigned int m_crawlers;
+ 		std::queue&lt;PinotSettings::IndexableLocation&gt; m_crawlQueue;
++		std::set&lt;DBusServletInfo *&gt; m_queryServlets;
+ 
+ 		bool on_activity_timeout(void);
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-11-09 12:36:47 UTC (rev 1403)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-11-09 12:52:37 UTC (rev 1404)
+@@ -76,22 +76,6 @@
+ 	metaData.addItem(docInfo, DocumentInfo::SERIAL_LABELS);
+ }
+ 
+-static DBusMessage *newDBusReply(DBusMessage *pMessage)
+-{
+-        if (pMessage == NULL) 
+-        {
+-                return NULL;
+-        }
+-
+-        DBusMessage *pReply = dbus_message_new_method_return(pMessage);
+-        if (pReply != NULL)
+-        {
+-                return pReply;
+-        }
+-
+-        return NULL;
+-}
+-
+ static ustring g_xmlDescription;
+ 
+ static bool loadXMLDescription(void)
+@@ -635,32 +619,16 @@
+ 	}
+ }
+ 
+-DBusServletThread::DBusServletThread(DaemonState *pServer, DBusConnection *pConnection, DBusMessage *pRequest) :
++DBusServletThread::DBusServletThread(DaemonState *pServer, DBusServletInfo *pInfo) :
+ 	WorkerThread(),
+ 	m_pServer(pServer),
+-	m_pConnection(pConnection),
+-	m_pRequest(pRequest),
+-	m_pReply(NULL),
+-	m_pArray(NULL),
++	m_pServletInfo(pInfo),
+ 	m_mustQuit(false)
+ {
+ }
+ 
+ DBusServletThread::~DBusServletThread()
+ {
+-	if (m_pArray != NULL)
+-	{
+-		// Free the array
+-		g_ptr_array_free(m_pArray, TRUE);
+-	}
+-	if (m_pRequest != NULL)
+-	{
+-		dbus_message_ref(m_pRequest);
+-	}
+-	if (m_pConnection != NULL)
+-	{
+-		dbus_connection_ref(m_pConnection);
+-	}
+ }
+ 
+ string DBusServletThread::getType(void) const
+@@ -668,80 +636,16 @@
+ 	return &quot;DBusServletThread&quot;;
+ }
+ 
+-DBusConnection *DBusServletThread::getConnection(void) const
++DBusServletInfo *DBusServletThread::getServletInfo(void) const
+ {
+-	return m_pConnection;
++	return m_pServletInfo;
+ }
+ 
+-DBusMessage *DBusServletThread::getReply(void) const
+-{
+-	return m_pReply;
+-}
+-
+ bool DBusServletThread::mustQuit(void) const
+ {
+ 	return m_mustQuit;
+ }
+ 
+-bool DBusServletThread::runQuery(QueryProperties &amp;queryProps, vector&lt;string&gt; &amp;docIds)
+-{
+-	PinotSettings &amp;settings = PinotSettings::getInstance();
+-
+-	docIds.clear();
+-
+-	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(settings.m_defaultBackend,
+-		settings.m_daemonIndexLocation);
+-	if (pEngine == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// Run the query
+-	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+-	if (pEngine-&gt;runQuery(queryProps) == false)
+-	{
+-		delete pEngine;
+-
+-		return false;
+-	}
+-
+-	const vector&lt;DocumentInfo&gt; &amp;resultsList = pEngine-&gt;getResults();
+-	if (resultsList.empty() == true)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusServletThread::runQuery: trying again&quot; &lt;&lt; endl;
+-#endif
+-		// Try again, this time with OR as default operator
+-		pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_OR);
+-		if (pEngine-&gt;runQuery(queryProps) == false)
+-		{
+-			delete pEngine;
+-
+-			return false;
+-		}
+-	}
+-
+-	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+-		resultIter != resultsList.end(); ++resultIter)
+-	{
+-		unsigned int indexId = 0;
+-		unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
+-
+-		// We only need the document ID
+-		if (docId &gt; 0)
+-		{
+-			char docIdStr[64];
+-
+-			snprintf(docIdStr, 64, &quot;%u&quot;, docId);
+-			docIds.push_back(docIdStr);
+-		}
+-	}
+-
+-	delete pEngine;
+-
+-	return true;
+-}
+-
+ void DBusServletThread::doWork(void)
+ {
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+@@ -751,8 +655,7 @@
+ 	bool processedMessage = true, updateLabelsCache = false, flushIndex = false;
+ 
+ 	if ((m_pServer == NULL) ||
+-		(m_pConnection == NULL) ||
+-		(m_pRequest == NULL) ||
++		(m_pServletInfo == NULL) ||
+ 		(pIndex == NULL))
+ 	{
+ 		return;
+@@ -768,7 +671,7 @@
+ 	}
+ 
+ #ifdef DEBUG
+-	const char *pSender = dbus_message_get_sender(m_pRequest);
++	const char *pSender = dbus_message_get_sender(m_pServletInfo-&gt;m_pRequest);
+ 	if (pSender != NULL)
+ 	{
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: called by &quot; &lt;&lt; pSender &lt;&lt; endl;
+@@ -779,7 +682,7 @@
+ 	}
+ #endif
+ 
+-	if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetStatistics&quot;) == TRUE)
++	if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetStatistics&quot;) == TRUE)
+ 	{
+ 		CrawlHistory crawlHistory(settings.getHistoryDatabaseName());
+ 		unsigned int crawledFilesCount = crawlHistory.getItemsCount(CrawlHistory::CRAWLED);
+@@ -790,8 +693,7 @@
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: received GetStatistics&quot; &lt;&lt; endl;
+ #endif
+ 		// Prepare the reply
+-		m_pReply = newDBusReply(m_pRequest);
+-		if (m_pReply != NULL)
++		if (m_pServletInfo-&gt;newReply() == true)
+ 		{
+ 			if (m_pServer-&gt;is_flag_set(DaemonState::LOW_DISK_SPACE) == true)
+ 			{
+@@ -810,7 +712,7 @@
+ 				&lt;&lt; &quot; &quot; &lt;&lt; docsCount &lt;&lt; &quot; &quot; &lt;&lt; lowDiskSpace &lt;&lt; onBattery &lt;&lt; crawling &lt;&lt; endl;
+ #endif
+ 
+-			dbus_message_append_args(m_pReply,
++			dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 				DBUS_TYPE_UINT32, &amp;crawledFilesCount,
+ 				DBUS_TYPE_UINT32, &amp;docsCount,
+ 				DBUS_TYPE_BOOLEAN, &amp;lowDiskSpace,
+@@ -819,9 +721,9 @@
+ 				DBUS_TYPE_INVALID);
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Reload&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Reload&quot;) == TRUE)
+ 	{
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+ 			gboolean reloading = TRUE;
+@@ -832,18 +734,17 @@
+ 			m_pServer-&gt;reload();
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_BOOLEAN, &amp;reloading,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Stop&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Stop&quot;) == TRUE)
+ 	{
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+ 			int exitStatus = EXIT_SUCCESS;
+@@ -854,10 +755,9 @@
+ 			m_pServer-&gt;set_flag(DaemonState::STOPPED);
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_INT32, &amp;exitStatus,
+ 					DBUS_TYPE_INVALID);
+ 			}
+@@ -865,12 +765,12 @@
+ 			m_mustQuit = true;
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;HasDocument&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;HasDocument&quot;) == TRUE)
+ 	{
+ 		char *pUrl = NULL;
+ 		unsigned int docId = 0;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_STRING, &amp;pUrl,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -886,48 +786,38 @@
+ 			}
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_UINT32, &amp;docId,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetLabels&quot;) == TRUE)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: received GetLabels&quot; &lt;&lt; endl;
+ #endif
+ 		// This method doesn't take any argument
+-		m_pArray = g_ptr_array_new();
++		m_pServletInfo-&gt;m_pArray = g_ptr_array_new();
+ 
+ 		for (set&lt;string&gt;::const_iterator labelIter = labelsCache.begin();
+ 			labelIter != labelsCache.end(); ++labelIter)
+ 		{
+ 			string labelName(*labelIter);
+ 
+-			g_ptr_array_add(m_pArray, const_cast&lt;char*&gt;(labelName.c_str()));
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusServletThread::doWork: adding label &quot; &lt;&lt; m_pArray-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
++			g_ptr_array_add(m_pServletInfo-&gt;m_pArray, const_cast&lt;char*&gt;(labelName.c_str()));
+ 		}
+ 
+ 		// Prepare the reply
+-		m_pReply = newDBusReply(m_pRequest);
+-		if (m_pReply != NULL)
+-		{
+-			dbus_message_append_args(m_pReply,
+-				DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;m_pArray-&gt;pdata, m_pArray-&gt;len,
+-				DBUS_TYPE_INVALID);
+-		}
++		m_pServletInfo-&gt;newReplyWithArray();
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;AddLabel&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;AddLabel&quot;) == TRUE)
+ 	{
+ 		char *pLabel = NULL;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_STRING, &amp;pLabel,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -950,21 +840,20 @@
+ 			}
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_STRING, &amp;pLabel,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;RenameLabel&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;RenameLabel&quot;) == TRUE)
+ 	{
+ 		char *pOldLabel = NULL;
+ 		char *pNewLabel = NULL;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_STRING, &amp;pOldLabel,
+ 			DBUS_TYPE_STRING, &amp;pNewLabel,
+ 			DBUS_TYPE_INVALID) == TRUE)
+@@ -975,20 +864,19 @@
+ #endif
+ 			
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_STRING, &amp;pNewLabel,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;DeleteLabel&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;DeleteLabel&quot;) == TRUE)
+ 	{
+ 		char *pLabel = NULL;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_STRING, &amp;pLabel,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -1012,20 +900,19 @@
+ 			}
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_STRING, &amp;pLabel,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentLabels&quot;) == TRUE)
+ 	{
+ 		unsigned int docId = 0;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_UINT32, &amp;docId,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -1036,44 +923,34 @@
+ #endif
+ 			if (pIndex-&gt;getDocumentLabels(docId, labels) == true)
+ 			{
+-				m_pArray = g_ptr_array_new();
++				m_pServletInfo-&gt;m_pArray = g_ptr_array_new();
+ 
+ 				for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+ 					labelIter != labels.end(); ++labelIter)
+ 				{
+ 					string labelName(*labelIter);
+ 
+-					g_ptr_array_add(m_pArray, const_cast&lt;char*&gt;(labelName.c_str()));
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;DBusServletThread::doWork: adding label &quot; &lt;&lt; m_pArray-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
++					g_ptr_array_add(m_pServletInfo-&gt;m_pArray, const_cast&lt;char*&gt;(labelName.c_str()));
+ 				}
+ 
+ 				// Prepare the reply
+-				m_pReply = newDBusReply(m_pRequest);
+-				if (m_pReply != NULL)
+-				{
+-					dbus_message_append_args(m_pReply,
+-						DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;m_pArray-&gt;pdata, m_pArray-&gt;len,
+-						DBUS_TYPE_INVALID);
+-				}
++				m_pServletInfo-&gt;newReplyWithArray();
+ 			}
+ 			else
+ 			{
+-				m_pReply = dbus_message_new_error(m_pRequest,
+-					&quot;de.berlios.Pinot.GetDocumentLabels&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.GetDocumentLabels&quot;,
+ 					&quot; failed&quot;);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentLabels&quot;) == TRUE)
+ 	{
+ 		char **ppLabels = NULL;
+ 		dbus_uint32_t labelsCount = 0;
+ 		unsigned int docId = 0;
+ 		gboolean resetLabels = TRUE;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_UINT32, &amp;docId,
+ 			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppLabels, &amp;labelsCount,
+ 			DBUS_TYPE_BOOLEAN, &amp;resetLabels,
+@@ -1113,16 +990,15 @@
+ 			g_strfreev(ppLabels);
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_UINT32, &amp;docId,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentsLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentsLabels&quot;) == TRUE)
+ 	{
+ 		char **ppDocIds = NULL;
+ 		char **ppLabels = NULL;
+@@ -1130,7 +1006,7 @@
+ 		dbus_uint32_t labelsCount = 0;
+ 		gboolean resetLabels = TRUE;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppDocIds, &amp;idsCount,
+ 			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppLabels, &amp;labelsCount,
+ 			DBUS_TYPE_BOOLEAN, &amp;resetLabels,
+@@ -1188,20 +1064,19 @@
+ 			g_strfreev(ppLabels);
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_BOOLEAN, &amp;resetLabels,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentInfo&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentInfo&quot;) == TRUE)
+ 	{
+ 		unsigned int docId = 0;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_UINT32, &amp;docId,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -1213,40 +1088,36 @@
+ 			if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+ 			{
+ 				// Prepare the reply
+-				m_pReply = newDBusReply(m_pRequest);
+-				if (m_pReply != NULL)
++				if (m_pServletInfo-&gt;newReply() == true)
+ 				{
+ 					DBusMessageIter iter;
+ 
+-					dbus_message_iter_init_append(m_pReply, &amp;iter);
++					dbus_message_iter_init_append(m_pServletInfo-&gt;m_pReply, &amp;iter);
+ 					if (DBusIndex::documentInfoToDBus(&amp;iter, 0, docInfo) == false)
+ 					{
+-						dbus_message_unref(m_pReply);
+-						m_pReply = dbus_message_new_error(m_pRequest,
+-							&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
++						dbus_message_unref(m_pServletInfo-&gt;m_pReply);
++						m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
+ 							&quot;Unknown error&quot;);
+ 					}
+ 				}
+ 			}
+ 			else
+ 			{
+-				m_pReply = dbus_message_new_error(m_pRequest,
+-					&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
+ 					&quot;Unknown document&quot;);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentInfo&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentInfo&quot;) == TRUE)
+ 	{
+ 		DBusMessageIter iter;
+ 		DocumentInfo docInfo;
+ 		unsigned int docId = 0;
+ 
+-		dbus_message_iter_init(m_pRequest, &amp;iter);
++		dbus_message_iter_init(m_pServletInfo-&gt;m_pRequest, &amp;iter);
+ 		if (DBusIndex::documentInfoFromDBus(&amp;iter, docId, docInfo) == false)
+ 		{
+-			m_pReply = dbus_message_new_error(m_pRequest,
+-				&quot;de.berlios.Pinot.SetDocumentInfo&quot;,
++			m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.SetDocumentInfo&quot;,
+ 				&quot;Unknown error&quot;);
+ 		}
+ 		else
+@@ -1262,77 +1133,103 @@
+ 			metaData.addItem(docInfo, DocumentInfo::SERIAL_FIELDS);
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_UINT32, &amp;docId,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SimpleQuery&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Query&quot;) == TRUE)
+ 	{
+ 		char *pSearchText = NULL;
+-		dbus_uint32_t maxHits = 0;
++		char *pEngineType = NULL;
++		char *pEngineOption = NULL;
++		dbus_uint32_t startDoc = 0, maxHits = 0;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pEngineType,
++			DBUS_TYPE_STRING, &amp;pEngineOption,
+ 			DBUS_TYPE_STRING, &amp;pSearchText,
++			DBUS_TYPE_UINT32, &amp;startDoc,
+ 			DBUS_TYPE_UINT32, &amp;maxHits,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+ 			bool replyWithError = true;
+ 
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusServletThread::doWork: received SimpleQuery &quot; &lt;&lt; pSearchText &lt;&lt; &quot;, &quot; &lt;&lt; maxHits &lt;&lt; endl;
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received Query &quot; &lt;&lt; pSearchText &lt;&lt; &quot;, &quot; &lt;&lt; startDoc &lt;&lt; &quot;/&quot; &lt;&lt; maxHits &lt;&lt; endl;
+ #endif
+ 			if (pSearchText != NULL)
+ 			{
+-				QueryProperties queryProps(&quot;DBUS&quot;, pSearchText);
+-				vector&lt;string&gt; docIds;
++				stringstream queryNameStr;
+ 
+-				// Run the query
++				// Give the query a unique name
++				queryNameStr &lt;&lt; &quot;DBUS&quot; &lt;&lt; m_id;
++				m_pServletInfo-&gt;m_queryName = queryNameStr.str();
++				m_pServletInfo-&gt;m_simpleQuery = false;
++
++				QueryProperties queryProps(m_pServletInfo-&gt;m_queryName, pSearchText);
+ 				queryProps.setMaximumResultsCount(maxHits);
+-				if (runQuery(queryProps, docIds) == true)
+-				{
+-					m_pArray = g_ptr_array_new();
+ 
+-					for (vector&lt;string&gt;::const_iterator docIter = docIds.begin();
+-						docIter != docIds.end(); ++docIter)
+-					{
++				m_pServletInfo-&gt;m_pThread = new EngineQueryThread(pEngineType,
++					pEngineType, pEngineOption,
++					queryProps, startDoc);
++			}
++
++			if (replyWithError == true)
++			{
++				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.SimpleQuery&quot;,
++					&quot;Query failed&quot;);
++			}
++		}
++	}
++	// FIXME: this method will soon be obsoleted
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SimpleQuery&quot;) == TRUE)
++	{
++		char *pSearchText = NULL;
++		dbus_uint32_t maxHits = 0;
++
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pSearchText,
++			DBUS_TYPE_UINT32, &amp;maxHits,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			bool replyWithError = true;
++
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;DBusServletThread::doWork: adding result &quot;
+-							&lt;&lt; m_pArray-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; *docIter &lt;&lt; endl;
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received SimpleQuery &quot; &lt;&lt; pSearchText &lt;&lt; &quot;, &quot; &lt;&lt; maxHits &lt;&lt; endl;
+ #endif
+-						g_ptr_array_add(m_pArray, const_cast&lt;char*&gt;(docIter-&gt;c_str()));
+-					}
++			if (pSearchText != NULL)
++			{
++				stringstream queryNameStr;
+ 
+-					// Prepare the reply
+-					m_pReply = newDBusReply(m_pRequest);
+-					if (m_pReply != NULL)
+-					{
+-						dbus_message_append_args(m_pReply,
+-							DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;m_pArray-&gt;pdata, m_pArray-&gt;len,
+-							DBUS_TYPE_INVALID);
++				// Give the query a unique name
++				queryNameStr &lt;&lt; &quot;DBUS&quot; &lt;&lt; m_id;
++				m_pServletInfo-&gt;m_queryName = queryNameStr.str();
++				m_pServletInfo-&gt;m_simpleQuery = true;
+ 
+-						replyWithError = false;
+-					}
+-				}
++				QueryProperties queryProps(m_pServletInfo-&gt;m_queryName, pSearchText);
++				queryProps.setMaximumResultsCount(maxHits);
++
++				m_pServletInfo-&gt;m_pThread = new EngineQueryThread(settings.m_defaultBackend,
++					settings.m_defaultBackend, settings.m_daemonIndexLocation,
++					queryProps, 0);
+ 			}
+ 
+ 			if (replyWithError == true)
+ 			{
+-				m_pReply = dbus_message_new_error(m_pRequest,
+-					&quot;de.berlios.Pinot.SimpleQuery&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.SimpleQuery&quot;,
+ 					&quot;Query failed&quot;);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;UpdateDocument&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;UpdateDocument&quot;) == TRUE)
+ 	{
+ 		unsigned int docId = 0;
+ 
+-		if (dbus_message_get_args(m_pRequest, &amp;error,
++		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_UINT32, &amp;docId,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -1348,16 +1245,15 @@
+ 			}
+ 
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_UINT32, &amp;docId,
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, &quot;org.freedesktop.DBus.Introspectable&quot;, &quot;Introspect&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;org.freedesktop.DBus.Introspectable&quot;, &quot;Introspect&quot;) == TRUE)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: received Introspect&quot; &lt;&lt; endl;
+@@ -1365,12 +1261,11 @@
+ 		if (loadXMLDescription() == true)
+ 		{
+ 			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
++			if (m_pServletInfo-&gt;newReply() == true)
+ 			{
+ 				const char *pXmlData = g_xmlDescription.c_str();
+ 
+-				dbus_message_append_args(m_pReply,
++				dbus_message_append_args(m_pServletInfo-&gt;m_pReply,
+ 					DBUS_TYPE_STRING, &amp;pXmlData,
+ 					DBUS_TYPE_INVALID);
+ 			}
+@@ -1379,8 +1274,8 @@
+ 	else
+ 	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusServletThread::doWork: foreign message for/from &quot; &lt;&lt; dbus_message_get_interface(m_pRequest)
+-			&lt;&lt; &quot; &quot; &lt;&lt; dbus_message_get_member(m_pRequest) &lt;&lt; endl;
++		cout &lt;&lt; &quot;DBusServletThread::doWork: foreign message for/from &quot; &lt;&lt; dbus_message_get_interface(m_pServletInfo-&gt;m_pRequest)
++			&lt;&lt; &quot; &quot; &lt;&lt; dbus_message_get_member(m_pServletInfo-&gt;m_pRequest) &lt;&lt; endl;
+ #endif
+ 		processedMessage = false;
+ 	}
+@@ -1392,7 +1287,7 @@
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: error occured: &quot; &lt;&lt; error.message &lt;&lt; endl;
+ #endif
+ 		// Use the error message as reply
+-		m_pReply = dbus_message_new_error(m_pRequest, error.name, error.message);
++		m_pServletInfo-&gt;newErrorReply(error.name, error.message);
+ 	}
+ 
+ 	dbus_error_free(&amp;error);
+@@ -1409,18 +1304,6 @@
+ #endif
+ 	}
+ 
+-	// Send a reply ?
+-	if ((m_pConnection != NULL) &amp;&amp;
+-		(m_pReply != NULL))
+-	{
+-		dbus_connection_send(m_pConnection, m_pReply, NULL);
+-		dbus_connection_flush(m_pConnection);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusServletThread::doWork: sent reply&quot; &lt;&lt; endl;
+-#endif
+-		dbus_message_unref(m_pReply);
+-	}
+-
+ 	// Flush the index ?
+ 	if (flushIndex == true)
+ 	{
+
+Modified: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2008-11-09 12:36:47 UTC (rev 1403)
++++ trunk/UI/GTK2/src/ServerThreads.h	2008-11-09 12:52:37 UTC (rev 1404)
+@@ -21,15 +21,6 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
+-extern &quot;C&quot;
+-{
+-#if DBUS_VERSION &lt; 1000000
+-#define DBUS_API_SUBJECT_TO_CHANGE
+-#endif
+-#include &lt;dbus/dbus.h&gt;
+-#include &lt;dbus/dbus-glib.h&gt;
+-#include &lt;dbus/dbus-glib-lowlevel.h&gt;
+-}
+ #include &lt;sigc++/sigc++.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ 
+@@ -87,27 +78,20 @@
+ class DBusServletThread : public WorkerThread
+ {
+ 	public:
+-		DBusServletThread(DaemonState *pServer, DBusConnection *pConnection, DBusMessage *pRequest);
++		DBusServletThread(DaemonState *pServer, DBusServletInfo *pInfo);
+ 		virtual ~DBusServletThread();
+ 
+ 		virtual std::string getType(void) const;
+ 
+-		DBusConnection *getConnection(void) const;
++		DBusServletInfo *getServletInfo(void) const;
+ 
+-		DBusMessage *getReply(void) const;
+-
+ 		bool mustQuit(void) const;
+ 
+ 	protected:
+ 		DaemonState *m_pServer;
+-		DBusConnection *m_pConnection;
+-		DBusMessage *m_pRequest;
+-		DBusMessage *m_pReply;
+-		GPtrArray *m_pArray;
++		DBusServletInfo *m_pServletInfo;
+ 		bool m_mustQuit;
+ 
+-		bool runQuery(QueryProperties &amp;queryProps, std::vector&lt;std::string&gt; &amp;docIds);
+-
+ 		virtual void doWork(void);
+ 
+ 	private:
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-11-09 12:36:47 UTC (rev 1403)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-11-09 12:52:37 UTC (rev 1404)
+@@ -220,7 +220,9 @@
+ 
+ 		if (pServer != NULL)
+ 		{
+-			pServer-&gt;start_thread(new DBusServletThread(pServer, pConnection, pMessage));
++			DBusServletInfo *pInfo = new DBusServletInfo(pConnection, pMessage);
++
++			pServer-&gt;start_thread(new DBusServletThread(pServer, pInfo));
+ 		}
+ 	}
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-11-09 12:36:47 UTC (rev 1403)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-11-09 12:52:37 UTC (rev 1404)
+@@ -6,7 +6,7 @@
+     &lt;/method&gt;
+   &lt;/interface&gt;
+   &lt;!--
+-	This interface WILL change before 1.0 is released !
++	WARNING: This interface WILL change before 1.0 is released !
+ 	--&gt;
+   &lt;interface name=&quot;de.berlios.Pinot&quot;&gt;
+     &lt;!--
+@@ -136,10 +136,31 @@
+     &lt;/method&gt;
+     &lt;!--
+ 	Queries the index.
++	 engineType : engine type. See pinot-search(1) for a list of supported types
++	 engineName : engine name. See pinot-search(1) for examples
+ 	 searchText : search text, as would be entered in Pinot's live query field
++	 startDoc: the first result to return, starting from 0
+ 	 maxHits: the maximum number of hits desired
++	 estimatedHits: an estimate of the total number of hits
++	 hitsList: hit properties
++	--&gt;
++    &lt;method name=&quot;Query&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.SimpleQuery&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;engineType&quot; direction=&quot;in&quot; /&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;engineName&quot; direction=&quot;in&quot; /&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;searchText&quot; direction=&quot;in&quot; /&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;startDoc&quot; direction=&quot;in&quot; /&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;maxHits&quot; direction=&quot;in&quot; /&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;estimatedHits&quot; direction=&quot;out&quot; /&gt;
++      &lt;arg type=&quot;aa(ss)&quot; name=&quot;hitsList&quot; direction=&quot;out&quot; /&gt;
++    &lt;/method&gt;
++    &lt;!--
++	Queries the index.
++	 searchText : search text, as would be entered in Pinot's live query field
++	 maxHits: the maximum number of hits desired
+ 	 docIds: array of document IDs
+ 	 docIdsCount: the number of document IDs in the array
++        WARNING: this method is obsolete
+ 	--&gt;
+     &lt;method name=&quot;SimpleQuery&quot;&gt;
+       &lt;annotation name=&quot;de.berlios.Pinot.SimpleQuery&quot; value=&quot;pinotDBus&quot;/&gt;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001394.html">[Pinot-svn] r1403 - trunk/scripts/python
+</A></li>
+	<LI>Next message: <A HREF="001396.html">[Pinot-svn] r1405 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1395">[ date ]</a>
+              <a href="thread.html#1395">[ thread ]</a>
+              <a href="subject.html#1395">[ subject ]</a>
+              <a href="author.html#1395">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

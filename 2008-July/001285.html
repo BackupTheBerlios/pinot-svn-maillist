@@ -1,0 +1,442 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1291 - in trunk/IndexSearch: . XesamGLib
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1291%20-%20in%20trunk/IndexSearch%3A%20.%20XesamGLib&In-Reply-To=%3C200807061303.m66D3W5Z014578%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001286.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1291 - in trunk/IndexSearch: . XesamGLib</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1291%20-%20in%20trunk/IndexSearch%3A%20.%20XesamGLib&In-Reply-To=%3C200807061303.m66D3W5Z014578%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1291 - in trunk/IndexSearch: . XesamGLib">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jul  6 15:03:32 CEST 2008</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001286.html">[Pinot-svn] r1292 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1285">[ date ]</a>
+              <a href="thread.html#1285">[ thread ]</a>
+              <a href="subject.html#1285">[ subject ]</a>
+              <a href="author.html#1285">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-06 15:03:23 +0200 (Sun, 06 Jul 2008)
+New Revision: 1291
+
+Added:
+   trunk/IndexSearch/XesamGLib/ModuleExports.cpp
+Modified:
+   trunk/IndexSearch/ModuleFactory.cpp
+   trunk/IndexSearch/ModuleFactory.h
+Log:
+Backends that are search-only don't need to export index-related functions.
+
+
+Modified: trunk/IndexSearch/ModuleFactory.cpp
+===================================================================
+--- trunk/IndexSearch/ModuleFactory.cpp	2008-06-28 12:34:01 UTC (rev 1290)
++++ trunk/IndexSearch/ModuleFactory.cpp	2008-07-06 13:03:23 UTC (rev 1291)
+@@ -60,10 +60,44 @@
+ using std::string;
+ using std::map;
+ using std::set;
++using std::pair;
+ 
+-map&lt;string, string&gt; ModuleFactory::m_types;
+-map&lt;string, void *&gt; ModuleFactory::m_handles;
++LoadableModule::LoadableModule(const string &amp;type, const string &amp;location,
++	void *pHandle) :
++	m_type(type),
++	m_location(location),
++	m_canSearch(false),
++	m_canIndex(false),
++	m_pHandle(pHandle)
++{
++}
+ 
++LoadableModule::LoadableModule(const LoadableModule &amp;other) :
++	m_type(other.m_type),
++	m_location(other.m_location),
++	m_canSearch(other.m_canSearch),
++	m_canIndex(other.m_canIndex),
++	m_pHandle(other.m_pHandle)
++{
++}
++
++LoadableModule::~LoadableModule()
++{
++}
++
++LoadableModule &amp;LoadableModule::operator=(const LoadableModule &amp;other)
++{
++	m_type = other.m_type;
++	m_location = other.m_location;
++	m_canSearch = other.m_canSearch;
++	m_canIndex = other.m_canIndex;
++	m_pHandle = other.m_pHandle;
++
++	return *this;
++}
++
++map&lt;string, LoadableModule&gt; ModuleFactory::m_types;
++
+ ModuleFactory::ModuleFactory()
+ {
+ }
+@@ -74,21 +108,15 @@
+ 
+ IndexInterface *ModuleFactory::getLibraryIndex(const string &amp;type, const string &amp;option)
+ {
+-	void *pHandle = NULL;
+-
+-	map&lt;string, string&gt;::iterator typeIter = m_types.find(type);
+-	if (typeIter == m_types.end())
++	map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.find(type);
++	if ((typeIter == m_types.end()) ||
++		(typeIter-&gt;second.m_canIndex == false))
+ 	{
+-		// We don't know about this type
+-		return NULL;
++		// We don't know about this type, or doesn't support indexes
++		return false;
+ 	}
+-	map&lt;string, void *&gt;::iterator handleIter = m_handles.find(typeIter-&gt;second);
+-	if (handleIter == m_handles.end())
+-	{
+-		// We don't know about this library
+-		return NULL;
+-	}
+-	pHandle = handleIter-&gt;second;
++
++	void *pHandle = typeIter-&gt;second.m_pHandle;
+ 	if (pHandle == NULL)
+ 	{
+ 		return NULL;
+@@ -109,21 +137,14 @@
+ 
+ SearchEngineInterface *ModuleFactory::getLibrarySearchEngine(const string &amp;type, const string &amp;option)
+ {
+-	void *pHandle = NULL;
+-
+-	map&lt;string, string&gt;::iterator typeIter = m_types.find(type);
++	map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.find(type);
+ 	if (typeIter == m_types.end())
+ 	{
+ 		// We don't know about this type
+ 		return NULL;
+ 	}
+-	map&lt;string, void *&gt;::iterator handleIter = m_handles.find(typeIter-&gt;second);
+-	if (handleIter == m_handles.end())
+-	{
+-		// We don't know about this library
+-		return NULL;
+-	}
+-	pHandle = handleIter-&gt;second;
++
++	void *pHandle = typeIter-&gt;second.m_pHandle;
+ 	if (pHandle == NULL)
+ 	{
+ 		return NULL;
+@@ -202,14 +223,30 @@
+ 					if (pTypeFunc != NULL)
+ 					{
+ 						string moduleType((*pTypeFunc)());
++						LoadableModule module(moduleType, fileName, pHandle);
+ 
++						// Can it search ?
++						getSearchEngineFunc *pSearchFunc = (getSearchEngineFunc *)dlsym(pHandle,
++							GETSEARCHENGINEFUNC);
++						if (pSearchFunc != NULL)
++						{
++							module.m_canSearch = true;
++						}
++
++						// Can it index ?
++						getIndexFunc *pIndexFunc = (getIndexFunc *)dlsym(pHandle,
++							GETINDEXFUNC);
++						if (pIndexFunc != NULL)
++						{
++							module.m_canIndex = true;
++						}
++
+ 						// Add a record for this module
+-						m_types[moduleType] = fileName;
++						m_types.insert(pair&lt;string, LoadableModule&gt;(moduleType, module));
+ #ifdef DEBUG
+ 						cout &lt;&lt; &quot;ModuleFactory::loadModules: type &quot; &lt;&lt; moduleType
+ 							&lt;&lt; &quot; is supported by &quot; &lt;&lt; pEntryName &lt;&lt; endl;
+ #endif
+-						m_handles[fileName] = pHandle;
+ 					}
+ 					else cerr &lt;&lt; &quot;ModuleFactory::loadModules: &quot; &lt;&lt; dlerror() &lt;&lt; endl;
+ 				}
+@@ -232,21 +269,15 @@
+ bool ModuleFactory::openOrCreateIndex(const string &amp;type, const string &amp;option,
+ 	bool &amp;obsoleteFormat, bool readOnly, bool overwrite)
+ {
+-	void *pHandle = NULL;
+-
+-	map&lt;string, string&gt;::iterator typeIter = m_types.find(type);
+-	if (typeIter == m_types.end())
++	map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.find(type);
++	if ((typeIter == m_types.end()) ||
++		(typeIter-&gt;second.m_canIndex == false))
+ 	{
+-		// We don't know about this type
++		// We don't know about this type, or doesn't support indexes
+ 		return false;
+ 	}
+-	map&lt;string, void *&gt;::iterator handleIter = m_handles.find(typeIter-&gt;second);
+-	if (handleIter == m_handles.end())
+-	{
+-		// We don't know about this library
+-		return false;
+-	}
+-	pHandle = handleIter-&gt;second;
++
++	void *pHandle = typeIter-&gt;second.m_pHandle;
+ 	if (pHandle == NULL)
+ 	{
+ 		return false;
+@@ -268,21 +299,15 @@
+ bool ModuleFactory::mergeIndexes(const string &amp;type, const string &amp;option0,
+ 	const string &amp;option1, const string &amp;option2)
+ {
+-	void *pHandle = NULL;
+-
+-	map&lt;string, string&gt;::iterator typeIter = m_types.find(type);
+-	if (typeIter == m_types.end())
++	map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.find(type);
++	if ((typeIter == m_types.end()) ||
++		(typeIter-&gt;second.m_canIndex == false))
+ 	{
+-		// We don't know about this type
++		// We don't know about this type, or doesn't support indexes
+ 		return false;
+ 	}
+-	map&lt;string, void *&gt;::iterator handleIter = m_handles.find(typeIter-&gt;second);
+-	if (handleIter == m_handles.end())
+-	{
+-		// We don't know about this library
+-		return false;
+-	}
+-	pHandle = handleIter-&gt;second;
++
++	void *pHandle = typeIter-&gt;second.m_pHandle;
+ 	if (pHandle == NULL)
+ 	{
+ 		return false;
+@@ -390,7 +415,7 @@
+ 	engines[&quot;googleapi&quot;] = false;
+ #endif
+ 	// Library-handled engines
+-	for (map&lt;string, string&gt;::iterator typeIter = m_types.begin();
++	for (map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.begin();
+ 		typeIter != m_types.end(); ++typeIter)
+ 	{
+ 		engines[typeIter-&gt;first] = true;
+@@ -401,33 +426,49 @@
+ {
+ 	if (asIndex == true)
+ 	{
+-		// Only backends implement access to index
+-		if (m_types.find(type) != m_types.end())
++		// Only backends implement index functionality
++		map&lt;string, LoadableModule&gt;::const_iterator typeIter = m_types.find(type);
++		if (typeIter != m_types.end())
+ 		{
+-			return true;
++			return typeIter-&gt;second.m_canIndex;
+ 		}
++
++		return false;
+ 	}
+-	else if (
++
++	if (
+ #ifdef HAVE_GOOGLEAPI
+ 		(type == &quot;googleapi&quot;) ||
+ #endif
+ #ifdef HAVE_BOOST_SPIRIT
+ 		(type == &quot;sherlock&quot;) ||
+ #endif
+-		(type == &quot;opensearch&quot;) ||
+-		(m_types.find(type) != m_types.end()))
++		(type == &quot;opensearch&quot;))
+ 	{
+ 		return true;
+ 	}
++	else
++	{
++		// Does this backend implement search functionality ?
++		map&lt;string, LoadableModule&gt;::const_iterator typeIter = m_types.find(type);
++		if (typeIter != m_types.end())
++		{
++			return typeIter-&gt;second.m_canSearch;
++		}
++	}
+ 
+ 	return false;	
+ }
+ 
+ void ModuleFactory::unloadModules(void)
+ {
+-	for (map&lt;string, void*&gt;::iterator iter = m_handles.begin(); iter != m_handles.end(); ++iter)
++	for (map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.begin(); typeIter != m_types.end(); ++typeIter)
+ 	{
+-		void *pHandle = iter-&gt;second;
++		void *pHandle = typeIter-&gt;second.m_pHandle;
++		if (pHandle == NULL)
++		{
++			continue;
++		}
+ 
+ 		closeAllFunc *pFunc = (closeAllFunc *)dlsym(pHandle, CLOSEALLFUNC);
+ 		if (pFunc != NULL)
+@@ -441,12 +482,11 @@
+ 		if (dlclose(pHandle) != 0)
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;ModuleFactory::unloadModules: failed on &quot; &lt;&lt; iter-&gt;first &lt;&lt; endl;
++			cout &lt;&lt; &quot;ModuleFactory::unloadModules: failed on &quot; &lt;&lt; typeIter-&gt;first &lt;&lt; endl;
+ #endif
+ 		}
+ 	}
+ 
+ 	m_types.clear();
+-	m_handles.clear();
+ }
+ 
+
+Modified: trunk/IndexSearch/ModuleFactory.h
+===================================================================
+--- trunk/IndexSearch/ModuleFactory.h	2008-06-28 12:34:01 UTC (rev 1290)
++++ trunk/IndexSearch/ModuleFactory.h	2008-07-06 13:03:23 UTC (rev 1291)
+@@ -25,6 +25,25 @@
+ #include &quot;IndexInterface.h&quot;
+ #include &quot;SearchEngineInterface.h&quot;
+ 
++/// Loadable module.
++class LoadableModule
++{
++	public:
++		LoadableModule(const std::string &amp;type, const std::string &amp;location,
++			void *pHandle);
++		LoadableModule(const LoadableModule &amp;other);
++		virtual ~LoadableModule();
++
++		LoadableModule &amp;operator=(const LoadableModule &amp;other);
++
++		std::string m_type;
++		std::string m_location;
++		bool m_canSearch;
++		bool m_canIndex;
++		void *m_pHandle;
++
++};
++
+ /// Factory for search engines.
+ class ModuleFactory
+ {
+@@ -61,8 +80,7 @@
+ 		static void unloadModules(void);
+ 
+ 	protected:
+-		static std::map&lt;std::string, std::string&gt; m_types;
+-		static std::map&lt;std::string, void *&gt; m_handles;
++		static std::map&lt;std::string, LoadableModule&gt; m_types;
+ 
+ 		ModuleFactory();
+ 
+
+Added: trunk/IndexSearch/XesamGLib/ModuleExports.cpp
+===================================================================
+--- trunk/IndexSearch/XesamGLib/ModuleExports.cpp	2008-06-28 12:34:01 UTC (rev 1290)
++++ trunk/IndexSearch/XesamGLib/ModuleExports.cpp	2008-07-06 13:03:23 UTC (rev 1291)
+@@ -0,0 +1,47 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;string&gt;
++
++#include &quot;config.h&quot;
++#include &quot;IndexInterface.h&quot;
++#include &quot;XesamEngine.h&quot;
++
++using std::string;
++
++extern &quot;C&quot;
++{
++	string getModuleType(void);
++	SearchEngineInterface *getSearchEngine(const string &amp;dbusObject);
++	void closeAll(void);
++}
++
++string getModuleType(void)
++{
++	return &quot;xesam&quot;;
++}
++
++SearchEngineInterface *getSearchEngine(const string &amp;dbusObject)
++{
++	return new XesamEngine(dbusObject);
++}
++
++void closeAll(void)
++{
++}
++
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001286.html">[Pinot-svn] r1292 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1285">[ date ]</a>
+              <a href="thread.html#1285">[ thread ]</a>
+              <a href="subject.html#1285">[ subject ]</a>
+              <a href="author.html#1285">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

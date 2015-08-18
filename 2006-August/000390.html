@@ -1,0 +1,553 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r397 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r397%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608161436.k7GEaCjQ026026%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000389.html">
+   <LINK REL="Next"  HREF="000391.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r397 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r397%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608161436.k7GEaCjQ026026%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r397 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug 16 16:36:12 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000389.html">[Pinot-svn] r396 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="000391.html">[Pinot-svn] r398 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#390">[ date ]</a>
+              <a href="thread.html#390">[ thread ]</a>
+              <a href="subject.html#390">[ subject ]</a>
+              <a href="author.html#390">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-16 16:36:12 +0200 (Wed, 16 Aug 2006)
+New Revision: 397
+
+Modified:
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+Log:
+Synced with changes to MonitorHandler.
+Both handlers remove documents that belong to sources that were previously
+monitored but no longer are.
+Use the daemon index for mail messages rather than a separate index.
+
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-16 14:10:35 UTC (rev 396)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-16 14:36:12 UTC (rev 397)
+@@ -26,10 +26,9 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;TimeConverter.h&quot;
++#include &quot;Url.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+-#include &quot;FileCollector.h&quot;
+-#include &quot;WritableXapianIndex.h&quot;
+ #include &quot;MboxHandler.h&quot;
+ 
+ using namespace std;
+@@ -38,6 +37,7 @@
+ MboxHandler::MboxHandler() :
+ 	MonitorHandler(),
+ 	m_history(PinotSettings::getInstance().m_historyDatabase),
++	m_index(PinotSettings::getInstance().m_daemonIndexLocation),
+ 	m_sourceId(0)
+ {
+ 	// Does the email source exist ?
+@@ -112,9 +112,7 @@
+ 	// Come up with a label for this mbox file's messages
+ 	sourceLabel += fileName;
+ 
+-	// Get the mail index
+-	WritableXapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
++	if (m_index.isGood() == false)
+ 	{
+ 		cerr &lt;&lt; &quot;MboxHandler::indexMessages: couldn't get mail index&quot; &lt;&lt; endl;
+ 		return false;
+@@ -123,10 +121,10 @@
+ 	// Get a parser
+ 	MboxParser boxParser(fileName, mboxOffset);
+ 
+-	bool indexedFile = parseMailAccount(boxParser, &amp;index, sourceLabel);
++	bool indexedFile = parseMailAccount(boxParser, sourceLabel);
+ 
+ 	// Flush the index
+-	index.flush();
++	m_index.flush();
+ 
+ 	// Update this mail account's record
+ 	m_history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, CrawlHistory::CRAWLED, mailAccount.m_modTime);
+@@ -134,17 +132,11 @@
+ 	return indexedFile;
+ }
+ 
+-bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, WritableIndexInterface *pIndex,
+-	const string &amp;sourceLabel)
++bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, const string &amp;sourceLabel)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
+ 	bool indexedFile = false;
+ 
+-	if (pIndex == NULL)
+-	{
+-		return false;
+-	}
+-
+ #ifdef DEBUG
+ 	Timer timer;
+ 	timer.start();
+@@ -154,7 +146,7 @@
+ 	unsigned int docNum = 0;
+ 
+ 	// Get a list of documents labeled with this source label
+-	pIndex-&gt;listDocumentsWithLabel(sourceLabel, docIdList); 
++	m_index.listDocumentsWithLabel(sourceLabel, docIdList); 
+ 
+ 	// This is the labels we'll apply to new documents
+ 	labels.insert(sourceLabel);
+@@ -163,10 +155,10 @@
+ 	while (pMessage != NULL)
+ 	{
+ 		// Has this message already been indexed ?
+-		unsigned int docId = pIndex-&gt;hasDocument(pMessage-&gt;getLocation());
++		unsigned int docId = m_index.hasDocument(pMessage-&gt;getLocation());
+ 		if (docId == 0)
+ 		{
+-			pIndex-&gt;setStemmingMode(WritableIndexInterface::STORE_BOTH);
++			m_index.setStemmingMode(WritableIndexInterface::STORE_BOTH);
+ 
+ 			// Get an ad hoc tokenizer for the message
+ 			Tokenizer *pTokenizer = TokenizerFactory::getTokenizerByType(pMessage-&gt;getType(), pMessage);
+@@ -179,20 +171,20 @@
+ 			}
+ 
+ 			unsigned int docId = 0;
+-			indexedFile = pIndex-&gt;indexDocument(*pTokenizer, labels, docId);
++			indexedFile = m_index.indexDocument(*pTokenizer, labels, docId);
+ 			if (indexedFile == true)
+ 			{
+ 				time_t messageDate = boxParser.getDate();
+ 
+-				pIndex-&gt;setDocumentLabels(docId, labels);
++				m_index.setDocumentLabels(docId, labels);
+ 
+ 				IndexedDocument docInfo(pMessage-&gt;getTitle(),
+-					XapianDatabase::buildUrl(PinotSettings::getInstance().m_mailIndexLocation, docId),
++					XapianDatabase::buildUrl(PinotSettings::getInstance().m_daemonIndexLocation, docId),
+ 					pMessage-&gt;getLocation(), pMessage-&gt;getType(), pMessage-&gt;getLanguage());
+ 				docInfo.setTimestamp(TimeConverter::toTimestamp(messageDate));
+ 
+ 				// Signal
+-				m_signalUpdate(docInfo, docId, _(&quot;My Email&quot;));
++				m_signalUpdate(docInfo, docId, _(&quot;My Computer&quot;));
+ 			}
+ #ifdef DEBUG
+ 			else cout &lt;&lt; &quot;MboxHandler::parseMailAccount: couldn't index message &quot; &lt;&lt; docNum &lt;&lt; endl;
+@@ -233,20 +225,15 @@
+ 
+ 	// Any document still in the list wasn't found this time around
+ 	// and should be unindexed
+-	deleteMessages(pIndex, docIdList);
++	deleteMessages(docIdList);
+ 
+ 	return indexedFile;
+ }
+ 
+-bool MboxHandler::deleteMessages(WritableIndexInterface *pIndex, set&lt;unsigned int&gt; &amp;docIdList)
++bool MboxHandler::deleteMessages(set&lt;unsigned int&gt; &amp;docIdList)
+ {
+ 	bool unindexedMsgs = false;
+ 
+-	if (pIndex == NULL)
+-	{
+-		return false;
+-	}
+-
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;MboxHandler::deleteMessages: &quot; &lt;&lt; docIdList.size() &lt;&lt; &quot; message(s) to unindex&quot; &lt;&lt; endl;
+ #endif
+@@ -256,7 +243,7 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;MboxHandler::deleteMessages: unindexing document ID &quot; &lt;&lt; *docIter &lt;&lt; endl;
+ #endif
+-		if (pIndex-&gt;unindexDocument(*docIter) == true)
++		if (m_index.unindexDocument(*docIter) == true)
+ 		{
+ 			unindexedMsgs = true;
+ 		}
+@@ -265,62 +252,53 @@
+ 	return unindexedMsgs;
+ }
+ 
+-bool MboxHandler::getLocations(set&lt;string&gt; &amp;newLocations,
+-	set&lt;string&gt; &amp;locationsToRemove)
++void MboxHandler::initialize(void)
+ {
+-	newLocations.clear();
+-	locationsToRemove.clear();
++	set&lt;string&gt; mailboxes;
+ 
+-	copy(m_locations.begin(), m_locations.end(),
+-		inserter(locationsToRemove, locationsToRemove.begin()));
+-
+ 	// Get the mail accounts map
+ 	set&lt;PinotSettings::TimestampedItem&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+ 	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = mailAccounts.begin();
+ 		mailIter != mailAccounts.end(); ++mailIter)
+ 	{
+-		// Is this a known location ?
+-		set&lt;string&gt;::iterator locationIter = m_locations.find(mailIter-&gt;m_name);
+-		if (locationIter == m_locations.end())
+-		{
+-			// No, it is new
+-			m_locations.insert(mailIter-&gt;m_name);
+-			newLocations.insert(mailIter-&gt;m_name);
+-		}
+-		else
+-		{
+-			// Since it's a known location, we'd better not remove it
+-			set&lt;string&gt;::iterator removeIter = locationsToRemove.find(mailIter-&gt;m_name);
+-			if (removeIter != locationsToRemove.end())
+-			{
+-				locationsToRemove.erase(removeIter);
+-			}
+-		}
++		m_locations.insert(mailIter-&gt;m_name);
+ 	}
+ 
+-	// Locations in locationsToRemove have to be removed
+-	for (set&lt;string&gt;::iterator removeIter = locationsToRemove.begin();
+-		removeIter != locationsToRemove.end(); ++removeIter)
++	// Unindex messages that belong to mailboxes that no longer exist
++	if (m_history.getSourceItems(m_sourceId, CrawlHistory::CRAWLED, 0, mailboxes) &gt; 0)
+ 	{
+-		set&lt;string&gt;::iterator locationIter = m_locations.find(*removeIter);
+-		if (locationIter != m_locations.end())
++		for(set&lt;string&gt;::const_iterator mailIter = mailboxes.begin();
++			mailIter != mailboxes.end(); ++mailIter)
+ 		{
+-			m_locations.erase(locationIter);
+-		}
+-	}
++			Url urlObj(*mailIter);
+ 
++			// Is this a file and does it still exist ?
++			if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
++				(m_locations.find(*mailIter) == m_locations.end()))
++			{
++				string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
++
++				sourceLabel += urlObj.getLocation();
++				sourceLabel += &quot;/&quot;;
++				sourceLabel += urlObj.getFile();
++
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::getLocations: &quot; &lt;&lt; m_locations.size() &lt;&lt; &quot; locations, &quot;
+-		&lt;&lt; newLocations.size() &lt;&lt; &quot; new, &quot; &lt;&lt; locationsToRemove.size() &lt;&lt; &quot; to be removed&quot; &lt;&lt; endl;
++				cout &lt;&lt; &quot;MboxHandler::initialize: removing messages with label &quot;
++					&lt;&lt; sourceLabel &lt;&lt; endl;
+ #endif
++				// All documents with this label will be unindexed
++				m_index.unindexDocuments(sourceLabel);
++			}
+ 
+-	if ((newLocations.empty() == false) ||
+-		(locationsToRemove.empty() == false))
+-	{
+-		return true;
++			// Delete this item
++			m_history.deleteItem(*mailIter);
++		}
+ 	}
++}
+ 
+-	return false;
++const set&lt;string&gt; &amp;MboxHandler::getLocations(void) const
++{
++	return m_locations;
+ }
+ 
+ bool MboxHandler::fileExists(const string &amp;fileName)
+@@ -373,21 +351,19 @@
+ 
+ 	sourceLabel += fileName;
+ 
+-	// Get the mail index
+-	WritableXapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
++	if (m_index.isGood() == false)
+ 	{
+ 		cerr &lt;&lt; &quot;MboxHandler::fileDeleted: couldn't get mail index&quot; &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
+ 	// Get a list of documents labeled with this source label
+-	if (index.listDocumentsWithLabel(sourceLabel, docIdList) == true)
++	if (m_index.listDocumentsWithLabel(sourceLabel, docIdList) == true)
+ 	{
+ 		// Unindex all documents labeled with this source label
+-		deleteMessages(&amp;index, docIdList); 
++		deleteMessages(docIdList); 
+ 		// Delete the label
+-		index.deleteLabel(sourceLabel);
++		m_index.deleteLabel(sourceLabel);
+ 
+ 		return true;
+ 	}
+
+Modified: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2006-08-16 14:10:35 UTC (rev 396)
++++ trunk/UI/GTK2/src/MboxHandler.h	2006-08-16 14:36:12 UTC (rev 397)
+@@ -25,7 +25,7 @@
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;MboxParser.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+-#include &quot;IndexInterface.h&quot;
++#include &quot;WritableXapianIndex.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+@@ -35,9 +35,11 @@
+ 		MboxHandler();
+ 		virtual ~MboxHandler();
+ 
++		/// Initializes things before starting monitoring.
++		virtual void initialize(void);
++
+ 		/// Returns locations.
+-		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
+-			std::set&lt;std::string&gt; &amp;locationsToRemove);
++		virtual const std::set&lt;std::string&gt; &amp;getLocations(void) const;
+ 
+ 		/// Handles file existence events.
+ 		virtual bool fileExists(const std::string &amp;fileName);
+@@ -57,7 +59,7 @@
+ 
+ 	protected:
+ 		CrawlHistory m_history;
+-		std::set&lt;std::string&gt; m_locations;
++		WritableXapianIndex m_index;
+ 		unsigned int m_sourceId;
+ 
+ 		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount);
+@@ -65,10 +67,9 @@
+ 		bool indexMessages(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount,
+ 			off_t mboxOffset);
+ 
+-		bool parseMailAccount(MboxParser &amp;boxParser, WritableIndexInterface *pIndex,
+-			const std::string &amp;sourceLabel);
++		bool parseMailAccount(MboxParser &amp;boxParser, const std::string &amp;sourceLabel);
+ 
+-		bool deleteMessages(WritableIndexInterface *pIndex, std::set&lt;unsigned int&gt; &amp;docIdList);
++		bool deleteMessages(std::set&lt;unsigned int&gt; &amp;docIdList);
+ 
+ 	private:
+ 		MboxHandler(const MboxHandler &amp;other);
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-08-16 14:10:35 UTC (rev 396)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-08-16 14:36:12 UTC (rev 397)
+@@ -28,6 +28,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;FileCollector.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+@@ -37,6 +38,7 @@
+ 
+ OnDiskHandler::OnDiskHandler() :
+ 	MonitorHandler(),
++	m_history(PinotSettings::getInstance().m_historyDatabase),
+ 	m_index(PinotSettings::getInstance().m_daemonIndexLocation)
+ {
+ 	m_index.setStemmingMode(WritableIndexInterface::STORE_BOTH);
+@@ -120,65 +122,53 @@
+ 	return indexedFile;
+ }
+ 
+-bool OnDiskHandler::getLocations(set&lt;string&gt; &amp;newLocations,
+-	set&lt;string&gt; &amp;locationsToRemove)
++void OnDiskHandler::initialize(void)
+ {
+-	newLocations.clear();
+-	locationsToRemove.clear();
++	map&lt;unsigned int, string&gt; sources;
+ 
+-	// Take advantage of this call to flush the index
+-	m_index.flush();
+-
+-	copy(m_locations.begin(), m_locations.end(),
+-		inserter(locationsToRemove, locationsToRemove.begin()));
+-
+-	// Get the indexable locations map
++	// Get the map of indexable locations
+ 	set&lt;PinotSettings::TimestampedItem&gt; &amp;indexableLocations = PinotSettings::getInstance().m_indexableLocations;
+ 	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator dirIter = indexableLocations.begin();
+ 		dirIter != indexableLocations.end(); ++dirIter)
+ 	{
+-		// Is this a known location ?
+-		set&lt;string&gt;::iterator locationIter = m_locations.find(dirIter-&gt;m_name);
+-		if (locationIter == m_locations.end())
+-		{
+-			// No, it is new
+-			m_locations.insert(dirIter-&gt;m_name);
+-			newLocations.insert(dirIter-&gt;m_name);
+-		}
+-		else
+-		{
+-			// Since it's a known location, we'd better not remove it
+-			set&lt;string&gt;::iterator removeIter = locationsToRemove.find(*locationIter);
+-			if (removeIter != locationsToRemove.end())
+-			{
+-				locationsToRemove.erase(removeIter);
+-			}
+-		}
++		m_locations.insert(dirIter-&gt;m_name);
+ 	}
+ 
+-	// Locations in locationsToRemove have to be removed
+-	for (set&lt;string&gt;::iterator removeIter = locationsToRemove.begin();
+-		removeIter != locationsToRemove.end(); ++removeIter)
++	// Unindex documents that belong to sources that no longer exist
++	if (m_history.getSources(sources) &gt; 0)
+ 	{
+-		set&lt;string&gt;::iterator locationIter = m_locations.find(*removeIter);
+-		if (locationIter != m_locations.end())
++		for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = sources.begin();
++			sourceIter != sources.end(); ++sourceIter)
+ 		{
+-			m_locations.erase(locationIter);
+-		}
+-	}
++			Url urlObj(sourceIter-&gt;second);
++			unsigned int sourceId = sourceIter-&gt;first;
+ 
++			// Is this a file and does it still exist ?
++			if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
++				(m_locations.find(sourceIter-&gt;second) == m_locations.end()))
++			{
++				char sourceStr[64];
++
++				snprintf(sourceStr, 64, &quot;SOURCE%u&quot;, sourceId);
++
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::getLocations: &quot; &lt;&lt; m_locations.size() &lt;&lt; &quot; locations, &quot;
+-		&lt;&lt; newLocations.size() &lt;&lt; &quot; new, &quot; &lt;&lt; locationsToRemove.size() &lt;&lt; &quot; to be removed&quot; &lt;&lt; endl;
++				cout &lt;&lt; &quot;OnDiskHandler::initialize: removing messages with label &quot;
++					&lt;&lt; sourceStr &lt;&lt; endl;
+ #endif
++				// All documents with this label will be unindexed
++				m_index.unindexDocuments(sourceStr);
++			}
+ 
+-	if ((newLocations.empty() == false) ||
+-		(locationsToRemove.empty() == false))
+-	{
+-		return true;
++			// Delete the source itself and all its items
++			m_history.deleteSource(sourceId);
++			m_history.deleteItems(sourceId);
++		}
+ 	}
++}
+ 
+-	return false;
++const set&lt;string&gt; &amp;OnDiskHandler::getLocations(void) const
++{
++	return m_locations;
+ }
+ 
+ bool OnDiskHandler::fileExists(const string &amp;fileName)
+@@ -248,4 +238,3 @@
+ 
+ 	return false;
+ }
+-
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2006-08-16 14:10:35 UTC (rev 396)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2006-08-16 14:36:12 UTC (rev 397)
+@@ -22,6 +22,7 @@
+ #include &lt;set&gt;
+ #include &lt;sigc++/slot.h&gt;
+ 
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;MboxParser.h&quot;
+ #include &quot;WritableXapianIndex.h&quot;
+@@ -34,9 +35,11 @@
+ 		OnDiskHandler();
+ 		virtual ~OnDiskHandler();
+ 
++		/// Initializes things before starting monitoring.
++		virtual void initialize(void);
++
+ 		/// Returns locations.
+-		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
+-			std::set&lt;std::string&gt; &amp;locationsToRemove);
++		virtual const std::set&lt;std::string&gt; &amp;getLocations(void) const;
+ 
+ 		/// Handles file existence events.
+ 		virtual bool fileExists(const std::string &amp;fileName);
+@@ -55,8 +58,8 @@
+ 		virtual bool fileDeleted(const std::string &amp;fileName);
+ 
+ 	protected:
++		CrawlHistory m_history;
+ 		WritableXapianIndex m_index;
+-		std::set&lt;std::string&gt; m_locations;
+ 
+ 		bool indexFile(const std::string &amp;fileName, bool alwaysUpdate);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000389.html">[Pinot-svn] r396 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="000391.html">[Pinot-svn] r398 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#390">[ date ]</a>
+              <a href="thread.html#390">[ thread ]</a>
+              <a href="subject.html#390">[ subject ]</a>
+              <a href="author.html#390">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

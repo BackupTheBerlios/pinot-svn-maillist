@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1301 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1301%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200807190625.m6J6P7rr017100%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001294.html">
+   <LINK REL="Next"  HREF="001296.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1301 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1301%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200807190625.m6J6P7rr017100%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1301 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 19 08:25:07 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001294.html">[Pinot-svn] r1300 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001296.html">[Pinot-svn] r1302 - trunk/IndexSearch/XesamGLib
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1295">[ date ]</a>
+              <a href="thread.html#1295">[ thread ]</a>
+              <a href="subject.html#1295">[ subject ]</a>
+              <a href="author.html#1295">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-19 08:24:35 +0200 (Sat, 19 Jul 2008)
+New Revision: 1301
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+The UI will let foreground threads run for up to a minute.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-07-18 15:21:09 UTC (rev 1300)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-07-19 06:24:35 UTC (rev 1301)
+@@ -268,11 +268,12 @@
+ }
+ 
+ ThreadsManager::ThreadsManager(const string &amp;defaultIndexLocation,
+-	unsigned int maxIndexThreads) :
++	unsigned int maxIndexThreads, unsigned int maxThreadsTime) :
+ 	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+ 	m_nextThreadId(1),
+ 	m_backgroundThreadsCount(0),
++	m_foregroundThreadsMaxTime(maxThreadsTime),
+ 	m_numCPUs(1),
+ 	m_stopIndexing(false)
+ {
+@@ -362,9 +363,9 @@
+ 
+ 				// Foreground threads ought not to run very long
+ 				if ((threadIter-&gt;second-&gt;isBackground() == false) &amp;&amp;
+-					(threadIter-&gt;second-&gt;getStartTime() + 300 &lt; timeNow))
++					(threadIter-&gt;second-&gt;getStartTime() + m_foregroundThreadsMaxTime &lt; timeNow))
+ 				{
+-					// This thread has been running for more than 5 minutes already !
++					// This thread has been running for too long !
+ 					threadIter-&gt;second-&gt;stop();
+ 
+ 					cerr &lt;&lt; &quot;Stopped long-running thread &quot; &lt;&lt; threadId &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-07-18 15:21:09 UTC (rev 1300)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-07-19 06:24:35 UTC (rev 1301)
+@@ -109,7 +109,8 @@
+ {
+ 	public:
+ 		ThreadsManager(const std::string &amp;defaultIndexLocation,
+-			unsigned int maxIndexThreads);
++			unsigned int maxIndexThreads,
++			unsigned int maxThreadsTime = 300);
+ 		virtual ~ThreadsManager();
+ 
+ 		bool start_thread(WorkerThread *pWorkerThread, bool inBackground = false);
+@@ -143,6 +144,7 @@
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_nextThreadId;
+ 		unsigned int m_backgroundThreadsCount;
++		unsigned int m_foregroundThreadsMaxTime;
+ 		long m_numCPUs;
+ 		sigc::signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+ 		std::set&lt;std::string&gt; m_beingIndexed;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-07-18 15:21:09 UTC (rev 1300)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-07-19 06:24:35 UTC (rev 1301)
+@@ -93,7 +93,7 @@
+ unsigned int mainWindow::m_maxIndexThreads = 2;
+ 
+ mainWindow::InternalState::InternalState(unsigned int maxIndexThreads, mainWindow *pWindow) :
+-	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
++	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads, 60),
+ 	m_liveQueryLength(0),
+ 	m_currentPage(0),
+ 	m_browsingIndex(false)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001294.html">[Pinot-svn] r1300 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001296.html">[Pinot-svn] r1302 - trunk/IndexSearch/XesamGLib
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1295">[ date ]</a>
+              <a href="thread.html#1295">[ thread ]</a>
+              <a href="subject.html#1295">[ subject ]</a>
+              <a href="author.html#1295">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

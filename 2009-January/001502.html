@@ -1,0 +1,135 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1512 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1512%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901261421.n0QELEoF008185%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001501.html">
+   <LINK REL="Next"  HREF="001503.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1512 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1512%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901261421.n0QELEoF008185%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1512 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 26 15:21:14 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001501.html">[Pinot-svn] r1511 - in trunk: SQL Tokenize UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001503.html">[Pinot-svn] r1513 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1502">[ date ]</a>
+              <a href="thread.html#1502">[ thread ]</a>
+              <a href="subject.html#1502">[ subject ]</a>
+              <a href="author.html#1502">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-26 15:21:07 +0100 (Mon, 26 Jan 2009)
+New Revision: 1512
+
+Modified:
+   trunk/UI/GTK2/src/ServerThreads.cpp
+Log:
+When interrupted, don't set the current entry's status to CRAWLED.
+Delete any CRAWLING entries the previous instance didn't have time to process
+and has left in.
+
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2009-01-26 03:38:35 UTC (rev 1511)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2009-01-26 14:21:07 UTC (rev 1512)
+@@ -483,19 +483,16 @@
+ 
+ 	// Is this item in the database already ?
+ 	itemExists = crawlHistory.hasItem(location, itemStatus, itemDate);
+-	if (itemExists == true)
++	if (itemExists == false)
+ 	{
+-		if (m_fullScan == true)
+-		{
+-			// Change the status from TO_CRAWL to CRAWLING
+-			crawlHistory.updateItem(location, CrawlHistory::CRAWLING, itemDate);
+-		}
+-	}
+-	else
+-	{
+ 		// Record it
+ 		crawlHistory.insertItem(location, CrawlHistory::CRAWLING, m_sourceId, itemDate);
+ 	}
++	else if (m_fullScan == true)
++	{
++		// Change the status from TO_CRAWL to CRAWLING
++		crawlHistory.updateItem(location, CrawlHistory::CRAWLING, itemDate);
++	}
+ 
+ 	// If stat'ing didn't fail, see if it's a file or a directory
+ 	if ((entryStatus == 0) &amp;&amp;
+@@ -600,11 +597,20 @@
+ 		(itemDate &gt;= fileStat.st_mtime))
+ 	{
+ 		// No, it wasn't
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: not reporting &quot; &lt;&lt; location
++			&lt;&lt; &quot;, status &quot; &lt;&lt; itemStatus &lt;&lt; endl;
++#endif
+ 		reportFile = false;
+ 	}
+ 
++	if (m_done == true)
++	{
++		// Don't record or report the file
++		reportFile = false;
++	}
+ 	// Did an error occur ?
+-	if (entryStatus != 0)
++	else if (entryStatus != 0)
+ 	{
+ 		time_t timeNow = time(NULL);
+ 
+@@ -671,6 +677,8 @@
+ 	// Remove errors and links
+ 	crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_ERROR);
+ 	crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_LINK);
++	// ...and entries the previous instance didn't have time to crawl
++	crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWLING);
+ 
+ 	if (m_fullScan == true)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001501.html">[Pinot-svn] r1511 - in trunk: SQL Tokenize UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001503.html">[Pinot-svn] r1513 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1502">[ date ]</a>
+              <a href="thread.html#1502">[ thread ]</a>
+              <a href="subject.html#1502">[ subject ]</a>
+              <a href="author.html#1502">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

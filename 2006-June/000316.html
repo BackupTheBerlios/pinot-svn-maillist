@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r322 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r322%20-%20trunk/Index&In-Reply-To=%3C200606161606.k5GG6tA8029555%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000315.html">
+   <LINK REL="Next"  HREF="000317.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r322 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r322%20-%20trunk/Index&In-Reply-To=%3C200606161606.k5GG6tA8029555%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r322 - trunk/Index">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jun 16 18:06:55 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000315.html">[Pinot-svn] r321 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000317.html">[Pinot-svn] r323 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#316">[ date ]</a>
+              <a href="thread.html#316">[ thread ]</a>
+              <a href="subject.html#316">[ subject ]</a>
+              <a href="author.html#316">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-16 18:06:53 +0200 (Fri, 16 Jun 2006)
+New Revision: 322
+
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Index can obtain expand terms based on one or more documents. This should be
+useful for a &quot;more like this&quot;-type feature.
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2006-06-16 13:36:02 UTC (rev 321)
++++ trunk/Index/IndexInterface.h	2006-06-16 16:06:53 UTC (rev 322)
+@@ -72,9 +72,12 @@
+ 		/// Unindexes documents with the given label.
+ 		virtual bool unindexDocuments(const std::string &amp;labelName) = 0;
+ 
+-		/// Suggests terms.
++		/// Gets terms with the same root.
+ 		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions) = 0;
+ 
++		/// Gets expand terms.
++		virtual unsigned int getExpandTerms(const std::set&lt;unsigned int&gt; &amp;docIds, std::set&lt;std::string&gt; &amp;suggestions) = 0;
++
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-06-16 13:36:02 UTC (rev 321)
++++ trunk/Index/XapianIndex.cpp	2006-06-16 16:06:53 UTC (rev 322)
+@@ -922,7 +922,7 @@
+ 	return unindexed;
+ }
+ 
+-/// Suggests terms.
++/// Gets terms with the same root.
+ unsigned int XapianIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
+ {
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+@@ -979,6 +979,56 @@
+ 	return suggestions.size();
+ }
+ 
++/// Gets expand terms.
++unsigned int XapianIndex::getExpandTerms(const set&lt;unsigned int&gt; &amp;docIds, set&lt;string&gt; &amp;suggestions)
++{
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return 0;
++	}
++
++	suggestions.clear();
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			Xapian::Enquire enquire(*pIndex);
++			Xapian::RSet relevantDocs;
++
++			for (set&lt;unsigned int&gt;::const_iterator docIter = docIds.begin();
++				docIter != docIds.end(); ++docIter)
++			{
++				relevantDocs.add_document(*docIter);
++			}
++
++			// Get 10 terms
++			Xapian::ESet expandTerms = enquire.get_eset(10, relevantDocs);
++			for (Xapian::ESetIterator termIter = expandTerms.begin();
++				termIter != expandTerms.end(); ++termIter)
++			{
++				if (isupper((int)((*termIter)[0])) == 0)
++				{
++					suggestions.insert(*termIter);
++				}
++			}
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get terms: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get terms, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return suggestions.size();
++}
++
+ /// Renames a label.
+ bool XapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+ {
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-06-16 13:36:02 UTC (rev 321)
++++ trunk/Index/XapianIndex.h	2006-06-16 16:06:53 UTC (rev 322)
+@@ -66,9 +66,12 @@
+ 		/// Unindexes documents with the given label.
+ 		virtual bool unindexDocuments(const std::string &amp;labelName);
+ 
+-		/// Suggests terms.
++		/// Gets terms with the same root.
+ 		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions);
+ 
++		/// Gets expand terms.
++		virtual unsigned int getExpandTerms(const std::set&lt;unsigned int&gt; &amp;docIds, std::set&lt;std::string&gt; &amp;suggestions);
++
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000315.html">[Pinot-svn] r321 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000317.html">[Pinot-svn] r323 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#316">[ date ]</a>
+              <a href="thread.html#316">[ thread ]</a>
+              <a href="subject.html#316">[ subject ]</a>
+              <a href="author.html#316">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

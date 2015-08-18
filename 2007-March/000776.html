@@ -1,0 +1,605 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r782 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r782%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703231333.l2NDX7nd015612%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000775.html">
+   <LINK REL="Next"  HREF="000777.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r782 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r782%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703231333.l2NDX7nd015612%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r782 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar 23 14:33:07 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000775.html">[Pinot-svn] r781 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000777.html">[Pinot-svn] r783 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#776">[ date ]</a>
+              <a href="thread.html#776">[ thread ]</a>
+              <a href="subject.html#776">[ subject ]</a>
+              <a href="author.html#776">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-23 14:33:06 +0100 (Fri, 23 Mar 2007)
+New Revision: 782
+
+Modified:
+   trunk/UI/GTK2/src/IndexPage.cpp
+   trunk/UI/GTK2/src/IndexPage.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/importDialog_glade.cc
+   trunk/UI/GTK2/src/importDialog_glade.hh
+   trunk/UI/GTK2/src/propertiesDialog.cc
+   trunk/UI/GTK2/src/propertiesDialog.hh
+   trunk/UI/GTK2/src/propertiesDialog_glade.cc
+   trunk/UI/GTK2/src/propertiesDialog_glade.hh
+   trunk/UI/GTK2/src/queryDialog.cc
+   trunk/UI/GTK2/src/queryDialog.hh
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+   trunk/UI/GTK2/src/queryDialog_glade.hh
+Log:
+Replaced ComboBox + ListStore with ComboBoxText.
+
+
+Modified: trunk/UI/GTK2/src/IndexPage.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexPage.cpp	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/IndexPage.cpp	2007-03-23 13:33:06 UTC (rev 782)
+@@ -45,7 +45,7 @@
+ 	m_docsCount(0),
+ 	m_firstDoc(0)
+ {
+-	m_pLabelCombobox = manage(new ComboBox());
++	m_pLabelCombobox = manage(new ComboBoxText());
+ 
+ 	Image *image521 = manage(new Image(StockID(&quot;gtk-media-rewind&quot;), IconSize(4)));
+ 	Label *label52 = manage(new Label(_(&quot;Show Previous&quot;)));
+@@ -105,10 +105,6 @@
+ 		pack_start(*pTree-&gt;getScrolledWindow());
+ 	}
+ 
+-	// Associate the columns model to the label combo
+-	m_refLabelNameTree = ListStore::create(m_labelNameColumns);
+-	m_pLabelCombobox-&gt;set_model(m_refLabelNameTree);
+-	m_pLabelCombobox-&gt;pack_start(m_labelNameColumns.m_name);
+ 	// Populate
+ 	populateLabelCombobox();
+ 
+@@ -147,21 +143,15 @@
+ 
+ void IndexPage::onLabelChanged(void)
+ {
+-	TreeModel::iterator labelIter = m_pLabelCombobox-&gt;get_active();
+-	if (labelIter)
+-	{
+-		TreeModel::Row row = *labelIter;
+-
+-		m_labelName = row[m_labelNameColumns.m_name];
++	m_labelName = m_pLabelCombobox-&gt;get_active_text();
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;IndexPage::onLabelChanged: current label now &quot; &lt;&lt; m_labelName &lt;&lt; endl;
++	cout &lt;&lt; &quot;IndexPage::onLabelChanged: current label now &quot; &lt;&lt; m_labelName &lt;&lt; endl;
+ #endif
+-		if (m_labelName == _(&quot;All labels&quot;))
+-		{
+-			m_labelName.clear();
+-		}
+-		m_signalLabelChanged(m_title, m_labelName);
++	if (m_labelName == _(&quot;All labels&quot;))
++	{
++		m_labelName.clear();
+ 	}
++	m_signalLabelChanged(m_title, m_labelName);
+ }
+ 
+ void IndexPage::onBackClicked(void)
+@@ -195,24 +185,13 @@
+ //
+ void IndexPage::populateLabelCombobox(void)
+ {
+-	TreeModel::iterator iter;
+-	TreeModel::Row row;
++	m_pLabelCombobox-&gt;append_text(_(&quot;All labels&quot;));
+ 
+-	m_refLabelNameTree-&gt;clear();
+-
+-	iter = m_refLabelNameTree-&gt;append();
+-	row = *iter;
+-	row[m_labelNameColumns.m_name] = _(&quot;All labels&quot;);
+-
+ 	const set&lt;string&gt; &amp;labels = m_settings.getLabels();
+ 	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+ 		labelIter != labels.end(); ++labelIter)
+ 	{
+-		string labelName(*labelIter);
+-
+-		iter = m_refLabelNameTree-&gt;append();
+-		row = *iter;
+-		row[m_labelNameColumns.m_name] = to_utf8(labelName);
++		m_pLabelCombobox-&gt;append_text(to_utf8(*labelIter));
+ 	}
+ 
+ 	m_pLabelCombobox-&gt;set_active(0);
+
+Modified: trunk/UI/GTK2/src/IndexPage.h
+===================================================================
+--- trunk/UI/GTK2/src/IndexPage.h	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/IndexPage.h	2007-03-23 13:33:06 UTC (rev 782)
+@@ -26,18 +26,16 @@
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;gtkmm/menu.h&gt;
+ #include &lt;gdkmm/pixbuf.h&gt;
+-#include &lt;gtkmm/combobox.h&gt;
++#include &lt;gtkmm/comboboxtext.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/scrolledwindow.h&gt;
+ #include &lt;gtkmm/textview.h&gt;
+-#include &lt;gtkmm/liststore.h&gt;
+ #include &lt;gtkmm/treeview.h&gt;
+ #include &lt;gtkmm/treeselection.h&gt;
+ 
+ #include &quot;QueryProperties.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;IndexTree.h&quot;
+-#include &quot;ModelColumns.h&quot;
+ #include &quot;Notebook.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+@@ -85,9 +83,7 @@
+ 		Glib::ustring m_indexName;
+ 		Glib::ustring m_labelName;
+ 		IndexTree *m_pTree;
+-		ComboModelColumns m_labelNameColumns;
+-		Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelNameTree;
+-		Gtk::ComboBox *m_pLabelCombobox;
++		Gtk::ComboBoxText *m_pLabelCombobox;
+ 		Gtk::Button *m_pBackButton;
+ 		Gtk::Button *m_pForwardButton;
+ 		unsigned int m_docsCount;
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/importDialog.cc	2007-03-23 13:33:06 UTC (rev 782)
+@@ -54,10 +54,6 @@
+ 	m_docsCount(0),
+ 	m_state(10, this)
+ {
+-	// Associate the columns model to the label combo
+-	m_refLabelNameTree = ListStore::create(m_labelNameColumns);
+-	labelNameCombobox-&gt;set_model(m_refLabelNameTree);
+-	labelNameCombobox-&gt;pack_start(m_labelNameColumns.m_name);
+ 	// Populate
+ 	populate_comboboxes();
+ 
+@@ -77,20 +73,15 @@
+ 
+ void importDialog::populate_comboboxes(void)
+ {
+-	TreeModel::iterator iter = m_refLabelNameTree-&gt;append();
+-	TreeModel::Row row = *iter;
+-	row[m_labelNameColumns.m_name] = _(&quot;None&quot;);
++	labelNameCombobox-&gt;append_text(_(&quot;None&quot;));
+ 	labelNameCombobox-&gt;set_active(0);
++
+ 	// Add all labels
+ 	const set&lt;string&gt; &amp;labels = PinotSettings::getInstance().getLabels();
+ 	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+ 		labelIter != labels.end(); ++labelIter)
+ 	{
+-		string labelName(*labelIter);
+-
+-		iter = m_refLabelNameTree-&gt;append();
+-		row = *iter;
+-		row[m_labelNameColumns.m_name] = to_utf8(labelName);
++		labelNameCombobox-&gt;append_text(to_utf8(*labelIter));
+ 	}
+ }
+ 
+@@ -239,9 +230,7 @@
+ 	int chosenLabel = labelNameCombobox-&gt;get_active_row_number();
+ 	if (chosenLabel &gt; 0)
+ 	{
+-		TreeModel::iterator iter = labelNameCombobox-&gt;get_active();
+-		TreeModel::Row row = *iter;
+-		m_labelName = from_utf8(row[m_labelNameColumns.m_name]);
++		m_labelName = from_utf8(labelNameCombobox-&gt;get_active_text());
+ 	}
+ 
+ 	import_url(location);
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/importDialog.hh	2007-03-23 13:33:06 UTC (rev 782)
+@@ -26,11 +26,9 @@
+ #include &lt;glibmm/refptr.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+-#include &lt;gtkmm/liststore.h&gt;
+ 
+ #include &quot;DocumentInfo.h&quot;
+ #include &quot;MonitorInterface.h&quot;
+-#include &quot;ModelColumns.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ #include &quot;importDialog_glade.hh&quot;
+ 
+@@ -52,9 +50,6 @@
+ 	void on_thread_end(WorkerThread *pThread);
+ 
+ private:
+-	// Label
+-	ComboModelColumns m_labelNameColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelNameTree;
+ 	Glib::ustring m_title;
+ 	std::string m_labelName;
+ 	unsigned int m_docsCount;
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.cc	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/importDialog_glade.cc	2007-03-23 13:33:06 UTC (rev 782)
+@@ -66,7 +66,7 @@
+    
+    Gtk::Label *locationLabel = Gtk::manage(new class Gtk::Label(_(&quot;Location:&quot;)));
+    titleLabel = Gtk::manage(new class Gtk::Label(_(&quot;Title:&quot;)));
+-   labelNameCombobox = Gtk::manage(new class Gtk::ComboBox());
++   labelNameCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
+    Gtk::Label *labelNameLabel = Gtk::manage(new class Gtk::Label(_(&quot;Apply label:&quot;)));
+    locationEntry = Gtk::manage(new class Gtk::Entry());
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.hh	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/importDialog_glade.hh	2007-03-23 13:33:06 UTC (rev 782)
+@@ -34,7 +34,7 @@
+ #include &lt;gtkmm/dialog.h&gt;
+ #include &lt;gtkmm/entry.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+-#include &lt;gtkmm/combobox.h&gt;
++#include &lt;gtkmm/comboboxtext.h&gt;
+ #include &lt;gtkmm/table.h&gt;
+ #include &lt;gtkmm/progressbar.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+@@ -46,7 +46,7 @@
+ protected:
+         class Gtk::Entry * titleEntry;
+         class Gtk::Label * titleLabel;
+-        class Gtk::ComboBox * labelNameCombobox;
++        class Gtk::ComboBoxText * labelNameCombobox;
+         class Gtk::Entry * locationEntry;
+         class Gtk::Table * docTable;
+         class Gtk::ProgressBar * importProgressbar;
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2007-03-23 13:33:06 UTC (rev 782)
+@@ -40,11 +40,6 @@
+ 	string language(docInfo.getLanguage());
+ 	bool notALanguageName = false;
+ 
+-	// Associate the columns model to the language combo
+-	m_refLanguageTree = ListStore::create(m_languageColumns);
+-	languageCombobox-&gt;set_model(m_refLanguageTree);
+-	languageCombobox-&gt;pack_start(m_languageColumns.m_name);
+-
+ 	// Associate the columns model to the labels tree
+ 	m_refLabelsTree = ListStore::create(m_labelsColumns);
+ 	labelsTreeview-&gt;set_model(m_refLabelsTree);
+@@ -107,18 +102,12 @@
+ 
+ void propertiesDialog::populate_languageCombobox(const string &amp;language, bool notALanguageName)
+ {
+-	TreeModel::iterator iter;
+-	TreeModel::Row row;
+ 	unsigned int languageStart = 0;
+ 	bool foundLanguage = false;
+ 
+ 	if (notALanguageName == true)
+ 	{
+-		iter = m_refLanguageTree-&gt;append();
+-		row = *iter;
+-
+-		// This is not a language name as such
+-		row[m_languageColumns.m_name] = language;
++		languageCombobox-&gt;append_text(to_utf8(language));
+ 		languageCombobox-&gt;set_active(0);
+ 		languageStart = 1;
+ 	}
+@@ -126,11 +115,9 @@
+ 	// Add all supported languages
+ 	for (unsigned int languageNum = 0; languageNum &lt; Languages::m_count; ++languageNum)
+ 	{
+-		string languageName = Languages::getIntlName(languageNum);
+-		iter = m_refLanguageTree-&gt;append();
+-		row = *iter;
+-		row[m_languageColumns.m_name] = languageName;
++		string languageName(Languages::getIntlName(languageNum));
+ 
++		languageCombobox-&gt;append_text(to_utf8(languageName));
+ 		if ((notALanguageName == false) &amp;&amp;
+ 			(languageName == language))
+ 		{
+@@ -224,11 +211,7 @@
+ 	int chosenLanguage = languageCombobox-&gt;get_active_row_number();
+ 	if (chosenLanguage &gt;= languageStart)
+ 	{
+-		TreeModel::iterator iter = languageCombobox-&gt;get_active();
+-		TreeModel::Row row = *iter;
+-		string languageName = from_utf8(row[m_languageColumns.m_name]);
+-
+-		m_docInfo.setLanguage(languageName);
++		m_docInfo.setLanguage(from_utf8(languageCombobox-&gt;get_active_text()));
+ 	}
+ 
+ 	// Go through the labels tree
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.hh	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/propertiesDialog.hh	2007-03-23 13:33:06 UTC (rev 782)
+@@ -43,8 +43,6 @@
+ 	const std::set&lt;std::string&gt; &amp;getLabels(void) const;
+ 
+ protected:
+-	ComboModelColumns m_languageColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLanguageTree;
+ 	LabelModelColumns m_labelsColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelsTree;
+ 	std::set&lt;std::string&gt; m_labels;
+
+Modified: trunk/UI/GTK2/src/propertiesDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog_glade.cc	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/propertiesDialog_glade.cc	2007-03-23 13:33:06 UTC (rev 782)
+@@ -63,7 +63,7 @@
+    labelOkButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-ok&quot;)));
+    titleEntry = Gtk::manage(new class Gtk::Entry());
+    typeEntry = Gtk::manage(new class Gtk::Entry());
+-   languageCombobox = Gtk::manage(new class Gtk::ComboBox());
++   languageCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    titleLabel = Gtk::manage(new class Gtk::Label(_(&quot;Title:&quot;)));
+    languageLabel = Gtk::manage(new class Gtk::Label(_(&quot;Language:&quot;)));
+    typeLabel = Gtk::manage(new class Gtk::Label(_(&quot;MIME type:&quot;)));
+
+Modified: trunk/UI/GTK2/src/propertiesDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog_glade.hh	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/propertiesDialog_glade.hh	2007-03-23 13:33:06 UTC (rev 782)
+@@ -34,7 +34,7 @@
+ #include &lt;gtkmm/dialog.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/entry.h&gt;
+-#include &lt;gtkmm/combobox.h&gt;
++#include &lt;gtkmm/comboboxtext.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/treeview.h&gt;
+ #include &lt;gtkmm/scrolledwindow.h&gt;
+@@ -49,7 +49,7 @@
+         class Gtk::Button * labelOkButton;
+         class Gtk::Entry * titleEntry;
+         class Gtk::Entry * typeEntry;
+-        class Gtk::ComboBox * languageCombobox;
++        class Gtk::ComboBoxText * languageCombobox;
+         class Gtk::Label * titleLabel;
+         class Gtk::Label * languageLabel;
+         class Gtk::Label * typeLabel;
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/queryDialog.cc	2007-03-23 13:33:06 UTC (rev 782)
+@@ -83,14 +83,6 @@
+ 	// Index all results
+ 	indexCheckbutton-&gt;set_active(m_properties.getIndexResults());
+ 
+-	// Associate the columns model to the index label combo
+-	m_refLabelNameTree = ListStore::create(m_labelNameColumns);
+-	labelNameCombobox-&gt;set_model(m_refLabelNameTree);
+-	labelNameCombobox-&gt;pack_start(m_labelNameColumns.m_name);
+-	// ...and the filter combo
+-	m_refFilterTree = ListStore::create(m_filterColumns);
+-	filterCombobox-&gt;set_model(m_refFilterTree);
+-	filterCombobox-&gt;pack_start(m_filterColumns.m_name);
+ 	// Populate
+ 	populate_comboboxes();
+ }
+@@ -103,9 +95,7 @@
+ {
+ 	unsigned int labelNum = 1;
+ 
+-	TreeModel::iterator iter = m_refLabelNameTree-&gt;append();
+-	TreeModel::Row row = *iter;
+-	row[m_labelNameColumns.m_name] = _(&quot;None&quot;);
++	labelNameCombobox-&gt;append_text(_(&quot;None&quot;));
+ 	labelNameCombobox-&gt;set_active(0);
+ 
+ 	// Add all labels to the label combo and select the one defined for the query
+@@ -113,9 +103,7 @@
+ 	{
+ 		string labelName(*labelIter);
+ 
+-		iter = m_refLabelNameTree-&gt;append();
+-		row = *iter;
+-		row[m_labelNameColumns.m_name] = to_utf8(labelName);
++		labelNameCombobox-&gt;append_text(to_utf8(labelName));
+ 		if (labelName == m_properties.getLabelName())
+ 		{
+ 			labelNameCombobox-&gt;set_active(labelNum);
+@@ -125,33 +113,15 @@
+ 	}
+ 
+ 	// All supported filters
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;Host name&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;File name&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;File extension&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;Title&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;URL&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;Directory&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;Language code&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;MIME type&quot;);
+-	iter = m_refFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_filterColumns.m_name] = _(&quot;Label&quot;);
++	filterCombobox-&gt;append_text(_(&quot;Host name&quot;));
++	filterCombobox-&gt;append_text(_(&quot;File name&quot;));
++	filterCombobox-&gt;append_text(_(&quot;File extension&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Title&quot;));
++	filterCombobox-&gt;append_text(_(&quot;URL&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Directory&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Language code&quot;));
++	filterCombobox-&gt;append_text(_(&quot;MIME type&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Label&quot;));
+ 	filterCombobox-&gt;set_active(0);
+ }
+ 
+@@ -197,11 +167,7 @@
+ 	int chosenLabel = labelNameCombobox-&gt;get_active_row_number();
+ 	if (chosenLabel &gt; 0)
+ 	{
+-		TreeModel::iterator iter = labelNameCombobox-&gt;get_active();
+-		TreeModel::Row row = *iter;
+-		string labelName = from_utf8(row[m_labelNameColumns.m_name]);
+-
+-		m_properties.setLabelName(labelName);
++		m_properties.setLabelName(from_utf8(labelNameCombobox-&gt;get_active_text()));
+ 	}
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/queryDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.hh	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/queryDialog.hh	2007-03-23 13:33:06 UTC (rev 782)
+@@ -22,10 +22,8 @@
+ #include &lt;string&gt;
+ #include &lt;set&gt;
+ #include &lt;glibmm/date.h&gt;
+-#include &lt;gtkmm/liststore.h&gt;
+ 
+ #include &quot;QueryProperties.h&quot;
+-#include &quot;ModelColumns.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;queryDialog_glade.hh&quot;
+ 
+@@ -41,10 +39,6 @@
+ 	std::string m_name;
+ 	QueryProperties&amp; m_properties;
+ 	const std::set&lt;std::string&gt; &amp;m_labels;
+-	ComboModelColumns m_labelNameColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelNameTree;
+-	ComboModelColumns m_filterColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refFilterTree;
+ 	Glib::Date m_fromDate;
+ 	Glib::Date m_toDate;
+ 	bool m_badName;
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2007-03-23 13:33:06 UTC (rev 782)
+@@ -70,7 +70,7 @@
+    
+    Gtk::Table *nameTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    Gtk::Label *filterLabel = Gtk::manage(new class Gtk::Label(_(&quot;New filter:&quot;)));
+-   filterCombobox = Gtk::manage(new class Gtk::ComboBox());
++   filterCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
+    Gtk::Button *addFilterButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-add&quot;)));
+    Gtk::HBox *queryHbox = Gtk::manage(new class Gtk::HBox(false, 0));
+@@ -81,7 +81,7 @@
+    Gtk::Label *queryFrameLabel = Gtk::manage(new class Gtk::Label(_(&quot;Query Text&quot;)));
+    Gtk::Frame *queryFrame = Gtk::manage(new class Gtk::Frame());
+    indexCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Index results with label&quot;)));
+-   labelNameCombobox = Gtk::manage(new class Gtk::ComboBox());
++   labelNameCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
+    Gtk::Label *resultsCountLabel = Gtk::manage(new class Gtk::Label(_(&quot;Number of results:&quot;)));
+    Gtk::Adjustment *resultsCountSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(10, 10, 100, 10, 20, 20));
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.hh	2007-03-22 12:45:56 UTC (rev 781)
++++ trunk/UI/GTK2/src/queryDialog_glade.hh	2007-03-23 13:33:06 UTC (rev 782)
+@@ -34,7 +34,7 @@
+ #include &lt;gtkmm/dialog.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/entry.h&gt;
+-#include &lt;gtkmm/combobox.h&gt;
++#include &lt;gtkmm/comboboxtext.h&gt;
+ #include &lt;gtkmm/textview.h&gt;
+ #include &lt;gtkmm/checkbutton.h&gt;
+ #include &lt;gtkmm/spinbutton.h&gt;
+@@ -48,10 +48,10 @@
+ protected:
+         class Gtk::Button * queryOkbutton;
+         class Gtk::Entry * nameEntry;
+-        class Gtk::ComboBox * filterCombobox;
++        class Gtk::ComboBoxText * filterCombobox;
+         class Gtk::TextView * queryTextview;
+         class Gtk::CheckButton * indexCheckbutton;
+-        class Gtk::ComboBox * labelNameCombobox;
++        class Gtk::ComboBoxText * labelNameCombobox;
+         class Gtk::SpinButton * resultsCountSpinbutton;
+         class Gtk::CheckButton * fromCheckbutton;
+         class Gtk::CheckButton * toCheckbutton;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000775.html">[Pinot-svn] r781 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000777.html">[Pinot-svn] r783 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#776">[ date ]</a>
+              <a href="thread.html#776">[ thread ]</a>
+              <a href="subject.html#776">[ subject ]</a>
+              <a href="author.html#776">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

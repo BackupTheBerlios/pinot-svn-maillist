@@ -1,0 +1,415 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r417 - in trunk: Monitor UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r417%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200608211349.k7LDnaBS003828%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000409.html">
+   <LINK REL="Next"  HREF="000411.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r417 - in trunk: Monitor UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r417%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200608211349.k7LDnaBS003828%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r417 - in trunk: Monitor UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Aug 21 15:49:36 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000409.html">[Pinot-svn] r416 - trunk/Monitor
+</A></li>
+        <LI>Next message: <A HREF="000411.html">[Pinot-svn] r418 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#410">[ date ]</a>
+              <a href="thread.html#410">[ thread ]</a>
+              <a href="subject.html#410">[ subject ]</a>
+              <a href="author.html#410">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-21 15:49:35 +0200 (Mon, 21 Aug 2006)
+New Revision: 417
+
+Modified:
+   trunk/Monitor/MonitorHandler.cpp
+   trunk/Monitor/MonitorHandler.h
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Renamed MonitorHandler::getLocations() to getFileNames() since this only deals
+with files. Monitoring those is done by MonitoringThread, which checks for
+events right after initializing the handler.
+OnDiskHandler::indexFile() creates an empty document if the file couldn't be
+downloaded.
+
+
+Modified: trunk/Monitor/MonitorHandler.cpp
+===================================================================
+--- trunk/Monitor/MonitorHandler.cpp	2006-08-21 12:01:29 UTC (rev 416)
++++ trunk/Monitor/MonitorHandler.cpp	2006-08-21 13:49:35 UTC (rev 417)
+@@ -27,9 +27,9 @@
+ {
+ }
+ 
+-const set&lt;string&gt; &amp;MonitorHandler::getLocations(void) const
++const set&lt;string&gt; &amp;MonitorHandler::getFileNames(void) const
+ {
+-	return m_locations;
++	return m_fileNames;
+ }
+ 
+ Signal3&lt;void, IndexedDocument, unsigned int, string&gt;&amp; MonitorHandler::getUpdateSignal(void)
+
+Modified: trunk/Monitor/MonitorHandler.h
+===================================================================
+--- trunk/Monitor/MonitorHandler.h	2006-08-21 12:01:29 UTC (rev 416)
++++ trunk/Monitor/MonitorHandler.h	2006-08-21 13:49:35 UTC (rev 417)
+@@ -54,14 +54,14 @@
+ 		/// Handles file deleted events.
+ 		virtual bool fileDeleted(const std::string &amp;fileName) = 0;
+ 
+-		/// Returns locations.
+-		const std::set&lt;std::string&gt; &amp;getLocations(void) const;
++		/// Returns the names of files to monitor.
++		const std::set&lt;std::string&gt; &amp;getFileNames(void) const;
+ 
+ 		/// Returns the file update signal.
+ 		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
+ 
+ 	protected:
+-		std::set&lt;std::string&gt; m_locations;
++		std::set&lt;std::string&gt; m_fileNames;
+ 		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt; m_signalUpdate;
+ 
+ 	private:
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-21 12:01:29 UTC (rev 416)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-21 13:49:35 UTC (rev 417)
+@@ -46,6 +46,9 @@
+ 		// Create it
+ 		m_sourceId = m_history.insertSource(&quot;My Email&quot;);
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxHandler: My Email source ID is &quot; &lt;&lt; m_sourceId &lt;&lt; endl;
++#endif
+ }
+ 
+ MboxHandler::~MboxHandler()
+@@ -261,7 +264,7 @@
+ 	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = mailAccounts.begin();
+ 		mailIter != mailAccounts.end(); ++mailIter)
+ 	{
+-		m_locations.insert(mailIter-&gt;m_name);
++		m_fileNames.insert(mailIter-&gt;m_name);
+ 	}
+ 
+ 	// Unindex messages that belong to mailboxes that no longer exist
+@@ -274,7 +277,7 @@
+ 
+ 			// Is this a file and does it still exist ?
+ 			if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
+-				(m_locations.find(mailIter-&gt;substr(7)) == m_locations.end()))
++				(m_fileNames.find(mailIter-&gt;substr(7)) == m_fileNames.end()))
+ 			{
+ 				string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+ 
+@@ -298,6 +301,9 @@
+ #endif
+ 		}
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxHandler::initialize: &quot; &lt;&lt; m_fileNames.size() &lt;&lt; &quot; mail accounts&quot; &lt;&lt; endl;
++#endif
+ }
+ 
+ void MboxHandler::flushIndex(void)
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-08-21 12:01:29 UTC (rev 416)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-08-21 13:49:35 UTC (rev 417)
+@@ -79,7 +79,9 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;OnDiskHandler::indexFile: couldn't download &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
+-		return false;
++
++		// The file  couldn't be downloaded but exists nonetheless !
++		pDoc = new Document(docInfo);
+ 	}
+ 
+ 	// Get an ad hoc tokenizer for the message
+@@ -125,13 +127,14 @@
+ void OnDiskHandler::initialize(void)
+ {
+ 	map&lt;unsigned int, string&gt; sources;
++	set&lt;string&gt; directories;
+ 
+ 	// Get the map of indexable locations
+ 	set&lt;PinotSettings::TimestampedItem&gt; &amp;indexableLocations = PinotSettings::getInstance().m_indexableLocations;
+ 	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator dirIter = indexableLocations.begin();
+ 		dirIter != indexableLocations.end(); ++dirIter)
+ 	{
+-		m_locations.insert(dirIter-&gt;m_name);
++		directories.insert(dirIter-&gt;m_name);
+ 	}
+ 
+ 	// Unindex documents that belong to sources that no longer exist
+@@ -148,7 +151,7 @@
+ 				continue;
+ 			}
+ 
+-			if (m_locations.find(sourceIter-&gt;second.substr(7)) == m_locations.end())
++			if (directories.find(sourceIter-&gt;second.substr(7)) == directories.end())
+ 			{
+ 				char sourceStr[64];
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-21 12:01:29 UTC (rev 416)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-21 13:49:35 UTC (rev 417)
+@@ -1466,11 +1466,88 @@
+ 	m_done = true;
+ 	write(m_ctrlWritePipe, &quot;Stop&quot;, 4);
+ 	m_status = _(&quot;Stopped monitoring&quot;);
++
++	return true;
++}
++
++void MonitorThread::processEvents(void)
++{
++	queue&lt;MonitorEvent&gt; events;
++
++	if (m_pMonitor-&gt;retrievePendingEvents(events) == false)
++	{
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;MonitorThread::doWork: stop called&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;MonitorThread::processEvents: failed to retrieve pending events&quot; &lt;&lt; endl;
+ #endif
++		return;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MonitorThread::processEvents: retrieved &quot; &lt;&lt; events.size() &lt;&lt; &quot; events&quot; &lt;&lt; endl;
++#endif
+ 
+-	return true;
++	while ((events.empty() == false) &amp;&amp;
++		(m_done == false))
++	{
++		MonitorEvent &amp;event = events.front();
++
++		if ((event.m_location.empty() == true) ||
++			(event.m_type == MonitorEvent::UNKNOWN))
++		{
++			// Next
++			events.pop();
++			continue;
++		}
++
++		// What's the event code ?
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MonitorThread::processEvents: event on &quot; &lt;&lt; event.m_location &lt;&lt; endl;
++#endif
++		if (event.m_type == MonitorEvent::EXISTS)
++		{
++			m_pHandler-&gt;fileExists(event.m_location);
++		}
++		else if (event.m_type == MonitorEvent::CREATED)
++		{
++			m_pHandler-&gt;fileCreated(event.m_location);
++
++			// If a whole directory was created, monitor it
++			if (event.m_isDirectory == true)
++			{
++				// FIXME: crawl it first !
++				m_pMonitor-&gt;addLocation(event.m_location, true);
++			}
++		}
++		else if (event.m_type == MonitorEvent::WRITE_CLOSED)
++		{
++			m_pHandler-&gt;fileModified(event.m_location);
++		}
++		else if (event.m_type == MonitorEvent::MOVED)
++		{
++			m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
++
++			if ((event.m_isDirectory == true) &amp;&amp;
++				(event.m_isWatch == true))
++			{
++				// Stop monitoring
++				m_pMonitor-&gt;removeLocation(event.m_previousLocation);
++				// FIXME: monitor the new location
++			}
++		}
++		else if (event.m_type == MonitorEvent::DELETED)
++		{
++			m_pHandler-&gt;fileDeleted(event.m_location);
++
++			if ((event.m_isDirectory == true) &amp;&amp;
++				(event.m_isWatch == true))
++			{
++				// Stop monitoring
++				m_pMonitor-&gt;removeLocation(event.m_location);
++			}
++		}
++
++		// Next
++		events.pop();
++	}
+ }
+ 
+ void MonitorThread::doWork(void)
+@@ -1485,8 +1562,19 @@
+ 	// Initialize the handler
+ 	m_pHandler-&gt;initialize();
+ 
+-	// What locations to monitor is set by DirectoryScannerThread
++	// Get the list of files to monitor
++	const set&lt;string&gt; &amp;fileNames = m_pHandler-&gt;getFileNames();
++	for (set&lt;string&gt;::const_iterator fileIter = fileNames.begin();
++		fileIter != fileNames.end(); ++fileIter)
++	{
++		m_pMonitor-&gt;addLocation(*fileIter, false);
++	}
++	// Directories, if any, are set elsewhere
++	// In the case of OnDiskHandler, they are set by DirectoryScannerThread
+ 
++	// There might already be events that need processing
++	processEvents();
++
+ 	// Wait for something to happen
+ 	while (m_done == false)
+ 	{
+@@ -1524,79 +1612,7 @@
+ 		}
+ 		else if (FD_ISSET(monitorFd, &amp;listenSet))
+ 		{
+-			queue&lt;MonitorEvent&gt; events;
+-
+-			// There might be more than one event waiting...
+-			if (m_pMonitor-&gt;retrievePendingEvents(events) == false)
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;MonitorThread::doWork: failed to retrieve pending events&quot; &lt;&lt; endl;
+-#endif
+-				break;
+-			}
+-
+-			while ((events.empty() == false) &amp;&amp;
+-				(m_done == false))
+-			{
+-				MonitorEvent &amp;event = events.front();
+-
+-				if ((event.m_location.empty() == true) ||
+-					(event.m_type == MonitorEvent::UNKNOWN))
+-				{
+-					// Next
+-					events.pop();
+-					continue;
+-				}
+-
+-				bool updatedIndex = false;
+-
+-				// What's the event code ?
+-				if (event.m_type == MonitorEvent::EXISTS)
+-				{
+-					m_pHandler-&gt;fileExists(event.m_location);
+-				}
+-				else if (event.m_type == MonitorEvent::CREATED)
+-				{
+-					m_pHandler-&gt;fileCreated(event.m_location);
+-
+-					// If a whole directory was created, monitor it
+-					if (event.m_isDirectory == true)
+-					{
+-						// FIXME: crawl it first !
+-						m_pMonitor-&gt;addLocation(event.m_location, true);
+-					}
+-				}
+-				else if (event.m_type == MonitorEvent::WRITE_CLOSED)
+-				{
+-					updatedIndex = m_pHandler-&gt;fileModified(event.m_location);
+-				}
+-				else if (event.m_type == MonitorEvent::MOVED)
+-				{
+-					updatedIndex = m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
+-
+-					if ((event.m_isDirectory == true) &amp;&amp;
+-						(event.m_isWatch == true))
+-					{
+-						// Stop monitoring
+-						m_pMonitor-&gt;removeLocation(event.m_previousLocation);
+-						// FIXME: monitor the new location
+-					}
+-				}
+-				else if (event.m_type == MonitorEvent::DELETED)
+-				{
+-					updatedIndex = m_pHandler-&gt;fileDeleted(event.m_location);
+-
+-					if ((event.m_isDirectory == true) &amp;&amp;
+-						(event.m_isWatch == true))
+-					{
+-						// Stop monitoring
+-						m_pMonitor-&gt;removeLocation(event.m_location);
+-					}
+-				}
+-
+-				// Next
+-				events.pop();
+-			}
++			processEvents();
+ 		}
+ 	}
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-21 12:01:29 UTC (rev 416)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-21 13:49:35 UTC (rev 417)
+@@ -387,6 +387,7 @@
+ 		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+ 
++		void processEvents(void);
+ 		virtual void doWork(void);
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000409.html">[Pinot-svn] r416 - trunk/Monitor
+</A></li>
+	<LI>Next message: <A HREF="000411.html">[Pinot-svn] r418 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#410">[ date ]</a>
+              <a href="thread.html#410">[ thread ]</a>
+              <a href="subject.html#410">[ subject ]</a>
+              <a href="author.html#410">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

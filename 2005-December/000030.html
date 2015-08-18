@@ -1,0 +1,738 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r31 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r31%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200512301211.jBUCBibD032051%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000029.html">
+   <LINK REL="Next"  HREF="000031.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r31 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r31%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200512301211.jBUCBibD032051%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r31 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Dec 30 13:11:44 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000029.html">[Pinot-svn] r30 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000031.html">[Pinot-svn] r32 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30">[ date ]</a>
+              <a href="thread.html#30">[ thread ]</a>
+              <a href="subject.html#30">[ subject ]</a>
+              <a href="author.html#30">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-30 13:11:43 +0100 (Fri, 30 Dec 2005)
+New Revision: 31
+
+Added:
+   trunk/UI/GTK2/src/pinot.cc
+Removed:
+   trunk/UI/GTK2/src/pinot.cpp
+Modified:
+   trunk/UI/GTK2/src/Makefile
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Sorted out issues with menuitems and view tab. Inform user if document to index
+is already indexed. In the results tree, don't repeat the name of the query for
+every group. Catch signals and quit cleanly.
+
+
+Modified: trunk/UI/GTK2/src/Makefile
+===================================================================
+--- trunk/UI/GTK2/src/Makefile	2005-12-29 21:30:54 UTC (rev 30)
++++ trunk/UI/GTK2/src/Makefile	2005-12-30 12:11:43 UTC (rev 31)
+@@ -12,8 +12,9 @@
+ 	prefsDialog.cc prefsDialog_glade.cc \
+ 	propertiesDialog.cc propertiesDialog_glade.cc \
+ 	queryDialog.cc queryDialog_glade.cc \
+-	mainWindow.cc mainWindow_glade.cc
+-UI_SRCS = pinot.cpp EnginesTree.cpp IndexPage.cpp IndexTree.cpp \
++	mainWindow.cc mainWindow_glade.cc \
++	pinot.cc
++UI_SRCS = EnginesTree.cpp IndexPage.cpp IndexTree.cpp \
+ 	HtmlView.cpp ModelColumns.cpp MonitorHandler.cpp Notebook.cpp \
+ 	PinotSettings.cpp PinotUtils.cpp ResultsTree.cpp WorkerThreads.cpp
+ UI_GTK2_OBJS := $(patsubst %.cc,${OBJ_DIR}/%.o,${UI_GTK2_SRCS})
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2005-12-29 21:30:54 UTC (rev 30)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2005-12-30 12:11:43 UTC (rev 31)
+@@ -405,14 +405,6 @@
+ 	// Unselect all
+ 	get_selection()-&gt;unselect_all();
+ 
+-	// This describes the query
+-	string queryDetails = &quot;\&quot;&quot;;
+-	queryDetails += queryName;
+-	queryDetails += &quot;\&quot; &quot;;
+-	queryDetails += _(&quot;on&quot;);
+-	queryDetails += &quot; &quot;;
+-	queryDetails += registeredEngineName;
+-
+ 	// What's the grouping criteria ?
+ 	if (groupBySearchEngine == true)
+ 	{
+@@ -479,7 +471,7 @@
+ 		}
+ 		else
+ 		{
+-			groupName = queryDetails;
++			groupName = registeredEngineName;
+ 		}
+ 
+ 		// Add the group or get its position if it's already in
+@@ -545,7 +537,7 @@
+ 		{
+ 			// If this didn't return any result, add an empty group
+ 			TreeModel::iterator groupIter;
+-			appendGroup(queryDetails, rootType, groupIter);
++			appendGroup(registeredEngineName, rootType, groupIter);
+ 			updateGroup(groupIter);
+ 
+ 			return true;
+@@ -677,16 +669,9 @@
+ 						for (set&lt;string&gt;::iterator iter = engineNames.begin(); iter != engineNames.end(); ++iter)
+ 						{
+ 							string engineName = (*iter);
+-
+-							string groupName = &quot;\&quot;&quot;;
+-							groupName += locale_from_utf8(childRow[m_resultsColumns.m_queryName]);
+-							groupName += &quot;\&quot; &quot;;
+-							groupName += _(&quot;on&quot;);
+-							groupName += &quot; &quot;;
+-							groupName += engineName;
+-
+ 							unsigned int indexId = 0;
+ 							unsigned int engineId = m_settings.getEngineId(engineName);
++
+ 							if (engineId == 0)
+ 							{
+ 								// This is actually an index, not an engine...
+@@ -698,7 +683,7 @@
+ 							}
+ 
+ 							// Add group
+-							if (appendGroup(groupName, newType, groupIter) == true)
++							if (appendGroup(engineName, newType, groupIter) == true)
+ 							{
+ 								// Add result
+ 								appendResult(locale_from_utf8(childRow[m_resultsColumns.m_text]), url,
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2005-12-29 21:30:54 UTC (rev 30)
++++ trunk/UI/GTK2/src/mainWindow.cc	2005-12-30 12:11:43 UTC (rev 31)
+@@ -221,8 +221,8 @@
+ 	indexresults1-&gt;set_sensitive(false);
+ 	viewfromindex1-&gt;set_sensitive(false);
+ 	refreshindex1-&gt;set_sensitive(false);
++	unindex1-&gt;set_sensitive(false);
+ 	showfromindex1-&gt;set_sensitive(false);
+-	unindex1-&gt;set_sensitive(false);
+ 	//viewstop1-&gt;set_sensitive(false);
+ 	// ...and buttons
+ 	removeIndexButton-&gt;set_sensitive(false);
+@@ -545,8 +545,8 @@
+ 		}
+ 		viewfromindex1-&gt;set_sensitive(canViewDocument);
+ 		refreshindex1-&gt;set_sensitive(isDocumentsIndex);
++		unindex1-&gt;set_sensitive(isDocumentsIndex);
+ 		showfromindex1-&gt;set_sensitive(true);
+-		unindex1-&gt;set_sensitive(isDocumentsIndex);
+ 
+ 		// Show the URL in the status bar
+ 		ustring statusText = _(&quot;Document location is&quot;);
+@@ -559,8 +559,8 @@
+ 		// No, disable these
+ 		viewfromindex1-&gt;set_sensitive(false);
+ 		refreshindex1-&gt;set_sensitive(false);
++		unindex1-&gt;set_sensitive(false);
+ 		showfromindex1-&gt;set_sensitive(false);
+-		unindex1-&gt;set_sensitive(false);
+ 	}
+ }
+ 
+@@ -673,24 +673,40 @@
+ //
+ void mainWindow::on_switch_page(GtkNotebookPage *p0, guint p1)
+ {
++	// Did the page change ?
++	if (m_state.m_currentPage != p1)
++	{
++		bool showResultsMenuitems = false;
++
++		NotebookPageBox *pNotebookPage = dynamic_cast&lt;NotebookPageBox*&gt;(m_pNotebook-&gt;get_nth_page(p1));
++		if (pNotebookPage != NULL)
++		{
++			NotebookPageBox::PageType type = pNotebookPage-&gt;getType();
++			if (type == NotebookPageBox::RESULTS_PAGE)
++			{
++				showResultsMenuitems = true;
++			}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::on_switch_page: switched to page &quot; &lt;&lt; p1 &lt;&lt; endl;
++			cout &lt;&lt; &quot;mainWindow::on_switch_page: switched to page &quot; &lt;&lt; p1
++				&lt;&lt; &quot;, type &quot; &lt;&lt; type &lt;&lt; endl;
+ #endif
+-	if (m_state.m_currentPage != (int)p1)
+-	{
+-		// Disable the widgets that depend on what page is selected
+-		// Results
+-		clearresults1-&gt;set_sensitive(false);
+-		showextract1-&gt;set_sensitive(false);
+-		groupresults1-&gt;set_sensitive(false);
++		}
++
++		// Results menuitems that depend on the page
++		clearresults1-&gt;set_sensitive(showResultsMenuitems);
++		showextract1-&gt;set_sensitive(showResultsMenuitems);
++		groupresults1-&gt;set_sensitive(showResultsMenuitems);
++
++		// Results menuitems that depend on selection
+ 		viewresults1-&gt;set_sensitive(false);
+ 		viewcache1-&gt;set_sensitive(false);
+ 		indexresults1-&gt;set_sensitive(false);
+-		// Index
++
++		// Index menuitems that depend on selection
+ 		viewfromindex1-&gt;set_sensitive(false);
+ 		refreshindex1-&gt;set_sensitive(false);
++		unindex1-&gt;set_sensitive(false);
+ 		showfromindex1-&gt;set_sensitive(false);
+-		unindex1-&gt;set_sensitive(false);
+ 	}
+ 	m_state.m_currentPage = (int)p1;
+ }
+@@ -913,21 +929,11 @@
+ 
+ 		if (pageNum &gt;= 0)
+ 		{
++			// Add the results to the tree
++			pResultsTree-&gt;addResults(queryProps, engineName,
++				resultsList, searchenginegroup1-&gt;get_active());
+ 			// Switch to that page
+ 			m_pNotebook-&gt;set_current_page(pageNum);
+-
+-			// Add the results to the tree
+-			if (pResultsTree-&gt;addResults(queryProps, engineName,
+-				resultsList, searchenginegroup1-&gt;get_active()) == true)
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;mainWindow::on_thread_end: added results&quot; &lt;&lt; endl;
+-#endif
+-				// Enable some menuitems
+-				clearresults1-&gt;set_sensitive(true);
+-				showextract1-&gt;set_sensitive(false);
+-				groupresults1-&gt;set_sensitive(false);
+-			}
+ 		}
+ 
+ 		// Index results ?
+@@ -1421,11 +1427,16 @@
+ 	// Do the changes affect the View tab ?
+ 	if (useExternalBrowser != m_settings.m_browseResults)
+ 	{
+-		// Close the existing view page ?
+ 		if (m_settings.m_browseResults == true)
+ 		{
++			// Close the existing view page
+ 			on_close_page(_(&quot;View&quot;), NotebookPageBox::VIEW_PAGE);
+ 		}
++		else
++		{
++			// Reopen the view page
++			view_document(&quot;<A HREF="file:///usr/share/pinot/index.html">file:///usr/share/pinot/index.html</A>&quot;, true);
++		}
+ 	}
+ 
+ 	// Any labels to delete or rename ?
+@@ -1628,11 +1639,9 @@
+ 				cout &lt;&lt; &quot;mainWindow::on_delete_activate: results tree&quot; &lt;&lt; endl;
+ #endif
+ 				ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-				if ((pResultsTree != NULL) &amp;&amp;
+-					(pResultsTree-&gt;deleteSelection() == true))
++				if (pResultsTree != NULL)
+ 				{
+-					// The results tree is now empty
+-					clearresults1-&gt;set_sensitive(false);
++					pResultsTree-&gt;deleteSelection();
+ 				}
+ 			}
+ 		}
+@@ -1655,7 +1664,6 @@
+ 			if (pResultsTree != NULL)
+ 			{
+ 				pResultsTree-&gt;clear();
+-				clearresults1-&gt;set_sensitive(false);
+ 			}
+ 		}
+ 	}
+@@ -1813,7 +1821,7 @@
+ 		&amp;mainWindow::on_message_import));
+ 	importBox.show();
+ 	importBox.run();
+-	// Let the signal handler deal with mporting stuff
++	// Let the signal handler deal with importing stuff
+ }
+ 
+ //
+@@ -2793,8 +2801,6 @@
+ //
+ void mainWindow::browse_index(const ustring &amp;indexName, unsigned int startDoc)
+ {
+-	bool enableIndexOps = false;
+-
+ 	// Rudimentary lock
+ 	if (m_state.m_browsingIndex == true)
+ 	{
+@@ -2818,12 +2824,6 @@
+ 		m_pNotebook-&gt;set_current_page(get_page_number(indexName, NotebookPageBox::INDEX_PAGE));
+ 	}
+ 
+-	if (indexName == _(&quot;My Documents&quot;))
+-	{
+-		enableIndexOps = true;
+-	}
+-	import1-&gt;set_sensitive(enableIndexOps);
+-
+ 	// Spawn a new thread to browse the index
+ 	IndexBrowserThread *pBrowseThread = new IndexBrowserThread(
+ 		locale_from_utf8(indexName), m_maxDocsCount, startDoc);
+@@ -2874,9 +2874,6 @@
+ 				m_state.m_beingIndexed.insert(url);
+ 				isNewDocument = true;
+ 			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;mainWindow::index_document: already indexed &quot; &lt;&lt; url &lt;&lt; endl;
+-#endif
+ 
+ 			m_state.unlock();
+ 		}
+@@ -2886,6 +2883,13 @@
+ 			// This is a new document
+ 			start_thread(new IndexingThread(docInfo, labelName));
+ 		}
++		else
++		{
++			ustring status = url;
++			status += &quot; &quot;;
++			status += _(&quot;is already indexed or is being indexed&quot;);
++			set_status(status);
++		}
+ 	}
+ 
+ 	// If the document is indexed, we may have to update its labels
+@@ -2934,7 +2938,7 @@
+ 			(system(shellCommand.c_str()) == -1))
+ 		{
+ 			ustring status = _(&quot;Couldn't browse URL:&quot;);
+-			status == &quot; &quot;;
++			status += &quot; &quot;;
+ 			status += Glib::strerror(errno);
+ 			set_status(status);
+ 		}
+@@ -2955,14 +2959,14 @@
+ 			ustring viewName = _(&quot;View&quot;);
+ 			int pageNum = -1;
+ 
+-			// Is there already a page for this index ?
++			// Is there already a view page ?
+ 			pViewPage = dynamic_cast&lt;ViewPage*&gt;(get_page(viewName, NotebookPageBox::VIEW_PAGE));
+ 			if (pViewPage != NULL)
+ 			{
+ 				pageNum = get_page_number(viewName, NotebookPageBox::VIEW_PAGE);
+ 				// The page may be hidden
+ 				pViewPage-&gt;show();
+-				// FIXME: move the page
++				// FIXME: reorder pages
+ 			}
+ 			else
+ 			{
+
+Copied: trunk/UI/GTK2/src/pinot.cc (from rev 27, trunk/UI/GTK2/src/pinot.cpp)
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cpp	2005-12-18 10:33:00 UTC (rev 27)
++++ trunk/UI/GTK2/src/pinot.cc	2005-12-30 12:11:43 UTC (rev 31)
+@@ -0,0 +1,175 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;stdlib.h&gt;
++#include &lt;signal.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;libintl.h&gt;
++#include &lt;iostream&gt;
++#include &lt;fstream&gt;
++#include &lt;glibmm.h&gt;
++#include &lt;glibmm/thread.h&gt;
++#include &lt;glibmm/ustring.h&gt;
++#include &lt;glibmm/convert.h&gt;
++#include &lt;gtkmm/main.h&gt;
++
++#include &quot;TokenizerFactory.h&quot;
++#include &quot;Languages.h&quot;
++#include &quot;XapianDatabase.h&quot;
++#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;ActionHistory.h&quot;
++#include &quot;QueryHistory.h&quot;
++#include &quot;ViewHistory.h&quot;
++#include &quot;NeonDownloader.h&quot;
++#include &quot;MozillaRenderer.h&quot;
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
++#include &quot;PinotSettings.h&quot;
++#include &quot;mainWindow.hh&quot;
++
++using namespace std;
++
++static ofstream outputFile;
++static streambuf *coutBuf = NULL;
++static streambuf *cerrBuf = NULL;
++
++static void closeAll(void)
++{
++	cout &lt;&lt; &quot;Exiting...&quot; &lt;&lt; endl;
++
++	// Save the settings
++	PinotSettings &amp;settings = PinotSettings::getInstance();
++	if (settings.save() == false)
++	{
++		cerr &lt;&lt; _(&quot;Couldn't save configuration file&quot;) &lt;&lt; endl;
++	}
++
++	// Close all indexes we may have opened
++	XapianDatabaseFactory::closeAll();
++
++	// Close the tokenizer libraries
++	TokenizerFactory::unloadTokenizers();
++
++	// Restore the stream buffers
++	if (coutBuf != NULL)
++	{
++		cout.rdbuf(coutBuf);
++	}
++	if (cerrBuf != NULL)
++	{
++		cerr.rdbuf(cerrBuf);
++	}
++	outputFile.close();
++
++	MozillaRenderer::shutdown();
++	NeonDownloader::shutdown();
++}
++
++static void quitAll(int sigNum)
++{
++	cout &lt;&lt; &quot;Quitting...&quot; &lt;&lt; endl;
++
++	Gtk::Main::quit();
++}
++
++int main(int argc, char **argv)
++{
++	struct sigaction newAction;
++
++#if defined(ENABLE_NLS)
++	bindtextdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
++	textdomain (GETTEXT_PACKAGE);
++#endif //ENABLE_NLS
++
++	NeonDownloader::initialize();
++	MozillaRenderer::initialize();
++	Glib::thread_init();
++	Gtk::Main m(&amp;argc, &amp;argv);
++
++	// This will create the necessary directories on the first run
++	PinotSettings &amp;settings = PinotSettings::getInstance();
++
++	string confDirectory = PinotSettings::getConfigurationDirectory();
++	chdir(confDirectory.c_str());
++
++	// Redirect cout and cerr to a file
++	string logFileName = confDirectory;
++	logFileName += &quot;/pinot.log&quot;;
++	outputFile.open(logFileName.c_str());
++	coutBuf = cout.rdbuf();
++	cerrBuf = cerr.rdbuf();
++	cout.rdbuf(outputFile.rdbuf());
++	cerr.rdbuf(outputFile.rdbuf());
++
++	// Load the settings
++	settings.load();
++	settings.loadSearchEngines(&quot;/usr/share/pinot/engines&quot;);
++	settings.loadSearchEngines(confDirectory + string(&quot;/engines&quot;));
++	// Load tokenizer libraries, if any
++	TokenizerFactory::loadTokenizers(&quot;/usr/share/pinot/tokenizers&quot;);
++	TokenizerFactory::loadTokenizers(confDirectory + string(&quot;/tokenizers&quot;));
++
++	// Catch interrupts
++	sigemptyset(&amp;newAction.sa_mask);
++	newAction.sa_flags = 0;
++	newAction.sa_handler = quitAll;
++	sigaction(SIGINT, &amp;newAction, NULL);
++	sigaction(SIGQUIT, &amp;newAction, NULL);
++
++	// Ensure Xapian will be able to deal with internal indices
++	if (XapianDatabaseFactory::getDatabase(settings.m_indexLocation, false) == NULL)
++	{
++		cerr &lt;&lt; _(&quot;Index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_indexLocation &lt;&lt; &quot; &quot;
++			&lt;&lt; _(&quot;is not valid, please check&quot;) &lt;&lt; endl;
++	}
++	if (XapianDatabaseFactory::getDatabase(settings.m_mailIndexLocation, false) == NULL)
++	{
++		cerr &lt;&lt; _(&quot;Index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_mailIndexLocation &lt;&lt; &quot; &quot;
++			&lt;&lt; _(&quot;is not valid, please check&quot;) &lt;&lt; endl;
++	}
++
++	// Do the same for the history database
++	if ((settings.m_historyDatabase.empty() == true) ||
++		(ActionHistory::create(settings.m_historyDatabase) == false) ||
++		(QueryHistory::create(settings.m_historyDatabase) == false) ||
++		(ViewHistory::create(settings.m_historyDatabase) == false))
++	{
++		cerr &lt;&lt; _(&quot;History database&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_historyDatabase &lt;&lt; &quot; &quot;
++			&lt;&lt; _(&quot;couldn't be created&quot;) &lt;&lt; endl;
++	}
++
++	atexit(closeAll);
++
++	// Localize language names
++	Languages::setIntlName(0, _(&quot;Danish&quot;));
++	Languages::setIntlName(1, _(&quot;Dutch&quot;));
++	Languages::setIntlName(2, _(&quot;English&quot;));
++	Languages::setIntlName(3, _(&quot;Finnish&quot;));
++	Languages::setIntlName(4, _(&quot;French&quot;));
++	Languages::setIntlName(5, _(&quot;German&quot;));
++	Languages::setIntlName(6, _(&quot;Italian&quot;));
++	Languages::setIntlName(7, _(&quot;Norwegian&quot;));
++	Languages::setIntlName(8, _(&quot;Portuguese&quot;));
++	Languages::setIntlName(9, _(&quot;Russian&quot;));
++	Languages::setIntlName(10, _(&quot;Spanish&quot;));
++	Languages::setIntlName(11, _(&quot;Swedish&quot;));
++
++	// Create and open the main dialog box
++	mainWindow mainBox;
++	m.run(mainBox);
++
++	return EXIT_SUCCESS;
++}
+
+Deleted: trunk/UI/GTK2/src/pinot.cpp
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cpp	2005-12-29 21:30:54 UTC (rev 30)
++++ trunk/UI/GTK2/src/pinot.cpp	2005-12-30 12:11:43 UTC (rev 31)
+@@ -1,158 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;stdlib.h&gt;
+-#include &lt;unistd.h&gt;
+-#include &lt;libintl.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;fstream&gt;
+-#include &lt;glibmm.h&gt;
+-#include &lt;glibmm/thread.h&gt;
+-#include &lt;glibmm/ustring.h&gt;
+-#include &lt;glibmm/convert.h&gt;
+-#include &lt;gtkmm/main.h&gt;
+-
+-#include &quot;TokenizerFactory.h&quot;
+-#include &quot;Languages.h&quot;
+-#include &quot;XapianDatabase.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
+-#include &quot;ActionHistory.h&quot;
+-#include &quot;QueryHistory.h&quot;
+-#include &quot;ViewHistory.h&quot;
+-#include &quot;NeonDownloader.h&quot;
+-#include &quot;MozillaRenderer.h&quot;
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
+-#include &quot;PinotSettings.h&quot;
+-#include &quot;mainWindow.hh&quot;
+-
+-using namespace std;
+-
+-static ofstream outputFile;
+-static streambuf *coutBuf = NULL;
+-static streambuf *cerrBuf = NULL;
+-
+-void closeAll(void)
+-{
+-	cout &lt;&lt; &quot;Exiting...&quot; &lt;&lt; endl;
+-
+-	// Save the settings
+-	PinotSettings &amp;settings = PinotSettings::getInstance();
+-	if (settings.save() == false)
+-	{
+-		cerr &lt;&lt; _(&quot;Couldn't save configuration file&quot;) &lt;&lt; endl;
+-	}
+-
+-	// Close all indexes we may have opened
+-	XapianDatabaseFactory::closeAll();
+-
+-	// Close the tokenizer libraries
+-	TokenizerFactory::unloadTokenizers();
+-
+-	// Restore the stream buffers
+-	if (coutBuf != NULL)
+-	{
+-		cout.rdbuf(coutBuf);
+-	}
+-	if (cerrBuf != NULL)
+-	{
+-		cerr.rdbuf(cerrBuf);
+-	}
+-	outputFile.close();
+-
+-	MozillaRenderer::shutdown();
+-	NeonDownloader::shutdown();
+-}
+-
+-int main(int argc, char **argv)
+-{
+-#if defined(ENABLE_NLS)
+-	bindtextdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
+-	textdomain (GETTEXT_PACKAGE);
+-#endif //ENABLE_NLS
+-
+-	NeonDownloader::initialize();
+-	MozillaRenderer::initialize();
+-	Glib::thread_init();
+-	Gtk::Main m(&amp;argc, &amp;argv);
+-
+-	// This will create the necessary directories on the first run
+-	PinotSettings &amp;settings = PinotSettings::getInstance();
+-
+-	string confDirectory = PinotSettings::getConfigurationDirectory();
+-	chdir(confDirectory.c_str());
+-
+-	// Redirect cout and cerr to a file
+-	string logFileName = confDirectory;
+-	logFileName += &quot;/pinot.log&quot;;
+-	outputFile.open(logFileName.c_str());
+-	coutBuf = cout.rdbuf();
+-	cerrBuf = cerr.rdbuf();
+-	cout.rdbuf(outputFile.rdbuf());
+-	cerr.rdbuf(outputFile.rdbuf());
+-
+-	// Load the settings
+-	settings.load();
+-	settings.loadSearchEngines(&quot;/usr/share/pinot/engines&quot;);
+-	settings.loadSearchEngines(confDirectory + string(&quot;/engines&quot;));
+-	// Load tokenizer libraries, if any
+-	TokenizerFactory::loadTokenizers(&quot;/usr/share/pinot/tokenizers&quot;);
+-	TokenizerFactory::loadTokenizers(confDirectory + string(&quot;/tokenizers&quot;));
+-
+-	// Ensure Xapian will be able to deal with internal indices
+-	if (XapianDatabaseFactory::getDatabase(settings.m_indexLocation, false) == NULL)
+-	{
+-		cerr &lt;&lt; _(&quot;Index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_indexLocation &lt;&lt; &quot; &quot;
+-			&lt;&lt; _(&quot;is not valid, please check&quot;) &lt;&lt; endl;
+-	}
+-	if (XapianDatabaseFactory::getDatabase(settings.m_mailIndexLocation, false) == NULL)
+-	{
+-		cerr &lt;&lt; _(&quot;Index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_mailIndexLocation &lt;&lt; &quot; &quot;
+-			&lt;&lt; _(&quot;is not valid, please check&quot;) &lt;&lt; endl;
+-	}
+-
+-	// Do the same for the history database
+-	if ((settings.m_historyDatabase.empty() == true) ||
+-		(ActionHistory::create(settings.m_historyDatabase) == false) ||
+-		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+-		(ViewHistory::create(settings.m_historyDatabase) == false))
+-	{
+-		cerr &lt;&lt; _(&quot;History database&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_historyDatabase &lt;&lt; &quot; &quot;
+-			&lt;&lt; _(&quot;couldn't be created&quot;) &lt;&lt; endl;
+-	}
+-
+-	atexit(closeAll);
+-
+-	// Localize language names
+-	Languages::setIntlName(0, _(&quot;Danish&quot;));
+-	Languages::setIntlName(1, _(&quot;Dutch&quot;));
+-	Languages::setIntlName(2, _(&quot;English&quot;));
+-	Languages::setIntlName(3, _(&quot;Finnish&quot;));
+-	Languages::setIntlName(4, _(&quot;French&quot;));
+-	Languages::setIntlName(5, _(&quot;German&quot;));
+-	Languages::setIntlName(6, _(&quot;Italian&quot;));
+-	Languages::setIntlName(7, _(&quot;Norwegian&quot;));
+-	Languages::setIntlName(8, _(&quot;Portuguese&quot;));
+-	Languages::setIntlName(9, _(&quot;Russian&quot;));
+-	Languages::setIntlName(10, _(&quot;Spanish&quot;));
+-	Languages::setIntlName(11, _(&quot;Swedish&quot;));
+-
+-	// Create and open the main dialog box
+-	mainWindow mainBox;
+-	m.run(mainBox);
+-
+-	return EXIT_SUCCESS;
+-}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000029.html">[Pinot-svn] r30 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000031.html">[Pinot-svn] r32 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30">[ date ]</a>
+              <a href="thread.html#30">[ thread ]</a>
+              <a href="subject.html#30">[ subject ]</a>
+              <a href="author.html#30">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

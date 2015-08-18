@@ -1,0 +1,318 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r248 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r248%20-%20trunk/Monitor&In-Reply-To=%3C200605182337.k4INbbYn012733%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000245.html">
+   <LINK REL="Next"  HREF="000247.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r248 - trunk/Monitor</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r248%20-%20trunk/Monitor&In-Reply-To=%3C200605182337.k4INbbYn012733%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r248 - trunk/Monitor">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri May 19 01:37:37 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000245.html">[Pinot-svn] r247 - trunk/Monitor
+</A></li>
+        <LI>Next message: <A HREF="000247.html">[Pinot-svn] r249 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#246">[ date ]</a>
+              <a href="thread.html#246">[ thread ]</a>
+              <a href="subject.html#246">[ subject ]</a>
+              <a href="author.html#246">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-19 01:37:13 +0200 (Fri, 19 May 2006)
+New Revision: 248
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/INotifyMonitor.h
+   trunk/Monitor/MonitorInterface.h
+Log:
+Monitoring now functional.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2006-05-17 14:33:35 UTC (rev 247)
++++ trunk/Monitor/INotifyMonitor.cpp	2006-05-18 23:37:13 UTC (rev 248)
+@@ -14,7 +14,10 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;sys/ioctl.h&gt;
+ #include &lt;sys/inotify.h&gt;
++#include &lt;string.h&gt;
++#include &lt;errno.h&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;INotifyMonitor.h&quot;
+@@ -41,7 +44,7 @@
+ /// Starts monitoring a location.
+ bool INotifyMonitor::addLocation(const string &amp;directory)
+ {
+-	uint32_t eventsMask = IN_CLOSE_WRITE|IN_MOVE|IN_CREATE|IN_DELETE|IN_DELETE_SELF|IN_MOVE_SELF;
++	uint32_t eventsMask = IN_ATTRIB|IN_CLOSE_WRITE|IN_MOVE|IN_CREATE|IN_DELETE|IN_UNMOUNT|IN_MOVE_SELF|IN_DELETE_SELF;
+ 
+ 	if ((directory.empty() == true) ||
+ 		(directory == &quot;/&quot;) ||
+@@ -50,8 +53,8 @@
+ 		return false;
+ 	}
+ 
+-	map&lt;string, int&gt;::iterator watchIter = m_watches.find(directory);
+-	if (watchIter != m_watches.end())
++	map&lt;string, int&gt;::iterator locationIter = m_locations.find(directory);
++	if (locationIter != m_locations.end())
+ 	{
+ 		// This is already being monitored
+ 		return true;
+@@ -61,12 +64,20 @@
+ 	int dirWd = inotify_add_watch(m_monitorFd, directory.c_str(), eventsMask);
+ 	if (dirWd &gt;= 0)
+ 	{
+-		m_watches.insert(pair&lt;string, int&gt;(directory, dirWd));
++		m_watches.insert(pair&lt;int, string&gt;(dirWd, directory));
++		m_locations.insert(pair&lt;string, int&gt;(directory, dirWd));
++#ifdef DEBUG
++		cout &lt;&lt; &quot;INotifyMonitor::addLocation: added watch &quot; &lt;&lt; dirWd &lt;&lt; &quot; &quot; &lt;&lt; directory &lt;&lt; endl;
++#endif
+ 
+ 		return true;
+ 	}
+-	cerr &lt;&lt; &quot;INotifyMonitor::addLocation: couldn't monitor &quot; &lt;&lt; directory &lt;&lt; endl;
+ 
++	char errBuffer[1024];
++
++	strerror_r(errno, errBuffer, 1024);
++	cerr &lt;&lt; &quot;INotifyMonitor::addLocation: couldn't monitor &quot; &lt;&lt; directory &lt;&lt; &quot;: &quot; &lt;&lt; errBuffer &lt;&lt; endl;
++
+ 	return false;
+ }
+ 
+@@ -79,11 +90,16 @@
+ 		return false;
+ 	}
+ 
+-	map&lt;string, int&gt;::iterator watchIter = m_watches.find(directory);
+-	if (watchIter != m_watches.end())
++	map&lt;string, int&gt;::iterator locationIter = m_locations.find(directory);
++	if (locationIter != m_locations.end())
+ 	{
+-		inotify_rm_watch(m_monitorFd, watchIter-&gt;second);
+-		m_watches.erase(watchIter);
++		inotify_rm_watch(m_monitorFd, locationIter-&gt;second);
++		map&lt;int, string&gt;::iterator watchIter = m_watches.find(locationIter-&gt;second);
++		if (watchIter != m_watches.end())
++		{
++			m_watches.erase(watchIter);
++		}
++		m_locations.erase(locationIter);
+ 
+ 		return true;
+ 	}
+@@ -96,6 +112,7 @@
+ bool INotifyMonitor::retrievePendingEvents(set&lt;MonitorEvent&gt; &amp;events)
+ {
+ 	char buffer[1024];
++	unsigned int queueLen;
+ 	size_t offset = 0;
+ 
+ 	events.clear();
+@@ -104,42 +121,59 @@
+ 		return false;
+ 	}
+ 
++    if (ioctl (m_monitorFd, FIONREAD, &amp;queueLen) == 0)
++	{
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: reading events&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: &quot;
++			&lt;&lt; queueLen &lt;&lt; &quot; bytes to read&quot; &lt;&lt; endl;
+ #endif
+-	int bytesRead = read(m_monitorFd, buffer, 1024); 
++	}
++
++	int bytesRead = read(m_monitorFd, buffer, 1024);
+ 	while (bytesRead - offset &gt; 0)
+ 	{
+ 		struct inotify_event *pEvent = (struct inotify_event *)&amp;buffer[offset];
+ 		size_t eventSize = sizeof(struct inotify_event) + pEvent-&gt;len;
++		bool isOnWatch = true;
+ 
+-		// The length includes the terminating NULL
+-		if (pEvent-&gt;len &lt; 1)
++#ifdef DEBUG
++		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: read &quot;
++			&lt;&lt; bytesRead &lt;&lt; &quot; bytes at offset &quot; &lt;&lt; offset &lt;&lt; endl;
++#endif
++		// What location is this event for ?
++		map&lt;int, string&gt;::iterator watchIter = m_watches.find(pEvent-&gt;wd);
++		if (watchIter == m_watches.end())
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: no name for watch &quot;
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: unknown watch &quot;
+ 				&lt;&lt; pEvent-&gt;wd &lt;&lt; endl;
+ #endif
+ 			offset += eventSize;
+ 			continue;
+ 		}
++
+ 		MonitorEvent monEvent;
+-		map&lt;uint32_t, string&gt;::iterator iter = m_movedFrom.end();
+ 
+-		// Get the whole event structure
+-		if (pEvent-&gt;name != NULL)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: event on &quot;
+-				&lt;&lt; pEvent-&gt;name &lt;&lt; endl;
+-#endif
+-			monEvent.m_location = pEvent-&gt;name;
+-		}
+ 		if (pEvent-&gt;mask &amp; IN_ISDIR)
+ 		{
+ 			monEvent.m_isDirectory = true;
+ 		}
+ 
++		monEvent.m_location = watchIter-&gt;second;
++		// A name is provided if the target is below a location we match
++		if (pEvent-&gt;len &gt;= 1)
++		{
++			monEvent.m_location += &quot;/&quot;;
++			monEvent.m_location += pEvent-&gt;name;
++			isOnWatch = false;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: event on &quot;
++			&lt;&lt; monEvent.m_location &lt;&lt; endl;
++#endif
++
++		map&lt;uint32_t, string&gt;::iterator movedIter = m_movedFrom.end();
++
+ 		// What type of event ?
+ 		switch (pEvent-&gt;mask)
+ 		{
+@@ -159,30 +193,39 @@
+ 				break;
+ 			case IN_MOVED_TO:
+ 				// What was the previous location ?
+-				iter = m_movedFrom.find(pEvent-&gt;cookie);
+-				if (iter != m_movedFrom.end())
++				movedIter = m_movedFrom.find(pEvent-&gt;cookie);
++				if (movedIter != m_movedFrom.end())
+ 				{
+-					monEvent.m_previousLocation = iter-&gt;second;
++					monEvent.m_previousLocation = movedIter-&gt;second;
+ 					monEvent.m_type = MonitorEvent::MOVED;
+-
+-					if (monEvent.m_isDirectory == true)
+-					{
+-						// We can already stop watching the old directory
+-						if (removeLocation(monEvent.m_previousLocation) == true)
+-						{
+-							// ...and watch this one instead
+-							addLocation(monEvent.m_location);
+-						}
+-					}
+-					m_movedFrom.erase(iter);
++#ifdef DEBUG
++					cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved from &quot;
++						&lt;&lt; monEvent.m_previousLocation &lt;&lt; endl;
++#endif
++					m_movedFrom.erase(movedIter);
+ 				}
+ #ifdef DEBUG
+ 				else cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: don't know where file was moved from&quot; &lt;&lt; endl;
+ #endif
+ 				break;
+-			case IN_DELETE_SELF:
++			case IN_DELETE:
+ 				monEvent.m_type = MonitorEvent::DELETED;
+ 				break;
++			case IN_MOVE_SELF:
++				// FIXME: how do we find out where the watched location was moved to ?
++			case IN_DELETE_SELF:
++#ifdef DEBUG
++				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: watch moved or deleted itself&quot; &lt;&lt; endl;
++#endif
++				removeLocation(monEvent.m_location);
++				break;
++			case IN_UNMOUNT:
++				if (isOnWatch == true)
++				{
++					// Watches are removed if the backing filesystem is unmounted
++					removeLocation(monEvent.m_location);
++				}
++				break;
+ 			default:
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: ignoring event &quot;
+
+Modified: trunk/Monitor/INotifyMonitor.h
+===================================================================
+--- trunk/Monitor/INotifyMonitor.h	2006-05-17 14:33:35 UTC (rev 247)
++++ trunk/Monitor/INotifyMonitor.h	2006-05-18 23:37:13 UTC (rev 248)
+@@ -39,7 +39,7 @@
+ 		virtual bool retrievePendingEvents(std::set&lt;MonitorEvent&gt; &amp;events);
+ 
+ 	protected:
+-		std::map&lt;std::string, int&gt; m_watches;
++		std::map&lt;std::string, int&gt; m_locations;
+ 		std::map&lt;uint32_t, std::string&gt; m_movedFrom;
+ 
+ 	private:
+
+Modified: trunk/Monitor/MonitorInterface.h
+===================================================================
+--- trunk/Monitor/MonitorInterface.h	2006-05-17 14:33:35 UTC (rev 247)
++++ trunk/Monitor/MonitorInterface.h	2006-05-18 23:37:13 UTC (rev 248)
+@@ -46,6 +46,7 @@
+ 		virtual bool retrievePendingEvents(std::set&lt;MonitorEvent&gt; &amp;events) = 0;
+ 
+ 	protected:
++		std::map&lt;int, std::string&gt; m_watches;
+ 		int m_monitorFd;
+ 
+ 		MonitorInterface() :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000245.html">[Pinot-svn] r247 - trunk/Monitor
+</A></li>
+	<LI>Next message: <A HREF="000247.html">[Pinot-svn] r249 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#246">[ date ]</a>
+              <a href="thread.html#246">[ thread ]</a>
+              <a href="subject.html#246">[ subject ]</a>
+              <a href="author.html#246">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

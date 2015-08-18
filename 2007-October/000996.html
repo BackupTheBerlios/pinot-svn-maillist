@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1002 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1002%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710021430.l92EUhIR008702%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000995.html">
+   <LINK REL="Next"  HREF="000997.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1002 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1002%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710021430.l92EUhIR008702%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1002 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct  2 16:30:43 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000995.html">[Pinot-svn] r1001 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000997.html">[Pinot-svn] r1003 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#996">[ date ]</a>
+              <a href="thread.html#996">[ thread ]</a>
+              <a href="subject.html#996">[ subject ]</a>
+              <a href="author.html#996">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-02 16:30:42 +0200 (Tue, 02 Oct 2007)
+New Revision: 1002
+
+Modified:
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+Log:
+Keep track of new labels separately.
+
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2007-10-02 14:25:04 UTC (rev 1001)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2007-10-02 14:30:42 UTC (rev 1002)
+@@ -128,6 +128,11 @@
+ {
+ }
+ 
++const set&lt;string&gt; &amp;prefsDialog::getLabelsToAdd(void) const
++{
++	return m_addedLabels;
++}
++
+ const set&lt;string&gt; &amp;prefsDialog::getLabelsToDelete(void) const
+ {
+ 	return m_deletedLabels;
+@@ -154,8 +159,18 @@
+ {
+ 	TreeModel::iterator iter;
+ 	TreeModel::Row row;
++	set&lt;string&gt; &amp;labels = m_settings.m_labels;
+ 
+-	const set&lt;string&gt; &amp;labels = m_settings.getLabels();
++	// Get labels directly from the daemon's index
++	IndexInterface *pDaemonIndex = m_settings.getIndex(m_settings.m_daemonIndexLocation);
++	if (pDaemonIndex != NULL)
++	{
++		labels.clear();
++		pDaemonIndex-&gt;getLabels(labels);
++
++		delete pDaemonIndex;
++	}
++
+ 	if (labels.empty() == true)
+ 	{
+ 		// This button will stay disabled until labels are added to the list
+@@ -183,9 +198,10 @@
+ 
+ void prefsDialog::save_labelsTreeview()
+ {
+-	// Clear the current settings
+-	m_settings.clearLabels();
++	set&lt;string&gt; &amp;labels = m_settings.m_labels;
+ 
++	labels.clear();
++
+ 	// Go through the labels tree
+ 	TreeModel::Children children = m_refLabelsTree-&gt;children();
+ 	if (children.empty() == false)
+@@ -196,8 +212,8 @@
+ 			TreeModel::Row row = *iter;
+ 
+ 			// Add this new label to the settings
+-			ustring labelName = row[m_labelsColumns.m_name];
+-			ustring oldName = row[m_labelsColumns.m_oldName];
++			ustring labelName(row[m_labelsColumns.m_name]);
++			ustring oldName(row[m_labelsColumns.m_oldName]);
+ 			// Was this label renamed ?
+ 			if ((row[m_labelsColumns.m_enabled] == true) &amp;&amp;
+ 				(labelName != oldName))
+@@ -211,11 +227,16 @@
+ 			{
+ 				m_deletedLabels.erase(labelIter);
+ 			}
++			// Is this a nw label ?
++			if (row[m_labelsColumns.m_enabled] == false)
++			{
++				m_addedLabels.insert(from_utf8(labelName));
++			}
+ 
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;prefsDialog::save_labelsTreeview: &quot; &lt;&lt; labelName &lt;&lt; endl;
+ #endif
+-			m_settings.addLabel(labelName);
++			labels.insert(labelName);
+ 		}
+ 	}
+ }
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2007-10-02 14:25:04 UTC (rev 1001)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2007-10-02 14:30:42 UTC (rev 1002)
+@@ -36,6 +36,8 @@
+ 	prefsDialog();
+ 	virtual ~prefsDialog();
+ 
++	const std::set&lt;std::string&gt; &amp;getLabelsToAdd(void) const;
++
+ 	const std::set&lt;std::string&gt; &amp;getLabelsToDelete(void) const;
+ 
+ 	const std::map&lt;std::string, std::string&gt; &amp;getLabelsToRename(void) const;
+@@ -71,6 +73,7 @@
+ 	TimestampedModelColumns m_mailColumns;
+ 	TimestampedModelColumns m_patternsColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refPatternsTree;
++	std::set&lt;std::string&gt; m_addedLabels;
+ 	std::set&lt;std::string&gt; m_deletedLabels;
+ 	std::map&lt;std::string, std::string&gt; m_renamedLabels;
+ 	std::set&lt;std::string&gt; m_deletedDirectories;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000995.html">[Pinot-svn] r1001 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000997.html">[Pinot-svn] r1003 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#996">[ date ]</a>
+              <a href="thread.html#996">[ thread ]</a>
+              <a href="subject.html#996">[ subject ]</a>
+              <a href="author.html#996">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,400 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1338 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1338%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200808191344.m7JDi2RD029632%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001328.html">
+   <LINK REL="Next"  HREF="001330.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1338 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1338%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200808191344.m7JDi2RD029632%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1338 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug 19 15:44:02 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001328.html">[Pinot-svn] r1337 - in trunk/IndexSearch: . Xapian XesamGLib
+</A></li>
+        <LI>Next message: <A HREF="001330.html">[Pinot-svn] r1339 - trunk/IndexSearch/Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1329">[ date ]</a>
+              <a href="thread.html#1329">[ thread ]</a>
+              <a href="subject.html#1329">[ subject ]</a>
+              <a href="author.html#1329">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-08-19 15:43:52 +0200 (Tue, 19 Aug 2008)
+New Revision: 1338
+
+Modified:
+   trunk/UI/GTK2/src/EnginesTree.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.cc
+Log:
+Synced with the new ModuleFactory::getSupportedEngines().
+Replaced PinotSettings::Engine with ModuleProperties.
+
+
+Modified: trunk/UI/GTK2/src/EnginesTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/EnginesTree.cpp	2008-08-19 13:40:26 UTC (rev 1337)
++++ trunk/UI/GTK2/src/EnginesTree.cpp	2008-08-19 13:43:52 UTC (rev 1338)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -246,7 +246,7 @@
+ //
+ void EnginesTree::populate(bool indexesOnly)
+ {
+-	set&lt;PinotSettings::Engine&gt; engines;
++	set&lt;ModuleProperties&gt; engines;
+ 	ustring currentUserChannel(_(&quot;Current User&quot;));
+ 	TreeModel::Row row;
+ 	TreeModel::iterator folderIter, localIter;
+@@ -293,11 +293,11 @@
+ 			m_refStore-&gt;iter_swap(folderIter, localIter);
+ 		}
+ 
+-		std::set&lt;PinotSettings::Engine&gt;::const_iterator engineIter = engines.begin();
++		std::set&lt;ModuleProperties&gt;::const_iterator engineIter = engines.begin();
+ 		for (; engineIter != engines.end(); ++engineIter)
+ 		{
+-			string engineName(engineIter-&gt;m_name);
+-			string engineType(engineIter-&gt;m_type);
++			string engineType(engineIter-&gt;m_name);
++			string engineName(engineIter-&gt;m_longName);
+ 
+ 			if (ModuleFactory::isSupported(engineType, true) == true)
+ 			{
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-08-19 13:40:26 UTC (rev 1337)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-08-19 13:43:52 UTC (rev 1338)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -314,33 +314,33 @@
+ 
+ bool PinotSettings::load(void)
+ {
+-	map&lt;string, bool&gt; engines;
+-	bool hasBackends = false;
++	map&lt;ModuleProperties, bool&gt; engines;
++	string currentUserChannelName(_(&quot;Current User&quot;));
+ 
+-	// Others are available as back-ends
++	// Some engines are available as back-ends
+ 	ModuleFactory::getSupportedEngines(engines);
+-	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin();
++	for (map&lt;ModuleProperties, bool&gt;::const_iterator engineIter = engines.begin();
+ 		engineIter != engines.end(); ++engineIter)
+ 	{
+ 		if (engineIter-&gt;second == true)
+ 		{
+-			string engineName(engineIter-&gt;first);
++			string channelName(engineIter-&gt;first.m_channel);
+ 
+-			if (isalpha(engineName[0]) != 0)
++			m_engineIds[1 &lt;&lt; m_engines.size()] = engineIter-&gt;first.m_name;
++
++			// Is a channel specified ?
++			if (channelName.empty() == true)
+ 			{
+-				engineName = toupper(engineName[0]);
+-				engineName += engineIter-&gt;first.substr(1);
++				channelName = currentUserChannelName;
+ 			}
++			m_engines.insert(engineIter-&gt;first);
+ 
+-			m_engineIds[1 &lt;&lt; m_engines.size()] = engineIter-&gt;first;
+-			m_engines.insert(Engine(engineName, engineIter-&gt;first, &quot;&quot;, _(&quot;Current User&quot;)));
+-			hasBackends = true;
++			if (m_engineChannels.find(channelName) == m_engineChannels.end())
++			{
++				m_engineChannels.insert(pair&lt;string, bool&gt;(channelName, true));
++			}
+ 		}
+ 	}
+-	if (hasBackends == true)
+-	{
+-		m_engineChannels.insert(pair&lt;string, bool&gt;(_(&quot;Current User&quot;), true));
+-	}
+ 
+ 	// Load the configuration file
+ 	string fileName = getConfigurationFileName();
+@@ -1331,7 +1331,7 @@
+ 					{
+ 						properties.m_channel = _(&quot;Unclassified&quot;);
+ 					}
+-					m_engines.insert(Engine(properties.m_name, &quot;sherlock&quot;, location, properties.m_channel));
++					m_engines.insert(ModuleProperties(&quot;sherlock&quot;, properties.m_name, location, properties.m_channel));
+ 					m_engineChannels.insert(pair&lt;string, bool&gt;(properties.m_channel, true));
+ 
+ 					// Any editable parameters in this plugin ?
+@@ -1699,7 +1699,7 @@
+ }
+ 
+ /// Returns the search engines set.
+-bool PinotSettings::getSearchEngines(set&lt;PinotSettings::Engine&gt; &amp;engines, string channelName) const
++bool PinotSettings::getSearchEngines(set&lt;ModuleProperties&gt; &amp;engines, const string &amp;channelName) const
+ {
+ 	if (channelName.empty() == true)
+ 	{
+@@ -1715,7 +1715,7 @@
+ 		}
+ 
+ 		// Copy engines that belong to the given channel
+-		for (set&lt;Engine&gt;::iterator engineIter = m_engines.begin(); engineIter != m_engines.end(); ++engineIter)
++		for (set&lt;ModuleProperties&gt;::iterator engineIter = m_engines.begin(); engineIter != m_engines.end(); ++engineIter)
+ 		{
+ 			if (engineIter-&gt;m_channel == channelName)
+ 			{
+@@ -1889,63 +1889,6 @@
+ 	return !m_isBlackList;
+ }
+ 
+-PinotSettings::Engine::Engine()
+-{
+-}
+-
+-PinotSettings::Engine::Engine(string name, string type, string option, string channel) :
+-	m_name(name),
+-	m_type(type),
+-	m_option(option),
+-	m_channel(channel)
+-{
+-}
+-
+-PinotSettings::Engine::Engine(const Engine &amp;other) :
+-	m_name(other.m_name),
+-	m_type(other.m_type),
+-	m_option(other.m_option),
+-	m_channel(other.m_channel)
+-{
+-}
+-
+-PinotSettings::Engine::~Engine()
+-{
+-}
+-
+-PinotSettings::Engine &amp;PinotSettings::Engine::operator=(const PinotSettings::Engine &amp;other)
+-{
+-	if (this != &amp;other)
+-	{
+-		m_name = other.m_name;
+-		m_type = other.m_type;
+-		m_option = other.m_option;
+-		m_channel = other.m_channel;
+-	}
+-
+-	return *this;
+-}
+-
+-bool PinotSettings::Engine::operator&lt;(const PinotSettings::Engine &amp;other) const
+-{
+-	if (m_name &lt; other.m_name)
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-bool PinotSettings::Engine::operator==(const Engine &amp;other) const
+-{
+-	if (m_name == other.m_name)
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+ PinotSettings::TimestampedItem::TimestampedItem() :
+ 	m_modTime(0)
+ {
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2008-08-19 13:40:26 UTC (rev 1337)
++++ trunk/UI/GTK2/src/PinotSettings.h	2008-08-19 13:43:52 UTC (rev 1338)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -29,6 +29,7 @@
+ #include &lt;libxml++/nodes/element.h&gt;
+ 
+ #include &quot;IndexInterface.h&quot;
++#include &quot;ModuleProperties.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ class PinotSettings
+@@ -91,26 +92,8 @@
+ 		/// Returns an IndexInterface for the given index location.
+ 		IndexInterface *getIndex(const std::string &amp;location);
+ 
+-		class Engine
+-		{
+-			public:
+-				Engine();
+-				Engine(const Engine &amp;other);
+-				Engine(std::string name, std::string type, std::string option, std::string channel);
+-				~Engine();
+-
+-				Engine &amp;operator=(const Engine &amp;other);
+-				bool operator&lt;(const Engine &amp;other) const;
+-				bool operator==(const Engine &amp;other) const;
+-
+-				std::string m_name;
+-				std::string m_type;
+-				std::string m_option;
+-				std::string m_channel;
+-		};
+-
+ 		/// Returns the search engines set.
+-		bool getSearchEngines(std::set&lt;Engine&gt; &amp;engines, std::string channelName = &quot;&quot;) const;
++		bool getSearchEngines(std::set&lt;ModuleProperties&gt; &amp;engines, const std::string &amp;channelName = &quot;&quot;) const;
+ 
+ 		/// Returns an ID that identifies the given engine name.
+ 		unsigned int getEngineId(const std::string &amp;name);
+@@ -224,7 +207,7 @@
+ 		bool m_firstRun;
+ 		std::map&lt;std::string, std::string&gt; m_indexNames;
+ 		std::map&lt;unsigned int, std::string&gt; m_indexIds;
+-		std::set&lt;Engine&gt; m_engines;
++		std::set&lt;ModuleProperties&gt; m_engines;
+ 		std::map&lt;unsigned int, std::string&gt; m_engineIds;
+ 		std::map&lt;std::string, bool&gt; m_engineChannels;
+ 		std::map&lt;std::string, QueryProperties&gt; m_queries;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-08-19 13:40:26 UTC (rev 1337)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-08-19 13:43:52 UTC (rev 1338)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2008 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -3346,7 +3346,7 @@
+ 		if (engineType == EnginesModelColumns::WEB_ENGINE)
+ 		{
+ 			// There's a special case for the Google API...
+-			if (engineName == &quot;Google API&quot;)
++			if (engineName == &quot;googleapi&quot;)
+ 			{
+ 				// Make sure this has been configured
+ 				if (m_settings.m_googleAPIKey.empty() == true)
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2008-08-19 13:40:26 UTC (rev 1337)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2008-08-19 13:43:52 UTC (rev 1338)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -126,7 +126,7 @@
+ 	populate_patternsTreeview(m_settings.m_filePatternsList, m_settings.m_isBlackList);
+ 
+ 	// Hide the Google API entry field ?
+-	if (ModuleFactory::isSupported(&quot;Google API&quot;) == false)
++	if (ModuleFactory::isSupported(&quot;googleapi&quot;) == false)
+ 	{
+ 		apiKeyLabel-&gt;hide();
+ 		apiKeyEntry-&gt;hide();
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-08-19 13:40:26 UTC (rev 1337)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-08-19 13:43:52 UTC (rev 1338)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -74,7 +74,7 @@
+ {
+ 	TreeModel::iterator folderIter = m_refStore-&gt;append();
+ 	TreeModel::Row row = *folderIter;
+-	std::map&lt;string, bool&gt; engines;
++	std::map&lt;ModuleProperties, bool&gt; engines;
+ 
+ 	// Indexes
+ 	statisticsTreeview-&gt;get_selection()-&gt;select(folderIter);
+@@ -93,12 +93,12 @@
+ 	row = *enginesIter;
+ 	row[m_statsColumns.m_name] = _(&quot;Search Engines&quot;);
+ 	ModuleFactory::getSupportedEngines(engines);
+-	for (std::map&lt;string, bool&gt;::const_iterator engineIter = engines.begin();
++	for (std::map&lt;ModuleProperties, bool&gt;::const_iterator engineIter = engines.begin();
+ 		engineIter != engines.end(); ++engineIter)
+ 	{
+ 		TreeModel::iterator statIter = m_refStore-&gt;append(enginesIter-&gt;children());
+ 		row = *statIter;
+-		row[m_statsColumns.m_name] = engineIter-&gt;first;
++		row[m_statsColumns.m_name] = engineIter-&gt;first.m_name;
+ 	}
+ 
+ 	// History
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001328.html">[Pinot-svn] r1337 - in trunk/IndexSearch: . Xapian XesamGLib
+</A></li>
+	<LI>Next message: <A HREF="001330.html">[Pinot-svn] r1339 - trunk/IndexSearch/Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1329">[ date ]</a>
+              <a href="thread.html#1329">[ thread ]</a>
+              <a href="subject.html#1329">[ subject ]</a>
+              <a href="author.html#1329">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

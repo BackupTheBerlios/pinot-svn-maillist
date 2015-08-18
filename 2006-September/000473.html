@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r480 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r480%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200609131253.k8DCrn2C013287%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000472.html">
+   <LINK REL="Next"  HREF="000474.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r480 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r480%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200609131253.k8DCrn2C013287%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r480 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 13 14:53:49 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000472.html">[Pinot-svn] r479 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000474.html">[Pinot-svn] r481 - in trunk: Collect Index Search Tokenize	UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#473">[ date ]</a>
+              <a href="thread.html#473">[ thread ]</a>
+              <a href="subject.html#473">[ subject ]</a>
+              <a href="author.html#473">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-13 14:53:48 +0200 (Wed, 13 Sep 2006)
+New Revision: 480
+
+Modified:
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+Log:
+Start the service if there are directories OR mbox files to index !
+
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2006-09-13 12:51:31 UTC (rev 479)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2006-09-13 12:53:48 UTC (rev 480)
+@@ -137,7 +137,7 @@
+ 	removeLabelButton-&gt;set_sensitive(true);
+ }
+ 
+-bool prefsDialog::save_labelsTreeview()
++void prefsDialog::save_labelsTreeview()
+ {
+ 	// Clear the current settings
+ 	m_settings.clearLabels();
+@@ -174,8 +174,6 @@
+ 			m_settings.addLabel(labelName);
+ 		}
+ 	}
+-
+-	return true;
+ }
+ 
+ void prefsDialog::populate_directoriesTreeview()
+@@ -246,19 +244,7 @@
+ 		}
+ 	}
+ 
+-	if (startService == true)
+-	{
+-		unsigned int crawledCount = 0, docsCount = 0;
+-
+-		// Let D-Bus activate the service if necessary
+-		DBusXapianIndex::getStatistics(crawledCount, docsCount);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;prefsDialog::save_directoriesTreeview: crawled &quot; &lt;&lt; crawledCount
+-			&lt;&lt; &quot;, indexed &quot; &lt;&lt; docsCount &lt;&lt; endl;
+-#endif
+-	}
+-
+-	return true;
++	return startService;
+ }
+ 
+ void prefsDialog::populate_mailTreeview()
+@@ -293,6 +279,8 @@
+ 
+ bool prefsDialog::save_mailTreeview()
+ {
++	bool startService = false;
++
+ 	// Clear the current settings
+ 	m_settings.m_mailAccounts.clear();
+ 
+@@ -326,10 +314,11 @@
+ 			cout &lt;&lt; &quot;prefsDialog::save_mailTreeview: &quot; &lt;&lt; mailAccount.m_name &lt;&lt; endl;
+ #endif
+ 			m_settings.m_mailAccounts.insert(mailAccount);
++			startService = true;
+ 		}
+ 	}
+ 
+-	return true;
++	return startService;
+ }
+ 
+ void prefsDialog::on_prefsOkbutton_clicked()
+@@ -345,8 +334,21 @@
+ 
+ 	// Validate the current lists
+ 	save_labelsTreeview();
+-	save_directoriesTreeview();
+-	save_mailTreeview();
++	if ((save_directoriesTreeview() == true) ||
++		(save_mailTreeview() == true))
++	{
++		unsigned int crawledCount = 0, docsCount = 0;
++
++		// Save the settings
++		m_settings.save();
++		// ... and let D-Bus activate the service if necessary
++		// If it was already running, changes will take effect when it's restarted
++		DBusXapianIndex::getStatistics(crawledCount, docsCount);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog::on_prefsOkbutton_clicked: crawled &quot; &lt;&lt; crawledCount
++			&lt;&lt; &quot;, indexed &quot; &lt;&lt; docsCount &lt;&lt; endl;
++#endif
++	}
+ }
+ 
+ void prefsDialog::on_addLabelButton_clicked()
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2006-09-13 12:51:31 UTC (rev 479)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2006-09-13 12:53:48 UTC (rev 480)
+@@ -51,7 +51,7 @@
+ 	virtual void on_removeAccountButton_clicked();
+ 
+ 	void populate_labelsTreeview();
+-	bool save_labelsTreeview();
++	void save_labelsTreeview();
+ 	void populate_directoriesTreeview();
+ 	bool save_directoriesTreeview();
+ 	void populate_mailTreeview();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000472.html">[Pinot-svn] r479 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000474.html">[Pinot-svn] r481 - in trunk: Collect Index Search Tokenize	UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#473">[ date ]</a>
+              <a href="thread.html#473">[ thread ]</a>
+              <a href="subject.html#473">[ subject ]</a>
+              <a href="author.html#473">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

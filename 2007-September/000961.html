@@ -1,0 +1,1210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r967 - in trunk: Index Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r967%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709081058.l88AwwT5009319%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000960.html">
+   <LINK REL="Next"  HREF="000962.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r967 - in trunk: Index Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r967%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709081058.l88AwwT5009319%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r967 - in trunk: Index Search UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep  8 12:58:58 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000960.html">[Pinot-svn] r966 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000962.html">[Pinot-svn] r968 - in trunk: UI/GTK2 UI/GTK2/src po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#961">[ date ]</a>
+              <a href="thread.html#961">[ thread ]</a>
+              <a href="subject.html#961">[ subject ]</a>
+              <a href="author.html#961">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-08 12:58:49 +0200 (Sat, 08 Sep 2007)
+New Revision: 967
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/queryDialog.cc
+   trunk/UI/GTK2/src/queryDialog.hh
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+   trunk/UI/GTK2/src/queryDialog_glade.hh
+   trunk/Utils/StringManip.cpp
+   trunk/Utils/StringManip.h
+Log:
+Date ranges are now part of the query string in the form &quot;yyyymmdd..yyyymmdd&quot;
+and processed with a DateValueRangeProcessor. Users can use the query dialog's
+new &quot;Date range&quot; filter.
+D, M and Y terms need not be generated for each document.
+If Xapian &gt; 1.0.2, spelling correction is enabled. Whenever a query on an index
+doesn't return anything, the UI creates a new query (prefixed with &quot;Corrected &quot;)
+that suggests replacement terms.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Index/XapianIndex.cpp	2007-09-08 10:58:49 UTC (rev 967)
+@@ -417,16 +417,6 @@
+ 		}
+ 		doc.add_term(string(&quot;XEXT:&quot;) + XapianDatabase::limitTermLength(extension));
+ 	}
+-	// Add the date terms D, M and Y
+-	time_t timeT = TimeConverter::fromTimestamp(info.getTimestamp());
+-	struct tm *tm = localtime(&amp;timeT);
+-	string yyyymmdd = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
+-	if (yyyymmdd.length() == 8)
+-	{
+-		doc.add_term(string(&quot;D&quot;) + yyyymmdd);
+-		doc.add_term(string(&quot;M&quot;) + yyyymmdd.substr(0, 6));
+-		doc.add_term(string(&quot;Y&quot;) + yyyymmdd.substr(0, 4));
+-	}
+ 	// Finally, add the language code with prefix L
+ 	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
+ 	// ...and the MIME type with prefix T
+@@ -551,16 +541,6 @@
+ 		}
+ 		commonTerms.insert(string(&quot;XEXT:&quot;) + XapianDatabase::limitTermLength(extension));
+ 	}
+-	// Date terms
+-	time_t timeT = TimeConverter::fromTimestamp(docInfo.getTimestamp());
+-	struct tm *tm = localtime(&amp;timeT);
+-	string yyyymmdd = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
+-	if (yyyymmdd.length() == 8)
+-	{
+-		commonTerms.insert(string(&quot;D&quot;) + yyyymmdd);
+-		commonTerms.insert(string(&quot;M&quot;) + yyyymmdd.substr(0, 6));
+-		commonTerms.insert(string(&quot;Y&quot;) + yyyymmdd.substr(0, 4));
+-	}
+ 	// Language code
+ 	commonTerms.insert(string(&quot;L&quot;) + Languages::toCode(language));
+ 	// MIME type
+@@ -626,9 +606,12 @@
+ 	const string &amp;language) const
+ {
+ 	time_t timeT = TimeConverter::fromTimestamp(info.getTimestamp());
++	struct tm *tm = localtime(&amp;timeT);
++	string yyyymmdd(TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday));
+ 
+ 	// Add this value to allow sorting by date
+-	doc.add_value(0, StringManip::integerToBinaryString((uint32_t)timeT));
++	doc.add_value(0, yyyymmdd);
++	// FIXME: add a value for size
+ 
+ 	DocumentInfo docCopy(info);
+ 	docCopy.setLanguage(language);
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Search/QueryProperties.cpp	2007-09-08 10:58:49 UTC (rev 967)
+@@ -29,14 +29,6 @@
+ QueryProperties::QueryProperties() :
+ 	m_type(XAPIAN_QP),
+ 	m_resultsCount(10),
+-	m_enableMinDate(false),
+-	m_minDay(0),
+-	m_minMonth(0),
+-	m_minYear(0),
+-	m_enableMaxDate(false),
+-	m_maxDay(0),
+-	m_maxMonth(0),
+-	m_maxYear(0),
+ 	m_indexResults(false)
+ {
+ }
+@@ -47,14 +39,6 @@
+ 	m_type(type),
+ 	m_freeQuery(freeQuery),
+ 	m_resultsCount(10),
+-	m_enableMinDate(false),
+-	m_minDay(0),
+-	m_minMonth(0),
+-	m_minYear(0),
+-	m_enableMaxDate(false),
+-	m_maxDay(0),
+-	m_maxMonth(0),
+-	m_maxYear(0),
+ 	m_indexResults(false)
+ {
+ 	removeFilters();
+@@ -69,14 +53,6 @@
+ 	m_hostFilter(other.m_hostFilter),
+ 	m_fileFilter(other.m_fileFilter),
+ 	m_resultsCount(other.m_resultsCount),
+-	m_enableMinDate(other.m_enableMinDate),
+-	m_minDay(other.m_minDay),
+-	m_minMonth(other.m_minMonth),
+-	m_minYear(other.m_minYear),
+-	m_enableMaxDate(other.m_enableMaxDate),
+-	m_maxDay(other.m_maxDay),
+-	m_maxMonth(other.m_maxMonth),
+-	m_maxYear(other.m_maxYear),
+ 	m_indexResults(other.m_indexResults),
+ 	m_labelName(other.m_labelName)
+ {
+@@ -98,14 +74,6 @@
+ 		m_hostFilter = other.m_hostFilter;
+ 		m_fileFilter = other.m_fileFilter;
+ 		m_resultsCount = other.m_resultsCount;
+-		m_enableMinDate = other.m_enableMinDate;
+-		m_minDay = other.m_minDay;
+-		m_minMonth = other.m_minMonth;
+-		m_minYear = other.m_minYear;
+-		m_enableMaxDate = other.m_enableMaxDate;
+-		m_maxDay = other.m_maxDay;
+-		m_maxMonth = other.m_maxMonth;
+-		m_maxYear = other.m_maxYear;
+ 		m_indexResults = other.m_indexResults;
+ 		m_labelName = other.m_labelName;
+ 	}
+@@ -270,44 +238,6 @@
+ 	return m_resultsCount;
+ }
+ 
+-/// Sets the minimum date.
+-void QueryProperties::setMinimumDate(bool enable, unsigned int day, unsigned int month, unsigned int year)
+-{
+-	m_enableMinDate = enable;
+-	m_minDay = day;
+-	m_minMonth = month;
+-	m_minYear = year;
+-}
+-
+-/// Gets the minimum date.
+-bool QueryProperties::getMinimumDate(unsigned int &amp;day, unsigned int &amp;month, unsigned int &amp;year) const
+-{
+-	day = m_minDay;
+-	month = m_minMonth;
+-	year = m_minYear;
+-
+-	return m_enableMinDate;
+-}
+-
+-/// Sets the maximum date.
+-void QueryProperties::setMaximumDate(bool enable, unsigned int day, unsigned int month, unsigned int year)
+-{
+-	m_enableMaxDate = enable;
+-	m_maxDay = day;
+-	m_maxMonth = month;
+-	m_maxYear = year;
+-}
+-
+-/// Gets the maximum date.
+-bool QueryProperties::getMaximumDate(unsigned int &amp;day, unsigned int &amp;month, unsigned int &amp;year) const
+-{
+-	day = m_maxDay;
+-	month = m_maxMonth;
+-	year = m_maxYear;
+-
+-	return m_enableMaxDate;
+-}
+-
+ /// Sets whether results should be indexed.
+ void QueryProperties::setIndexResults(bool index)
+ {
+@@ -352,9 +282,7 @@
+ /// Returns whether the query is empty.
+ bool QueryProperties::isEmpty() const
+ {
+-	if ((m_freeQuery.empty() == true) &amp;&amp;
+-		(m_enableMinDate == false) &amp;&amp;
+-		(m_enableMaxDate == false))
++	if (m_freeQuery.empty() == true)
+ 	{
+ 		return true;
+ 	}
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Search/QueryProperties.h	2007-09-08 10:58:49 UTC (rev 967)
+@@ -69,16 +69,6 @@
+ 		/// Gets the maximum number of results.
+ 		unsigned int getMaximumResultsCount(void) const;
+ 
+-		/// Sets the minimum date.
+-		void setMinimumDate(bool enable, unsigned int day, unsigned int month, unsigned int year);
+-		/// Gets the minimum date.
+-		bool getMinimumDate(unsigned int &amp;day, unsigned int &amp;month, unsigned int &amp;year) const;
+-
+-		/// Sets the maximum date.
+-		void setMaximumDate(bool enable, unsigned int day, unsigned int month, unsigned int year);
+-		/// Gets the maximum date.
+-		bool getMaximumDate(unsigned int &amp;day, unsigned int &amp;month, unsigned int &amp;year) const;
+-
+ 		/// Sets whether results should be indexed.
+ 		void setIndexResults(bool index);
+ 		/// Gets whether results should be indexed
+@@ -104,14 +94,6 @@
+ 		string m_hostFilter;
+ 		string m_fileFilter;
+ 		unsigned int m_resultsCount;
+-		bool m_enableMinDate;
+-		unsigned int m_minDay;
+-		unsigned int m_minMonth;
+-		unsigned int m_minYear;
+-		bool m_enableMaxDate;
+-		unsigned int m_maxDay;
+-		unsigned int m_maxMonth;
+-		unsigned int m_maxYear;
+ 		bool m_indexResults;
+ 		string m_labelName;
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Search/XapianEngine.cpp	2007-09-08 10:58:49 UTC (rev 967)
+@@ -112,85 +112,6 @@
+ {
+ }
+ 
+-Xapian::Query XapianEngine::dateFilter(unsigned int minDay, unsigned int minMonth, unsigned int minYear,
+-	unsigned int maxDay, unsigned int maxMonth, unsigned int maxYear)
+-{
+-	// The following was lifted from Xapian's date_range_filter() in
+-	// xapian-applications/omega/date.cc and prettified slightly
+-	vector&lt;Xapian::Query&gt; v;
+-	char buf[10];
+-
+-	snprintf(buf, 10, &quot;D%04d%02d&quot;, minYear, minMonth);
+-	int d_last = lastDay(minYear, minMonth);
+-	int d_end = d_last;
+-	if (minYear == maxYear &amp;&amp; minMonth == maxMonth &amp;&amp; maxDay &lt; d_last)
+-	{
+-		d_end = maxDay;
+-	}
+-	// Deal with any initial partial month
+-	if (minDay &gt; 1 || d_end &lt; d_last)
+-	{
+-		for ( ; minDay &lt;= d_end ; minDay++)
+-		{
+-			snprintf(buf + 7, 3, &quot;%02d&quot;, minDay);
+-			v.push_back(Xapian::Query(buf));
+-		}
+-	} else {
+-		buf[0] = 'M';
+-		v.push_back(Xapian::Query(buf));
+-	}
+-	
+-	if (minYear == maxYear &amp;&amp; minMonth == maxMonth)
+-	{
+-		return Xapian::Query(Xapian::Query::OP_OR, v.begin(), v.end());
+-	}
+-
+-	int m_last = (minYear &lt; maxYear) ? 12 : maxMonth - 1;
+-	while (++minMonth &lt;= m_last)
+-	{
+-		snprintf(buf + 5, 5, &quot;%02d&quot;, minMonth);
+-		buf[0] = 'M';
+-		v.push_back(Xapian::Query(buf));
+-	}
+-	
+-	if (minYear &lt; maxYear)
+-	{
+-		while (++minYear &lt; maxYear)
+-		{
+-			snprintf(buf + 1, 9, &quot;%04d&quot;, minYear);
+-			buf[0] = 'Y';
+-			v.push_back(Xapian::Query(buf));
+-		}
+-		snprintf(buf + 1, 9, &quot;%04d&quot;, maxYear);
+-		buf[0] = 'M';
+-		for (minMonth = 1; minMonth &lt; maxMonth; minMonth++)
+-		{
+-			snprintf(buf + 5, 5, &quot;%02d&quot;, minMonth);
+-			v.push_back(Xapian::Query(buf));
+-		}
+-	}
+-	
+-	snprintf(buf + 5, 5, &quot;%02d&quot;, maxMonth);
+-
+-	// Deal with any final partial month
+-	if (maxDay &lt; lastDay(maxYear, maxMonth))
+-	{
+-		buf[0] = 'D';
+-		for (minDay = 1 ; minDay &lt;= maxDay; minDay++)
+-		{
+-			snprintf(buf + 7, 3, &quot;%02d&quot;, minDay);
+-			v.push_back(Xapian::Query(buf));
+-		}
+-	}
+-	else
+-	{
+-		buf[0] = 'M';
+-		v.push_back(Xapian::Query(buf));
+-	}
+-
+-	return Xapian::Query(Xapian::Query::OP_OR, v.begin(), v.end());
+-}
+-
+ Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 	const string &amp;stemLanguage, DefaultOperator defaultOperator,
+ 	string &amp;correctedFreeQuery, bool minimal)
+@@ -343,11 +264,15 @@
+ 	if (minimal == false)
+ 	{
+ 		flags |= Xapian::QueryParser::FLAG_WILDCARD;
+-#if 0
++#if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
+ 		flags |= Xapian::QueryParser::FLAG_SPELLING_CORRECTION;
+ #endif
+ 	}
+ 
++	// Date range
++	Xapian::DateValueRangeProcessor dateProcessor(0);
++	parser.add_valuerangeprocessor(&amp;dateProcessor);
++
+ 	// Parse the query string
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+ 	if (minimal == true)
+@@ -355,7 +280,7 @@
+ 		return parsedQuery;
+ 	}
+ 
+-#if 0
++#if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
+ 	// Any correction ?
+ 	correctedFreeQuery = parser.get_corrected_query_string();
+ #ifdef DEBUG
+@@ -363,60 +288,6 @@
+ #endif
+ #endif
+ 
+-	// Apply a date range ?
+-	bool enableMin = queryProps.getMinimumDate(minDay, minMonth, minYear);
+-	bool enableMax = queryProps.getMaximumDate(maxDay, maxMonth, maxYear);
+-	if ((enableMin == false) &amp;&amp; 
+-		(enableMax == false))
+-	{
+-		// No
+-		return parsedQuery;
+-	}
+-
+-	// Anyone going as far back as Year 0 is taking the piss :-)
+-	if ((enableMin == false) ||
+-		(minYear == 0))
+-	{
+-		minDay = minMonth = 1;
+-		minYear = 1970;
+-	}
+-	// If the second date is older than the Epoch, the first date should be set too
+-	if ((enableMax == false) ||
+-		(maxYear == 0))
+-	{
+-		time_t nowTime = time(NULL);
+-		struct tm *timeTm = localtime(&amp;nowTime);
+-		maxYear = timeTm-&gt;tm_year + 1900;
+-		maxMonth = timeTm-&gt;tm_mon + 1;
+-		maxDay = timeTm-&gt;tm_mday;
+-	}
+-
+-	string yyyymmddMin(TimeConverter::toYYYYMMDDString(minYear, minMonth, minDay));
+-	string yyyymmddMax(TimeConverter::toYYYYMMDDString(maxYear, maxMonth, maxDay));
+-	time_t startTime = TimeConverter::fromYYYYMMDDString(yyyymmddMin);
+-	time_t endTime = TimeConverter::fromYYYYMMDDString(yyyymmddMax);
+- 
+-	double diffTime = difftime(endTime, startTime);
+-	if (diffTime &gt; 0)
+-	{
+-		Xapian::Query dateQuery = dateFilter(minDay, minMonth, minYear, maxDay, maxMonth, maxYear);
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianEngine::parseQuery: applied date range (&quot;
+-			&lt;&lt; yyyymmddMax &lt;&lt; &quot; &lt;= &quot; &lt;&lt; yyyymmddMin &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-		if (parsedQuery.empty() == false)
+-		{
+-			return Xapian::Query(Xapian::Query::OP_FILTER, parsedQuery, dateQuery);
+-		}
+-
+-		return dateQuery;
+-	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;XapianEngine::parseQuery: date range is zero or bogus (&quot;
+-		&lt;&lt; yyyymmddMax &lt;&lt; &quot; &lt;= &quot; &lt;&lt; yyyymmddMin &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-
+ 	return parsedQuery;
+ }
+ 
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Search/XapianEngine.h	2007-09-08 10:58:49 UTC (rev 967)
+@@ -28,6 +28,21 @@
+ #include &quot;SearchEngineInterface.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ 
++// Spelling correction in Xapian &lt;= 1.0.2 may cause a crash
++// See <A HREF="http://www.xapian.org/cgi-bin/bugzilla/show_bug.cgi?id=194">http://www.xapian.org/cgi-bin/bugzilla/show_bug.cgi?id=194</A>
++#define ENABLE_XAPIAN_SPELLING_CORRECTION 0
++#if XAPIAN_MAJOR_VERSION&gt;1
++#define ENABLE_XAPIAN_SPELLING_CORRECTION 1
++#elif XAPIAN_MAJOR_VERSION==1
++#if XAPIAN_MINOR_VERSION&gt;0
++#define ENABLE_XAPIAN_SPELLING_CORRECTION 1
++#else
++#if XAPIAN_REVISION&gt;2
++#define ENABLE_XAPIAN_SPELLING_CORRECTION 1
++#endif
++#endif
++#endif
++
+ /// Wraps Xapian's search funtionality.
+ class XapianEngine : public SearchEngineInterface
+ {
+@@ -53,9 +68,6 @@
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+ 			unsigned int startDoc, unsigned int maxResultsCount);
+ 
+-		static Xapian::Query dateFilter(unsigned int minDay, unsigned int minMonth, unsigned int minYear,
+-		        unsigned int maxDay, unsigned int maxMonth, unsigned int maxYear);
+-
+ 		static Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, DefaultOperator defaultOperator,
+ 			string &amp;correctedFreeQuery, bool minimal = false);
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-09-08 10:58:49 UTC (rev 967)
+@@ -666,12 +666,9 @@
+ 
+ 	QueryProperties queryProps;
+ 	Date minDate, maxDate;
+-	string backCompatString;
++	string freeQuery;
+ 	bool enableMinDate = false, enableMaxDate = false;
+ 
+-	minDate.set_time(time(NULL));
+-	maxDate.set_time(time(NULL));
+-
+ 	// Load the query's properties
+ 	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+ 	{
+@@ -690,88 +687,88 @@
+ 		}
+ 		else if (nodeName == &quot;text&quot;)
+ 		{
+-			queryProps.setFreeQuery(nodeContent);
++			freeQuery = nodeContent;
+ 		}
+ 		else if ((nodeName == &quot;and&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += nodeContent;
++			freeQuery += nodeContent;
+ 		}
+ 		else if ((nodeName == &quot;phrase&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += &quot;\&quot;&quot;;
+-			backCompatString += nodeContent;
+-			backCompatString += &quot;\&quot;&quot;;
++			freeQuery += &quot;\&quot;&quot;;
++			freeQuery += nodeContent;
++			freeQuery += &quot;\&quot;&quot;;
+ 		}
+ 		else if ((nodeName == &quot;any&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+ 			// FIXME: don't be lazy and add those correctly
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += nodeContent;
++			freeQuery += nodeContent;
+ 		}
+ 		else if ((nodeName == &quot;not&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += &quot;-(&quot;;
+-			backCompatString += nodeContent;
+-			backCompatString += &quot;)&quot;;
++			freeQuery += &quot;-(&quot;;
++			freeQuery += nodeContent;
++			freeQuery += &quot;)&quot;;
+ 		}
+ 		else if ((nodeName == &quot;language&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += &quot;language:&quot;;
+-			backCompatString += nodeContent;
++			freeQuery += &quot;language:&quot;;
++			freeQuery += nodeContent;
+ 		}
+ 		else if ((nodeName == &quot;hostfilter&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += &quot;site:&quot;;
+-			backCompatString += nodeContent;
++			freeQuery += &quot;site:&quot;;
++			freeQuery += nodeContent;
+ 		}
+ 		else if ((nodeName == &quot;filefilter&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += &quot;file:&quot;;
+-			backCompatString += nodeContent;
++			freeQuery += &quot;file:&quot;;
++			freeQuery += nodeContent;
+ 		}
+ 		else if ((nodeName == &quot;labelfilter&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (backCompatString.empty() == false)
++			if (freeQuery.empty() == false)
+ 			{
+-				backCompatString += &quot; &quot;;
++				freeQuery += &quot; &quot;;
+ 			}
+-			backCompatString += &quot;label:&quot;;
+-			backCompatString += nodeContent;
++			freeQuery += &quot;label:&quot;;
++			freeQuery += nodeContent;
+ 		}
+ 		else if (nodeName == &quot;maxresults&quot;)
+ 		{
+@@ -784,12 +781,10 @@
+ 			{
+ 				enableMinDate = true;
+ 			}
+-			queryProps.setMinimumDate(enableMinDate, minDate.get_day(), minDate.get_month(), minDate.get_year());
+ 		}
+ 		else if (nodeName == &quot;mindate&quot;)
+ 		{
+ 			minDate.set_parse(nodeContent);
+-			queryProps.setMinimumDate(enableMinDate, minDate.get_day(), minDate.get_month(), minDate.get_year());
+ 		}
+ 		else if (nodeName == &quot;enablemaxdate&quot;)
+ 		{
+@@ -797,12 +792,10 @@
+ 			{
+ 				enableMaxDate = true;
+ 			}
+-			queryProps.setMaximumDate(enableMaxDate, maxDate.get_day(), maxDate.get_month(), maxDate.get_year());
+ 		}
+ 		else if (nodeName == &quot;maxdate&quot;)
+ 		{
+ 			maxDate.set_parse(nodeContent);
+-			queryProps.setMaximumDate(enableMaxDate, maxDate.get_day(), maxDate.get_month(), maxDate.get_year());
+ 		}
+ 		else if (nodeName == &quot;index&quot;)
+ 		{
+@@ -821,12 +814,42 @@
+ 		}
+ 	}
+ 
++	// Are pre-0.80 dates specified ?
++	if ((enableMinDate == true) ||
++		(enableMaxDate == true))
++	{
++		// Provide reasonable defaults
++		if (enableMinDate == false)
++		{
++			minDate.set_day(1);
++			minDate.set_month(Date::JANUARY);
++			minDate.set_year(1970);
++		}
++		if (enableMaxDate == false)
++		{
++			maxDate.set_day(31);
++			maxDate.set_month(Date::DECEMBER);
++			maxDate.set_year(2099);
++		}
++
++		ustring minDateStr(minDate.format_string(&quot;%Y%m%d&quot;));
++		ustring maxDateStr(maxDate.format_string(&quot;%Y%m%d&quot;));
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;PinotSettings::loadQueries: date range &quot; &lt;&lt; minDateStr &lt;&lt; &quot; to &quot; &lt;&lt; maxDateStr &lt;&lt; endl;
++#endif
++		freeQuery += &quot; &quot;;
++		freeQuery += minDateStr;
++		freeQuery += &quot;..&quot;;
++		freeQuery += maxDateStr;
++	}
++
+ 	// We need at least a name
+ 	if (queryProps.getName().empty() == false)
+ 	{
+-		if (backCompatString.empty() == false)
++		if (freeQuery.empty() == false)
+ 		{
+-			queryProps.setFreeQuery(backCompatString);
++			queryProps.setFreeQuery(freeQuery);
+ 		}
+ 		m_queries[queryProps.getName()] = queryProps;
+ 	}
+@@ -1268,27 +1291,12 @@
+ 				return false;
+ 			}
+ 
+-			Date aDate;
+ 			unsigned int day, month, year;
+ 
+ 			addChildElement(pElem, &quot;name&quot;, queryIter-&gt;first);
+ 			addChildElement(pElem, &quot;text&quot;, queryIter-&gt;second.getFreeQuery());
+ 			sprintf(numStr, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
+ 			addChildElement(pElem, &quot;maxresults&quot;, numStr);
+-			bool enable = queryIter-&gt;second.getMinimumDate(day, month, year);
+-			if (year &gt; 0)
+-			{
+-				addChildElement(pElem, &quot;enablemindate&quot;, (enable ? &quot;YES&quot; : &quot;NO&quot;));
+-				aDate.set_dmy((Date::Day )day, (Date::Month )month, (Date::Year )year);
+-				addChildElement(pElem, &quot;mindate&quot;, aDate.format_string(&quot;%F&quot;));
+-			}
+-			enable = queryIter-&gt;second.getMaximumDate(day, month, year);
+-			if (year &gt; 0)
+-			{
+-				addChildElement(pElem, &quot;enablemaxdate&quot;, (enable ? &quot;YES&quot; : &quot;NO&quot;));
+-				aDate.set_dmy((Date::Day )day, (Date::Month )month, (Date::Year )year);
+-				addChildElement(pElem, &quot;maxdate&quot;, aDate.format_string(&quot;%F&quot;));
+-			}
+ 			addChildElement(pElem, &quot;index&quot;, (queryIter-&gt;second.getIndexResults() ? &quot;ALL&quot; : &quot;NONE&quot;));
+ 			addChildElement(pElem, &quot;label&quot;, queryIter-&gt;second.getLabelName());
+ 		}
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-09-08 10:58:49 UTC (rev 967)
+@@ -370,6 +370,45 @@
+ }
+ 
+ //
++// Add a query
++//
++void mainWindow::add_query(QueryProperties &amp;queryProps, bool mergeQueries)
++{
++	ustring queryName(queryProps.getName());
++
++	// Does such a query already exist ?
++	TreeModel::Children children = m_refQueryTree-&gt;children();
++	for (TreeModel::Children::iterator iter = children.begin();
++		iter != children.end(); ++iter)
++	{
++		TreeModel::Row row = *iter;
++
++		if (queryName == from_utf8(row[m_queryColumns.m_name]))
++		{
++			if (mergeQueries == true)
++			{
++				QueryProperties existingQueryProps = row[m_queryColumns.m_properties];
++				ustring freeQuery(existingQueryProps.getFreeQuery());
++
++				if (freeQuery != queryProps.getFreeQuery())
++				{
++					queryProps.setFreeQuery(freeQuery + &quot; | &quot; + queryProps.getFreeQuery());
++				}
++			}
++			m_settings.removeQuery(queryName);
++			break;
++		}
++	}
++
++	// Update everything
++	if (m_settings.addQuery(queryProps) == true)
++	{
++		populate_queryTreeview(queryName);
++		queryExpander-&gt;set_expanded(true);
++	}	
++}
++
++//
+ // Query list selection changed
+ //
+ void mainWindow::on_queryTreeviewSelection_changed()
+@@ -1000,8 +1039,25 @@
+ 			pResultsTree-&gt;deleteResults(engineName);
+ 			pResultsTree-&gt;addResults(engineName, resultsList,
+ 				resultsCharset);
++		}
+ 
+-			// FIXME: if wasCorrected is true, suggest the correction to the user
++		// Suggest the correction to the user
++		if (wasCorrected == true)
++		{
++			ustring correctedQueryName(_(&quot;Corrected&quot;));
++
++			if (queryName.empty() == true)
++			{
++				correctedQueryName += &quot;...&quot;;
++			}
++			else
++			{
++				correctedQueryName += &quot; &quot;;
++				correctedQueryName += queryName;
++			}
++			queryProps.setName(correctedQueryName);
++
++			add_query(queryProps, true);
+ 		}
+ 
+ 		// Index results ?
+@@ -1092,6 +1148,8 @@
+ 		{
+ 			moreLike = &quot; &quot;;
+ 		}
++
++		// Add the expand terms
+ 		for (set&lt;string&gt;::const_iterator termIter = expandTerms.begin();
+ 			termIter != expandTerms.end(); ++termIter)
+ 		{
+@@ -1101,30 +1159,9 @@
+ 			}
+ 			moreLike += *termIter;
+ 		}
+-
+-		// Does such a query already exist ?
+-		TreeModel::Children children = m_refQueryTree-&gt;children();
+-		for (TreeModel::Children::iterator iter = children.begin();
+-			iter != children.end(); ++iter)
+-		{
+-			TreeModel::Row row = *iter;
+-
+-			if (queryName == from_utf8(row[m_queryColumns.m_name]))
+-			{
+-				m_settings.removeQuery(queryName);
+-				break;
+-			}
+-		}
+-
+-		// Add these terms
+ 		queryProps.setFreeQuery(queryProps.getFreeQuery() + moreLike);
+ 
+-		// Update everything
+-		if (m_settings.addQuery(queryProps) == true)
+-		{
+-			populate_queryTreeview(queryName);
+-			queryExpander-&gt;set_expanded(true);
+-		}
++		add_query(queryProps, false);
+ 	}
+ 	else if (type == &quot;LabelUpdateThread&quot;)
+ 	{
+@@ -1395,8 +1432,6 @@
+ 
+ 		// Refresh the engines list
+ 		m_pEnginesTree-&gt;populate();
+-		// ...and the index menu
+-		populate_indexMenu();
+ 	}
+ 
+ 	set_status(_(&quot;Edited index&quot;));
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/mainWindow.hh	2007-09-08 10:58:49 UTC (rev 967)
+@@ -60,6 +60,7 @@
+ 	void save_queryTreeview();
+ 	void populate_cacheMenu();
+ 	void populate_indexMenu();
++	void add_query(QueryProperties &amp;queryProps, bool mergeQueries);
+ 
+ 	// Handlers
+ 	bool on_queryCompletion_match(const Glib::ustring &amp;key, const Gtk::TreeModel::const_iterator &amp;iter);
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/queryDialog.cc	2007-09-08 10:58:49 UTC (rev 967)
+@@ -27,7 +27,6 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;queryDialog.hh&quot;
+-#include &quot;dateDialog.hh&quot;
+ 
+ using namespace std;
+ using namespace Glib;
+@@ -59,29 +58,6 @@
+ 	}
+ 	// Maximum number of results
+ 	resultsCountSpinbutton-&gt;set_value((double)m_properties.getMaximumResultsCount());
+-	// Date range
+-	bool enable = m_properties.getMinimumDate(day, month, year);
+-	if (year &gt; 0)
+-	{
+-		m_fromDate.set_dmy((Date::Day )day, (Date::Month )month, (Date::Year )year);
+-	}
+-	else
+-	{
+-		m_fromDate.set_time(time(NULL));
+-	}
+-	fromCheckbutton-&gt;set_active(enable);
+-	fromButton-&gt;set_label(m_fromDate.format_string(&quot;%x&quot;));
+-	enable = m_properties.getMaximumDate(day, month, year);
+-	if (year &gt; 0)
+-	{
+-		m_toDate.set_dmy((Date::Day )day, (Date::Month )month, (Date::Year )year);
+-	}
+-	else
+-	{
+-		m_toDate.set_time(time(NULL));
+-	}
+-	toCheckbutton-&gt;set_active(enable);
+-	toButton-&gt;set_label(m_toDate.format_string(&quot;%x&quot;));
+ 	// Index all results
+ 	indexCheckbutton-&gt;set_active(m_properties.getIndexResults());
+ 
+@@ -146,6 +122,7 @@
+ 	filterCombobox-&gt;append_text(_(&quot;Language code&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;MIME type&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;Label&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Date range&quot;));
+ 	filterCombobox-&gt;set_active(0);
+ }
+ 
+@@ -186,9 +163,6 @@
+ 	}
+ 	// Maximum number of results
+ 	m_properties.setMaximumResultsCount((unsigned int)resultsCountSpinbutton-&gt;get_value());
+-	// Date range
+-	m_properties.setMinimumDate(fromCheckbutton-&gt;get_active(), m_fromDate.get_day(), m_fromDate.get_month(), m_fromDate.get_year());
+-	m_properties.setMaximumDate(toCheckbutton-&gt;get_active(), m_toDate.get_day(), m_toDate.get_month(), m_toDate.get_year());
+ 	// Index all results
+ 	m_properties.setIndexResults(indexCheckbutton-&gt;get_active());
+ 	// Index label
+@@ -216,6 +190,9 @@
+ void queryDialog::on_addFilterButton_clicked()
+ {
+ 	ustring filter;
++	time_t timeT = time(NULL);
++	struct tm *tm = localtime(&amp;timeT);
++	bool isDateRange = false;
+ 
+ 	// What's the corresponding filter ?
+ 	int chosenFilter = filterCombobox-&gt;get_active_row_number();
+@@ -252,6 +229,11 @@
+ 		case 9:
+ 			filter = &quot;label&quot;;
+ 			break;
++		case 10:
++			filter = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
++			filter += &quot;..20991231&quot;;
++			isDateRange = true;
++			break;
+ 		default:
+ 			break;
+ 	}
+@@ -262,38 +244,11 @@
+ 		ustring queryText = refBuffer-&gt;get_text();
+ 		queryText += &quot; &quot;;
+ 		queryText += filter;
+-		queryText += &quot;:xxx&quot;;
++		if (isDateRange == false)
++		{
++			queryText += &quot;:xxx&quot;;
++		}
+ 		refBuffer-&gt;set_text(queryText);
+ 	}
+ }
+ 
+-void queryDialog::on_fromButton_clicked()
+-{
+-	dateDialog datePicker(_(&quot;Start date&quot;), m_fromDate);
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;queryDialog::on_fromButton_clicked: start date is &quot; &lt;&lt; m_fromDate.format_string(&quot;%x&quot;) &lt;&lt; endl;
+-#endif
+-	datePicker.show();
+-	if (datePicker.run() == RESPONSE_OK)
+-	{
+-		datePicker.getChoice(m_fromDate);
+-		fromButton-&gt;set_label(m_fromDate.format_string(&quot;%x&quot;));
+-	}
+-}
+-
+-void queryDialog::on_toButton_clicked()
+-{
+-	dateDialog datePicker(_(&quot;End date&quot;), m_toDate);
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;queryDialog::on_toButton_clicked: end date is &quot; &lt;&lt; m_toDate.format_string(&quot;%x&quot;) &lt;&lt; endl;
+-#endif
+-	datePicker.show();
+-	if (datePicker.run() == RESPONSE_OK)
+-	{
+-		datePicker.getChoice(m_toDate);
+-	        toButton-&gt;set_label(m_toDate.format_string(&quot;%x&quot;));
+-	}
+-}
+-
+
+Modified: trunk/UI/GTK2/src/queryDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.hh	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/queryDialog.hh	2007-09-08 10:58:49 UTC (rev 967)
+@@ -52,8 +52,6 @@
+ 	virtual void on_queryOkbutton_clicked();
+ 	virtual void on_nameEntry_changed();
+ 	virtual void on_addFilterButton_clicked();
+-        virtual void on_fromButton_clicked();
+-        virtual void on_toButton_clicked();
+ 
+ };
+ #endif
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2007-09-08 10:58:49 UTC (rev 967)
+@@ -1,4 +1,4 @@
+-// generated 2007/8/3 22:14:46 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2007/9/7 23:17:50 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+@@ -86,10 +86,6 @@
+    Gtk::Label *resultsCountLabel = Gtk::manage(new class Gtk::Label(_(&quot;Number of results:&quot;)));
+    Gtk::Adjustment *resultsCountSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(10, 10, 100, 10, 20, 20));
+    resultsCountSpinbutton = Gtk::manage(new class Gtk::SpinButton(*resultsCountSpinbutton_adj, 1, 0));
+-   fromCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Start date:&quot;)));
+-   toCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;End date:&quot;)));
+-   fromButton = Gtk::manage(new class Gtk::Button(_(&quot;Date&quot;)));
+-   toButton = Gtk::manage(new class Gtk::Button(_(&quot;Date&quot;)));
+    
+    Gtk::Table *actionsTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    Gtk::VBox *queryVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+@@ -169,28 +165,12 @@
+    resultsCountSpinbutton-&gt;set_numeric(false);
+    resultsCountSpinbutton-&gt;set_digits(0);
+    resultsCountSpinbutton-&gt;set_wrap(false);
+-   fromCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   fromCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   fromCheckbutton-&gt;set_mode(true);
+-   fromCheckbutton-&gt;set_active(false);
+-   toCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   toCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   toCheckbutton-&gt;set_mode(true);
+-   toCheckbutton-&gt;set_active(false);
+-   fromButton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   fromButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   toButton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   toButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+    actionsTable-&gt;set_row_spacings(0);
+    actionsTable-&gt;set_col_spacings(0);
+-   actionsTable-&gt;attach(*indexCheckbutton, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 4, 4);
+-   actionsTable-&gt;attach(*labelNameCombobox, 1, 2, 3, 4, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*indexCheckbutton, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*labelNameCombobox, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*resultsCountLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*resultsCountSpinbutton, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   actionsTable-&gt;attach(*fromCheckbutton, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 4, 4);
+-   actionsTable-&gt;attach(*toCheckbutton, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
+-   actionsTable-&gt;attach(*fromButton, 1, 2, 1, 2, Gtk::FILL, Gtk::FILL, 4, 4);
+-   actionsTable-&gt;attach(*toButton, 1, 2, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
+    queryVbox-&gt;pack_start(*nameTable, Gtk::PACK_SHRINK, 0);
+    queryVbox-&gt;pack_start(*queryHbox, Gtk::PACK_SHRINK, 0);
+    queryVbox-&gt;pack_start(*queryFrame, Gtk::PACK_EXPAND_WIDGET, 4);
+@@ -224,18 +204,12 @@
+    labelNameCombobox-&gt;show();
+    resultsCountLabel-&gt;show();
+    resultsCountSpinbutton-&gt;show();
+-   fromCheckbutton-&gt;show();
+-   toCheckbutton-&gt;show();
+-   fromButton-&gt;show();
+-   toButton-&gt;show();
+    actionsTable-&gt;show();
+    queryVbox-&gt;show();
+    queryDialog-&gt;show();
+    queryOkbutton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;queryDialog_glade::on_queryOkbutton_clicked), false);
+    nameEntry-&gt;signal_changed().connect(SigC::slot(*this, &amp;queryDialog_glade::on_nameEntry_changed), false);
+    addFilterButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;queryDialog_glade::on_addFilterButton_clicked), false);
+-   fromButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;queryDialog_glade::on_fromButton_clicked), false);
+-   toButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;queryDialog_glade::on_toButton_clicked), false);
+ }
+ 
+ queryDialog_glade::~queryDialog_glade()
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.hh	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/UI/GTK2/src/queryDialog_glade.hh	2007-09-08 10:58:49 UTC (rev 967)
+@@ -1,9 +1,9 @@
+-// generated 2007/1/11 21:02:42 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2007/9/7 23:17:50 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.4 and gtkmm 2.10.5
++// for gtk 2.10.14 and gtkmm 2.10.9
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.hh and./src/queryDialog.cc
+ 
+@@ -53,10 +53,6 @@
+         class Gtk::CheckButton * indexCheckbutton;
+         class Gtk::ComboBoxText * labelNameCombobox;
+         class Gtk::SpinButton * resultsCountSpinbutton;
+-        class Gtk::CheckButton * fromCheckbutton;
+-        class Gtk::CheckButton * toCheckbutton;
+-        class Gtk::Button * fromButton;
+-        class Gtk::Button * toButton;
+         
+         queryDialog_glade();
+         
+@@ -65,7 +61,5 @@
+         virtual void on_queryOkbutton_clicked() = 0;
+         virtual void on_nameEntry_changed() = 0;
+         virtual void on_addFilterButton_clicked() = 0;
+-        virtual void on_fromButton_clicked() = 0;
+-        virtual void on_toButton_clicked() = 0;
+ };
+ #endif
+
+Modified: trunk/Utils/StringManip.cpp
+===================================================================
+--- trunk/Utils/StringManip.cpp	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Utils/StringManip.cpp	2007-09-08 10:58:49 UTC (rev 967)
+@@ -24,12 +24,6 @@
+ #else
+ #include &lt;unistd.h&gt;
+ #endif
+-#ifdef HAVE_ARPA_INET_H
+-# include &lt;arpa/inet.h&gt;
+-#endif
+-#ifdef HAVE_NETINET_IN_H
+-# include &lt;netinet/in.h&gt;
+-#endif
+ #include &lt;ctype.h&gt;
+ #include &lt;algorithm&gt;
+ 
+@@ -338,28 +332,3 @@
+ 	return result;
+ }
+ 
+-/// Converts a binary string to an integer.
+-uint32_t StringManip::binaryStringToInteger(const string &amp;str)
+-{
+-	uint32_t value;
+-
+-	// This is from from Xapian's xapian-applications/omega/values.h
+-	if (str.size() != 4)
+-	{
+-		return (uint32_t)-1;
+-	}
+-
+-	memcpy(&amp;value, str.data(), 4);
+-
+-	return ntohl(value);
+-}
+-
+-/// Converts an integer to a binary string.
+-string StringManip::integerToBinaryString(uint32_t value)
+-{
+-	// This is from from Xapian's xapian-applications/omega/values.h
+-	value = htonl(value);
+-
+-	return string(reinterpret_cast&lt;const char*&gt;(&amp;value), 4);
+-}
+-
+
+Modified: trunk/Utils/StringManip.h
+===================================================================
+--- trunk/Utils/StringManip.h	2007-09-04 12:14:42 UTC (rev 966)
++++ trunk/Utils/StringManip.h	2007-09-08 10:58:49 UTC (rev 967)
+@@ -58,12 +58,6 @@
+ 		/// Hashes a string so that it is no longer than maxLength.
+ 		static std::string hashString(const std::string &amp;str, unsigned int maxLength);
+ 
+-		/// Converts a binary string to an integer.
+-		static uint32_t binaryStringToInteger(const std::string &amp;str);
+-
+-		/// Converts an integer to a binary string.
+-		static std::string integerToBinaryString(uint32_t value);
+-
+ 	protected:
+ 		StringManip();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000960.html">[Pinot-svn] r966 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000962.html">[Pinot-svn] r968 - in trunk: UI/GTK2 UI/GTK2/src po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#961">[ date ]</a>
+              <a href="thread.html#961">[ thread ]</a>
+              <a href="subject.html#961">[ subject ]</a>
+              <a href="author.html#961">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

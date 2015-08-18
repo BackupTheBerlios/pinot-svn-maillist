@@ -1,0 +1,283 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1131 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1131%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200711301519.lAUFJTVN027627%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001124.html">
+   <LINK REL="Next"  HREF="001126.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1131 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1131%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200711301519.lAUFJTVN027627%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1131 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Nov 30 16:19:29 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001124.html">[Pinot-svn] r1130 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001126.html">[Pinot-svn] r1132 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1125">[ date ]</a>
+              <a href="thread.html#1125">[ thread ]</a>
+              <a href="subject.html#1125">[ subject ]</a>
+              <a href="author.html#1125">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-11-30 16:19:28 +0100 (Fri, 30 Nov 2007)
+New Revision: 1131
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Tell the user that the index needs updating with a MessageDialog and keep
+pestering him until he clicks the &quot;Don't warn me again&quot; checkbox.
+Be nice and give a title of all MessageDialog's.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-11-30 15:09:34 UTC (rev 1130)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-11-30 15:19:28 UTC (rev 1131)
+@@ -90,6 +90,7 @@
+ bool PinotSettings::m_clientMode = false;
+ 
+ PinotSettings::PinotSettings() :
++	m_warnAboutVersion(false),
+ 	m_minimumDiskSpace(50),
+ 	m_xPos(0),
+ 	m_yPos(0),
+@@ -263,6 +264,7 @@
+ void PinotSettings::clear(void)
+ {
+ 	m_version.clear();
++	m_warnAboutVersion = false;
+ 	m_googleAPIKey.clear();
+ 	m_xPos = 0;
+ 	m_yPos = 0;
+@@ -454,6 +456,17 @@
+ 				{
+ 					m_version = nodeContent;
+ 				}
++				else if (nodeName == &quot;warnaboutversion&quot;)
++				{
++					if (nodeContent == &quot;YES&quot;)
++					{
++						m_warnAboutVersion = true;
++					}
++					else
++					{
++						m_warnAboutVersion = false;
++					}
++				}
+ 				else if (nodeName == &quot;googleapikey&quot;)
+ 				{
+ 					m_googleAPIKey = nodeContent;
+@@ -1273,6 +1286,7 @@
+ 		}
+ 		// ...with text children nodes
+ 		addChildElement(pRootElem, &quot;version&quot;, VERSION);
++		addChildElement(pRootElem, &quot;warnaboutversion&quot;, (m_warnAboutVersion ? &quot;YES&quot; : &quot;NO&quot;));
+ 		addChildElement(pRootElem, &quot;googleapikey&quot;, m_googleAPIKey);
+ 		// User interface position and size
+ 		pElem = pRootElem-&gt;add_child(&quot;ui&quot;);
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2007-11-30 15:09:34 UTC (rev 1130)
++++ trunk/UI/GTK2/src/PinotSettings.h	2007-11-30 15:19:28 UTC (rev 1131)
+@@ -185,6 +185,7 @@
+ 		};
+ 
+ 		Glib::ustring m_version;
++		bool m_warnAboutVersion;
+ 		Glib::ustring m_googleAPIKey;
+ 		Glib::ustring m_docsIndexLocation;
+ 		Glib::ustring m_daemonIndexLocation;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-11-30 15:09:34 UTC (rev 1130)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-11-30 15:19:28 UTC (rev 1131)
+@@ -28,6 +28,7 @@
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+ #include &lt;gtkmm/aboutdialog.h&gt;
++#include &lt;gtkmm/checkbutton.h&gt;
+ #include &lt;gtkmm/stock.h&gt;
+ #include &lt;gtkmm/messagedialog.h&gt;
+ #include &lt;gtkmm/scrolledwindow.h&gt;
+@@ -40,7 +41,6 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;XapianDatabase.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+@@ -240,6 +240,36 @@
+ 	{
+ 		on_configure_activate();
+ 	}
++	else if	(m_settings.m_warnAboutVersion == true)
++	{
++		ustring boxMsg(_(&quot;Updating all documents in My Web Pages is recommended&quot;));
++		MessageDialog msgDialog(boxMsg, false);
++		CheckButton *warnCheckbutton = NULL;
++
++		// The index version is not as expected
++		VBox *pVbox = msgDialog.get_vbox();
++		if (pVbox != NULL)
++		{
++			warnCheckbutton = manage(new CheckButton(_(&quot;Don't warn me again&quot;)));
++			warnCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
++			warnCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++			warnCheckbutton-&gt;set_mode(true);
++			warnCheckbutton-&gt;set_active(false);
++			pVbox-&gt;pack_end(*warnCheckbutton, Gtk::PACK_EXPAND_WIDGET);
++			warnCheckbutton-&gt;show();
++		}
++		msgDialog.set_title(_(&quot;Update&quot;));
++		msgDialog.set_transient_for(*this);
++		msgDialog.show();
++		msgDialog.run();
++
++		// Silence the warning ?
++		if ((warnCheckbutton != NULL) &amp;&amp;
++			(warnCheckbutton-&gt;get_active() == true))
++		{
++			m_settings.m_warnAboutVersion = false;
++		}
++	}
+ }
+ 
+ //
+@@ -2320,7 +2350,7 @@
+ void mainWindow::on_unindex_activate()
+ {
+ 	vector&lt;DocumentInfo&gt; documentsList;
+-	ustring boxTitle = _(&quot;Remove this document from the index ?&quot;);
++	ustring boxMsg(_(&quot;Remove this document from the index ?&quot;));
+ 
+ 	ResultsTree *pResultsTree = NULL;
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+@@ -2339,11 +2369,12 @@
+ 
+ 	if (documentsList.size() &gt; 1)
+ 	{
+-		boxTitle = _(&quot;Remove these documents from the index ?&quot;);
++		boxMsg = _(&quot;Remove these documents from the index ?&quot;);
+ 	}
+ 
+ 	// Ask for confirmation
+-	MessageDialog msgDialog(boxTitle, false, MESSAGE_QUESTION, BUTTONS_YES_NO);
++	MessageDialog msgDialog(boxMsg, false, MESSAGE_QUESTION, BUTTONS_YES_NO);
++	msgDialog.set_title(_(&quot;Unindex&quot;));
+ 	msgDialog.set_transient_for(*this);
+ 	msgDialog.show();
+ 	int result = msgDialog.run();
+@@ -2818,8 +2849,9 @@
+ 	// Any thread still running ?
+ 	if (m_state.get_threads_count() &gt; 0)
+ 	{
+-		ustring boxTitle = _(&quot;At least one task hasn't completed yet. Quit now ?&quot;);
+-		MessageDialog msgDialog(boxTitle, false, MESSAGE_QUESTION, BUTTONS_YES_NO);
++		ustring boxMsg(_(&quot;At least one task hasn't completed yet. Quit now ?&quot;));
++		MessageDialog msgDialog(boxMsg, false, MESSAGE_QUESTION, BUTTONS_YES_NO);
++		msgDialog.set_title(_(&quot;Quit&quot;));
+ 		msgDialog.set_transient_for(*this);
+ 		msgDialog.show();
+ 		int result = msgDialog.run();
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-11-30 15:09:34 UTC (rev 1130)
++++ trunk/UI/GTK2/src/pinot.cc	2007-11-30 15:19:28 UTC (rev 1131)
+@@ -112,7 +112,7 @@
+ 	Glib::ustring errorMsg;
+ 	struct sigaction newAction;
+ 	int longOptionIndex = 0;
+-	bool warnAboutIndex = false;
++	bool warnAboutVersion = false;
+ 
+ 	// Look at the options
+ 	int optionChar = getopt_long(argc, argv, &quot;hv&quot;, g_longOptions, &amp;longOptionIndex);
+@@ -276,7 +276,7 @@
+ 	}
+ 	else
+ 	{
+-		warnAboutIndex = pFirstDb-&gt;wasObsoleteFormat();
++		warnAboutVersion = pFirstDb-&gt;wasObsoleteFormat();
+ 	}
+ 	// ...and the daemon index in read-only mode
+ 	// If it can't be open, it just means the daemon has not yet created it
+@@ -319,15 +319,15 @@
+ 	if ((indexVersion &lt; PINOT_INDEX_MIN_VERSION) &amp;&amp;
+ 		(index.getDocumentsCount() &gt; 0))
+ 	{
+-		warnAboutIndex = true;
++		warnAboutVersion = true;
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;My Web Pages was set to version &quot; &lt;&lt; indexVersion &lt;&lt; endl;
++#endif
+ 	index.setVersion(VERSION);
+-
+-	if ((warnAboutIndex == true) &amp;&amp;
+-		(errorMsg.empty() == true))
++	if (warnAboutVersion == true)
+ 	{
+-		// Warn the user
+-		errorMsg = _(&quot;Updating all documents in My Web Pages is recommended&quot;);
++		settings.m_warnAboutVersion = warnAboutVersion;
+ 	}
+ 
+ 	try
+@@ -339,7 +339,6 @@
+ 		mainWindow mainBox;
+ 		if (errorMsg.empty() == false)
+ 		{
+-			// FIXME: use a popup ! 
+ 			mainBox.set_status(errorMsg);
+ 		}
+ 		m.run(mainBox);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001124.html">[Pinot-svn] r1130 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001126.html">[Pinot-svn] r1132 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1125">[ date ]</a>
+              <a href="thread.html#1125">[ thread ]</a>
+              <a href="subject.html#1125">[ subject ]</a>
+              <a href="author.html#1125">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r236 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r236%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200605070550.k475o9fX020393%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000233.html">
+   <LINK REL="Next"  HREF="000235.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r236 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r236%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200605070550.k475o9fX020393%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r236 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun May  7 07:50:09 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000233.html">[Pinot-svn] r235 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000235.html">[Pinot-svn] r237 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#234">[ date ]</a>
+              <a href="thread.html#234">[ thread ]</a>
+              <a href="subject.html#234">[ subject ]</a>
+              <a href="author.html#234">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-07 07:49:52 +0200 (Sun, 07 May 2006)
+New Revision: 236
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Update the query terms list on addResults() as it may change from one run to
+the next.
+When unindexing documents, &quot;remove&quot; is better suited than &quot;delete&quot;.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-05-06 11:28:03 UTC (rev 235)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-05-07 05:49:52 UTC (rev 236)
+@@ -41,10 +41,10 @@
+ using namespace Gdk;
+ using namespace Gtk;
+ 
+-ResultsTree::ResultsTree(const QueryProperties &amp;queryProps, Menu *pPopupMenu,
++ResultsTree::ResultsTree(const ustring &amp;queryName, Menu *pPopupMenu,
+ 	PinotSettings &amp;settings) :
+ 	TreeView(),
+-	m_queryProps(queryProps),
++	m_queryName(queryName),
+ 	m_pPopupMenu(pPopupMenu),
+ 	m_pResultsScrolledwindow(NULL),
+ 	m_settings(settings),
+@@ -152,9 +152,6 @@
+ 	m_upIconPixbuf = render_icon(Stock::GO_UP, ICON_SIZE_MENU, &quot;MetaSE-pinot&quot;);
+ 	m_downIconPixbuf = render_icon(Stock::GO_DOWN, ICON_SIZE_MENU, &quot;MetaSE-pinot&quot;);
+ 
+-	// Get the query's terms now, we'll need them later
+-	m_queryProps.getTerms(m_queryTerms);
+-
+ 	// Show all
+ 	show();
+ 	m_pResultsScrolledwindow-&gt;show();
+@@ -311,7 +308,7 @@
+ 
+ void ResultsTree::onSelectionChanged(void)
+ {
+-	m_signalSelectionChanged(m_queryProps.getName());
++	m_signalSelectionChanged(m_queryName);
+ }
+ 
+ bool ResultsTree::onSearchEqual(const RefPtr&lt;TreeModel&gt;&amp; model, int column,
+@@ -382,7 +379,7 @@
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;ResultsTree::onSelectionSelect: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
+ #endif
+-				extract = history.getItemExtract(from_utf8(m_queryProps.getName()), engineName, url);
++				extract = history.getItemExtract(from_utf8(m_queryName), engineName, url);
+ 			}
+ 
+ 			RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
+@@ -454,6 +451,9 @@
+ 	unsigned int count = 0;
+ 	ResultsModelColumns::ResultType rootType;
+ 
++	// Get this query's terms
++	queryProps.getTerms(m_queryTerms);
++
+ 	// Unselect all
+ 	get_selection()-&gt;unselect_all();
+ 
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2006-05-06 11:28:03 UTC (rev 235)
++++ trunk/UI/GTK2/src/ResultsTree.h	2006-05-07 05:49:52 UTC (rev 236)
+@@ -41,7 +41,7 @@
+ class ResultsTree : public Gtk::TreeView
+ {
+ 	public:
+-		ResultsTree(const QueryProperties &amp;queryProps, Gtk::Menu *pPopupMenu,
++		ResultsTree(const Glib::ustring &amp;queryName, Gtk::Menu *pPopupMenu,
+ 			PinotSettings &amp;settings);
+ 		virtual ~ResultsTree();
+ 
+@@ -93,7 +93,7 @@
+ 		SigC::Signal1&lt;void, Glib::ustring&gt;&amp; getSelectionChangedSignal(void);
+ 
+ 	protected:
+-		QueryProperties m_queryProps;
++		Glib::ustring m_queryName;
+ 		Gtk::Menu *m_pPopupMenu;
+ 		Gtk::ScrolledWindow *m_pResultsScrolledwindow;
+ 		Glib::RefPtr&lt;Gtk::TreeStore&gt; m_refStore;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-05-06 11:28:03 UTC (rev 235)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-05-07 05:49:52 UTC (rev 236)
+@@ -888,7 +888,7 @@
+ 				SigC::slot(*this, &amp;mainWindow::on_close_page));
+ 
+ 			// Position the results tree
+-			pResultsTree = manage(new ResultsTree(queryProps, resultsMenuitem-&gt;get_submenu(), m_settings));
++			pResultsTree = manage(new ResultsTree(queryName, resultsMenuitem-&gt;get_submenu(), m_settings));
+ 			pResultsPage = manage(new ResultsPage(queryName, pResultsTree, m_pNotebook-&gt;get_height(), m_settings));
+ 			// Connect to the &quot;changed&quot; signal
+ 			pResultsTree-&gt;getSelectionChangedSignal().connect(
+@@ -1935,7 +1935,7 @@
+ void mainWindow::on_unindex_activate()
+ {
+ 	vector&lt;IndexedDocument&gt; documentsList;
+-	ustring boxTitle = _(&quot;Delete this document from the index ?&quot;);
++	ustring boxTitle = _(&quot;Remove this document from the index ?&quot;);
+ 
+ 	IndexTree *pIndexTree = NULL;
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+@@ -1954,7 +1954,7 @@
+ 
+ 	if (documentsList.size() &gt; 1)
+ 	{
+-		boxTitle = _(&quot;Delete these documents from the index ?&quot;);
++		boxTitle = _(&quot;Remove these documents from the index ?&quot;);
+ 	}
+ 
+ 	// Ask for confirmation
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000233.html">[Pinot-svn] r235 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000235.html">[Pinot-svn] r237 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#234">[ date ]</a>
+              <a href="thread.html#234">[ thread ]</a>
+              <a href="subject.html#234">[ subject ]</a>
+              <a href="author.html#234">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

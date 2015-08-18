@@ -1,0 +1,792 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r136 - in trunk: . Collect UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r136%20-%20in%20trunk%3A%20.%20Collect%20UI/GTK2/src%20Utils&In-Reply-To=%3C200603040544.k245iMEt024548%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000134.html">
+   <LINK REL="Next"  HREF="000136.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r136 - in trunk: . Collect UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r136%20-%20in%20trunk%3A%20.%20Collect%20UI/GTK2/src%20Utils&In-Reply-To=%3C200603040544.k245iMEt024548%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r136 - in trunk: . Collect UI/GTK2/src Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Mar  4 06:44:22 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000134.html">[Pinot-svn] r135 - in trunk: Collect UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000136.html">[Pinot-svn] r137 - in trunk: Collect Search UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#135">[ date ]</a>
+              <a href="thread.html#135">[ thread ]</a>
+              <a href="subject.html#135">[ subject ]</a>
+              <a href="author.html#135">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-04 06:44:16 +0100 (Sat, 04 Mar 2006)
+New Revision: 136
+
+Modified:
+   trunk/Collect/DownloaderFactory.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/Utils/Url.cpp
+   trunk/configure.in
+Log:
+We can now switch between curl and neon for HTTP collection and URL escaping
+by running configure with --with-http=neon|curl. Neon is used by default.
+Removed long obsolete ListenerThread. Cosmetic mods to worker threads.
+
+
+Modified: trunk/Collect/DownloaderFactory.cpp
+===================================================================
+--- trunk/Collect/DownloaderFactory.cpp	2006-03-04 03:33:34 UTC (rev 135)
++++ trunk/Collect/DownloaderFactory.cpp	2006-03-04 05:44:16 UTC (rev 136)
+@@ -15,7 +15,13 @@
+  */
+ 
+ #include &quot;XapianCollector.h&quot;
++#ifdef USE_NEON
+ #include &quot;NeonDownloader.h&quot;
++#else
++#ifdef USE_CURL
++#include &quot;CurlDownloader.h&quot;
++#endif
++#endif
+ #include &quot;FileCollector.h&quot;
+ #include &quot;MboxCollector.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+@@ -23,25 +29,31 @@
+ /// Returns a Downloader of the specified type; NULL if unavailable.
+ DownloaderInterface *DownloaderFactory::getDownloader(string protocol, string type)
+ {
+-	DownloaderInterface *myDownloader = NULL;
++	DownloaderInterface *pDownloader = NULL;
+ 
+ 	// Choice by protocol
+ 	if (protocol == &quot;http&quot;)
+ 	{
+-		myDownloader = new NeonDownloader();
++#ifdef USE_NEON
++		pDownloader = new NeonDownloader();
++#else
++#ifdef USE_CURL
++		pDownloader = new CurlDownloader();
++#endif
++#endif
+ 	}
+ 	else if (protocol == &quot;xapian&quot;)
+ 	{
+-		myDownloader = new XapianCollector();
++		pDownloader = new XapianCollector();
+ 	}
+ 	else if (protocol == &quot;file&quot;)
+ 	{
+-		myDownloader = new FileCollector();
++		pDownloader = new FileCollector();
+ 	}
+ 	else if (protocol == &quot;mailbox&quot;)
+ 	{
+-		myDownloader = new MboxCollector();
++		pDownloader = new MboxCollector();
+ 	}
+ 
+-	return myDownloader;
++	return pDownloader;
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-03-04 03:33:34 UTC (rev 135)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-03-04 05:44:16 UTC (rev 136)
+@@ -341,12 +341,12 @@
+ 
+ IndexBrowserThread::IndexBrowserThread(const string &amp;indexName,
+ 	unsigned int maxDocsCount, unsigned int startDoc) :
+-	WorkerThread()
++	WorkerThread(),
++	m_indexName(indexName),
++	m_indexDocsCount(0),
++	m_maxDocsCount(maxDocsCount),
++	m_startDoc(startDoc)
+ {
+-	m_indexName = indexName;
+-	m_indexDocsCount = 0;
+-	m_maxDocsCount = maxDocsCount;
+-	m_startDoc = startDoc;
+ }
+ 
+ IndexBrowserThread::~IndexBrowserThread()
+@@ -462,11 +462,12 @@
+ 
+ QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+ 	const string &amp;engineOption, const QueryProperties &amp;queryProps) :
+-	m_queryProps(queryProps), WorkerThread()
++	WorkerThread(),
++	m_queryProps(queryProps),
++	m_engineName(engineName),
++	m_engineDisplayableName(engineDisplayableName),
++	m_engineOption(engineOption)
+ {
+-	m_engineName = engineName;
+-	m_engineDisplayableName = engineDisplayableName;
+-	m_engineOption = engineOption;
+ }
+ 
+ QueryingThread::~QueryingThread()
+@@ -567,10 +568,10 @@
+ }
+ 
+ LabelQueryThread::LabelQueryThread(const string &amp;indexName, const string &amp;labelName) :
+-	WorkerThread()
++	WorkerThread(),
++	m_indexName(indexName),
++	m_labelName(labelName)
+ {
+-	m_indexName = indexName;
+-	m_labelName = labelName;
+ }
+ 
+ LabelQueryThread::~LabelQueryThread()
+@@ -689,12 +690,12 @@
+ }
+ 
+ DownloadingThread::DownloadingThread(const string url, bool fromCache) :
+-	WorkerThread()
++	WorkerThread(),
++	m_url(url),
++	m_fromCache(fromCache),
++	m_pDoc(NULL),
++	m_pDownloader(NULL)
+ {
+-	m_url = url;
+-	m_fromCache = fromCache;
+-	m_pDoc = NULL;
+-	m_downloader = NULL;
+ }
+ 
+ DownloadingThread::~DownloadingThread()
+@@ -703,9 +704,9 @@
+ 	{
+ 		delete m_pDoc;
+ 	}
+-	if (m_downloader != NULL)
++	if (m_pDownloader != NULL)
+ 	{
+-		delete m_downloader;
++		delete m_pDownloader;
+ 	}
+ }
+ 
+@@ -726,24 +727,20 @@
+ 
+ bool DownloadingThread::stop(void)
+ {
+-	if (m_downloader-&gt;stop() == true)
+-	{
+-		m_done = true;
+-		m_status = _(&quot;Stopped retrieval of&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_url;
+-		return true;
+-	}
++	m_done = true;
++	m_status = _(&quot;Stopped retrieval of&quot;);
++	m_status += &quot; &quot;;
++	m_status += m_url;
+ 
+-	return false;
++	return true;
+ }
+ 
+ void DownloadingThread::doWork(void)
+ {
+-	if (m_downloader != NULL)
++	if (m_pDownloader != NULL)
+ 	{
+-		delete m_downloader;
+-		m_downloader = NULL;
++		delete m_pDownloader;
++		m_pDownloader = NULL;
+ 	}
+ 
+ 	Url thisUrl(m_url);
+@@ -762,8 +759,8 @@
+ 	else
+ 	{
+ 		// Get a Downloader, the default one will do
+-		m_downloader = DownloaderFactory::getDownloader(thisUrl.getProtocol(), &quot;&quot;);
+-		if (m_downloader == NULL)
++		m_pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol(), &quot;&quot;);
++		if (m_pDownloader == NULL)
+ 		{
+ 			m_status = _(&quot;Couldn't obtain downloader for protocol&quot;);
+ 			m_status += &quot; &quot;;
+@@ -773,7 +770,7 @@
+ 		{
+ 			DocumentInfo docInfo(&quot;&quot;, m_url, &quot;&quot;, &quot;&quot;);
+ 
+-			m_pDoc = m_downloader-&gt;retrieveUrl(docInfo);
++			m_pDoc = m_pDownloader-&gt;retrieveUrl(docInfo);
+ 		}
+ 	}
+ 
+@@ -1015,14 +1012,15 @@
+ 
+ UnindexingThread::UnindexingThread(const set&lt;unsigned int&gt; &amp;docIdList) :
+ 	WorkerThread(),
++	m_indexLocation(PinotSettings::getInstance().m_indexLocation),
+ 	m_docsCount(0)
+ {
+ 	copy(docIdList.begin(), docIdList.end(), inserter(m_docIdList, m_docIdList.begin()));
+-	m_indexLocation = PinotSettings::getInstance().m_indexLocation;
+ }
+ 
+ UnindexingThread::UnindexingThread(const set&lt;string&gt; &amp;labelNames, const string &amp;indexLocation) :
+ 	WorkerThread(),
++	m_indexLocation(indexLocation),
+ 	m_docsCount(0)
+ {
+ 	copy(labelNames.begin(), labelNames.end(), inserter(m_labelNames, m_labelNames.begin()));
+@@ -1030,10 +1028,6 @@
+ 	{
+ 		m_indexLocation = PinotSettings::getInstance().m_indexLocation;
+ 	}
+-	else
+-	{
+-		m_indexLocation = indexLocation;
+-	}
+ }
+ 
+ UnindexingThread::~UnindexingThread()
+@@ -1128,11 +1122,11 @@
+ 
+ UpdateDocumentThread::UpdateDocumentThread(const string &amp;indexName,
+ 	unsigned int docId, const DocumentInfo &amp;docInfo) :
+-	WorkerThread()
++	WorkerThread(),
++	m_indexName(indexName),
++	m_docId(docId),
++	m_docInfo(docInfo)
+ {
+-	m_indexName = indexName;
+-	m_docId = docId;
+-	m_docInfo = docInfo;
+ }
+ 
+ UpdateDocumentThread::~UpdateDocumentThread()
+@@ -1204,150 +1198,12 @@
+ 	}
+ }
+ 
+-ListenerThread::ListenerThread(const string &amp;fifoFileName) :
+-	WorkerThread(),
+-	m_ctrlReadPipe(-1),
+-	m_ctrlWritePipe(-1)
+-{
+-	int pipeFds[2];
+-
+-	if (pipe(pipeFds) == 0)
+-	{
+-		// This pipe will allow to stop select()
+-		m_ctrlReadPipe = pipeFds[0];
+-		m_ctrlWritePipe = pipeFds[1];
+-	}
+-	m_fifoFileName = fifoFileName;
+-}
+-
+-ListenerThread::~ListenerThread()
+-{
+-	close(m_ctrlReadPipe);
+-	close(m_ctrlWritePipe);
+-}
+-
+-string ListenerThread::getType(void) const
+-{
+-	return &quot;ListenerThread&quot;;
+-}
+-
+-bool ListenerThread::stop(void)
+-{
+-	m_done = true;
+-	write(m_ctrlWritePipe, &quot;Stop&quot;, 4);
+-	m_status = _(&quot;Stopped listening on&quot;);
+-	m_status += &quot; &quot;;
+-	m_status += m_fifoFileName;
+-
+-	return true;
+-}
+-
+-Signal2&lt;void, DocumentInfo, string&gt;&amp; ListenerThread::getReceptionSignal(void)
+-{
+-	return m_signalReception;
+-}
+-
+-void ListenerThread::doWork(void)
+-{
+-	if (unlink(m_fifoFileName.c_str()) != 0)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;ListenerThread::doWork: couldn't delete FIFO at &quot; &lt;&lt; m_fifoFileName &lt;&lt; endl;
+-#endif
+-	}
+-
+-	if (mkfifo(m_fifoFileName.c_str(), S_IRUSR|S_IWUSR) != 0)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;ListenerThread::doWork: couldn't create FIFO at &quot; &lt;&lt; m_fifoFileName &lt;&lt; endl;
+-#endif
+-	}
+-
+-	// Ignore SIGPIPE
+-	if (sigset(SIGPIPE, SIG_IGN) == SIG_ERR)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;ListenerThread::doWork: couldn't ignore SIGPIPE&quot; &lt;&lt; endl;
+-#endif
+-	}
+-
+-	// Open the FIFO
+-	int fd = open(m_fifoFileName.c_str(), O_RDWR);
+-	if (fd != -1)
+-	{
+-		// Set the file in non-blocking mode
+-		int flags = fcntl(fd, F_GETFL);
+-		flags |= O_NONBLOCK;
+-		fcntl(fd, F_SETFL, (long)flags);
+-
+-		fd_set listenSet;
+-		FD_ZERO(&amp;listenSet);
+-		FD_SET(fd, &amp;listenSet);
+-		if (m_ctrlReadPipe &gt;= 0)
+-		{
+-			FD_SET(m_ctrlReadPipe, &amp;listenSet);
+-		}
+-
+-		// Listen and wait for something to read
+-		while (m_done == false)
+-		{
+-			int fdCount = select(max(fd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, NULL);
+-			if ((fdCount &lt; 0) &amp;&amp;
+-				(errno != EINTR))
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;ListenerThread::doWork: select() failed&quot; &lt;&lt; endl;
+-#endif
+-				break;
+-			}
+-			else if (FD_ISSET(fd, &amp;listenSet))
+-			{
+-				string xmlMsg;
+-				char buffer[1024];
+-
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;ListenerThread::doWork: reading...&quot; &lt;&lt; endl;
+-#endif
+-				ssize_t bytes = read(fd, buffer, 1024);
+-				while (bytes &gt; 0)
+-				{
+-					xmlMsg += string(buffer, bytes);
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;ListenerThread::doWork: read &quot; &lt;&lt; bytes &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
+-#endif
+-					bytes = read(fd, buffer, 1024);
+-				}
+-
+-				// FIXME: ensure the XML is valid, use libxml++ parser
+-				string location = StringManip::extractField(xmlMsg, &quot;&lt;location&gt;&quot;, &quot;&lt;/location&gt;&quot;);
+-				Url urlObj(location);
+-				DocumentInfo docInfo(StringManip::extractField(xmlMsg, &quot;&lt;title&gt;&quot;, &quot;&lt;/title&gt;&quot;),
+-					location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+-				string labelName = StringManip::extractField(xmlMsg, &quot;&lt;label&gt;&quot;, &quot;&lt;/label&gt;&quot;);
+-				string content = StringManip::extractField(xmlMsg, &quot;&lt;content&gt;&quot;, &quot;&lt;/content&gt;&quot;);
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;ListenerThread::doWork: &quot; &lt;&lt; content.length() &lt;&lt; &quot; bytes of content&quot; &lt;&lt; endl;
+-#endif
+-
+-				// Signal
+-				m_signalReception(docInfo, labelName);
+-			}
+-		}
+-
+-		close(fd);
+-	}
+-	else
+-	{
+-		m_status = _(&quot;Couldn't read FIFO at&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_fifoFileName;
+-	}
+-}
+-
+ MonitorThread::MonitorThread(MonitorHandler *pHandler) :
+ 	WorkerThread(),
+ 	m_ctrlReadPipe(-1),
+-	m_ctrlWritePipe(-1)
++	m_ctrlWritePipe(-1),
++	m_pHandler(pHandler),
++	m_numCPUs(1)
+ {
+ 	int pipeFds[2];
+ 
+@@ -1357,7 +1213,6 @@
+ 		m_ctrlReadPipe = pipeFds[0];
+ 		m_ctrlWritePipe = pipeFds[1];
+ 	}
+-	m_pHandler = pHandler;
+ 	m_numCPUs = sysconf(_SC_NPROCESSORS_ONLN);
+ }
+ 
+@@ -1422,9 +1277,6 @@
+ 			FD_SET(m_ctrlReadPipe, &amp;listenSet);
+ 		}
+ 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MonitorThread::doWork: checking locations&quot; &lt;&lt; endl;
+-#endif
+ 		if ((setLocationsToMonitor == true) &amp;&amp;
+ 			(m_pHandler-&gt;getFileSystemLocations(fsLocations) &gt; 0) &amp;&amp;
+ 			(m_pHandler-&gt;hasNewLocations() == true))
+@@ -1487,9 +1339,6 @@
+ 		}
+ 		setLocationsToMonitor = false;
+ 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MonitorThread::doWork: starting select()&quot; &lt;&lt; endl;
+-#endif
+ 		int fdCount = select(max(famFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
+ 		if ((fdCount &lt; 0) &amp;&amp;
+ 			(errno != EINTR))
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-03-04 03:33:34 UTC (rev 135)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-03-04 05:44:16 UTC (rev 136)
+@@ -258,7 +258,7 @@
+ 		std::string m_url;
+ 		bool m_fromCache;
+ 		Document *m_pDoc;
+-		DownloaderInterface *m_downloader;
++		DownloaderInterface *m_pDownloader;
+ 
+ 		virtual void doWork(void);
+ 
+@@ -361,32 +361,6 @@
+ 
+ };
+ 
+-class ListenerThread : public WorkerThread
+-{
+-	public:
+-		ListenerThread(const std::string &amp;fifoFileName);
+-		virtual ~ListenerThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		virtual bool stop(void);
+-
+-		SigC::Signal2&lt;void, DocumentInfo, std::string&gt;&amp; getReceptionSignal(void);
+-
+-	protected:
+-		int m_ctrlReadPipe;
+-		int m_ctrlWritePipe;
+-		std::string m_fifoFileName;
+-		SigC::Signal2&lt;void, DocumentInfo, std::string&gt; m_signalReception;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		ListenerThread(const ListenerThread &amp;other);
+-		ListenerThread &amp;operator=(const ListenerThread &amp;other);
+-
+-};
+-
+ class MonitorThread : public WorkerThread
+ {
+ 	public:
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-03-04 03:33:34 UTC (rev 135)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-03-04 05:44:16 UTC (rev 136)
+@@ -214,13 +214,6 @@
+ 	m_state.connect();
+ 
+ 	// FIXME: delete all &quot;ignored&quot; threads when exiting !!!
+-	// Fire up a listener thread
+-	ListenerThread *pListenThread = new ListenerThread(PinotSettings::getConfigurationDirectory() + string(&quot;/fifo&quot;));
+-	// Connect to its reception signal
+-	pListenThread-&gt;getReceptionSignal().connect(
+-		SigC::slot(*this, &amp;mainWindow::on_message_reception));
+-	start_thread(pListenThread, true);
+-
+ 	// Fire up the mail monitor thread
+ 	MboxHandler *pMbox = new MboxHandler();
+ 	// Connect to its update signal
+@@ -381,9 +374,6 @@
+ 	TreeModel::Row row = *iter;
+ 
+ 	ustring match = row[m_liveQueryColumns.m_name];
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::on_queryCompletion_match: &quot; &lt;&lt; key &lt;&lt; &quot;, &quot; &lt;&lt; match &lt;&lt; endl;
+-#endif
+ 
+ 	return true;
+ }
+@@ -1062,6 +1052,9 @@
+ 		{
+ 			// Yes, it did
+ 			status = _(&quot;Updated document&quot;);
++			status += &quot; &quot;;
++			snprintf(docIdStr, 64, &quot;%u&quot;, docId);
++			status += docIdStr;
+ 
+ 			if (pIndexTree != NULL)
+ 			{
+@@ -1184,10 +1177,6 @@
+ 		status = _(&quot;Updated document&quot;);
+ 		set_status(status);
+ 	}
+-	else if (type == &quot;ListenerThread&quot;)
+-	{
+-		// FIXME: do something about this
+-	}
+ 
+ 	// Delete the thread
+ 	delete pThread;;
+
+Modified: trunk/Utils/Url.cpp
+===================================================================
+--- trunk/Utils/Url.cpp	2006-03-04 03:33:34 UTC (rev 135)
++++ trunk/Utils/Url.cpp	2006-03-04 05:44:16 UTC (rev 136)
+@@ -14,7 +14,13 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#ifdef USE_NEON
+ #include &lt;neon/ne_uri.h&gt;
++#else
++#ifdef USE_CURL
++#include &lt;curl/curl.h&gt;
++#endif
++#endif
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+@@ -194,7 +200,6 @@
+ 		{
+ 			canonicalUrl.replace(pos, host.length(), StringManip::toLowerCase(host));
+ 		}
+-		canonicalUrl = escapeUrl(canonicalUrl);;
+ 	}
+ 
+ 	// Get rid of the last directory's slash
+@@ -276,19 +281,70 @@
+ /// Escapes an URL.
+ string Url::escapeUrl(const string &amp;url)
+ {
+-	string escapedUrlStr = &quot;&quot;;
++	string escapedUrl(url);
+ 
+ 	if (url.empty() == false)
+ 	{
+-		char *escapedUrl = ne_path_escape(url.c_str());
+-		if (escapedUrl != NULL)
++#ifdef USE_NEON
++		char *pEscapedUrl = ne_path_escape(url.c_str());
++		if (pEscapedUrl != NULL)
+ 		{
+-			escapedUrlStr = escapedUrl;
+-			free(escapedUrl);
++			escapedUrl = pEscapedUrl;
++			free(pEscapedUrl);
+ 		}
++#else
++#ifdef USE_CURL
++		Url thisUrl(url);
++		string location(thisUrl.getLocation());
++		string file(thisUrl.getFile());
++		string params(thisUrl.getParameters());
++
++		if (location.empty() == false)
++		{
++			char *pEscapedUrl = curl_escape(location.c_str(), location.length());
++			if (pEscapedUrl != NULL)
++			{
++				string::size_type pos = escapedUrl.find(location.c_str());
++				if (pos != string::npos)
++				{
++					escapedUrl.replace(pos, location.length(), pEscapedUrl);
++				}
++				curl_free(pEscapedUrl);
++			}
++		}
++
++		if (file.empty() == false)
++		{
++			char *pEscapedUrl = curl_escape(file.c_str(), file.length());
++			if (pEscapedUrl != NULL)
++			{
++				string::size_type pos = escapedUrl.find(file.c_str());
++				if (pos != string::npos)
++				{
++					escapedUrl.replace(pos, file.length(), pEscapedUrl);
++				}
++				curl_free(pEscapedUrl);
++			}
++		}
++
++		if (params.empty() == false)
++		{
++			char *pEscapedUrl = curl_escape(params.c_str(), params.length());
++			if (pEscapedUrl != NULL)
++			{
++				string::size_type pos = escapedUrl.find(params.c_str());
++				if (pos != string::npos)
++				{
++					escapedUrl.replace(pos, params.length(), pEscapedUrl);
++				}
++				curl_free(pEscapedUrl);
++			}
++		}
++#endif
++#endif
+ 	}
+ 
+-	return escapedUrlStr;
++	return escapedUrl;
+ }
+ 
+ /// Unescapes an URL.
+@@ -298,11 +354,23 @@
+ 
+ 	if (escapedUrl.empty() == false)
+ 	{
++#ifdef USE_NEON
+ 		char *unescapedUrl = ne_path_unescape(escapedUrl.c_str());
++#else
++#ifdef USE_CURL
++		char *unescapedUrl = curl_unescape(escapedUrl.c_str(), escapedUrl.length());
++#endif
++#endif
+ 		if (unescapedUrl != NULL)
+ 		{
+ 			unescapedUrlStr = unescapedUrl;
++#ifdef USE_NEON
+ 			free(unescapedUrl);
++#else
++#ifdef USE_CURL
++			curl_free(unescapedUrl);
++#endif
++#endif
+ 		}
+ 	}
+ 
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-03-04 03:33:34 UTC (rev 135)
++++ trunk/configure.in	2006-03-04 05:44:16 UTC (rev 136)
+@@ -48,6 +48,8 @@
+ 
+ AC_LANG_CPLUSPLUS
+ 
++AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
++
+ dnl Xapian
+ AC_PATH_PROG(XAPIAN_CONFIG, xapian-config, no)
+ if test &quot;$XAPIAN_CONFIG&quot; = &quot;no&quot; ; then
+@@ -57,16 +59,42 @@
+ XAPIAN_CFLAGS=`$XAPIAN_CONFIG --cxxflags`
+ XAPIAN_LIBS=`$XAPIAN_CONFIG --libs`
+ 
++dnl Neon or Curl ?
++AC_MSG_CHECKING(which HTTP library to use)
++AC_ARG_WITH(http, AS_HELP_STRING(--with-http@&lt;:@=neon|curl@:&gt;@,
++	which HTTP library to use (default: neon)))
++httplibrary=$with_http
++if test &quot;x$httplibrary&quot; = &quot;x&quot;; then
++	httplibrary=&quot;neon&quot;
++fi
++AC_MSG_RESULT($httplibrary)
++
++case &quot;$httplibrary&quot; in
++neon)
++PKG_CHECK_MODULES(NEON, neon &gt;= 0.24 )
++PKG_CHECK_MODULES(SSL, openssl &gt;= 0.9.7 )
++HTTP_LIBRARY=&quot;USE_NEON&quot;
++;;
++curl)
++AC_PATH_PROG(CURL_CONFIG, curl-config, no)
++if test &quot;$CURL_CONFIG&quot; = &quot;no&quot; ; then
++   AC_MSG_ERROR([Can't find curl-config in $PATH.])
++   exit 1
++fi
++CURL_CFLAGS=`$CURL_CONFIG --cflags`
++CURL_LIBS=`$CURL_CONFIG --libs`
++HTTP_LIBRARY=&quot;USE_CURL&quot;
++;;
++esac
++
+ dnl Other libraries
+ MISC_LIBS=&quot;-lmagic -lcrypt&quot;
+ AC_SUBST(MISC_LIBS)
+ PKG_CHECK_MODULES(SQL, sqlite3 &gt;= 3.1 )
+ AC_SUBST(SQL_CFLAGS)
+ AC_SUBST(SQL_LIBS)
+-PKG_CHECK_MODULES(NEON, neon &gt;= 0.24 )
+-PKG_CHECK_MODULES(SSL, openssl &gt;= 0.9.7 )
+-HTTP_CFLAGS=&quot;$NEON_CFLAGS $SSL_CFLAGS&quot;
+-HTTP_LIBS=&quot;$NEON_LIBS $SSL_LIBS&quot;
++HTTP_CFLAGS=&quot;$NEON_CFLAGS $SSL_CFLAGS $CURL_CFLAGS -D$HTTP_LIBRARY&quot;
++HTTP_LIBS=&quot;$NEON_LIBS $SSL_LIBS $CURL_LIBS&quot;
+ AC_SUBST(HTTP_CFLAGS)
+ AC_SUBST(HTTP_LIBS)
+ PKG_CHECK_MODULES(MIME, gmime-2.0 &gt;= 2.0 )
+@@ -98,6 +126,6 @@
+ AC_CHECK_FUNCS(mmap)
+ 
+ AC_OUTPUT( pinot.spec Makefile Utils/Makefile Tokenize/Makefile SQL/Makefile \
+-	po/Makefile.in Collect/Makefile Search/Makefile Search/Google/Makefile \
++	po/Makefile.in Collect/Makefile Search/Makefile \
+ 	Index/Makefile UI/RenderHTML/Makefile UI/GTK2/src/Makefile )
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000134.html">[Pinot-svn] r135 - in trunk: Collect UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000136.html">[Pinot-svn] r137 - in trunk: Collect Search UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#135">[ date ]</a>
+              <a href="thread.html#135">[ thread ]</a>
+              <a href="subject.html#135">[ subject ]</a>
+              <a href="author.html#135">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,239 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1673 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1673%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200910211322.n9LDMDNb025065%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001662.html">
+   <LINK REL="Next"  HREF="001664.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1673 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1673%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200910211322.n9LDMDNb025065%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1673 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct 21 15:22:13 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001662.html">[Pinot-svn] r1672 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="001664.html">[Pinot-svn] r1674 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1663">[ date ]</a>
+              <a href="thread.html#1663">[ thread ]</a>
+              <a href="subject.html#1663">[ subject ]</a>
+              <a href="author.html#1663">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-10-21 15:22:04 +0200 (Wed, 21 Oct 2009)
+New Revision: 1673
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.h
+Log:
+Use the Query API to limit the query to a set of documents (Search This For)
+instead of mangling the query string.
+Escape and hash terms with prefix &quot;path&quot;.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2009-10-10 11:52:09 UTC (rev 1672)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2009-10-21 13:22:04 UTC (rev 1673)
+@@ -77,7 +77,8 @@
+ 	// In XapianIndex, these are escaped and hashed
+ 	if ((filterName == &quot;file&quot;) ||
+ 		(filterName ==&quot;dir&quot;) ||
+-		(filterName == &quot;url&quot;))
++		(filterName == &quot;url&quot;) ||
++		(filterName == &quot;path&quot;))
+ 	{
+ 		escapeValue = hashValue = true;
+ 	}
+@@ -593,7 +594,7 @@
+ 
+ Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 	const string &amp;stemLanguage, DefaultOperator defaultOperator,
+-	const string &amp;limitQuery, string &amp;correctedFreeQuery, bool minimal)
++	string &amp;correctedFreeQuery, bool minimal)
+ {
+ 	Xapian::QueryParser parser;
+ 	CJKVTokenizer tokenizer;
+@@ -702,20 +703,6 @@
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
+ 	parser.add_boolean_prefix(&quot;tokens&quot;, &quot;XTOK:&quot;);
+ 
+-	// Any limit on what documents should be searched ?
+-	if (limitQuery.empty() == false)
+-	{
+-		string limitedQuery(limitQuery);
+-
+-		limitedQuery += &quot; AND ( &quot;;
+-		limitedQuery += freeQuery;
+-		limitedQuery += &quot; )&quot;;
+-		freeQuery = limitedQuery;
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; freeQuery &lt;&lt; endl;
+-#endif
+-	}
+-
+ 	// Date range
+ 	Xapian::DateValueRangeProcessor dateProcessor(0);
+ 	parser.add_valuerangeprocessor(&amp;dateProcessor);
+@@ -810,6 +797,9 @@
+ 				escapedValue = XapianDatabase::limitTermLength(escapedValue);
+ 			}
+ 
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianEngine::parseQuery: escaping to &quot; &lt;&lt; escapedValue &lt;&lt; endl;
++#endif
+ 			freeQuery.replace(escapedFilterStart + 1, escapedFilterEnd - escapedFilterStart,
+ 				escapedValue);
+ 			escapedFilterEnd = escapedFilterEnd + escapedValue.length() - filterValue.length();
+@@ -840,9 +830,22 @@
+ 	}
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; parsedQuery.get_description() &lt;&lt; endl;
++	cout &lt;&lt; &quot;XapianEngine::parseQuery: query is &quot; &lt;&lt; parsedQuery.get_description() &lt;&lt; endl;
+ #endif
+ 
++	// Any limit on what documents should be searched ?
++	if (m_limitDocuments.empty() == false)
++	{
++		Xapian::Query filterQuery(Xapian::Query::OP_OR,
++			m_limitDocuments.begin(), m_limitDocuments.end());
++
++		parsedQuery = Xapian::Query(Xapian::Query::OP_FILTER,
++			parsedQuery, filterQuery);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: limited query is &quot; &lt;&lt; parsedQuery.get_description() &lt;&lt; endl;
++#endif
++	}
++
+ 	if (minimal == false)
+ 	{
+ #if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
+@@ -1075,39 +1078,17 @@
+ /// Sets the set of documents to limit to.
+ bool XapianEngine::setLimitSet(const set&lt;string&gt; &amp;docsSet)
+ {
+-	unsigned int bracketsLevel = 1;
+-	bool firstLocation = true;
+-
+-	m_limitQuery.clear();
+-
+-	if (docsSet.empty() == true)
+-	{
+-		return true;
+-	}
+-
+-	// FIXME: there must be a better way !
+-	m_limitQuery = &quot;( &quot;;
+ 	for (set&lt;string&gt;::const_iterator docIter = docsSet.begin();
+ 		docIter != docsSet.end(); ++docIter)
+ 	{
+-		if (firstLocation == false)
+-		{
+-			m_limitQuery += &quot; OR ( &quot;;
+-			++bracketsLevel;
+-		}
++		string urlFilter(&quot;U&quot;);
+ 
+-		m_limitQuery += &quot;url:\&quot;&quot;;
+-		m_limitQuery += *docIter;
+-		m_limitQuery += &quot;\&quot;&quot;;
+-
+-		firstLocation = false;
++		// Escape and hash
++		urlFilter += XapianDatabase::limitTermLength(Url::escapeUrl(*docIter), true);
++		m_limitDocuments.insert(urlFilter);
+ 	}
+-	for (unsigned int count = 0; count &lt; bracketsLevel; ++count)
+-	{
+-		m_limitQuery += &quot; )&quot;;
+-	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianEngine::setLimitSet: &quot; &lt;&lt; m_limitQuery &lt;&lt; endl;
++	cout &lt;&lt; &quot;XapianEngine::setLimitSet: &quot; &lt;&lt; m_limitDocuments.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	return true;
+@@ -1177,7 +1158,7 @@
+ 		// 1. no stemming, exact matches only
+ 		// 2. stem terms if a language is defined for the query
+ 		Xapian::Query fullQuery = parseQuery(pIndex, queryProps, &quot;&quot;,
+-			m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
++			m_defaultOperator, m_correctedFreeQuery);
+ 		while (fullQuery.empty() == false)
+ 		{
+ 			// Query the database
+@@ -1196,7 +1177,7 @@
+ 					cout &lt;&lt; &quot;XapianEngine::runQuery: trying again with stemming&quot; &lt;&lt; endl;
+ #endif
+ 					fullQuery = parseQuery(pIndex, queryProps, stemLanguage,
+-						m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
++						m_defaultOperator, m_correctedFreeQuery);
+ 					++searchStep;
+ 					continue;
+ 				}
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.h	2009-10-10 11:52:09 UTC (rev 1672)
++++ trunk/IndexSearch/Xapian/XapianEngine.h	2009-10-21 13:22:04 UTC (rev 1673)
+@@ -60,7 +60,7 @@
+ 
+ 	protected:
+ 		std::string m_databaseName;
+-		std::string m_limitQuery;
++		std::set&lt;std::string&gt; m_limitDocuments;
+ 		std::set&lt;std::string&gt; m_expandDocuments;
+ 		Xapian::Stem m_stemmer;
+ 
+@@ -70,7 +70,7 @@
+ 
+ 		Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, DefaultOperator defaultOperator,
+-			const string &amp;limitQuery, string &amp;correctedFreeQuery, bool minimal = false);
++			string &amp;correctedFreeQuery, bool minimal = false);
+ 
+ 	private:
+ 		XapianEngine(const XapianEngine &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001662.html">[Pinot-svn] r1672 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="001664.html">[Pinot-svn] r1674 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1663">[ date ]</a>
+              <a href="thread.html#1663">[ thread ]</a>
+              <a href="subject.html#1663">[ subject ]</a>
+              <a href="author.html#1663">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

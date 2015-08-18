@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r541 - in trunk: . Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r541%20-%20in%20trunk%3A%20.%20Index&In-Reply-To=%3C200610290905.k9T95qv7006966%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000533.html">
+   <LINK REL="Next"  HREF="000535.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r541 - in trunk: . Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r541%20-%20in%20trunk%3A%20.%20Index&In-Reply-To=%3C200610290905.k9T95qv7006966%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r541 - in trunk: . Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Oct 29 10:05:52 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000533.html">[Pinot-svn] r540 - in trunk: . Utils
+</A></li>
+        <LI>Next message: <A HREF="000535.html">[Pinot-svn] r542 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#534">[ date ]</a>
+              <a href="thread.html#534">[ thread ]</a>
+              <a href="subject.html#534">[ subject ]</a>
+              <a href="author.html#534">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-29 10:05:51 +0100 (Sun, 29 Oct 2006)
+New Revision: 541
+
+Modified:
+   trunk/Index/LanguageDetector.cpp
+   trunk/Index/Makefile.am
+   trunk/Makefile.am
+   trunk/configure.in
+Log:
+If libtextcat has textcat_Cat(), set HAVE_TEXTCAT_CAT to use this function
+instead of textcat_Classify(). Install textcat3_conf.txt, so that if
+textcat_Version() returns version 3 we can initialize the library with it.
+
+
+Modified: trunk/Index/LanguageDetector.cpp
+===================================================================
+--- trunk/Index/LanguageDetector.cpp	2006-10-29 08:26:23 UTC (rev 540)
++++ trunk/Index/LanguageDetector.cpp	2006-10-29 09:05:51 UTC (rev 541)
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;strings.h&gt;
+ #include &lt;sys/time.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;utility&gt;
+@@ -61,7 +62,22 @@
+ 
+ 	candidates.clear();
+ 
+-	confFile += &quot;/share/pinot/textcat_conf.txt&quot;;
++	// What configuration file should we use ?
++	confFile += &quot;/share/pinot/&quot;;
++	if (strncasecmp(textcat_Version(), &quot;TextCat 3&quot;, 9) == 0)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;LanguageDetector::guessLanguage: detected libtextcat 3&quot; &lt;&lt; endl;
++#endif
++		// Version 3
++		confFile += &quot;textcat3_conf.txt&quot;;
++	}
++	else
++	{
++		confFile += &quot;textcat_conf.txt&quot;;
++	}
++
++	// Initialize
+ 	void *td = textcat_Init(confFile.c_str());
+ 	if (td == NULL)
+ 	{
+@@ -148,8 +164,8 @@
+ 	}
+ #endif
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;LanguageDetector::guessLanguage: language guessing with &quot;
+-		&lt;&lt; textcat_Version() &lt;&lt; &quot; took &quot; &lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;LanguageDetector::guessLanguage: language guessing took &quot;
++		&lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	// Close the descriptor
+
+Modified: trunk/Index/Makefile.am
+===================================================================
+--- trunk/Index/Makefile.am	2006-10-29 08:26:23 UTC (rev 540)
++++ trunk/Index/Makefile.am	2006-10-29 09:05:51 UTC (rev 541)
+@@ -30,4 +30,7 @@
+ 
+ AM_CXXFLAGS = -I$(srcdir)/../Utils -I$(srcdir)/../Tokenize -I$(srcdir)/../Collect \
+ 	@HTTP_CFLAGS@ @MIME_CFLAGS@ @XML_CFLAGS@ @DBUS_CFLAGS@ @INDEX_CFLAGS@
++if HAVE_TEXTCAT_CAT
++AM_CXXFLAGS += -DHAVE_TEXTCAT_CAT
++endif
+ 
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2006-10-29 08:26:23 UTC (rev 540)
++++ trunk/Makefile.am	2006-10-29 09:05:51 UTC (rev 541)
+@@ -1,11 +1,11 @@
+ # generated 2005/12/14 20:48:47 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ # using glademm V2.6.0
+ 
+-SUBDIRS = po Utils Tokenize SQL Collect @SOAP_SUBDIRS@ Index \
++SUBDIRS = po Utils Tokenize SQL Collect Index @SOAP_SUBDIRS@ \
+ 	Search Monitor UI/GTK2/src
+ 
+ EXTRA_DIST = ChangeLog NEWS README TODO mkinstalldirs pinot.desktop \
+-	pinot.spec textcat_conf.txt globalconfig.xml \
++	pinot.spec textcat_conf.txt textcat3_conf.txt globalconfig.xml \
+ 	Search/Plugins/*src Search/Plugins/*.xml \
+ 	Collect/pinot-collect.1 Index/pinot-index.1 Search/pinot-search.1 \
+ 	UI/GTK2/src/pinot.1 UI/GTK2/src/pinot-dbus-daemon.1 \
+@@ -26,6 +26,7 @@
+ 	$(INSTALL_DATA) UI/GTK2/src/pinot-dbus-daemon.xml $(DESTDIR)$(datadir)/pinot/pinot-dbus-daemon.xml
+ 	$(INSTALL_DATA) UI/GTK2/src/de.berlios.Pinot.service $(DESTDIR)$(datadir)/dbus-1/services/de.berlios.Pinot.service
+ 	$(INSTALL_DATA) textcat_conf.txt $(DESTDIR)$(datadir)/pinot/textcat_conf.txt
++	$(INSTALL_DATA) textcat3_conf.txt $(DESTDIR)$(datadir)/pinot/textcat3_conf.txt
+ 	$(mkinstalldirs) $(DESTDIR)$(datadir)/pinot/engines
+ 	$(INSTALL_DATA) Search/Plugins/*.src $(DESTDIR)$(datadir)/pinot/engines/
+ 	@mv $(DESTDIR)$(datadir)/pinot/engines/AmazonAPI.src $(DESTDIR)$(datadir)/pinot/
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-10-29 08:26:23 UTC (rev 540)
++++ trunk/configure.in	2006-10-29 09:05:51 UTC (rev 541)
+@@ -153,10 +153,17 @@
+     [AM_CONDITIONAL(HAVE_BOOST_SPIRIT, true)
+     ])
+ 
++dnl TextCat
++AC_CHECK_HEADERS([textcat.h])
++AC_CHECK_LIB(textcat, textcat_Cat,
++    [AM_CONDITIONAL(HAVE_TEXTCAT_CAT, true)],
++    [AM_CONDITIONAL(HAVE_TEXTCAT_CAT, false)]
++    )
++
+ dnl Other libraries
+ MISC_LIBS=&quot;-lcrypt&quot;
+ AC_SUBST(MISC_LIBS)
+-AC_CHECK_HEADERS([textcat.h netinet/in.h arpa/inet.h])
++AC_CHECK_HEADERS([netinet/in.h arpa/inet.h])
+ PKG_CHECK_MODULES(MIMEINFO, shared-mime-info )
+ SHARED_MIME_INFO_PREFIX=`pkg-config --variable=prefix shared-mime-info`
+ AC_SUBST(SHARED_MIME_INFO_PREFIX)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000533.html">[Pinot-svn] r540 - in trunk: . Utils
+</A></li>
+	<LI>Next message: <A HREF="000535.html">[Pinot-svn] r542 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#534">[ date ]</a>
+              <a href="thread.html#534">[ thread ]</a>
+              <a href="subject.html#534">[ subject ]</a>
+              <a href="author.html#534">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

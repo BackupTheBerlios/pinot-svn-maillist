@@ -1,0 +1,348 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1408 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1408%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811131501.mADF1sZH020735%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001398.html">
+   <LINK REL="Next"  HREF="001400.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1408 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1408%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811131501.mADF1sZH020735%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1408 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov 13 16:01:54 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001398.html">[Pinot-svn] r1407 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001400.html">[Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1399">[ date ]</a>
+              <a href="thread.html#1399">[ thread ]</a>
+              <a href="subject.html#1399">[ subject ]</a>
+              <a href="author.html#1399">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-13 16:01:48 +0100 (Thu, 13 Nov 2008)
+New Revision: 1408
+
+Modified:
+   trunk/UI/GTK2/src/Notebook.cpp
+   trunk/UI/GTK2/src/Notebook.h
+Log:
+Show spelling suggestions above the results list. A close button hides them
+until other suggestions are available.
+
+
+Modified: trunk/UI/GTK2/src/Notebook.cpp
+===================================================================
+--- trunk/UI/GTK2/src/Notebook.cpp	2008-11-11 14:33:04 UTC (rev 1407)
++++ trunk/UI/GTK2/src/Notebook.cpp	2008-11-13 15:01:48 UTC (rev 1408)
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;iostream&gt;
+ #include &lt;gtkmm/rc.h&gt;
+ 
+ #include &quot;config.h&quot;
+@@ -23,6 +24,7 @@
+ #include &quot;Notebook.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ 
++using namespace std;
+ using namespace Glib;
+ using namespace Gtk;
+ 
+@@ -60,7 +62,9 @@
+ 	NotebookPageBox(queryName, NotebookPageBox::RESULTS_PAGE, settings),
+ 	m_pLabel(NULL),
+ 	m_pCombobox(NULL),
+-	m_pButton(NULL),
++	m_pYesButton(NULL),
++	m_pCloseImage(NULL),
++	m_pCloseButton(NULL),
+ 	m_pHBox(NULL),
+ 	m_pVBox(NULL),
+ 	m_pVPaned(NULL),
+@@ -70,37 +74,47 @@
+ 	{
+ 		m_pLabel = manage(new Label(_(&quot;Did you mean ?&quot;)));
+ 		m_pCombobox = manage(new ComboBoxText());
+-		m_pButton = manage(new Button(StockID(&quot;gtk-yes&quot;)));
++		m_pYesButton = manage(new Button(StockID(&quot;gtk-yes&quot;)));
++		m_pCloseImage = manage(new Image(StockID(&quot;gtk-close&quot;), IconSize(ICON_SIZE_MENU)));
++		m_pCloseButton = manage(new Button());
+ 
++		m_pCloseImage-&gt;set_alignment(0, 0);
++		m_pCloseImage-&gt;set_padding(0, 0);
++		m_pCloseButton-&gt;set_relief(RELIEF_NONE);
++		m_pCloseButton-&gt;set_border_width(0);
++		m_pCloseButton-&gt;set_name(&quot;pinot-tab-close-button&quot;);
++		m_pCloseButton-&gt;set_tooltip_text(_(&quot;Close&quot;));
++		m_pCloseButton-&gt;set_alignment(0, 0);
++		m_pCloseButton-&gt;add(*m_pCloseImage);
+ 		m_pHBox = manage(new HBox(false, 0));
+ 		m_pHBox-&gt;pack_start(*m_pLabel, Gtk::PACK_SHRINK, 4);
+ 		m_pHBox-&gt;pack_start(*m_pCombobox, Gtk::PACK_EXPAND_WIDGET, 4);
+-		m_pHBox-&gt;pack_start(*m_pButton, Gtk::PACK_SHRINK, 4);
++		m_pHBox-&gt;pack_start(*m_pYesButton, Gtk::PACK_SHRINK, 4);
++		m_pHBox-&gt;pack_start(*m_pCloseButton, Gtk::PACK_SHRINK, 4);
+ 
+ 		m_pVBox = manage(new VBox(false, 0));
++		m_pVBox-&gt;pack_start(*m_pHBox, Gtk::PACK_SHRINK);
+ 		m_pVBox-&gt;pack_start(*pTree-&gt;getResultsScrolledWindow());
+-		m_pVBox-&gt;pack_start(*m_pHBox, Gtk::PACK_SHRINK, 0);
+ 
+ 		m_pVPaned = manage(new VPaned());
+ 		m_pVPaned-&gt;set_flags(Gtk::CAN_FOCUS);
+ 		m_pVPaned-&gt;set_position(105);
+ 		m_pVPaned-&gt;pack1(*m_pVBox, Gtk::EXPAND|Gtk::SHRINK);
+ 		m_pVPaned-&gt;pack2(*pTree-&gt;getExtractScrolledWindow(), Gtk::SHRINK);
+-		pack_start(*m_pVPaned, Gtk::PACK_EXPAND_WIDGET, 0);
++		pack_start(*m_pVPaned, Gtk::PACK_EXPAND_WIDGET);
+ 
+ 		// Give the extract 2/10th of the height
+ 		m_pVPaned-&gt;set_position((parentHeight * 8) / 10);
+ 
+ 		// Hide suggestions by default
+-		m_pLabel-&gt;hide();
+-		m_pCombobox-&gt;hide();
+-		m_pButton-&gt;hide();
+-		m_pHBox-&gt;hide();
++		onCloseButtonClicked();
+ 		m_pVBox-&gt;show();
+ 		m_pVPaned-&gt;show();
+ 
+-		m_pButton-&gt;signal_clicked().connect(
+-			sigc::mem_fun(*this, &amp;ResultsPage::onButtonClicked), false);
++		m_pYesButton-&gt;signal_clicked().connect(
++			sigc::mem_fun(*this, &amp;ResultsPage::onYesButtonClicked), false);
++		m_pCloseButton-&gt;signal_clicked().connect(
++			sigc::mem_fun(*this, &amp;ResultsPage::onCloseButtonClicked), false);
+ 	}
+ 
+ 	show();
+@@ -110,7 +124,7 @@
+ {
+ }
+ 
+-void ResultsPage::onButtonClicked()
++void ResultsPage::onYesButtonClicked()
+ {
+ 	if (m_pCombobox == NULL)
+ 	{
+@@ -120,6 +134,17 @@
+ 	m_signalSuggest(m_title, m_pCombobox-&gt;get_active_text());
+ }
+ 
++void ResultsPage::onCloseButtonClicked()
++{
++	// Just hide these
++	m_pLabel-&gt;hide();
++	m_pCombobox-&gt;hide();
++	m_pYesButton-&gt;hide();
++	m_pCloseImage-&gt;hide();
++	m_pCloseButton-&gt;hide();
++	m_pHBox-&gt;hide();
++}
++
+ //
+ // Returns the page's tree.
+ //
+@@ -139,16 +164,32 @@
+ //
+ void ResultsPage::appendSuggestion(const ustring &amp;text)
+ {
+-	if (text.empty() == false)
++	if ((text.empty() == false) &amp;&amp;
++		(m_suggestions.find(text) == m_suggestions.end()))
+ 	{
++		ustring activeText(m_pCombobox-&gt;get_active_text());
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ResultsPage::appendSuggestion: suggesting &quot; &lt;&lt; text &lt;&lt; endl;
++#endif
++		m_suggestions.insert(text);
+ 		m_pCombobox-&gt;prepend_text(text);
+-		m_pCombobox-&gt;set_active(0);
++		if (activeText.empty() == true)
++		{
++			m_pCombobox-&gt;set_active(0);
++		}
++		else
++		{
++			m_pCombobox-&gt;set_active_text(activeText);
++		}
++	}
+ 
+-		m_pLabel-&gt;show();
+-		m_pCombobox-&gt;show();
+-		m_pButton-&gt;show();
+-		m_pHBox-&gt;show();
+-	}
++	m_pLabel-&gt;show();
++	m_pCombobox-&gt;show();
++	m_pYesButton-&gt;show();
++	m_pCloseImage-&gt;show();
++	m_pCloseButton-&gt;show();
++	m_pHBox-&gt;show();
+ }
+ 
+ bool NotebookTabBox::m_initialized = false;
+@@ -157,9 +198,9 @@
+ 	HBox(),
+ 	m_title(title),
+ 	m_pageType(type),
+-	m_tabLabel(NULL),
+-	m_tabImage(NULL),
+-	m_tabButton(NULL)
++	m_pTabLabel(NULL),
++	m_pTabImage(NULL),
++	m_pTabButton(NULL)
+ {
+ 	if (m_initialized == false)
+ 	{
+@@ -176,34 +217,34 @@
+ 			&quot;widget \&quot;*.pinot-tab-close-button\&quot; style \&quot;pinot-tab-close-button-style\&quot;&quot;);
+ 	}
+ 
+-	m_tabLabel = manage(new Label(title));
+-	m_tabImage = manage(new Image(StockID(&quot;gtk-close&quot;), IconSize(ICON_SIZE_MENU)));
+-	m_tabButton = manage(new Button());
++	m_pTabLabel = manage(new Label(title));
++	m_pTabImage = manage(new Image(StockID(&quot;gtk-close&quot;), IconSize(ICON_SIZE_MENU)));
++	m_pTabButton = manage(new Button());
+ 
+-	m_tabLabel-&gt;set_alignment(0, 0.5);
+-	m_tabLabel-&gt;set_padding(0, 0);
+-	m_tabLabel-&gt;set_justify(JUSTIFY_LEFT);
+-	m_tabLabel-&gt;set_line_wrap(false);
+-	m_tabLabel-&gt;set_use_markup(false);
+-	m_tabLabel-&gt;set_selectable(false);
+-	m_tabImage-&gt;set_alignment(0, 0);
+-	m_tabImage-&gt;set_padding(0, 0);
+-	m_tabButton-&gt;set_relief(RELIEF_NONE);
+-	m_tabButton-&gt;set_border_width(0);
+-	m_tabButton-&gt;set_name(&quot;pinot-tab-close-button&quot;);
+-	m_tabButton-&gt;set_tooltip_text(_(&quot;Close&quot;));
+-	m_tabButton-&gt;set_alignment(0, 0);
+-	m_tabButton-&gt;add(*m_tabImage);
+-	pack_start(*m_tabLabel);
+-	pack_start(*m_tabButton, PACK_SHRINK);
++	m_pTabLabel-&gt;set_alignment(0, 0.5);
++	m_pTabLabel-&gt;set_padding(0, 0);
++	m_pTabLabel-&gt;set_justify(JUSTIFY_LEFT);
++	m_pTabLabel-&gt;set_line_wrap(false);
++	m_pTabLabel-&gt;set_use_markup(false);
++	m_pTabLabel-&gt;set_selectable(false);
++	m_pTabImage-&gt;set_alignment(0, 0);
++	m_pTabImage-&gt;set_padding(0, 0);
++	m_pTabButton-&gt;set_relief(RELIEF_NONE);
++	m_pTabButton-&gt;set_border_width(0);
++	m_pTabButton-&gt;set_name(&quot;pinot-tab-close-button&quot;);
++	m_pTabButton-&gt;set_tooltip_text(_(&quot;Close&quot;));
++	m_pTabButton-&gt;set_alignment(0, 0);
++	m_pTabButton-&gt;add(*m_pTabImage);
++	pack_start(*m_pTabLabel);
++	pack_start(*m_pTabButton, PACK_SHRINK);
+ 	set_spacing(0);
+ 	set_homogeneous(false);
+-	m_tabLabel-&gt;show();
+-	m_tabImage-&gt;show();
+-	m_tabButton-&gt;show();
++	m_pTabLabel-&gt;show();
++	m_pTabImage-&gt;show();
++	m_pTabButton-&gt;show();
+ 	show();
+ 
+-	m_tabButton-&gt;signal_clicked().connect(
++	m_pTabButton-&gt;signal_clicked().connect(
+ 		sigc::mem_fun(*this, &amp;NotebookTabBox::onButtonClicked));
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/Notebook.h
+===================================================================
+--- trunk/UI/GTK2/src/Notebook.h	2008-11-11 14:33:04 UTC (rev 1407)
++++ trunk/UI/GTK2/src/Notebook.h	2008-11-13 15:01:48 UTC (rev 1408)
+@@ -19,6 +19,7 @@
+ #ifndef _NOTEBOOK_HH
+ #define _NOTEBOOK_HH
+ 
++#include &lt;set&gt;
+ #include &lt;sigc++/sigc++.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;gtkmm/box.h&gt;
+@@ -73,14 +74,18 @@
+ 	protected:
+ 		Gtk::Label *m_pLabel;
+ 		Gtk::ComboBoxText *m_pCombobox;
+-		Gtk::Button *m_pButton;
++		Gtk::Button *m_pYesButton;
++		Gtk::Image *m_pCloseImage;
++		Gtk::Button *m_pCloseButton;
+ 		Gtk::HBox *m_pHBox;
+ 		Gtk::VBox *m_pVBox;
+ 		Gtk::VPaned *m_pVPaned;
+ 		ResultsTree *m_pTree;
+ 		sigc::signal2&lt;void, Glib::ustring, Glib::ustring&gt; m_signalSuggest;
++		std::set&lt;Glib::ustring&gt; m_suggestions;
++		void onYesButtonClicked();
+ 
+-		void onButtonClicked();
++		void onCloseButtonClicked();
+ 
+ };
+ 
+@@ -97,9 +102,9 @@
+ 		static bool m_initialized;
+ 		Glib::ustring m_title;
+ 		NotebookPageBox::PageType m_pageType;
+-		Gtk::Label *m_tabLabel;
+-		Gtk::Image *m_tabImage;
+-		Gtk::Button *m_tabButton;
++		Gtk::Label *m_pTabLabel;
++		Gtk::Image *m_pTabImage;
++		Gtk::Button *m_pTabButton;
+ 		sigc::signal2&lt;void, Glib::ustring, NotebookPageBox::PageType&gt; m_signalClose;
+ 
+ 		void onButtonClicked(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001398.html">[Pinot-svn] r1407 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001400.html">[Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1399">[ date ]</a>
+              <a href="thread.html#1399">[ thread ]</a>
+              <a href="subject.html#1399">[ subject ]</a>
+              <a href="author.html#1399">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

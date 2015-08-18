@@ -1,0 +1,419 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1313 - in trunk: IndexSearch UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1313%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200807260421.m6Q4LmYE019566%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001306.html">
+   <LINK REL="Next"  HREF="001308.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1313 - in trunk: IndexSearch UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1313%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200807260421.m6Q4LmYE019566%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1313 - in trunk: IndexSearch UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 26 06:21:48 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001306.html">[Pinot-svn] r1312 - tags
+</A></li>
+        <LI>Next message: <A HREF="001308.html">[Pinot-svn] r1314 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1307">[ date ]</a>
+              <a href="thread.html#1307">[ thread ]</a>
+              <a href="subject.html#1307">[ subject ]</a>
+              <a href="author.html#1307">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-26 06:20:04 +0200 (Sat, 26 Jul 2008)
+New Revision: 1313
+
+Modified:
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/DBusIndex.h
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+Log:
+Extended GetStatistics to return the flags &quot;low disk space&quot;, &quot;on battery&quot; and
+&quot;crawling&quot;. The latter is new to the daemon and set while a DirectoryScanner is
+running.
+That information is displayed in the Status window.
+
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/IndexSearch/DBusIndex.cpp	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -343,7 +343,67 @@
+ 	return false;
+ }
+ 
++/// Gets some statistics from the D-Bus service.
++bool DBusIndex::getStatistics(unsigned int crawledCount, unsigned int docsCount,
++	bool &amp;lowDiskSpace, bool &amp;onBattery, bool &amp;crawling)
++{
++	gboolean lowDiskSpaceB = FALSE, onBatteryB = FALSE, crawlingB = FALSE;
+ 
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::getStatistics: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	if (dbus_g_proxy_call(pBusProxy, &quot;GetStatistics&quot;, &amp;pError,
++		G_TYPE_INVALID,
++		G_TYPE_UINT, &amp;crawledCount,
++		G_TYPE_UINT, &amp;docsCount,
++		G_TYPE_BOOLEAN, &amp;lowDiskSpaceB,
++		G_TYPE_BOOLEAN, &amp;onBatteryB,
++		G_TYPE_BOOLEAN, &amp;crawlingB,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::getStatistics: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++	else
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::getStatistics: got &quot; &lt;&lt; crawledCount &lt;&lt; &quot; &quot; &lt;&lt; docsCount
++			&lt;&lt; &quot; &quot; &lt;&lt; lowDiskSpaceB &lt;&lt; onBatteryB &lt;&lt; crawlingB &lt;&lt; endl;
++#endif
++		if (lowDiskSpaceB == TRUE)
++		{
++			lowDiskSpace = true;
++		}
++		if (onBatteryB == TRUE)
++		{
++			onBattery = true;
++		}
++		if (crawlingB == TRUE)
++		{
++			crawling = true;
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return true;
++}
++
+ //
+ // Implementation of IndexInterface
+ //
+
+Modified: trunk/IndexSearch/DBusIndex.h
+===================================================================
+--- trunk/IndexSearch/DBusIndex.h	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/IndexSearch/DBusIndex.h	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -56,6 +56,10 @@
+ 		/// Asks the D-Bus service to reload its configuration.
+ 		static bool reload(void);
+ 
++		/// Gets some statistics from the D-Bus service.
++		static bool getStatistics(unsigned int crawledCount, unsigned int docsCount,
++			bool &amp;lowDiskSpace, bool &amp;onBattery, bool &amp;crawling);
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const;
+ 
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -272,6 +272,7 @@
+ 	if (start_thread(pScannerThread, true) == true)
+ 	{
+ 		++m_crawlers;
++		set_flag(CRAWLING);
+ 
+ 		return true;
+ 	}
+@@ -352,6 +353,8 @@
+ 		// Get the next location, unless something is still being crawled
+ 		if (m_crawlers == 0)
+ 		{
++			reset_flag(CRAWLING);
++
+ 			if (m_crawlQueue.empty() == false)
+ 			{
+ 				PinotSettings::IndexableLocation nextLocation(m_crawlQueue.front());
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -36,7 +36,7 @@
+ 		DaemonState();
+ 		virtual ~DaemonState();
+ 
+-		typedef enum { LOW_DISK_SPACE = 0, ON_BATTERY, STOPPED, DISCONNECTED } StatusFlag;
++		typedef enum { LOW_DISK_SPACE = 0, ON_BATTERY, CRAWLING, STOPPED, DISCONNECTED } StatusFlag;
+ 
+ 		void start(bool forceFullScan);
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -668,6 +668,7 @@
+ 		CrawlHistory crawlHistory(settings.getHistoryDatabaseName());
+ 		unsigned int crawledFilesCount = crawlHistory.getItemsCount(CrawlHistory::CRAWLED);
+ 		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
++		gboolean lowDiskSpace = FALSE, onBattery = FALSE, crawling = FALSE;
+ 
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: received GetStatistics&quot; &lt;&lt; endl;
+@@ -676,9 +677,29 @@
+ 		m_pReply = newDBusReply(m_pRequest);
+ 		if (m_pReply != NULL)
+ 		{
++			if (m_pServer-&gt;is_flag_set(DaemonState::LOW_DISK_SPACE) == true)
++			{
++				lowDiskSpace = TRUE;
++			}
++			if (m_pServer-&gt;is_flag_set(DaemonState::ON_BATTERY) == true)
++			{
++				onBattery = TRUE;
++			}
++			if (m_pServer-&gt;is_flag_set(DaemonState::CRAWLING) == true)
++			{
++				crawling = TRUE;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: replying with &quot; &lt;&lt; crawledFilesCount
++				&lt;&lt; &quot; &quot; &lt;&lt; docsCount &lt;&lt; &quot; &quot; &lt;&lt; lowDiskSpace &lt;&lt; onBattery &lt;&lt; crawling &lt;&lt; endl;
++#endif
++
+ 			dbus_message_append_args(m_pReply,
+ 				DBUS_TYPE_UINT32, &amp;crawledFilesCount,
+ 				DBUS_TYPE_UINT32, &amp;docsCount,
++				DBUS_TYPE_BOOLEAN, &amp;lowDiskSpace,
++				DBUS_TYPE_BOOLEAN, &amp;onBattery,
++				DBUS_TYPE_BOOLEAN, &amp;crawling,
+ 				DBUS_TYPE_INVALID);
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -18,6 +18,9 @@
+       &lt;annotation name=&quot;de.berlios.Pinot.GetStatistics&quot; value=&quot;pinotDBus&quot;/&gt;
+       &lt;arg type=&quot;u&quot; name=&quot;crawledCount&quot; direction=&quot;out&quot;/&gt;
+       &lt;arg type=&quot;u&quot; name=&quot;docsCount&quot; direction=&quot;out&quot;/&gt;
++      &lt;arg type=&quot;b&quot; name=&quot;lowDiskSpace&quot; direction=&quot;out&quot; /&gt;
++      &lt;arg type=&quot;b&quot; name=&quot;onBattery&quot; direction=&quot;out&quot; /&gt;
++      &lt;arg type=&quot;b&quot; name=&quot;crawling&quot; direction=&quot;out&quot; /&gt;
+     &lt;/method&gt;
+     &lt;!--
+ 	Instructs the daemon program to reload the configuration file.
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -29,6 +29,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
++#include &quot;DBusIndex.h&quot;
+ #include &quot;ModuleFactory.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+@@ -41,7 +42,8 @@
+ 
+ statisticsDialog::statisticsDialog() :
+ 	statisticsDialog_glade(),
+-	m_hasErrors(false)
++	m_hasErrors(false),
++	m_getStats(true)
+ {
+ 	// Associate the columns model to the engines tree
+ 	m_refStore = TreeStore::create(m_statsColumns);
+@@ -53,11 +55,14 @@
+ 		statisticsTreeview-&gt;append_column(*manage(pColumn));
+ 	}
+ 
++	// Resize the window
++	resize((int )(get_width() * 2), (int )(get_height() * 1.5));
++
+ 	// Populate
+ 	populate();
+ 	// ...and update regularly
+ 	m_idleConnection = Glib::signal_timeout().connect(sigc::mem_fun(*this,
+-		&amp;statisticsDialog::on_activity_timeout), 5000);
++		&amp;statisticsDialog::on_activity_timeout), 10000);
+ }
+ 
+ statisticsDialog::~statisticsDialog()
+@@ -108,21 +113,15 @@
+ 	row = *m_daemonIter;
+ 	row[m_statsColumns.m_name] = _(&quot;Daemon&quot;);
+ 	m_daemonProcIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
++	m_diskSpaceIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
++	m_batteryIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
++	m_crawlIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
+ 
+ 	// Expand everything
+ 	statisticsTreeview-&gt;expand_all();
+ 	TreeModel::Path enginesPath = m_refStore-&gt;get_path(enginesIter);
+ 	statisticsTreeview-&gt;collapse_row(enginesPath);
+ 
+-	Adjustment *pAdjustement = statisticsScrolledwindow-&gt;get_hadjustment();
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;statisticsDialog: &quot; &lt;&lt; pAdjustement-&gt;get_value() &lt;&lt; &quot; &quot;
+-		&lt;&lt; pAdjustement-&gt;get_lower() &lt;&lt; &quot; &quot; &lt;&lt; pAdjustement-&gt;get_upper() &lt;&lt; endl;
+-#endif
+-	pAdjustement-&gt;set_value(pAdjustement-&gt;get_upper());
+-	statisticsScrolledwindow-&gt;set_hadjustment(pAdjustement);
+-	resize((int )pAdjustement-&gt;get_upper() * 2, get_height());
+-
+ 	on_activity_timeout();
+ }
+ 
+@@ -132,8 +131,10 @@
+ 	ViewHistory viewHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 	TreeModel::Row row;
+ 	std::map&lt;unsigned int, string&gt; sources;
++	ustring yes(_(&quot;Yes&quot;)), no(_(&quot;No&quot;));
+ 	string daemonDBusStatus;
+ 	char countStr[64];
++	bool lowDiskSpace = false, onBattery = false, crawling = false;
+ 
+ 	row = *m_myWebPagesIter;
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
+@@ -192,28 +193,52 @@
+ 		pidFile.close();
+ 	}
+ 	snprintf(countStr, 64, &quot;%u&quot;, daemonPID);
++
+ 	row = *m_daemonProcIter;
+ 	if (daemonPID &gt; 0)
+ 	{
+ 		// FIXME: check whether it's actually running !
+ 		row[m_statsColumns.m_name] = ustring(_(&quot;Running under PID&quot;)) + &quot; &quot; + countStr;
++
++		if (m_getStats == true)
++		{
++			unsigned int crawledCount = 0, docsCount = 0;
++
++			if (DBusIndex::getStatistics(crawledCount, docsCount, lowDiskSpace, onBattery, crawling) == false)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;statisticsDialog::on_activity_timeout: failed to get statistics&quot; &lt;&lt; endl;
++#endif
++
++				// Don't try again
++				m_getStats = false;
++			}
++		}
+ 	}
+ 	else
+ 	{
+ 		if (daemonDBusStatus == &quot;Disconnected&quot;)
+ 		{
+-			row[m_statsColumns.m_name] = ustring(_(&quot;Disconnected from D-Bus&quot;));
++			row[m_statsColumns.m_name] = _(&quot;Disconnected from D-Bus&quot;);
+ 		}
+ 		else if (daemonDBusStatus == &quot;Stopped&quot;)
+ 		{
+-			row[m_statsColumns.m_name] = ustring(_(&quot;Stopped&quot;));
++			row[m_statsColumns.m_name] = _(&quot;Stopped&quot;);
+ 		}
+ 		else
+ 		{
+-			row[m_statsColumns.m_name] = ustring(_(&quot;Currently not running&quot;));
++			row[m_statsColumns.m_name] = _(&quot;Currently not running&quot;);
+ 		}
+ 	}
+ 
++	// Show status
++	row = *m_diskSpaceIter;
++	row[m_statsColumns.m_name] = ustring(_(&quot;Low disk space&quot;)) + &quot;: &quot; + (lowDiskSpace == true ? yes : no);
++	row = *m_batteryIter;
++	row[m_statsColumns.m_name] = ustring(_(&quot;On battery&quot;)) + &quot;: &quot; + (onBattery == true ? yes : no);
++	row = *m_crawlIter;
++	row[m_statsColumns.m_name] = ustring(_(&quot;Crawling&quot;)) + &quot;: &quot;+ (crawling == true ? yes : no);
++
+ 	// Show errors
+ 	crawlHistory.getSources(sources);
+ 	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2008-07-19 11:16:57 UTC (rev 1312)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2008-07-26 04:20:04 UTC (rev 1313)
+@@ -40,13 +40,17 @@
+ 	Gtk::TreeModel::iterator m_myWebPagesIter;
+ 	Gtk::TreeModel::iterator m_myDocumentsIter;
+ 	Gtk::TreeModel::iterator m_viewStatIter;
++	Gtk::TreeModel::iterator m_crawledStatIter;
+ 	Gtk::TreeModel::iterator m_daemonIter;
+ 	Gtk::TreeModel::iterator m_daemonProcIter;
+-	Gtk::TreeModel::iterator m_crawledStatIter;
++	Gtk::TreeModel::iterator m_diskSpaceIter;
++	Gtk::TreeModel::iterator m_batteryIter;
++	Gtk::TreeModel::iterator m_crawlIter;
+ 	Gtk::TreeModel::iterator m_errorsTopIter;
+ 	std::map&lt;int, Gtk::TreeModel::iterator&gt; m_errorsIters;
+ 	std::map&lt;unsigned int, time_t&gt; m_latestErrorDates;
+ 	bool m_hasErrors;
++	bool m_getStats;
+ 	sigc::connection m_idleConnection;
+ 
+ 	void populate(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001306.html">[Pinot-svn] r1312 - tags
+</A></li>
+	<LI>Next message: <A HREF="001308.html">[Pinot-svn] r1314 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1307">[ date ]</a>
+              <a href="thread.html#1307">[ thread ]</a>
+              <a href="subject.html#1307">[ subject ]</a>
+              <a href="author.html#1307">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

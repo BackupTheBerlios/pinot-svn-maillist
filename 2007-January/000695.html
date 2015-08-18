@@ -1,0 +1,238 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r701 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r701%20-%20trunk/Index&In-Reply-To=%3C200701280505.l0S55U28030869%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000694.html">
+   <LINK REL="Next"  HREF="000696.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r701 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r701%20-%20trunk/Index&In-Reply-To=%3C200701280505.l0S55U28030869%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r701 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jan 28 06:05:30 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000694.html">[Pinot-svn] r700 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000696.html">[Pinot-svn] r702 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#695">[ date ]</a>
+              <a href="thread.html#695">[ thread ]</a>
+              <a href="subject.html#695">[ subject ]</a>
+              <a href="author.html#695">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-01-28 06:05:29 +0100 (Sun, 28 Jan 2007)
+New Revision: 701
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/LanguageDetector.cpp
+   trunk/Index/XapianDatabase.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Added getDocumentTermsCount() to IndexInterface.
+Minor fix to XapianDatabase::openDatabase().
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/DBusXapianIndex.cpp	2007-01-28 05:05:29 UTC (rev 701)
+@@ -169,6 +169,12 @@
+ 	return XapianIndex::getDocumentInfo(docId, docInfo);
+ }
+ 
++/// Returns a document's terms count.
++unsigned int DBusXapianIndex::getDocumentTermsCount(unsigned int docId) const
++{
++	return XapianIndex::getDocumentTermsCount(docId);
++}
++
+ /// Determines whether a document has a label.
+ bool DBusXapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/DBusXapianIndex.h	2007-01-28 05:05:29 UTC (rev 701)
+@@ -46,6 +46,9 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+ 
++		/// Returns a document's terms count.
++		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+ 
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/IndexInterface.h	2007-01-28 05:05:29 UTC (rev 701)
+@@ -50,6 +50,9 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const = 0;
+ 
++		/// Returns a document's terms count.
++		virtual unsigned int getDocumentTermsCount(unsigned int docId) const = 0;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const = 0;
+ 
+
+Modified: trunk/Index/LanguageDetector.cpp
+===================================================================
+--- trunk/Index/LanguageDetector.cpp	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/LanguageDetector.cpp	2007-01-28 05:05:29 UTC (rev 701)
+@@ -38,7 +38,7 @@
+ using std::vector;
+ using std::min;
+ 
+-unsigned int LanguageDetector::m_maxTextSize = 10000;
++unsigned int LanguageDetector::m_maxTextSize = 1000;
+ 
+ LanguageDetector::LanguageDetector()
+ {
+
+Modified: trunk/Index/XapianDatabase.cpp
+===================================================================
+--- trunk/Index/XapianDatabase.cpp	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/XapianDatabase.cpp	2007-01-28 05:05:29 UTC (rev 701)
+@@ -127,13 +127,16 @@
+ 
+ 	// Is it a remote database ?
+ 	string::size_type slashPos = m_databaseName.find(&quot;/&quot;);
+-	if (slashPos != 0)
++	string::size_type colonPos = m_databaseName.find(&quot;:&quot;);
++	if (((slashPos == string::npos) ||
++		(slashPos &gt; 0)) &amp;&amp;
++		(colonPos != string::npos))
+ 	{
+ 		Url urlObj(m_databaseName);
+ 
+ 		if (m_readOnly == false)
+ 		{
+-			cerr &lt;&lt; &quot;XapianDatabase::openDatabase: remote databases are read-only&quot; &lt;&lt; endl;
++			cerr &lt;&lt; &quot;XapianDatabase::openDatabase: remote databases &quot; &lt;&lt; m_databaseName &lt;&lt; &quot; are read-only&quot; &lt;&lt; endl;
+ 			return;
+ 		}
+ 
+@@ -145,7 +148,7 @@
+ 
+ 		string hostName(urlObj.getHost());
+ 		// A port number should be included
+-		string::size_type colonPos = hostName.find(&quot;:&quot;);
++		colonPos = hostName.find(&quot;:&quot;);
+ 		if (colonPos != string::npos)
+ 		{
+ 			string protocol(urlObj.getProtocol());
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/XapianIndex.cpp	2007-01-28 05:05:29 UTC (rev 701)
+@@ -717,6 +717,44 @@
+ 	return foundDocument;
+ }
+ 
++/// Returns a document's terms count.
++unsigned int XapianIndex::getDocumentTermsCount(unsigned int docId) const
++{
++	unsigned int termsCount = 0;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return 0;
++	}
++
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			Xapian::Document doc = pIndex-&gt;get_document(docId);
++
++			termsCount = doc.termlist_count();
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianIndex::getDocumentTermsCount: &quot; &lt;&lt; termsCount &lt;&lt; &quot; terms in document &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document terms count: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document terms count, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return termsCount;
++}
++
+ /// Determines whether a document has a label.
+ bool XapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-01-27 11:57:05 UTC (rev 700)
++++ trunk/Index/XapianIndex.h	2007-01-28 05:05:29 UTC (rev 701)
+@@ -44,6 +44,9 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+ 
++		/// Returns a document's terms count.
++		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000694.html">[Pinot-svn] r700 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000696.html">[Pinot-svn] r702 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#695">[ date ]</a>
+              <a href="thread.html#695">[ thread ]</a>
+              <a href="subject.html#695">[ subject ]</a>
+              <a href="author.html#695">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

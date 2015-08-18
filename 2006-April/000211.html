@@ -1,0 +1,4816 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r211 - in trunk/Utils: . xdgmime
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r211%20-%20in%20trunk/Utils%3A%20.%20xdgmime&In-Reply-To=%3C200604140718.k3E7IiRq023593%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000208.html">
+   <LINK REL="Next"  HREF="000209.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r211 - in trunk/Utils: . xdgmime</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r211%20-%20in%20trunk/Utils%3A%20.%20xdgmime&In-Reply-To=%3C200604140718.k3E7IiRq023593%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r211 - in trunk/Utils: . xdgmime">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Apr 14 09:18:44 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000208.html">[Pinot-svn] r210 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000209.html">[Pinot-svn] r212 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#211">[ date ]</a>
+              <a href="thread.html#211">[ thread ]</a>
+              <a href="subject.html#211">[ subject ]</a>
+              <a href="author.html#211">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-04-14 09:18:40 +0200 (Fri, 14 Apr 2006)
+New Revision: 211
+
+Added:
+   trunk/Utils/xdgmime/
+   trunk/Utils/xdgmime/ChangeLog
+   trunk/Utils/xdgmime/xdgmime.c
+   trunk/Utils/xdgmime/xdgmime.h
+   trunk/Utils/xdgmime/xdgmimealias.c
+   trunk/Utils/xdgmime/xdgmimealias.h
+   trunk/Utils/xdgmime/xdgmimecache.c
+   trunk/Utils/xdgmime/xdgmimecache.h
+   trunk/Utils/xdgmime/xdgmimeglob.c
+   trunk/Utils/xdgmime/xdgmimeglob.h
+   trunk/Utils/xdgmime/xdgmimeint.c
+   trunk/Utils/xdgmime/xdgmimeint.h
+   trunk/Utils/xdgmime/xdgmimemagic.c
+   trunk/Utils/xdgmime/xdgmimemagic.h
+   trunk/Utils/xdgmime/xdgmimeparent.c
+   trunk/Utils/xdgmime/xdgmimeparent.h
+Modified:
+   trunk/Utils/MIMEScanner.cpp
+   trunk/Utils/Makefile.am
+Log:
+Import freedesktop.org's LGPL-licensed xdgmime library, pulled from CVS today.
+MIMEScanner now uses that to more effectively determine a file's MIME type.
+As a result, we now depend on shared-mime-info.
+
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/MIMEScanner.cpp	2006-04-14 07:18:40 UTC (rev 211)
+@@ -15,12 +15,16 @@
+  */
+ 
+ #include &lt;strings.h&gt;
+-#include &lt;magic.h&gt;
++#include &lt;utility&gt;
+ 
+-#include &quot;Url.h&quot;
++#include &quot;xdgmime/xdgmime.h&quot;
++
+ #include &quot;MIMEScanner.h&quot;
++#include &quot;StringManip.h&quot;
++#include &quot;Url.h&quot;
+ 
+ using std::string;
++using std::min;
+ 
+ MIMEScanner::MIMEScanner()
+ {
+@@ -28,35 +32,20 @@
+ 
+ string MIMEScanner::scanFileType(const string &amp;fileName)
+ {
+-	string::size_type fileExtPos = fileName.find_last_of(&quot;.&quot;);
+-	if (fileExtPos != string::npos)
++	if (fileName.empty() == true)
+ 	{
+-		string fileExt = fileName.substr(fileExtPos);
++		return &quot;&quot;;
++	}
+ 
+-		if (strncasecmp(fileExt.c_str(), &quot;.txt&quot;, 4) == 0)
+-		{
+-			return &quot;text/plain&quot;;
+-		}
+-		else if (strncasecmp(fileExt.c_str(), &quot;.html&quot;, 5) == 0)
+-		{
+-			return &quot;text/html&quot;;
+-		}
+-		else if (strncasecmp(fileExt.c_str(), &quot;.xml&quot;, 4) == 0)
+-		{
+-			return &quot;text/xml&quot;;
+-		}
+-		else if (strncasecmp(fileExt.c_str(), &quot;.pdf&quot;, 4) == 0)
+-		{
+-			return &quot;application/pdf&quot;;
+-		}
+-		else if (strncasecmp(fileExt.c_str(), &quot;.ps&quot;, 3) == 0)
+-		{
+-			return &quot;application/postscript&quot;;
+-		}
++	// Does it have an obvious extension ?
++	const char  *pType = xdg_mime_get_mime_type_from_file_name(fileName.c_str());
++	if ((pType == NULL) ||
++		(strncasecmp(pType, xdg_mime_type_unknown, min(strlen(pType), strlen(xdg_mime_type_unknown))) == 0))
++	{
++		return &quot;&quot;;
+ 	}
+ 
+-	// Unknown type
+-	return &quot;&quot;;
++	return pType;
+ }
+ 
+ /// Finds out the given file's MIME type.
+@@ -67,68 +56,46 @@
+ 		return &quot;&quot;;
+ 	}
+ 
+-	// Does it have an obvious extension ?
+ 	string mimeType = scanFileType(fileName);
+-	if (mimeType.empty() == false)
++	if (mimeType.empty() == true)
+ 	{
+-		return mimeType;
+-	}
+-
+-	// Open
+-	magic_t magicCookie = magic_open(MAGIC_SYMLINK|MAGIC_MIME);
+-	if (magicCookie == NULL)
+-	{
+-		return &quot;&quot;;
+-	}
+-	if (magic_load(magicCookie, NULL) == -1)
+-	{
+-		magic_close(magicCookie);
+-		return &quot;&quot;;
+-	}
+-
+-	const char *type = magic_file(magicCookie, fileName.c_str());
+-	if (type != NULL)
+-	{
+-		mimeType = type;
+-
+-		// The MIME string might be of the form &quot;mime_type; charset=...&quot;
+-		string::size_type mimeTypeEnd = mimeType.find(&quot;;&quot;);
+-		if (mimeTypeEnd != string::npos)
++		// Have a peek at the file
++		const char *pType = xdg_mime_get_mime_type_for_file(fileName.c_str(), NULL);
++		if ((pType == NULL) ||
++			(strncasecmp(pType, xdg_mime_type_unknown, min(strlen(pType), strlen(xdg_mime_type_unknown))) == 0))
+ 		{
+-			mimeType.resize(mimeTypeEnd);
++			return &quot;&quot;;
+ 		}
++
++		mimeType = pType;
+ 	}
+ 
+-	// Close
+-	magic_close(magicCookie);
+-
+ 	return mimeType;
+ }
+ 
+ /// Finds out the given URL's MIME type.
+ string MIMEScanner::scanUrl(const Url &amp;urlObj)
+ {
+-	// Is it a local file ?
+-	if (urlObj.getProtocol() == &quot;file&quot;)
++	string mimeType = scanFileType(urlObj.getFile());
++	if (mimeType.empty() == true)
+ 	{
+-		string fileName = urlObj.getLocation();
+-		fileName += &quot;/&quot;;
+-		fileName += urlObj.getFile();
++		// Is it a local file ?
++		if (urlObj.getProtocol() == &quot;file&quot;)
++		{
++			string fileName = urlObj.getLocation();
++			fileName += &quot;/&quot;;
++			fileName += urlObj.getFile();
+ 
+-		return scanFile(fileName);
++			mimeType = scanFile(fileName);
++		}
+ 	}
+ 
+-	string mimeType = scanFileType(urlObj.getFile());
+ 	if (mimeType.empty() == true)
+ 	{
+ 		if (urlObj.getProtocol() == &quot;http&quot;)
+ 		{
+ 			mimeType = &quot;text/html&quot;;
+ 		}
+-		else
+-		{
+-			mimeType = &quot;text/plain&quot;;
+-		}
+ 	}
+ 
+ 	return mimeType;
+
+Modified: trunk/Utils/Makefile.am
+===================================================================
+--- trunk/Utils/Makefile.am	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/Makefile.am	2006-04-14 07:18:40 UTC (rev 211)
+@@ -15,7 +15,14 @@
+ 	Result.h \
+ 	TimeConverter.h \
+ 	Url.h \
+-	XapianDatabaseFactory.h
++	XapianDatabaseFactory.h \
++	xdgmime/xdgmimealias.h \
++	xdgmime/xdgmimecache.h \
++	xdgmime/xdgmimeglob.h \
++	xdgmime/xdgmime.h \
++	xdgmime/xdgmimeint.h \
++	xdgmime/xdgmimemagic.h \
++	xdgmime/xdgmimeparent.h
+ 
+ noinst_LTLIBRARIES = libUtils.la
+ 
+@@ -33,7 +40,15 @@
+ 	Result.cpp \
+ 	TimeConverter.cpp \
+ 	Url.cpp \
+-	XapianDatabaseFactory.cpp
++	XapianDatabaseFactory.cpp \
++	xdgmime/xdgmimealias.c \
++	xdgmime/xdgmime.c \
++	xdgmime/xdgmimecache.c \
++	xdgmime/xdgmimeglob.c \
++	xdgmime/xdgmimeint.c \
++	xdgmime/xdgmimemagic.c \
++	xdgmime/xdgmimeparent.c
+ 
+-AM_CXXFLAGS = -fPIC @HTTP_CFLAGS@ @INDEX_CFLAGS@ @MIME_CFLAGS@
++AM_CFLAGS = -fPIC -DXDG_PREFIX=pinot_xdg
++AM_CXXFLAGS = -fPIC @HTTP_CFLAGS@ @INDEX_CFLAGS@ @MIME_CFLAGS@ -DXDG_PREFIX=pinot_xdg
+ 
+
+Added: trunk/Utils/xdgmime/ChangeLog
+===================================================================
+--- trunk/Utils/xdgmime/ChangeLog	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/ChangeLog	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,362 @@
++2006-03-02  Christian Neumair  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">chris at gnome-de.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_glob_hash_insert_text),
++	(_xdg_glob_hash_append_glob): Don't strdup the MIME type when passing
++	it to _xdg_glob_hash_insert_text, but let the function itself figure
++	out whether string duplication is needed. Fixes #5993.
++	Thanks to Martin Wehner.
++
++2006-02-25  Christian Neumair  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">chris at gnome-de.org</A>&gt;
++
++	* src/xdgmimemagic.c: (_xdg_mime_magic_lookup_data): Make
++	priority equality check more robust so that it works for three or more
++	matches. Also allow matchlets with 0 priority.
++
++2006-02-19  Christian Neumair  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">chris at gnome-de.org</A>&gt;
++
++	* src/xdgmimemagic.c: (_xdg_mime_magic_lookup_data): When two
++	unrelated MIME types with equal priorities match, don't assume one of
++	them matches.
++	<A HREF="http://bugzilla.gnome.org/show_bug.cgi?id=331719">http://bugzilla.gnome.org/show_bug.cgi?id=331719</A>
++
++2006-01-03  Christian Neumair  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">chris at gnome-de.org</A>&gt;
++
++	* src/xdgmimemagic.c: (_xdg_mime_magic_lookup_data): Also consider
++	match priority for the returned MIME type.
++
++2005-12-01  Christian Neumair  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">chris at gnome-de.org</A>&gt;
++
++	* src/xdgmime.c: (xdg_mime_get_mime_type_from_file_name):
++	* src/xdgmimecache.c: (_xdg_mime_cache_get_mime_type_from_file_name):
++	Return XDG_MIME_TYPE_UNKNOWN if multiple MIME types match a simple
++	pattern.
++
++2005-12-01  Matthias Clasen  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++
++	* src/xdgmimecache.h:
++	* src/xdgmimecache.c (_xdg_mime_cache_get_mime_type_for_file): 
++	Allow passing in a struct stat * to avoid re-stat()ing. 
++	Forgotten commit from an earlier entry.
++
++	* src/xdgmimecache.c (cache_glob_lookup_literal):
++	(cache_glob_lookup_fnmatch):
++	(cache_glob_node_lookup_suffix): Change these functions to
++	allow returning more than one mime type if identical globs
++	match.
++
++	* src/xdgmimemagic.h: 
++	* src/xdgmimeglob.h: 
++	* src/xdgmimemagic.c (_xdg_mime_magic_lookup_data): 
++	* src/xdgmimeglob.c (_xdg_glob_hash_lookup_file_name): 
++	Change these functions to allow returning more than one
++	mime type if identical globs match.
++	
++	* src/xdgmimecache.c (_xdg_mime_cache_get_mime_type_for_file): 
++	* src/xdgmime.c (xdg_mime_get_mime_type_for_file): 
++	If multiple identical globs match, use magic to disambiguate.
++	
++2005-11-04  Matthias Clasen  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++
++	* xdgmime.c (xdg_mime_list_mime_parents): Prevent
++	a segfault.
++
++2005-10-18  Matthias Clasen  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++	
++	* src/xdgmime.c:
++	* src/xdgmimecache.h:
++	* src/xdgmimecache.c: Make the array of caches NULL-terminated
++	and rename it to _caches.  (#4011)
++
++	* src/xdgmime.h:
++	* src/xdgmime.c: Add a struct statbuf * argument to 
++	xdg_mime_get_mime_type_for_file().  (#3529)
++
++	* src/test-mime.c: Adjust callers. Add License.
++
++	* src/xdgmimecache.c: Make magic comparisons work correctly.
++
++Thu Jun  9 23:55:25 2005  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmime.c (xdg_mime_init_from_directory): patch from
++	federico to realloc the right size, #3506
++
++2005-04-17  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmimeint.c: fix gcc4 signedness warning
++
++2005-04-17  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c: (_xdg_mime_magic_matchlet_compare_to_data),
++	(_xdg_mime_magic_matchlet_compare_level),
++	(_xdg_mime_magic_lookup_data): when  magic patterns matches, check if
++	there aren't subtypes with matching patterns too, and if so, favour
++	the subtype over the parent type, should fix #2686
++
++2005-04-16  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmime.c: (xdg_mime_init_from_directory): fix leak when
++	mime.cache doesn't exist
++
++2005-04-16  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/test-mime.c: (main): disabled call to xdg_mime_dump for now
++	* src/xdgmimemagic.c: (_xdg_mime_magic_matchlet_compare_to_data):
++	fixed off by 1 error when handling offsets, fixes bug #2050 and 
++	partly bug #2359
++
++Fri Apr  8 23:37:33 2005  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmimecache.c: Actually add the file.  Also, patch from
++	Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt; to fix small bugs, #2939
++
++Fri Apr  1 14:59:43 2005  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmimecache.c: Patch from Matthias Clasen to mmap the
++	cached xdg file.
++
++Mon Mar 28 13:58:32 2005  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmimeglob.c (_xdg_glob_hash_insert_text): patch from
++	Matthias Clasen to handle globs that don't have '.' chars in
++	them.  As an example 'foo~' should match '*~'
++
++Mon Mar 21 13:16:12 2005  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmime.c (xdg_mime_shutdown): fix from  Axel Liljencrantz
++	&lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">f97-ali at nada.kth.se</A>&gt; to free parent_list in shutdown.
++
++2005-01-10  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_glob_hash_lookup_file_name): make previous
++	commit actually work...
++
++2005-01-10  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_glob_hash_lookup_file_name): don't get
++	confused by multiple dots in filenames when doing extension matching
++
++2004-12-13  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmime.h:
++
++	 wrap new API in XDG_ENTRY()
++
++2004-12-13  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_glob_hash_lookup_file_name):
++
++	Do not assume the filename is UTF8. We just need to look
++	for the dot which is ASCII.
++
++2004-12-09  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimeint.h:
++
++	Remove spacings I introduced by mistake
++
++2004-12-09  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimealias.c: (_xdg_mime_alias_read_from_file):
++	* src/xdgmimeint.c: (_xdg_ucs4_to_lower):
++	* src/xdgmimeint.h:
++	* src/xdgmimeparent.c: (_xdg_mime_parent_read_from_file):
++
++	Check in Mariano Su&#225;rez-Alvarez &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">msuarezalvarez at arnet.com.ar</A>&gt; patch
++	for GNOME bug #160838.
++
++2004-12-09  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_glob_hash_node_lookup_file_name):
++	* src/xdgmimeint.c: (_xdg_ucs4_to_lower):
++	* src/xdgmimeint.h:
++
++	Follow the freedesktop spec about case sensitiveness. Fix #732
++
++2004-12-08  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_mime_glob_read_from_file): backing out
++	&quot;fix&quot; for bug #1048 since it frees memory that shouldn't be freed.
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c: (_xdg_mime_magic_read_from_file):
++
++	Check that fread succeeded reading all chars. Fix #1049
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmime.c:
++	* src/xdgmimealias.c:
++	* src/xdgmimeglob.c:
++	* src/xdgmimeint.c:
++	* src/xdgmimemagic.c:
++	* src/xdgmimeparent.c:
++
++	Include config.h. Fix #913
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimealias.c: (_xdg_mime_alias_list_lookup):
++
++	Fix a typo
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmime.c: (xdg_mime_unalias_mime_type),
++	(xdg_mime_mime_type_equal), (xdg_mime_mime_type_subclass),
++	(xdg_mime_get_mime_parents):
++	* src/xdgmime.h:
++
++	Add apis to get parents and to unalias mime type
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimealias.c: (_xdg_mime_alias_list_lookup):
++	* src/xdgmimeparent.c: (_xdg_mime_parent_list_lookup):
++
++	Protect against stupid bsearch() implementations.  (#1961,
++	Morten Welinder)
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimeparent.c: (_xdg_mime_parent_read_from_file):
++
++	Initialize the parent field of the newly allocate list 
++	entry.  (#1916, Alex Larsson)
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_mime_glob_read_from_file):
++
++	Patch from Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt; to fix
++	a mem leak. Bug #1048
++
++2004-12-08  Marco Pesenti Gritti  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">marco at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.h:
++
++	Patch from <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">Michael.Wilson at bull.net</A> to fix compile error on AIX
++
++Sun Nov  7 02:25:21 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmime.h: Patch from Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++	to add alias and inheritence support.
++
++2004-09-16  Christophe Fergeau  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">teuf at gnome.org</A>&gt;
++
++	* src/xdgmimeglob.c: (_xdg_glob_hash_free_nodes):
++	* src/xdgmimemagic.c: (_xdg_mime_magic_free): fix memory leaks, 
++	  fixes <A HREF="http://bugzilla.gnome.org/show_bug.cgi?id=152771">http://bugzilla.gnome.org/show_bug.cgi?id=152771</A> and
++	  <A HREF="http://bugzilla.gnome.org/show_bug.cgi?id=152768">http://bugzilla.gnome.org/show_bug.cgi?id=152768</A>
++
++Mon Jul 19 00:23:00 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmime.c (xdg_mime_register_reload_callback): register a
++	callback when we reload MIME data.
++
++	* src/xdgmime.c (xdg_mime_remove_callback): Add capability to
++	remove callback.
++
++Sun Jul 18 20:56:22 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmime.c (xdg_mime_shutdown):
++	(xdg_mime_init): reread data when it changes on disk.
++
++Thu May 27 16:18:14 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmime.h: move xdg_mime_shutdown into the XDG_ENTRY guard.
++
++Thu May 27 15:02:13 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_read_magic_file): patch from
++	Hongli Lai &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">h.lai at chello.nl</A>&gt; to catch magic files that don't end
++	with a '\n'.
++
++Fri Apr 30 11:56:01 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_read_a_number): make the
++	buffer the right size.  Reported by Morten Welinder, #136323
++
++Sun Mar 21 23:56:46 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c: Patch from Arjan van de Ven
++	&lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">arjanv at redhat.com</A>&gt; to do s/fgetc/getc_unlocked/g.
++
++Wed Mar 10 22:28:41 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_read_a_number): fix usage of
++	isdigit.  Reported by Morten Welinder, #136323
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_read_magic_file): patch from
++	Christophe Fergeau to reverse the order of the matchlet before
++	adding it to the list.
++
++	* src/xdgmimeint.h (_xdg_utf8_skip): patch from Alexander Larsson
++	to make extern.
++
++Wed Jan 21 09:29:41 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_insert_match): dropped
++	patches.  Fix.
++
++	* src/xdgmimeglob.c (_xdg_glob_hash_free_nodes): dropped patches.
++	Fix.
++
++Tue Jan 20 14:55:39 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmime.h (XDG_MIME_TYPE_UNKNOWN): move the definition so
++	that it catches the XDG_ENTRY mangling.
++
++	* src/xdgmimemagic.c: make some functions static
++
++Tue Jan 20 14:34:26 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmime.c (xdg_mime_get_max_buffer_extents): add function so
++	that it's easy to get the max buffer extents.
++
++Tue Jan 20 12:55:55 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/Makefile: Test prefix code
++
++	* src/xdgmime*.h: Fully use the prefix code
++
++	* src/xdgmime.c: finish the syncing from both GTK+ and gnome-vfs.
++
++Tue Jan 13 16:21:04 2004  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* src/xdgmime.[ch] (XDG_MIME_TYPE_UNKNOWN): make an extern const
++	char * so that comparisons can work.
++
++	* src/xdgmimeint.c (_xdg_utf8_to_ucs4): patch from Dave Jones
++	&lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">davej at redhat.com</A>&gt; to make operations more explicit.
++
++Tue Oct 28 15:09:06 2003  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* README: Add a readme, and clarify the licensing terms of the
++	software.
++
++Tue Oct 28 14:47:37 2003  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmime.c (xdg_mime_shutdown): implement shutdown.  This
++	frees all memory and resets to an uninitialized state as best as
++	possible.
++
++Mon Oct 27 11:45:58 2003  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at redhat.com</A>&gt;
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_read_a_number): strtol
++	returns a long, not an int.  Thanks to Manish Singh for pointing
++	this out.
++
++	* src/xdgmimemagic.c (_xdg_mime_magic_parse_magic_line): change
++	assertion to avoid a warning.
++
++Tue Oct 21 15:56:55 2003  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* Makefile: add a simple makefile
++	* src/Makefile: ditto
++
++Tue Jul 22 15:37:45 2003  Jonathan Blandford  &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at gnome.org</A>&gt;
++
++	* xdgmime/xdgmime.c (xdg_mime_init): use XDG_DATA_HOME instead of
++	XDG_CONFIG_HOME.
++
+
+Added: trunk/Utils/xdgmime/xdgmime.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmime.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmime.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,808 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmime.c: XDG Mime Spec mime resolver.  Based on version 0.11 of the spec.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ * 
++ * Copyright (C) 2003,2004  Red Hat, Inc.
++ * Copyright (C) 2003,2004  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ * 
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &quot;xdgmime.h&quot;
++#include &quot;xdgmimeint.h&quot;
++#include &quot;xdgmimeglob.h&quot;
++#include &quot;xdgmimemagic.h&quot;
++#include &quot;xdgmimealias.h&quot;
++#include &quot;xdgmimeparent.h&quot;
++#include &quot;xdgmimecache.h&quot;
++#include &lt;stdio.h&gt;
++#include &lt;string.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;sys/types.h&gt;
++#include &lt;sys/time.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;assert.h&gt;
++
++typedef struct XdgDirTimeList XdgDirTimeList;
++typedef struct XdgCallbackList XdgCallbackList;
++
++static int need_reread = TRUE;
++static time_t last_stat_time = 0;
++
++static XdgGlobHash *global_hash = NULL;
++static XdgMimeMagic *global_magic = NULL;
++static XdgAliasList *alias_list = NULL;
++static XdgParentList *parent_list = NULL;
++static XdgDirTimeList *dir_time_list = NULL;
++static XdgCallbackList *callback_list = NULL;
++
++XdgMimeCache **_caches = NULL;
++static int n_caches = 0;
++
++const char *xdg_mime_type_unknown = &quot;application/octet-stream&quot;;
++
++
++enum
++{
++  XDG_CHECKED_UNCHECKED,
++  XDG_CHECKED_VALID,
++  XDG_CHECKED_INVALID
++};
++
++struct XdgDirTimeList
++{
++  time_t mtime;
++  char *directory_name;
++  int checked;
++  XdgDirTimeList *next;
++};
++
++struct XdgCallbackList
++{
++  XdgCallbackList *next;
++  XdgCallbackList *prev;
++  int              callback_id;
++  XdgMimeCallback  callback;
++  void            *data;
++  XdgMimeDestroy   destroy;
++};
++
++/* Function called by xdg_run_command_on_dirs.  If it returns TRUE, further
++ * directories aren't looked at */
++typedef int (*XdgDirectoryFunc) (const char *directory,
++				 void       *user_data);
++
++static XdgDirTimeList *
++xdg_dir_time_list_new (void)
++{
++  XdgDirTimeList *retval;
++
++  retval = calloc (1, sizeof (XdgDirTimeList));
++  retval-&gt;checked = XDG_CHECKED_UNCHECKED;
++
++  return retval;
++}
++
++static void
++xdg_dir_time_list_free (XdgDirTimeList *list)
++{
++  XdgDirTimeList *next;
++
++  while (list)
++    {
++      next = list-&gt;next;
++      free (list-&gt;directory_name);
++      free (list);
++      list = next;
++    }
++}
++
++static int
++xdg_mime_init_from_directory (const char *directory)
++{
++  char *file_name;
++  struct stat st;
++  XdgDirTimeList *list;
++
++  assert (directory != NULL);
++
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/mime.cache&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/mime.cache&quot;);
++  if (stat (file_name, &amp;st) == 0)
++    {
++      XdgMimeCache *cache = _xdg_mime_cache_new_from_file (file_name);
++
++      if (cache != NULL)
++	{
++	  list = xdg_dir_time_list_new ();
++	  list-&gt;directory_name = file_name;
++	  list-&gt;mtime = st.st_mtime;
++	  list-&gt;next = dir_time_list;
++	  dir_time_list = list;
++
++	  _caches = realloc (_caches, sizeof (XdgMimeCache *) * (n_caches + 2));
++	  _caches[n_caches] = cache;
++          _caches[n_caches + 1] = NULL;
++	  n_caches++;
++
++	  return FALSE;
++	}
++    }
++  free (file_name);
++
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/globs&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/globs&quot;);
++  if (stat (file_name, &amp;st) == 0)
++    {
++      _xdg_mime_glob_read_from_file (global_hash, file_name);
++
++      list = xdg_dir_time_list_new ();
++      list-&gt;directory_name = file_name;
++      list-&gt;mtime = st.st_mtime;
++      list-&gt;next = dir_time_list;
++      dir_time_list = list;
++    }
++  else
++    {
++      free (file_name);
++    }
++
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/magic&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/magic&quot;);
++  if (stat (file_name, &amp;st) == 0)
++    {
++      _xdg_mime_magic_read_from_file (global_magic, file_name);
++
++      list = xdg_dir_time_list_new ();
++      list-&gt;directory_name = file_name;
++      list-&gt;mtime = st.st_mtime;
++      list-&gt;next = dir_time_list;
++      dir_time_list = list;
++    }
++  else
++    {
++      free (file_name);
++    }
++
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/aliases&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/aliases&quot;);
++  _xdg_mime_alias_read_from_file (alias_list, file_name);
++  free (file_name);
++
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/subclasses&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/subclasses&quot;);
++  _xdg_mime_parent_read_from_file (parent_list, file_name);
++  free (file_name);
++
++  return FALSE; /* Keep processing */
++}
++
++/* Runs a command on all the directories in the search path */
++static void
++xdg_run_command_on_dirs (XdgDirectoryFunc  func,
++			 void             *user_data)
++{
++  const char *xdg_data_home;
++  const char *xdg_data_dirs;
++  const char *ptr;
++
++  xdg_data_home = getenv (&quot;XDG_DATA_HOME&quot;);
++  if (xdg_data_home)
++    {
++      if ((func) (xdg_data_home, user_data))
++	return;
++    }
++  else
++    {
++      const char *home;
++
++      home = getenv (&quot;HOME&quot;);
++      if (home != NULL)
++	{
++	  char *guessed_xdg_home;
++	  int stop_processing;
++
++	  guessed_xdg_home = malloc (strlen (home) + strlen (&quot;/.local/share/&quot;) + 1);
++	  strcpy (guessed_xdg_home, home);
++	  strcat (guessed_xdg_home, &quot;/.local/share/&quot;);
++	  stop_processing = (func) (guessed_xdg_home, user_data);
++	  free (guessed_xdg_home);
++
++	  if (stop_processing)
++	    return;
++	}
++    }
++
++  xdg_data_dirs = getenv (&quot;XDG_DATA_DIRS&quot;);
++  if (xdg_data_dirs == NULL)
++    xdg_data_dirs = &quot;/usr/local/share/:/usr/share/&quot;;
++
++  ptr = xdg_data_dirs;
++
++  while (*ptr != '\000')
++    {
++      const char *end_ptr;
++      char *dir;
++      int len;
++      int stop_processing;
++
++      end_ptr = ptr;
++      while (*end_ptr != ':' &amp;&amp; *end_ptr != '\000')
++	end_ptr ++;
++
++      if (end_ptr == ptr)
++	{
++	  ptr++;
++	  continue;
++	}
++
++      if (*end_ptr == ':')
++	len = end_ptr - ptr;
++      else
++	len = end_ptr - ptr + 1;
++      dir = malloc (len + 1);
++      strncpy (dir, ptr, len);
++      dir[len] = '\0';
++      stop_processing = (func) (dir, user_data);
++      free (dir);
++
++      if (stop_processing)
++	return;
++
++      ptr = end_ptr;
++    }
++}
++
++/* Checks file_path to make sure it has the same mtime as last time it was
++ * checked.  If it has a different mtime, or if the file doesn't exist, it
++ * returns FALSE.
++ *
++ * FIXME: This doesn't protect against permission changes.
++ */
++static int
++xdg_check_file (const char *file_path)
++{
++  struct stat st;
++
++  /* If the file exists */
++  if (stat (file_path, &amp;st) == 0)
++    {
++      XdgDirTimeList *list;
++
++      for (list = dir_time_list; list; list = list-&gt;next)
++	{
++	  if (! strcmp (list-&gt;directory_name, file_path) &amp;&amp;
++	      st.st_mtime == list-&gt;mtime)
++	    {
++	      if (list-&gt;checked == XDG_CHECKED_UNCHECKED)
++		list-&gt;checked = XDG_CHECKED_VALID;
++	      else if (list-&gt;checked == XDG_CHECKED_VALID)
++		list-&gt;checked = XDG_CHECKED_INVALID;
++
++	      return (list-&gt;checked != XDG_CHECKED_VALID);
++	    }
++	}
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
++static int
++xdg_check_dir (const char *directory,
++	       int        *invalid_dir_list)
++{
++  int invalid;
++  char *file_name;
++
++  assert (directory != NULL);
++
++  /* Check the globs file */
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/globs&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/globs&quot;);
++  invalid = xdg_check_file (file_name);
++  free (file_name);
++  if (invalid)
++    {
++      *invalid_dir_list = TRUE;
++      return TRUE;
++    }
++
++  /* Check the magic file */
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/magic&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/magic&quot;);
++  invalid = xdg_check_file (file_name);
++  free (file_name);
++  if (invalid)
++    {
++      *invalid_dir_list = TRUE;
++      return TRUE;
++    }
++
++  /* Check the mime.cache file */
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/mime.cache&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/mime.cache&quot;);
++  invalid = xdg_check_file (file_name);
++  free (file_name);
++  if (invalid)
++    {
++      *invalid_dir_list = TRUE;
++      return TRUE;
++    }
++
++  return FALSE; /* Keep processing */
++}
++
++/* Walks through all the mime files stat()ing them to see if they've changed.
++ * Returns TRUE if they have. */
++static int
++xdg_check_dirs (void)
++{
++  XdgDirTimeList *list;
++  int invalid_dir_list = FALSE;
++
++  for (list = dir_time_list; list; list = list-&gt;next)
++    list-&gt;checked = XDG_CHECKED_UNCHECKED;
++
++  xdg_run_command_on_dirs ((XdgDirectoryFunc) xdg_check_dir,
++			   &amp;invalid_dir_list);
++
++  if (invalid_dir_list)
++    return TRUE;
++
++  for (list = dir_time_list; list; list = list-&gt;next)
++    {
++      if (list-&gt;checked != XDG_CHECKED_VALID)
++	return TRUE;
++    }
++
++  return FALSE;
++}
++
++/* We want to avoid stat()ing on every single mime call, so we only look for
++ * newer files every 5 seconds.  This will return TRUE if we need to reread the
++ * mime data from disk.
++ */
++static int
++xdg_check_time_and_dirs (void)
++{
++  struct timeval tv;
++  time_t current_time;
++  int retval = FALSE;
++
++  gettimeofday (&amp;tv, NULL);
++  current_time = tv.tv_sec;
++
++  if (current_time &gt;= last_stat_time + 5)
++    {
++      retval = xdg_check_dirs ();
++      last_stat_time = current_time;
++    }
++
++  return retval;
++}
++
++/* Called in every public function.  It reloads the hash function if need be.
++ */
++static void
++xdg_mime_init (void)
++{
++  if (xdg_check_time_and_dirs ())
++    {
++      xdg_mime_shutdown ();
++    }
++
++  if (need_reread)
++    {
++      global_hash = _xdg_glob_hash_new ();
++      global_magic = _xdg_mime_magic_new ();
++      alias_list = _xdg_mime_alias_list_new ();
++      parent_list = _xdg_mime_parent_list_new ();
++
++      xdg_run_command_on_dirs ((XdgDirectoryFunc) xdg_mime_init_from_directory,
++			       NULL);
++
++      need_reread = FALSE;
++    }
++}
++
++const char *
++xdg_mime_get_mime_type_for_data (const void *data,
++				 size_t      len)
++{
++  const char *mime_type;
++
++  xdg_mime_init ();
++
++  if (_caches)
++    return _xdg_mime_cache_get_mime_type_for_data (data, len);
++
++  mime_type = _xdg_mime_magic_lookup_data (global_magic, data, len, NULL, 0);
++
++  if (mime_type)
++    return mime_type;
++
++  return XDG_MIME_TYPE_UNKNOWN;
++}
++
++const char *
++xdg_mime_get_mime_type_for_file (const char  *file_name,
++                                 struct stat *statbuf)
++{
++  const char *mime_type;
++  /* currently, only a few globs occur twice, and none
++   * more often, so 5 seems plenty.
++   */
++  const char *mime_types[5];
++  FILE *file;
++  unsigned char *data;
++  int max_extent;
++  int bytes_read;
++  struct stat buf;
++  const char *base_name;
++  int n;
++
++  if (file_name == NULL)
++    return NULL;
++  if (! _xdg_utf8_validate (file_name))
++    return NULL;
++
++  xdg_mime_init ();
++
++  if (_caches)
++    return _xdg_mime_cache_get_mime_type_for_file (file_name, statbuf);
++
++  base_name = _xdg_get_base_name (file_name);
++  n = _xdg_glob_hash_lookup_file_name (global_hash, base_name, mime_types, 5);
++
++  if (n == 1)
++    return mime_types[0];
++
++  if (!statbuf)
++    {
++      if (stat (file_name, &amp;buf) != 0)
++	return XDG_MIME_TYPE_UNKNOWN;
++
++      statbuf = &buf;
++    }
++
++  if (!S_ISREG (statbuf-&gt;st_mode))
++    return XDG_MIME_TYPE_UNKNOWN;
++
++  /* FIXME: Need to make sure that max_extent isn't totally broken.  This could
++   * be large and need getting from a stream instead of just reading it all
++   * in. */
++  max_extent = _xdg_mime_magic_get_buffer_extents (global_magic);
++  data = malloc (max_extent);
++  if (data == NULL)
++    return XDG_MIME_TYPE_UNKNOWN;
++        
++  file = fopen (file_name, &quot;r&quot;);
++  if (file == NULL)
++    {
++      free (data);
++      return XDG_MIME_TYPE_UNKNOWN;
++    }
++
++  bytes_read = fread (data, 1, max_extent, file);
++  if (ferror (file))
++    {
++      free (data);
++      fclose (file);
++      return XDG_MIME_TYPE_UNKNOWN;
++    }
++
++  mime_type = _xdg_mime_magic_lookup_data (global_magic, data, bytes_read,
++					   mime_types, n);
++
++  free (data);
++  fclose (file);
++
++  if (mime_type)
++    return mime_type;
++
++  return XDG_MIME_TYPE_UNKNOWN;
++}
++
++const char *
++xdg_mime_get_mime_type_from_file_name (const char *file_name)
++{
++  const char *mime_types[2];
++
++  xdg_mime_init ();
++
++  if (_caches)
++    return _xdg_mime_cache_get_mime_type_from_file_name (file_name);
++
++  if (_xdg_glob_hash_lookup_file_name (global_hash, file_name, mime_types, 2) == 1)
++    return mime_types[0];
++  else
++    return XDG_MIME_TYPE_UNKNOWN;
++}
++
++int
++xdg_mime_is_valid_mime_type (const char *mime_type)
++{
++  /* FIXME: We should make this a better test
++   */
++  return _xdg_utf8_validate (mime_type);
++}
++
++void
++xdg_mime_shutdown (void)
++{
++  XdgCallbackList *list;
++
++  /* FIXME: Need to make this (and the whole library) thread safe */
++  if (dir_time_list)
++    {
++      xdg_dir_time_list_free (dir_time_list);
++      dir_time_list = NULL;
++    }
++	
++  if (global_hash)
++    {
++      _xdg_glob_hash_free (global_hash);
++      global_hash = NULL;
++    }
++  if (global_magic)
++    {
++      _xdg_mime_magic_free (global_magic);
++      global_magic = NULL;
++    }
++
++  if (alias_list)
++    {
++      _xdg_mime_alias_list_free (alias_list);
++      alias_list = NULL;
++    }
++
++  if (parent_list)
++    {
++      _xdg_mime_parent_list_free (parent_list);
++      parent_list = NULL;
++    }
++  
++  for (list = callback_list; list; list = list-&gt;next)
++    (list-&gt;callback) (list-&gt;data);
++
++  need_reread = TRUE;
++}
++
++int
++xdg_mime_get_max_buffer_extents (void)
++{
++  xdg_mime_init ();
++  
++  if (_caches)
++    return _xdg_mime_cache_get_max_buffer_extents ();
++
++  return _xdg_mime_magic_get_buffer_extents (global_magic);
++}
++
++const char *
++xdg_mime_unalias_mime_type (const char *mime_type)
++{
++  const char *lookup;
++
++  xdg_mime_init ();
++
++  if (_caches)
++    return _xdg_mime_cache_unalias_mime_type (mime_type);
++
++  if ((lookup = _xdg_mime_alias_list_lookup (alias_list, mime_type)) != NULL)
++    return lookup;
++
++  return mime_type;
++}
++
++int
++xdg_mime_mime_type_equal (const char *mime_a,
++			  const char *mime_b)
++{
++  const char *unalias_a, *unalias_b;
++
++  xdg_mime_init ();
++
++  unalias_a = xdg_mime_unalias_mime_type (mime_a);
++  unalias_b = xdg_mime_unalias_mime_type (mime_b);
++
++  if (strcmp (unalias_a, unalias_b) == 0)
++    return 1;
++
++  return 0;
++}
++
++int
++xdg_mime_media_type_equal (const char *mime_a,
++			   const char *mime_b)
++{
++  char *sep;
++
++  xdg_mime_init ();
++
++  sep = strchr (mime_a, '/');
++  
++  if (sep &amp;&amp; strncmp (mime_a, mime_b, sep - mime_a + 1) == 0)
++    return 1;
++
++  return 0;
++}
++
++#if 0
++static int
++xdg_mime_is_super_type (const char *mime)
++{
++  int length;
++  const char *type;
++
++  length = strlen (mime);
++  type = &amp;(mime[length - 2]);
++
++  if (strcmp (type, &quot;/*&quot;) == 0)
++    return 1;
++
++  return 0;
++}
++#endif
++
++int
++xdg_mime_mime_type_subclass (const char *mime,
++			     const char *base)
++{
++  const char *umime, *ubase;
++  const char **parents;
++
++  xdg_mime_init ();
++
++  if (_caches)
++    return _xdg_mime_cache_mime_type_subclass (mime, base);
++
++  umime = xdg_mime_unalias_mime_type (mime);
++  ubase = xdg_mime_unalias_mime_type (base);
++
++  if (strcmp (umime, ubase) == 0)
++    return 1;
++
++#if 0  
++  /* Handle supertypes */
++  if (xdg_mime_is_super_type (ubase) &amp;&amp;
++      xdg_mime_media_type_equal (umime, ubase))
++    return 1;
++#endif
++
++  /*  Handle special cases text/plain and application/octet-stream */
++  if (strcmp (ubase, &quot;text/plain&quot;) == 0 &amp;&amp; 
++      strncmp (umime, &quot;text/&quot;, 5) == 0)
++    return 1;
++
++  if (strcmp (ubase, &quot;application/octet-stream&quot;) == 0)
++    return 1;
++  
++  parents = _xdg_mime_parent_list_lookup (parent_list, umime);
++  for (; parents &amp;&amp; *parents; parents++)
++    {
++      if (xdg_mime_mime_type_subclass (*parents, ubase))
++	return 1;
++    }
++
++  return 0;
++}
++
++char **
++xdg_mime_list_mime_parents (const char *mime)
++{
++  const char **parents;
++  char **result;
++  int i, n;
++
++  if (_caches)
++    return _xdg_mime_cache_list_mime_parents (mime);
++
++  parents = xdg_mime_get_mime_parents (mime);
++
++  if (!parents)
++    return NULL;
++
++  for (i = 0; parents[i]; i++) ;
++  
++  n = (i + 1) * sizeof (char *);
++  result = (char **) malloc (n);
++  memcpy (result, parents, n);
++
++  return result;
++}
++
++const char **
++xdg_mime_get_mime_parents (const char *mime)
++{
++  const char *umime;
++
++  xdg_mime_init ();
++
++  umime = xdg_mime_unalias_mime_type (mime);
++
++  return _xdg_mime_parent_list_lookup (parent_list, umime);
++}
++
++void 
++xdg_mime_dump (void)
++{
++  printf (&quot;*** ALIASES ***\n\n&quot;);
++  _xdg_mime_alias_list_dump (alias_list);
++  printf (&quot;\n*** PARENTS ***\n\n&quot;);
++  _xdg_mime_parent_list_dump (parent_list);
++}
++
++
++/* Registers a function to be called every time the mime database reloads its files
++ */
++int
++xdg_mime_register_reload_callback (XdgMimeCallback  callback,
++				   void            *data,
++				   XdgMimeDestroy   destroy)
++{
++  XdgCallbackList *list_el;
++  static int callback_id = 1;
++
++  /* Make a new list element */
++  list_el = calloc (1, sizeof (XdgCallbackList));
++  list_el-&gt;callback_id = callback_id;
++  list_el-&gt;callback = callback;
++  list_el-&gt;data = data;
++  list_el-&gt;destroy = destroy;
++  list_el-&gt;next = callback_list;
++  if (list_el-&gt;next)
++    list_el-&gt;next-&gt;prev = list_el;
++
++  callback_list = list_el;
++  callback_id ++;
++
++  return callback_id - 1;
++}
++
++void
++xdg_mime_remove_callback (int callback_id)
++{
++  XdgCallbackList *list;
++
++  for (list = callback_list; list; list = list-&gt;next)
++    {
++      if (list-&gt;callback_id == callback_id)
++	{
++	  if (list-&gt;next)
++	    list-&gt;next = list-&gt;prev;
++
++	  if (list-&gt;prev)
++	    list-&gt;prev-&gt;next = list-&gt;next;
++	  else
++	    callback_list = list-&gt;next;
++
++	  /* invoke the destroy handler */
++	  (list-&gt;destroy) (list-&gt;data);
++	  free (list);
++	  return;
++	}
++    }
++}
+
+Added: trunk/Utils/xdgmime/xdgmime.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmime.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmime.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,102 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmime.h: XDG Mime Spec mime resolver.  Based on version 0.11 of the spec.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ * 
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ * 
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++
++#ifndef __XDG_MIME_H__
++#define __XDG_MIME_H__
++
++#include &lt;stdlib.h&gt;
++#include &lt;sys/stat.h&gt;
++
++#ifdef __cplusplus
++extern &quot;C&quot; {
++#endif /* __cplusplus */
++
++#ifdef XDG_PREFIX
++#define XDG_ENTRY(func) _XDG_ENTRY2(XDG_PREFIX,func)
++#define _XDG_ENTRY2(prefix,func) _XDG_ENTRY3(prefix,func)
++#define _XDG_ENTRY3(prefix,func) prefix##_##func
++#endif
++
++typedef void (*XdgMimeCallback) (void *user_data);
++typedef void (*XdgMimeDestroy)  (void *user_data);
++
++  
++#ifdef XDG_PREFIX
++#define xdg_mime_get_mime_type_for_data       XDG_ENTRY(get_mime_type_for_data)
++#define xdg_mime_get_mime_type_for_file       XDG_ENTRY(get_mime_type_for_file)
++#define xdg_mime_get_mime_type_from_file_name XDG_ENTRY(get_mime_type_from_file_name)
++#define xdg_mime_is_valid_mime_type           XDG_ENTRY(is_valid_mime_type)
++#define xdg_mime_mime_type_equal              XDG_ENTRY(mime_type_equal)
++#define xdg_mime_media_type_equal             XDG_ENTRY(media_type_equal)
++#define xdg_mime_mime_type_subclass           XDG_ENTRY(mime_type_subclass)
++#define xdg_mime_get_mime_parents             XDG_ENTRY(get_mime_parents)
++#define xdg_mime_list_mime_parents            XDG_ENTRY(list_mime_parents)
++#define xdg_mime_unalias_mime_type            XDG_ENTRY(unalias_mime_type)
++#define xdg_mime_get_max_buffer_extents       XDG_ENTRY(get_max_buffer_extents)
++#define xdg_mime_shutdown                     XDG_ENTRY(shutdown)
++#define xdg_mime_register_reload_callback     XDG_ENTRY(register_reload_callback)
++#define xdg_mime_remove_callback              XDG_ENTRY(remove_callback)
++#define xdg_mime_type_unknown                 XDG_ENTRY(type_unknown)
++#endif
++
++extern const char *xdg_mime_type_unknown;
++#define XDG_MIME_TYPE_UNKNOWN xdg_mime_type_unknown
++
++const char  *xdg_mime_get_mime_type_for_data       (const void *data,
++						    size_t      len);
++const char  *xdg_mime_get_mime_type_for_file       (const char *file_name,
++                                                    struct stat *statbuf);
++const char  *xdg_mime_get_mime_type_from_file_name (const char *file_name);
++int          xdg_mime_is_valid_mime_type           (const char *mime_type);
++int          xdg_mime_mime_type_equal              (const char *mime_a,
++						    const char *mime_b);
++int          xdg_mime_media_type_equal             (const char *mime_a,
++						    const char *mime_b);
++int          xdg_mime_mime_type_subclass           (const char *mime_a,
++						    const char *mime_b);
++  /* xdg_mime_get_mime_parents() is deprecated since it does
++   * not work correctly with caches. Use xdg_mime_list_parents() 
++   * instead, but notice that that function expects you to free
++   * the array it returns. 
++   */
++const char **xdg_mime_get_mime_parents		   (const char *mime);
++char **      xdg_mime_list_mime_parents		   (const char *mime);
++const char  *xdg_mime_unalias_mime_type		   (const char *mime);
++int          xdg_mime_get_max_buffer_extents       (void);
++void         xdg_mime_shutdown                     (void);
++void         xdg_mime_dump                         (void);
++int          xdg_mime_register_reload_callback     (XdgMimeCallback  callback,
++						    void            *data,
++						    XdgMimeDestroy   destroy);
++void         xdg_mime_remove_callback              (int              callback_id);
++
++#ifdef __cplusplus
++}
++#endif /* __cplusplus */
++
++#endif /* __XDG_MIME_H__ */
+
+Added: trunk/Utils/xdgmime/xdgmimealias.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimealias.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimealias.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,184 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimealias.c: Private file.  Datastructure for storing the aliases.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2004  Red Hat, Inc.
++ * Copyright (C) 2004  Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &quot;xdgmimealias.h&quot;
++#include &quot;xdgmimeint.h&quot;
++#include &lt;stdlib.h&gt;
++#include &lt;stdio.h&gt;
++#include &lt;assert.h&gt;
++#include &lt;string.h&gt;
++#include &lt;fnmatch.h&gt;
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++typedef struct XdgAlias XdgAlias;
++
++struct XdgAlias 
++{
++  char *alias;
++  char *mime_type;
++};
++
++struct XdgAliasList
++{
++  struct XdgAlias *aliases;
++  int n_aliases;
++};
++
++XdgAliasList *
++_xdg_mime_alias_list_new (void)
++{
++  XdgAliasList *list;
++
++  list = malloc (sizeof (XdgAliasList));
++
++  list-&gt;aliases = NULL;
++  list-&gt;n_aliases = 0;
++
++  return list;
++}
++
++void         
++_xdg_mime_alias_list_free (XdgAliasList *list)
++{
++  int i;
++
++  if (list-&gt;aliases)
++    {
++      for (i = 0; i &lt; list-&gt;n_aliases; i++)
++	{
++	  free (list-&gt;aliases[i].alias);
++	  free (list-&gt;aliases[i].mime_type);
++	}
++      free (list-&gt;aliases);
++    }
++  free (list);
++}
++
++static int
++alias_entry_cmp (const void *v1, const void *v2)
++{
++  return strcmp (((XdgAlias *)v1)-&gt;alias, ((XdgAlias *)v2)-&gt;alias);
++}
++
++const char  *
++_xdg_mime_alias_list_lookup (XdgAliasList *list,
++			     const char   *alias)
++{
++  XdgAlias *entry;
++  XdgAlias key;
++
++  if (list-&gt;n_aliases &gt; 0)
++    {
++      key.alias = (char *)alias;
++      key.mime_type = 0;
++
++      entry = bsearch (&amp;key, list-&gt;aliases, list-&gt;n_aliases,
++		       sizeof (XdgAlias), alias_entry_cmp);
++      if (entry)
++        return entry-&gt;mime_type;
++    }
++
++  return NULL;
++}
++
++void
++_xdg_mime_alias_read_from_file (XdgAliasList *list,
++				const char   *file_name)
++{
++  FILE *file;
++  char line[255];
++  int alloc;
++
++  file = fopen (file_name, &quot;r&quot;);
++
++  if (file == NULL)
++    return;
++
++  /* FIXME: Not UTF-8 safe.  Doesn't work if lines are greater than 255 chars.
++   * Blah */
++  alloc = list-&gt;n_aliases + 16;
++  list-&gt;aliases = realloc (list-&gt;aliases, alloc * sizeof (XdgAlias));
++  while (fgets (line, 255, file) != NULL)
++    {
++      char *sep;
++      if (line[0] == '#')
++	continue;
++
++      sep = strchr (line, ' ');
++      if (sep == NULL)
++	continue;
++      *(sep++) = '\000';
++      sep[strlen (sep) -1] = '\000';
++      if (list-&gt;n_aliases == alloc)
++	{
++	  alloc &lt;&lt;= 1;
++	  list-&gt;aliases = realloc (list-&gt;aliases, 
++				   alloc * sizeof (XdgAlias));
++	}
++      list-&gt;aliases[list-&gt;n_aliases].alias = strdup (line);
++      list-&gt;aliases[list-&gt;n_aliases].mime_type = strdup (sep);
++      list-&gt;n_aliases++;
++    }
++  list-&gt;aliases = realloc (list-&gt;aliases, 
++			   list-&gt;n_aliases * sizeof (XdgAlias));
++
++  fclose (file);  
++  
++  if (list-&gt;n_aliases &gt; 1)
++    qsort (list-&gt;aliases, list-&gt;n_aliases, 
++           sizeof (XdgAlias), alias_entry_cmp);
++}
++
++
++void
++_xdg_mime_alias_list_dump (XdgAliasList *list)
++{
++  int i;
++
++  if (list-&gt;aliases)
++    {
++      for (i = 0; i &lt; list-&gt;n_aliases; i++)
++	{
++	  printf (&quot;%s %s\n&quot;, 
++		  list-&gt;aliases[i].alias,
++		  list-&gt;aliases[i].mime_type);
++	}
++    }
++}
++
++
+
+Added: trunk/Utils/xdgmime/xdgmimealias.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimealias.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimealias.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,50 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimealias.h: Private file.  Datastructure for storing the aliases.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2004  Red Hat, Inc.
++ * Copyright (C) 200  Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifndef __XDG_MIME_ALIAS_H__
++#define __XDG_MIME_ALIAS_H__
++
++#include &quot;xdgmime.h&quot;
++
++typedef struct XdgAliasList XdgAliasList;
++
++#ifdef XDG_PREFIX
++#define _xdg_mime_alias_read_from_file        XDG_ENTRY(alias_read_from_file)
++#define _xdg_mime_alias_list_new              XDG_ENTRY(alias_list_new)
++#define _xdg_mime_alias_list_free             XDG_ENTRY(alias_list_free)
++#define _xdg_mime_alias_list_lookup           XDG_ENTRY(alias_list_lookup)
++#endif
++
++void          _xdg_mime_alias_read_from_file (XdgAliasList *list,
++					      const char   *file_name);
++XdgAliasList *_xdg_mime_alias_list_new       (void);
++void          _xdg_mime_alias_list_free      (XdgAliasList *list);
++const char   *_xdg_mime_alias_list_lookup    (XdgAliasList *list,
++					      const char  *alias);
++void          _xdg_mime_alias_list_dump      (XdgAliasList *list);
++
++#endif /* __XDG_MIME_ALIAS_H__ */
+
+Added: trunk/Utils/xdgmime/xdgmimecache.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimecache.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimecache.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,888 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimealias.c: Private file.  mmappable caches for mime data
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2005  Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &lt;stdio.h&gt;
++#include &lt;stdlib.h&gt;
++#include &lt;string.h&gt;
++
++#include &lt;fcntl.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;fnmatch.h&gt;
++#include &lt;assert.h&gt;
++
++#include &lt;netinet/in.h&gt; /* for ntohl/ntohs */
++
++#ifdef HAVE_MMAP
++#include &lt;sys/mman.h&gt;
++#endif
++
++#include &lt;sys/stat.h&gt;
++#include &lt;sys/types.h&gt;
++
++#include &quot;xdgmimecache.h&quot;
++#include &quot;xdgmimeint.h&quot;
++
++#ifndef MAX
++#define MAX(a,b) ((a) &gt; (b) ? (a) : (b))
++#endif
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++#ifndef _O_BINARY
++#define _O_BINARY 0
++#endif
++
++#ifndef MAP_FAILED
++#define MAP_FAILED ((void *) -1)
++#endif
++
++#define MAJOR_VERSION 1
++#define MINOR_VERSION 0
++
++struct _XdgMimeCache
++{
++  int ref_count;
++
++  size_t  size;
++  char   *buffer;
++};
++
++#define GET_UINT16(cache,offset) (ntohs(*(xdg_uint16_t*)((cache) + (offset))))
++#define GET_UINT32(cache,offset) (ntohl(*(xdg_uint32_t*)((cache) + (offset))))
++
++XdgMimeCache *
++_xdg_mime_cache_ref (XdgMimeCache *cache)
++{
++  cache-&gt;ref_count++;
++  return cache;
++}
++
++void
++_xdg_mime_cache_unref (XdgMimeCache *cache)
++{
++  cache-&gt;ref_count--;
++
++  if (cache-&gt;ref_count == 0)
++    {
++#ifdef HAVE_MMAP
++      munmap (cache-&gt;buffer, cache-&gt;size);
++#endif
++      free (cache);
++    }
++}
++
++XdgMimeCache *
++_xdg_mime_cache_new_from_file (const char *file_name)
++{
++  XdgMimeCache *cache = NULL;
++
++#ifdef HAVE_MMAP
++  int fd = -1;
++  struct stat st;
++  char *buffer = NULL;
++
++  /* Open the file and map it into memory */
++  fd = open (file_name, O_RDONLY|_O_BINARY, 0);
++
++  if (fd &lt; 0)
++    return NULL;
++  
++  if (fstat (fd, &amp;st) &lt; 0 || st.st_size &lt; 4)
++    goto done;
++
++  buffer = (char *) mmap (NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
++
++  if (buffer == MAP_FAILED)
++    goto done;
++
++  /* Verify version */
++  if (GET_UINT16 (buffer, 0) != MAJOR_VERSION ||
++      GET_UINT16 (buffer, 2) != MINOR_VERSION)
++    {
++      munmap (buffer, st.st_size);
++
++      goto done;
++    }
++  
++  cache = (XdgMimeCache *) malloc (sizeof (XdgMimeCache));
++  cache-&gt;ref_count = 1;
++  cache-&gt;buffer = buffer;
++  cache-&gt;size = st.st_size;
++
++ done:
++  if (fd != -1)
++    close (fd);
++
++#endif  /* HAVE_MMAP */
++
++  return cache;
++}
++
++static int
++cache_magic_matchlet_compare_to_data (XdgMimeCache *cache, 
++				      xdg_uint32_t  offset,
++				      const void   *data,
++				      size_t        len)
++{
++  xdg_uint32_t range_start = GET_UINT32 (cache-&gt;buffer, offset);
++  xdg_uint32_t range_length = GET_UINT32 (cache-&gt;buffer, offset + 4);
++  xdg_uint32_t data_length = GET_UINT32 (cache-&gt;buffer, offset + 12);
++  xdg_uint32_t data_offset = GET_UINT32 (cache-&gt;buffer, offset + 16);
++  xdg_uint32_t mask_offset = GET_UINT32 (cache-&gt;buffer, offset + 20);
++  
++  int i, j;
++
++  for (i = range_start; i &lt;= range_start + range_length; i++)
++    {
++      int valid_matchlet = TRUE;
++      
++      if (i + data_length &gt; len)
++	return FALSE;
++
++      if (mask_offset)
++	{
++	  for (j = 0; j &lt; data_length; j++)
++	    {
++	      if ((((unsigned char *)cache-&gt;buffer)[data_offset + j] &amp; ((unsigned char *)cache-&gt;buffer)[mask_offset + j]) !=
++		  ((((unsigned char *) data)[j + i]) &amp; ((unsigned char *)cache-&gt;buffer)[mask_offset + j]))
++		{
++		  valid_matchlet = FALSE;
++		  break;
++		}
++	    }
++	}
++      else
++	{
++	  for (j = 0; j &lt; data_length; j++)
++	    {
++	      if (((unsigned char *)cache-&gt;buffer)[data_offset + j] != ((unsigned char *) data)[j + i])
++		{
++		  valid_matchlet = FALSE;
++		  break;
++		}
++	    }
++	}
++      
++      if (valid_matchlet)
++	return TRUE;
++    }
++  
++  return FALSE;  
++}
++
++static int
++cache_magic_matchlet_compare (XdgMimeCache *cache, 
++			      xdg_uint32_t  offset,
++			      const void   *data,
++			      size_t        len)
++{
++  xdg_uint32_t n_children = GET_UINT32 (cache-&gt;buffer, offset + 24);
++  xdg_uint32_t child_offset = GET_UINT32 (cache-&gt;buffer, offset + 28);
++
++  int i;
++  
++  if (cache_magic_matchlet_compare_to_data (cache, offset, data, len))
++    {
++      if (n_children == 0)
++	return TRUE;
++      
++      for (i = 0; i &lt; n_children; i++)
++	{
++	  if (cache_magic_matchlet_compare (cache, child_offset + 32 * i,
++					    data, len))
++	    return TRUE;
++	}
++    }
++  
++  return FALSE;  
++}
++
++static const char *
++cache_magic_compare_to_data (XdgMimeCache *cache, 
++			     xdg_uint32_t  offset,
++			     const void   *data, 
++			     size_t        len, 
++			     int          *prio)
++{
++  xdg_uint32_t priority = GET_UINT32 (cache-&gt;buffer, offset);
++  xdg_uint32_t mimetype_offset = GET_UINT32 (cache-&gt;buffer, offset + 4);
++  xdg_uint32_t n_matchlets = GET_UINT32 (cache-&gt;buffer, offset + 8);
++  xdg_uint32_t matchlet_offset = GET_UINT32 (cache-&gt;buffer, offset + 12);
++
++  int i;
++
++  for (i = 0; i &lt; n_matchlets; i++)
++    {
++      if (cache_magic_matchlet_compare (cache, matchlet_offset + i * 32, 
++					data, len))
++	{
++	  *prio = priority;
++	  
++	  return cache-&gt;buffer + mimetype_offset;
++	}
++    }
++
++  return NULL;
++}
++
++static const char *
++cache_magic_lookup_data (XdgMimeCache *cache, 
++			 const void   *data, 
++			 size_t        len, 
++			 int          *prio,
++			 const char   *mime_types[],
++			 int           n_mime_types)
++{
++  xdg_uint32_t list_offset;
++  xdg_uint32_t n_entries;
++  xdg_uint32_t offset;
++
++  int j, n;
++
++  *prio = 0;
++
++  list_offset = GET_UINT32 (cache-&gt;buffer, 24);
++  n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++  offset = GET_UINT32 (cache-&gt;buffer, list_offset + 8);
++  
++  for (j = 0; j &lt; n_entries; j++)
++    {
++      const char *match;
++
++      match = cache_magic_compare_to_data (cache, offset + 16 * j, 
++					   data, len, prio);
++      if (match)
++	return match;
++      else
++	{
++	  xdg_uint32_t mimetype_offset;
++	  const char *non_match;
++	  
++	  mimetype_offset = GET_UINT32 (cache-&gt;buffer, offset + 16 * j + 4);
++	  non_match = cache-&gt;buffer + mimetype_offset;
++
++	  for (n = 0; n &lt; n_mime_types; n++)
++	    {
++	      if (mime_types[n] &amp;&amp; 
++		  xdg_mime_mime_type_equal (mime_types[n], non_match))
++		mime_types[n] = NULL;
++	    }
++	}
++    }
++
++  return NULL;
++}
++
++static const char *
++cache_alias_lookup (const char *alias)
++{
++  const char *ptr;
++  int i, min, max, mid, cmp;
++
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 4);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++      xdg_uint32_t offset;
++
++      min = 0; 
++      max = n_entries - 1;
++      while (max &gt;= min) 
++	{
++	  mid = (min + max) / 2;
++
++	  offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * mid);
++	  ptr = cache-&gt;buffer + offset;
++	  cmp = strcmp (ptr, alias);
++	  
++	  if (cmp &lt; 0)
++	    min = mid + 1;
++	  else if (cmp &gt; 0)
++	    max = mid - 1;
++	  else
++	    {
++	      offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * mid + 4);
++	      return cache-&gt;buffer + offset;
++	    }
++	}
++    }
++
++  return NULL;
++}
++
++static int
++cache_glob_lookup_literal (const char *file_name,
++			   const char *mime_types[],
++			   int         n_mime_types)
++{
++  const char *ptr;
++  int i, min, max, mid, cmp;
++
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 12);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++      xdg_uint32_t offset;
++
++      min = 0; 
++      max = n_entries - 1;
++      while (max &gt;= min) 
++	{
++	  mid = (min + max) / 2;
++
++	  offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * mid);
++	  ptr = cache-&gt;buffer + offset;
++	  cmp = strcmp (ptr, file_name);
++	  
++	  if (cmp &lt; 0)
++	    min = mid + 1;
++	  else if (cmp &gt; 0)
++	    max = mid - 1;
++	  else
++	    {
++	      offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * mid + 4);
++	      mime_types[0] = (const char *)(cache-&gt;buffer + offset);
++	      
++	      return 1;
++	    }
++	}
++    }
++
++  return 0;
++}
++
++static int
++cache_glob_lookup_fnmatch (const char *file_name,
++			   const char *mime_types[],
++			   int         n_mime_types)
++{
++  const char *mime_type;
++  const char *ptr;
++
++  int i, j, n;
++
++  n = 0;
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 20);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++
++      for (j = 0; j &lt; n_entries &amp;&amp; n &lt; n_mime_types; j++)
++	{
++	  xdg_uint32_t offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * j);
++	  xdg_uint32_t mimetype_offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * j + 4);
++	  ptr = cache-&gt;buffer + offset;
++	  mime_type = cache-&gt;buffer + mimetype_offset;
++
++	  /* FIXME: Not UTF-8 safe */
++	  if (fnmatch (ptr, file_name, 0) == 0)
++	    mime_types[n++] = mime_type;
++	}
++
++      if (n &gt; 0)
++	return n;
++    }
++  
++  return 0;
++}
++
++static int
++cache_glob_node_lookup_suffix (XdgMimeCache *cache,
++			       xdg_uint32_t  n_entries,
++			       xdg_uint32_t  offset,
++			       const char   *suffix, 
++			       int           ignore_case,
++			       const char   *mime_types[],
++			       int           n_mime_types)
++{
++  xdg_unichar_t character;
++  xdg_unichar_t match_char;
++  xdg_uint32_t mimetype_offset;
++  xdg_uint32_t n_children;
++  xdg_uint32_t child_offset; 
++
++  int min, max, mid, n, i;
++
++  character = _xdg_utf8_to_ucs4 (suffix);
++  if (ignore_case)
++    character = _xdg_ucs4_to_lower (character);
++
++  min = 0;
++  max = n_entries - 1;
++  while (max &gt;= min)
++    {
++      mid = (min + max) /  2;
++
++      match_char = GET_UINT32 (cache-&gt;buffer, offset + 16 * mid);
++
++      if (match_char &lt; character)
++	min = mid + 1;
++      else if (match_char &gt; character)
++	max = mid - 1;
++      else 
++	{
++	  suffix = _xdg_utf8_next_char (suffix);
++	  if (*suffix == '\0')
++	    {
++	      mimetype_offset = GET_UINT32 (cache-&gt;buffer, offset + 16 * mid + 4);
++	      n = 0;
++	      mime_types[n++] = cache-&gt;buffer + mimetype_offset;
++	      
++	      n_children = GET_UINT32 (cache-&gt;buffer, offset + 16 * mid + 8);
++	      child_offset = GET_UINT32 (cache-&gt;buffer, offset + 16 * mid + 12);
++	      i = 0;
++	      while (n &lt; n_mime_types &amp;&amp; i &lt; n_children)
++		{
++		  match_char = GET_UINT32 (cache-&gt;buffer, child_offset + 16 * i);
++		  mimetype_offset = GET_UINT32 (cache-&gt;buffer, offset + 16 * i + 4);
++		  if (match_char != 0)
++		    break;
++
++		  mime_types[n++] = cache-&gt;buffer + mimetype_offset;
++		  i++;
++		}
++
++	      return n;
++	    }
++	  else
++	    {
++	      n_children = GET_UINT32 (cache-&gt;buffer, offset + 16 * mid + 8);
++	      child_offset = GET_UINT32 (cache-&gt;buffer, offset + 16 * mid + 12);
++      
++	      return cache_glob_node_lookup_suffix (cache, 
++						    n_children, child_offset,
++						    suffix, ignore_case,
++						    mime_types,
++						    n_mime_types);
++	    }
++	}
++    }
++
++  return 0;
++}
++
++static int
++cache_glob_lookup_suffix (const char *suffix, 
++			  int         ignore_case,
++			  const char *mime_types[],
++			  int         n_mime_types)
++{
++  int i, n;
++
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 16);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++      xdg_uint32_t offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4);
++
++      n = cache_glob_node_lookup_suffix (cache, 
++					 n_entries, offset, 
++					 suffix, ignore_case,
++					 mime_types,
++					 n_mime_types);
++      if (n &gt; 0)
++	return n;
++    }
++
++  return 0;
++}
++
++static void
++find_stopchars (char *stopchars)
++{
++  int i, j, k, l;
++ 
++  k = 0;
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 16);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++      xdg_uint32_t offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4);
++
++      for (j = 0; j &lt; n_entries; j++)
++	{
++	  xdg_uint32_t match_char = GET_UINT32 (cache-&gt;buffer, offset);
++	  
++	  if (match_char &lt; 128)
++	    {
++	      for (l = 0; l &lt; k; l++)
++		if (stopchars[l] == match_char)
++		  break;
++	      if (l == k)
++		{
++		  stopchars[k] = (char) match_char;
++		  k++;
++		}
++	    }
++
++	  offset += 16;
++	}
++    }
++
++  stopchars[k] = '\0';
++}
++
++static int
++cache_glob_lookup_file_name (const char *file_name, 
++			     const char *mime_types[],
++			     int         n_mime_types)
++{
++  const char *ptr;
++  char stopchars[128];
++  int n;
++  
++  assert (file_name != NULL);
++
++  /* First, check the literals */
++  n = cache_glob_lookup_literal (file_name, mime_types, n_mime_types);
++  if (n &gt; 0)
++    return n;
++
++  find_stopchars (stopchars);
++
++  /* Next, check suffixes */
++  ptr = strpbrk (file_name, stopchars);
++  while (ptr)
++    {
++      n = cache_glob_lookup_suffix (ptr, FALSE, mime_types, n_mime_types);
++      if (n &gt; 0)
++	return n;
++      
++      n = cache_glob_lookup_suffix (ptr, TRUE, mime_types, n_mime_types);
++      if (n &gt; 0)
++	return n;
++
++      ptr = strpbrk (ptr + 1, stopchars);
++    }
++  
++  /* Last, try fnmatch */
++  return cache_glob_lookup_fnmatch (file_name, mime_types, n_mime_types);
++}
++
++int
++_xdg_mime_cache_get_max_buffer_extents (void)
++{
++  xdg_uint32_t offset;
++  xdg_uint32_t max_extent;
++  int i;
++
++  max_extent = 0;
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++
++      offset = GET_UINT32 (cache-&gt;buffer, 24);
++      max_extent = MAX (max_extent, GET_UINT32 (cache-&gt;buffer, offset + 4));
++    }
++
++  return max_extent;
++}
++
++static const char *
++cache_get_mime_type_for_data (const void *data,
++			      size_t      len,
++			      const char *mime_types[],
++			      int         n_mime_types)
++{
++  const char *mime_type;
++  int i, n, priority;
++
++  priority = 0;
++  mime_type = NULL;
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++
++      int prio;
++      const char *match;
++
++      match = cache_magic_lookup_data (cache, data, len, &amp;prio, 
++				       mime_types, n_mime_types);
++      if (prio &gt; priority)
++	{
++	  priority = prio;
++	  mime_type = match;
++	}
++    }
++
++  if (priority &gt; 0)
++    return mime_type;
++
++  for (n = 0; n &lt; n_mime_types; n++)
++    {
++      if (mime_types[n])
++	return mime_types[n];
++    }
++
++  return XDG_MIME_TYPE_UNKNOWN;
++}
++
++const char *
++_xdg_mime_cache_get_mime_type_for_data (const void *data,
++					size_t      len)
++{
++  return cache_get_mime_type_for_data (data, len, NULL, 0);
++}
++
++const char *
++_xdg_mime_cache_get_mime_type_for_file (const char  *file_name,
++					struct stat *statbuf)
++{
++  const char *mime_type;
++  const char *mime_types[2];
++  FILE *file;
++  unsigned char *data;
++  int max_extent;
++  int bytes_read;
++  struct stat buf;
++  const char *base_name;
++  int n;
++
++  if (file_name == NULL)
++    return NULL;
++
++  if (! _xdg_utf8_validate (file_name))
++    return NULL;
++
++  base_name = _xdg_get_base_name (file_name);
++  n = cache_glob_lookup_file_name (base_name, mime_types, 2);
++
++  if (n == 1)
++    return mime_types[0];
++
++  if (!statbuf)
++    {
++      if (stat (file_name, &amp;buf) != 0)
++	return XDG_MIME_TYPE_UNKNOWN;
++
++      statbuf = &buf;
++    }
++
++  if (!S_ISREG (statbuf-&gt;st_mode))
++    return XDG_MIME_TYPE_UNKNOWN;
++
++  /* FIXME: Need to make sure that max_extent isn't totally broken.  This could
++   * be large and need getting from a stream instead of just reading it all
++   * in. */
++  max_extent = _xdg_mime_cache_get_max_buffer_extents ();
++  data = malloc (max_extent);
++  if (data == NULL)
++    return XDG_MIME_TYPE_UNKNOWN;
++        
++  file = fopen (file_name, &quot;r&quot;);
++  if (file == NULL)
++    {
++      free (data);
++      return XDG_MIME_TYPE_UNKNOWN;
++    }
++
++  bytes_read = fread (data, 1, max_extent, file);
++  if (ferror (file))
++    {
++      free (data);
++      fclose (file);
++      return XDG_MIME_TYPE_UNKNOWN;
++    }
++
++  mime_type = cache_get_mime_type_for_data (data, bytes_read,
++					    mime_types, n);
++
++  free (data);
++  fclose (file);
++
++  return mime_type;
++}
++
++const char *
++_xdg_mime_cache_get_mime_type_from_file_name (const char *file_name)
++{
++  const char *mime_types[2];
++
++  if (cache_glob_lookup_file_name (file_name, mime_types, 2) == 1)
++    return mime_types[0];
++  else
++    return XDG_MIME_TYPE_UNKNOWN;
++}
++
++#if 1
++static int
++is_super_type (const char *mime)
++{
++  int length;
++  const char *type;
++
++  length = strlen (mime);
++  type = &amp;(mime[length - 2]);
++
++  if (strcmp (type, &quot;/*&quot;) == 0)
++    return 1;
++
++  return 0;
++}
++#endif
++
++int
++_xdg_mime_cache_mime_type_subclass (const char *mime,
++				    const char *base)
++{
++  const char *umime, *ubase;
++
++  int i, j, min, max, med, cmp;
++  
++  umime = _xdg_mime_cache_unalias_mime_type (mime);
++  ubase = _xdg_mime_cache_unalias_mime_type (base);
++
++  if (strcmp (umime, ubase) == 0)
++    return 1;
++
++  /* We really want to handle text/ * in GtkFileFilter, so we just
++   * turn on the supertype matching
++   */
++#if 1
++  /* Handle supertypes */
++  if (is_super_type (ubase) &amp;&amp;
++      xdg_mime_media_type_equal (umime, ubase))
++    return 1;
++#endif
++
++  /*  Handle special cases text/plain and application/octet-stream */
++  if (strcmp (ubase, &quot;text/plain&quot;) == 0 &amp;&amp; 
++      strncmp (umime, &quot;text/&quot;, 5) == 0)
++    return 1;
++
++  if (strcmp (ubase, &quot;application/octet-stream&quot;) == 0)
++    return 1;
++ 
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++      
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 8);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++      xdg_uint32_t offset, n_parents, parent_offset;
++
++      min = 0; 
++      max = n_entries - 1;
++      while (max &gt;= min)
++	{
++	  med = (min + max)/2;
++	  
++	  offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * med);
++	  cmp = strcmp (cache-&gt;buffer + offset, umime);
++	  if (cmp &lt; 0)
++	    min = med + 1;
++	  else if (cmp &gt; 0)
++	    max = med - 1;
++	  else
++	    {
++	      offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * med + 4);
++	      n_parents = GET_UINT32 (cache-&gt;buffer, offset);
++	      
++	      for (j = 0; j &lt; n_parents; j++)
++		{
++		  parent_offset = GET_UINT32 (cache-&gt;buffer, offset + 4 + 4 * j);
++		  if (_xdg_mime_cache_mime_type_subclass (cache-&gt;buffer + parent_offset, ubase))
++		    return 1;
++		}
++
++	      break;
++	    }
++	}
++    }
++
++  return 0;
++}
++
++const char *
++_xdg_mime_cache_unalias_mime_type (const char *mime)
++{
++  const char *lookup;
++  
++  lookup = cache_alias_lookup (mime);
++  
++  if (lookup)
++    return lookup;
++  
++  return mime;  
++}
++
++char **
++_xdg_mime_cache_list_mime_parents (const char *mime)
++{
++  int i, j, p;
++  char *all_parents[128]; /* we'll stop at 128 */ 
++  char **result;
++
++  p = 0;
++  for (i = 0; _caches[i]; i++)
++    {
++      XdgMimeCache *cache = _caches[i];
++  
++      xdg_uint32_t list_offset = GET_UINT32 (cache-&gt;buffer, 8);
++      xdg_uint32_t n_entries = GET_UINT32 (cache-&gt;buffer, list_offset);
++
++      for (j = 0; j &lt; n_entries; j++)
++	{
++	  xdg_uint32_t mimetype_offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * i);
++	  xdg_uint32_t parents_offset = GET_UINT32 (cache-&gt;buffer, list_offset + 4 + 8 * i + 4);
++	  
++	  if (strcmp (cache-&gt;buffer + mimetype_offset, mime) == 0)
++	    {
++	      xdg_uint32_t n_parents = GET_UINT32 (cache-&gt;buffer, parents_offset);
++	      
++	      for (j = 0; j &lt; n_parents; j++)
++		all_parents[p++] = cache-&gt;buffer + parents_offset + 4 + 4 * j;
++
++	      break;
++	    }
++	}
++    }
++  all_parents[p++] = 0;
++  
++  result = (char **) malloc (p * sizeof (char *));
++  memcpy (result, all_parents, p * sizeof (char *));
++
++  return result;
++}
++
+
+Added: trunk/Utils/xdgmime/xdgmimecache.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimecache.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimecache.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,63 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimecache.h: Private file.  Datastructure for mmapped caches.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2005  Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifndef __XDG_MIME_CACHE_H__
++#define __XDG_MIME_CACHE_H__
++
++#include &quot;xdgmime.h&quot;
++
++typedef struct _XdgMimeCache XdgMimeCache;
++
++#ifdef XDG_PREFIX
++#define _xdg_mime_cache_new_from_file        XDG_ENTRY(cache_new_from_file)
++#define _xdg_mime_cache_ref                  XDG_ENTRY(cache_ref)
++#define _xdg_mime_cache_unref                XDG_ENTRY(cache_unref)
++#endif
++
++extern XdgMimeCache **_caches;
++
++XdgMimeCache *_xdg_mime_cache_new_from_file (const char   *file_name);
++XdgMimeCache *_xdg_mime_cache_ref           (XdgMimeCache *cache);
++void          _xdg_mime_cache_unref         (XdgMimeCache *cache);
++
++
++const char  *_xdg_mime_cache_get_mime_type_for_data       (const void *data,
++		 				           size_t      len);
++const char  *_xdg_mime_cache_get_mime_type_for_file       (const char  *file_name,
++							   struct stat *statbuf);
++const char  *_xdg_mime_cache_get_mime_type_from_file_name (const char *file_name);
++int          _xdg_mime_cache_is_valid_mime_type           (const char *mime_type);
++int          _xdg_mime_cache_mime_type_equal              (const char *mime_a,
++						           const char *mime_b);
++int          _xdg_mime_cache_media_type_equal             (const char *mime_a,
++							   const char *mime_b);
++int          _xdg_mime_cache_mime_type_subclass           (const char *mime_a,
++							   const char *mime_b);
++char       **_xdg_mime_cache_list_mime_parents		  (const char *mime);
++const char  *_xdg_mime_cache_unalias_mime_type            (const char *mime);
++int          _xdg_mime_cache_get_max_buffer_extents       (void);
++
++#endif /* __XDG_MIME_CACHE_H__ */
+
+Added: trunk/Utils/xdgmime/xdgmimeglob.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeglob.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimeglob.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,545 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimeglob.c: Private file.  Datastructure for storing the globs.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &quot;xdgmimeglob.h&quot;
++#include &quot;xdgmimeint.h&quot;
++#include &lt;stdlib.h&gt;
++#include &lt;stdio.h&gt;
++#include &lt;assert.h&gt;
++#include &lt;string.h&gt;
++#include &lt;fnmatch.h&gt;
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++typedef struct XdgGlobHashNode XdgGlobHashNode;
++typedef struct XdgGlobList XdgGlobList;
++
++struct XdgGlobHashNode
++{
++  xdg_unichar_t character;
++  const char *mime_type;
++  XdgGlobHashNode *next;
++  XdgGlobHashNode *child;
++};
++struct XdgGlobList
++{
++  const char *data;
++  const char *mime_type;
++  XdgGlobList *next;
++};
++
++struct XdgGlobHash
++{
++  XdgGlobList *literal_list;
++  XdgGlobHashNode *simple_node;
++  XdgGlobList *full_list;
++};
++
++
++/* XdgGlobList
++ */
++static XdgGlobList *
++_xdg_glob_list_new (void)
++{
++  XdgGlobList *new_element;
++
++  new_element = calloc (1, sizeof (XdgGlobList));
++
++  return new_element;
++}
++
++/* Frees glob_list and all of it's children */
++static void
++_xdg_glob_list_free (XdgGlobList *glob_list)
++{
++  XdgGlobList *ptr, *next;
++
++  ptr = glob_list;
++
++  while (ptr != NULL)
++    {
++      next = ptr-&gt;next;
++
++      if (ptr-&gt;data)
++	free ((void *) ptr-&gt;data);
++      if (ptr-&gt;mime_type)
++	free ((void *) ptr-&gt;mime_type);
++      free (ptr);
++
++      ptr = next;
++    }
++}
++
++static XdgGlobList *
++_xdg_glob_list_append (XdgGlobList *glob_list,
++		       void        *data,
++		       const char  *mime_type)
++{
++  XdgGlobList *new_element;
++  XdgGlobList *tmp_element;
++
++  new_element = _xdg_glob_list_new ();
++  new_element-&gt;data = data;
++  new_element-&gt;mime_type = mime_type;
++  if (glob_list == NULL)
++    return new_element;
++
++  tmp_element = glob_list;
++  while (tmp_element-&gt;next != NULL)
++    tmp_element = tmp_element-&gt;next;
++
++  tmp_element-&gt;next = new_element;
++
++  return glob_list;
++}
++
++#if 0
++static XdgGlobList *
++_xdg_glob_list_prepend (XdgGlobList *glob_list,
++			void        *data,
++			const char  *mime_type)
++{
++  XdgGlobList *new_element;
++
++  new_element = _xdg_glob_list_new ();
++  new_element-&gt;data = data;
++  new_element-&gt;next = glob_list;
++  new_element-&gt;mime_type = mime_type;
++
++  return new_element;
++}
++#endif
++
++/* XdgGlobHashNode
++ */
++
++static XdgGlobHashNode *
++_xdg_glob_hash_node_new (void)
++{
++  XdgGlobHashNode *glob_hash_node;
++
++  glob_hash_node = calloc (1, sizeof (XdgGlobHashNode));
++
++  return glob_hash_node;
++}
++
++static void
++_xdg_glob_hash_node_dump (XdgGlobHashNode *glob_hash_node,
++			  int depth)
++{
++  int i;
++  for (i = 0; i &lt; depth; i++)
++    printf (&quot; &quot;);
++
++  printf (&quot;%c&quot;, (char)glob_hash_node-&gt;character);
++  if (glob_hash_node-&gt;mime_type)
++    printf (&quot; - %s\n&quot;, glob_hash_node-&gt;mime_type);
++  else
++    printf (&quot;\n&quot;);
++  if (glob_hash_node-&gt;child)
++    _xdg_glob_hash_node_dump (glob_hash_node-&gt;child, depth + 1);
++  if (glob_hash_node-&gt;next)
++    _xdg_glob_hash_node_dump (glob_hash_node-&gt;next, depth);
++}
++
++static XdgGlobHashNode *
++_xdg_glob_hash_insert_text (XdgGlobHashNode *glob_hash_node,
++			    const char      *text,
++			    const char      *mime_type)
++{
++  XdgGlobHashNode *node;
++  xdg_unichar_t character;
++
++  character = _xdg_utf8_to_ucs4 (text);
++
++  if ((glob_hash_node == NULL) ||
++      (character &lt; glob_hash_node-&gt;character))
++    {
++      node = _xdg_glob_hash_node_new ();
++      node-&gt;character = character;
++      node-&gt;next = glob_hash_node;
++      glob_hash_node = node;
++    }
++  else if (character == glob_hash_node-&gt;character)
++    {
++      node = glob_hash_node;
++    }
++  else
++    {
++      XdgGlobHashNode *prev_node;
++      int found_node = FALSE;
++
++      /* Look for the first character of text in glob_hash_node, and insert it if we
++       * have to.*/
++      prev_node = glob_hash_node;
++      node = prev_node-&gt;next;
++
++      while (node != NULL)
++	{
++	  if (character &lt; node-&gt;character)
++	    {
++	      node = _xdg_glob_hash_node_new ();
++	      node-&gt;character = character;
++	      node-&gt;next = prev_node-&gt;next;
++	      prev_node-&gt;next = node;
++
++	      found_node = TRUE;
++	      break;
++	    }
++	  else if (character == node-&gt;character)
++	    {
++	      found_node = TRUE;
++	      break;
++	    }
++	  prev_node = node;
++	  node = node-&gt;next;
++	}
++
++      if (! found_node)
++	{
++	  node = _xdg_glob_hash_node_new ();
++	  node-&gt;character = character;
++	  node-&gt;next = prev_node-&gt;next;
++	  prev_node-&gt;next = node;
++	}
++    }
++
++  text = _xdg_utf8_next_char (text);
++  if (*text == '\000')
++    {
++      if (node-&gt;mime_type)
++	{
++	  if (strcmp (node-&gt;mime_type, mime_type))
++	    {
++	      XdgGlobHashNode *child;
++	      int found_node = FALSE;
++	      
++	      child = node-&gt;child;
++	      while (child &amp;&amp; child-&gt;character == '\0')
++		{
++		  if (strcmp (child-&gt;mime_type, mime_type) == 0)
++		    {
++		      found_node = TRUE;
++		      break;
++		    }
++		  child = child-&gt;next;
++		}
++
++	      if (!found_node)
++		{
++		  child = _xdg_glob_hash_node_new ();
++		  child-&gt;character = '\000';
++		  child-&gt;mime_type = strdup (mime_type);
++		  child-&gt;child = NULL;
++		  child-&gt;next = node-&gt;child;
++		  node-&gt;child = child;
++		}
++	    }
++	}
++      else
++	{
++	  node-&gt;mime_type = strdup (mime_type);
++	}
++    }
++  else
++    {
++      node-&gt;child = _xdg_glob_hash_insert_text (node-&gt;child, text, mime_type);
++    }
++  return glob_hash_node;
++}
++
++static int
++_xdg_glob_hash_node_lookup_file_name (XdgGlobHashNode *glob_hash_node,
++				      const char      *file_name,
++				      int              ignore_case,
++				      const char      *mime_types[],
++				      int              n_mime_types)
++{
++  int n;
++  XdgGlobHashNode *node;
++  xdg_unichar_t character;
++
++  if (glob_hash_node == NULL)
++    return 0;
++
++  character = _xdg_utf8_to_ucs4 (file_name);
++  if (ignore_case)
++    character = _xdg_ucs4_to_lower(character);
++
++  for (node = glob_hash_node; node &amp;&amp; character &gt;= node-&gt;character; node = node-&gt;next)
++    {
++      if (character == node-&gt;character)
++	{
++	  file_name = _xdg_utf8_next_char (file_name);
++	  if (*file_name == '\000')
++	    {
++	      n = 0;
++	      mime_types[n++] = node-&gt;mime_type;
++	      node = node-&gt;child;
++	      while (n &lt; n_mime_types &amp;&amp; node &amp;&amp; node-&gt;character == 0)
++		{
++		  mime_types[n++] = node-&gt;mime_type;
++		  node = node-&gt;next;
++		}
++	    }
++	  else
++	    {
++	      n = _xdg_glob_hash_node_lookup_file_name (node-&gt;child,
++							file_name,
++							ignore_case,
++							mime_types,
++							n_mime_types);
++	    }
++	  return n;
++	}
++    }
++
++  return 0;
++}
++
++int
++_xdg_glob_hash_lookup_file_name (XdgGlobHash *glob_hash,
++				 const char  *file_name,
++				 const char  *mime_types[],
++				 int          n_mime_types)
++{
++  XdgGlobList *list;
++  const char *ptr;
++  char stopchars[128];
++  int i, n;
++  XdgGlobHashNode *node;
++
++  /* First, check the literals */
++
++  assert (file_name != NULL &amp;&amp; n_mime_types &gt; 0);
++
++  for (list = glob_hash-&gt;literal_list; list; list = list-&gt;next)
++    {
++      if (strcmp ((const char *)list-&gt;data, file_name) == 0)
++	{
++	  mime_types[0] = list-&gt;mime_type;
++	  return 1;
++	}
++    }
++
++  i = 0;
++  for (node = glob_hash-&gt;simple_node; node; node = node-&gt;next)
++    {
++      if (node-&gt;character &lt; 128)
++ 	stopchars[i++] = (char)node-&gt;character;
++    }
++  stopchars[i] = '\0';
++ 
++  ptr = strpbrk (file_name, stopchars);
++  while (ptr)
++    {
++      n = _xdg_glob_hash_node_lookup_file_name (glob_hash-&gt;simple_node, ptr, FALSE,
++						mime_types, n_mime_types);
++      if (n &gt; 0)
++	return n;
++      
++      n = _xdg_glob_hash_node_lookup_file_name (glob_hash-&gt;simple_node, ptr, TRUE,
++						mime_types, n_mime_types);
++      if (n &gt; 0)
++	return n;
++      
++      ptr = strpbrk (ptr + 1, stopchars);
++    }
++
++  /* FIXME: Not UTF-8 safe */
++  n = 0;
++  for (list = glob_hash-&gt;full_list; list &amp;&amp; n &lt; n_mime_types; list = list-&gt;next)
++    {
++      if (fnmatch ((const char *)list-&gt;data, file_name, 0) == 0)
++	mime_types[n++] = list-&gt;mime_type;
++    }
++
++  return n;
++}
++
++
++
++/* XdgGlobHash
++ */
++
++XdgGlobHash *
++_xdg_glob_hash_new (void)
++{
++  XdgGlobHash *glob_hash;
++
++  glob_hash = calloc (1, sizeof (XdgGlobHash));
++
++  return glob_hash;
++}
++
++
++static void
++_xdg_glob_hash_free_nodes (XdgGlobHashNode *node)
++{
++  if (node)
++    {
++      if (node-&gt;child)
++       _xdg_glob_hash_free_nodes (node-&gt;child);
++      if (node-&gt;next)
++       _xdg_glob_hash_free_nodes (node-&gt;next);
++      if (node-&gt;mime_type)
++	free ((void *) node-&gt;mime_type);
++      free (node);
++    }
++}
++
++void
++_xdg_glob_hash_free (XdgGlobHash *glob_hash)
++{
++  _xdg_glob_list_free (glob_hash-&gt;literal_list);
++  _xdg_glob_list_free (glob_hash-&gt;full_list);
++  _xdg_glob_hash_free_nodes (glob_hash-&gt;simple_node);
++  free (glob_hash);
++}
++
++XdgGlobType
++_xdg_glob_determine_type (const char *glob)
++{
++  const char *ptr;
++  int maybe_in_simple_glob = FALSE;
++  int first_char = TRUE;
++
++  ptr = glob;
++
++  while (*ptr != '\000')
++    {
++      if (*ptr == '*' &amp;&amp; first_char)
++	maybe_in_simple_glob = TRUE;
++      else if (*ptr == '\\' || *ptr == '[' || *ptr == '?' || *ptr == '*')
++	  return XDG_GLOB_FULL;
++
++      first_char = FALSE;
++      ptr = _xdg_utf8_next_char (ptr);
++    }
++  if (maybe_in_simple_glob)
++    return XDG_GLOB_SIMPLE;
++  else
++    return XDG_GLOB_LITERAL;
++}
++
++/* glob must be valid UTF-8 */
++void
++_xdg_glob_hash_append_glob (XdgGlobHash *glob_hash,
++			    const char  *glob,
++			    const char  *mime_type)
++{
++  XdgGlobType type;
++
++  assert (glob_hash != NULL);
++  assert (glob != NULL);
++
++  type = _xdg_glob_determine_type (glob);
++
++  switch (type)
++    {
++    case XDG_GLOB_LITERAL:
++      glob_hash-&gt;literal_list = _xdg_glob_list_append (glob_hash-&gt;literal_list, strdup (glob), strdup (mime_type));
++      break;
++    case XDG_GLOB_SIMPLE:
++      glob_hash-&gt;simple_node = _xdg_glob_hash_insert_text (glob_hash-&gt;simple_node, glob + 1, mime_type);
++      break;
++    case XDG_GLOB_FULL:
++      glob_hash-&gt;full_list = _xdg_glob_list_append (glob_hash-&gt;full_list, strdup (glob), strdup (mime_type));
++      break;
++    }
++}
++
++void
++_xdg_glob_hash_dump (XdgGlobHash *glob_hash)
++{
++  XdgGlobList *list;
++  printf (&quot;LITERAL STRINGS\n&quot;);
++  if (glob_hash-&gt;literal_list == NULL)
++    {
++      printf (&quot;    None\n&quot;);
++    }
++  else
++    {
++      for (list = glob_hash-&gt;literal_list; list; list = list-&gt;next)
++	printf (&quot;    %s - %s\n&quot;, (char *)list-&gt;data, list-&gt;mime_type);
++    }
++  printf (&quot;\nSIMPLE GLOBS\n&quot;);
++  _xdg_glob_hash_node_dump (glob_hash-&gt;simple_node, 4);
++
++  printf (&quot;\nFULL GLOBS\n&quot;);
++  if (glob_hash-&gt;full_list == NULL)
++    {
++      printf (&quot;    None\n&quot;);
++    }
++  else
++    {
++      for (list = glob_hash-&gt;full_list; list; list = list-&gt;next)
++	printf (&quot;    %s - %s\n&quot;, (char *)list-&gt;data, list-&gt;mime_type);
++    }
++}
++
++
++void
++_xdg_mime_glob_read_from_file (XdgGlobHash *glob_hash,
++			       const char  *file_name)
++{
++  FILE *glob_file;
++  char line[255];
++
++  glob_file = fopen (file_name, &quot;r&quot;);
++
++  if (glob_file == NULL)
++    return;
++
++  /* FIXME: Not UTF-8 safe.  Doesn't work if lines are greater than 255 chars.
++   * Blah */
++  while (fgets (line, 255, glob_file) != NULL)
++    {
++      char *colon;
++      if (line[0] == '#')
++	continue;
++
++      colon = strchr (line, ':');
++      if (colon == NULL)
++	continue;
++      *(colon++) = '\000';
++      colon[strlen (colon) -1] = '\000';
++      _xdg_glob_hash_append_glob (glob_hash, colon, line);
++    }
++
++  fclose (glob_file);
++}
+
+Added: trunk/Utils/xdgmime/xdgmimeglob.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeglob.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimeglob.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,67 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimeglob.h: Private file.  Datastructure for storing the globs.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifndef __XDG_MIME_GLOB_H__
++#define __XDG_MIME_GLOB_H__
++
++#include &quot;xdgmime.h&quot;
++
++typedef struct XdgGlobHash XdgGlobHash;
++
++typedef enum
++{
++  XDG_GLOB_LITERAL, /* Makefile */
++  XDG_GLOB_SIMPLE,  /* *.gif */
++  XDG_GLOB_FULL     /* x*.[ch] */
++} XdgGlobType;
++
++  
++#ifdef XDG_PREFIX
++#define _xdg_mime_glob_read_from_file         XDG_ENTRY(glob_read_from_file)
++#define _xdg_glob_hash_new                    XDG_ENTRY(hash_new)
++#define _xdg_glob_hash_free                   XDG_ENTRY(hash_free)
++#define _xdg_glob_hash_lookup_file_name       XDG_ENTRY(hash_lookup_file_name)
++#define _xdg_glob_hash_append_glob            XDG_ENTRY(hash_append_glob)
++#define _xdg_glob_determine_type              XDG_ENTRY(determine_type)
++#define _xdg_glob_hash_dump                   XDG_ENTRY(hash_dump)
++#endif
++
++void         _xdg_mime_glob_read_from_file   (XdgGlobHash *glob_hash,
++					      const char  *file_name);
++XdgGlobHash *_xdg_glob_hash_new              (void);
++void         _xdg_glob_hash_free             (XdgGlobHash *glob_hash);
++int          _xdg_glob_hash_lookup_file_name (XdgGlobHash *glob_hash,
++					      const char  *text,
++					      const char  *mime_types[],
++					      int          n_mime_types);
++void         _xdg_glob_hash_append_glob      (XdgGlobHash *glob_hash,
++					      const char  *glob,
++					      const char  *mime_type);
++XdgGlobType  _xdg_glob_determine_type        (const char  *glob);
++void         _xdg_glob_hash_dump             (XdgGlobHash *glob_hash);
++
++#endif /* __XDG_MIME_GLOB_H__ */
+
+Added: trunk/Utils/xdgmime/xdgmimeint.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeint.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimeint.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,154 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimeint.c: Internal defines and functions.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &quot;xdgmimeint.h&quot;
++#include &lt;ctype.h&gt;
++#include &lt;string.h&gt;
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++static const char _xdg_utf8_skip_data[256] = {
++  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++  2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
++  3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,5,5,5,5,6,6,1,1
++};
++
++const char * const _xdg_utf8_skip = _xdg_utf8_skip_data;
++
++
++
++/* Returns the number of unprocessed characters. */
++xdg_unichar_t
++_xdg_utf8_to_ucs4(const char *source)
++{
++  xdg_unichar_t ucs32;
++  if( ! ( *source &amp; 0x80 ) )
++    {
++      ucs32 = *source;
++    }
++  else
++    {
++      int bytelength = 0;
++      xdg_unichar_t result;
++      if ( ! (*source &amp; 0x40) )
++	{
++	  ucs32 = *source;
++	}
++      else
++	{
++	  if ( ! (*source &amp; 0x20) )
++	    {
++	      result = *source++ &amp; 0x1F;
++	      bytelength = 2;
++	    }
++	  else if ( ! (*source &amp; 0x10) )
++	    {
++	      result = *source++ &amp; 0x0F;
++	      bytelength = 3;
++	    }
++	  else if ( ! (*source &amp; 0x08) )
++	    {
++	      result = *source++ &amp; 0x07;
++	      bytelength = 4;
++	    }
++	  else if ( ! (*source &amp; 0x04) )
++	    {
++	      result = *source++ &amp; 0x03;
++	      bytelength = 5;
++	    }
++	  else if ( ! (*source &amp; 0x02) )
++	    {
++	      result = *source++ &amp; 0x01;
++	      bytelength = 6;
++	    }
++	  else
++	    {
++	      result = *source++;
++	      bytelength = 1;
++	    }
++
++	  for ( bytelength --; bytelength &gt; 0; bytelength -- )
++	    {
++	      result &lt;&lt;= 6;
++	      result |= *source++ &amp; 0x3F;
++	    }
++	  ucs32 = result;
++	}
++    }
++  return ucs32;
++}
++
++
++/* hullo.  this is great code.  don't rewrite it */
++
++xdg_unichar_t
++_xdg_ucs4_to_lower (xdg_unichar_t source)
++{
++  /* FIXME: Do a real to_upper sometime */
++  /* CaseFolding-3.2.0.txt has a table of rules. */
++  if ((source &amp; 0xFF) == source)
++    return (xdg_unichar_t) tolower ((unsigned char) source);
++  return source;
++}
++
++int
++_xdg_utf8_validate (const char *source)
++{
++  /* FIXME: actually write */
++  return TRUE;
++}
++
++const char *
++_xdg_get_base_name (const char *file_name)
++{
++  const char *base_name;
++
++  if (file_name == NULL)
++    return NULL;
++
++  base_name = strrchr (file_name, '/');
++
++  if (base_name == NULL)
++    return file_name;
++  else
++    return base_name + 1;
++}
+
+Added: trunk/Utils/xdgmime/xdgmimeint.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeint.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimeint.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,73 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimeint.h: Internal defines and functions.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifndef __XDG_MIME_INT_H__
++#define __XDG_MIME_INT_H__
++
++#include &quot;xdgmime.h&quot;
++
++
++#ifndef	FALSE
++#define	FALSE (0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE (!FALSE)
++#endif
++
++/* FIXME: Needs to be configure check */
++typedef unsigned int   xdg_unichar_t;
++typedef unsigned char  xdg_uchar8_t;
++typedef unsigned short xdg_uint16_t;
++typedef unsigned int   xdg_uint32_t;
++
++#ifdef XDG_PREFIX
++#define _xdg_utf8_skip   XDG_ENTRY(utf8_skip)
++#define _xdg_utf8_to_ucs4   XDG_ENTRY(utf8_to_ucs4)
++#define _xdg_ucs4_to_lower   XDG_ENTRY(ucs4_to_lower)
++#define _xdg_utf8_validate   XDG_ENTRY(utf8_validate)
++#define _xdg_get_base_name   XDG_ENTRY(get_ase_name)
++#endif
++
++#define SWAP_BE16_TO_LE16(val) (xdg_uint16_t)(((xdg_uint16_t)(val) &lt;&lt; 8)|((xdg_uint16_t)(val) &gt;&gt; 8))
++
++#define SWAP_BE32_TO_LE32(val) (xdg_uint32_t)((((xdg_uint32_t)(val) &amp; 0xFF000000U) &gt;&gt; 24) |	\
++					      (((xdg_uint32_t)(val) &amp; 0x00FF0000U) &gt;&gt; 8) |	\
++					      (((xdg_uint32_t)(val) &amp; 0x0000FF00U) &lt;&lt; 8) |	\
++					      (((xdg_uint32_t)(val) &amp; 0x000000FFU) &lt;&lt; 24))
++/* UTF-8 utils
++ */
++extern const char *const _xdg_utf8_skip;
++#define _xdg_utf8_next_char(p) (char *)((p) + _xdg_utf8_skip[*(unsigned char *)(p)])
++#define _xdg_utf8_char_size(p) (int) (_xdg_utf8_skip[*(unsigned char *)(p)])
++
++xdg_unichar_t  _xdg_utf8_to_ucs4  (const char    *source);
++xdg_unichar_t  _xdg_ucs4_to_lower (xdg_unichar_t  source);
++int            _xdg_utf8_validate (const char    *source);
++const char    *_xdg_get_base_name (const char    *file_name);
++
++#endif /* __XDG_MIME_INT_H__ */
+
+Added: trunk/Utils/xdgmime/xdgmimemagic.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimemagic.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimemagic.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,818 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimemagic.: Private file.  Datastructure for storing magic files.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &lt;assert.h&gt;
++#include &quot;xdgmimemagic.h&quot;
++#include &quot;xdgmimeint.h&quot;
++#include &lt;stdio.h&gt;
++#include &lt;stdlib.h&gt;
++#include &lt;string.h&gt;
++#include &lt;ctype.h&gt;
++#include &lt;errno.h&gt;
++#include &lt;limits.h&gt;
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++extern int errno;
++
++typedef struct XdgMimeMagicMatch XdgMimeMagicMatch;
++typedef struct XdgMimeMagicMatchlet XdgMimeMagicMatchlet;
++
++typedef enum
++{
++  XDG_MIME_MAGIC_SECTION,
++  XDG_MIME_MAGIC_MAGIC,
++  XDG_MIME_MAGIC_ERROR,
++  XDG_MIME_MAGIC_EOF
++} XdgMimeMagicState;
++
++struct XdgMimeMagicMatch
++{
++  const char *mime_type;
++  int priority;
++  XdgMimeMagicMatchlet *matchlet;
++  XdgMimeMagicMatch *next;
++};
++
++
++struct XdgMimeMagicMatchlet
++{
++  int indent;
++  int offset;
++  unsigned int value_length;
++  unsigned char *value;
++  unsigned char *mask;
++  unsigned int range_length;
++  unsigned int word_size;
++  XdgMimeMagicMatchlet *next;
++};
++
++
++struct XdgMimeMagic
++{
++  XdgMimeMagicMatch *match_list;
++  int max_extent;
++};
++
++static XdgMimeMagicMatch *
++_xdg_mime_magic_match_new (void)
++{
++  return calloc (1, sizeof (XdgMimeMagicMatch));
++}
++
++
++static XdgMimeMagicMatchlet *
++_xdg_mime_magic_matchlet_new (void)
++{
++  XdgMimeMagicMatchlet *matchlet;
++
++  matchlet = malloc (sizeof (XdgMimeMagicMatchlet));
++
++  matchlet-&gt;indent = 0;
++  matchlet-&gt;offset = 0;
++  matchlet-&gt;value_length = 0;
++  matchlet-&gt;value = NULL;
++  matchlet-&gt;mask = NULL;
++  matchlet-&gt;range_length = 1;
++  matchlet-&gt;word_size = 1;
++  matchlet-&gt;next = NULL;
++
++  return matchlet;
++}
++
++
++static void
++_xdg_mime_magic_matchlet_free (XdgMimeMagicMatchlet *mime_magic_matchlet)
++{
++  if (mime_magic_matchlet)
++    {
++      if (mime_magic_matchlet-&gt;next)
++	_xdg_mime_magic_matchlet_free (mime_magic_matchlet-&gt;next);
++      if (mime_magic_matchlet-&gt;value)
++	free (mime_magic_matchlet-&gt;value);
++      if (mime_magic_matchlet-&gt;mask)
++	free (mime_magic_matchlet-&gt;mask);
++      free (mime_magic_matchlet);
++    }
++}
++
++
++/* Frees mime_magic_match and the remainder of its list
++ */
++static void
++_xdg_mime_magic_match_free (XdgMimeMagicMatch *mime_magic_match)
++{
++  XdgMimeMagicMatch *ptr, *next;
++
++  ptr = mime_magic_match;
++  while (ptr)
++    {
++      next = ptr-&gt;next;
++
++      if (ptr-&gt;mime_type)
++	free ((void *) ptr-&gt;mime_type);
++      if (ptr-&gt;matchlet)
++	_xdg_mime_magic_matchlet_free (ptr-&gt;matchlet);
++      free (ptr);
++
++      ptr = next;
++    }
++}
++
++/* Reads in a hunk of data until a newline character or a '\000' is hit.  The
++ * returned string is null terminated, and doesn't include the newline.
++ */
++static unsigned char *
++_xdg_mime_magic_read_to_newline (FILE *magic_file,
++				 int  *end_of_file)
++{
++  unsigned char *retval;
++  int c;
++  int len, pos;
++
++  len = 128;
++  pos = 0;
++  retval = malloc (len);
++  *end_of_file = FALSE;
++
++  while (TRUE)
++    {
++      c = getc_unlocked (magic_file);
++      if (c == EOF)
++	{
++	  *end_of_file = TRUE;
++	  break;
++	}
++      if (c == '\n' || c == '\000')
++	break;
++      retval[pos++] = (unsigned char) c;
++      if (pos % 128 == 127)
++	{
++	  len = len + 128;
++	  retval = realloc (retval, len);
++	}
++    }
++
++  retval[pos] = '\000';
++  return retval;
++}
++
++/* Returns the number read from the file, or -1 if no number could be read.
++ */
++static int
++_xdg_mime_magic_read_a_number (FILE *magic_file,
++			       int  *end_of_file)
++{
++  /* LONG_MAX is about 20 characters on my system */
++#define MAX_NUMBER_SIZE 30
++  char number_string[MAX_NUMBER_SIZE + 1];
++  int pos = 0;
++  int c;
++  long retval = -1;
++
++  while (TRUE)
++    {
++      c = getc_unlocked (magic_file);
++
++      if (c == EOF)
++	{
++	  *end_of_file = TRUE;
++	  break;
++	}
++      if (! isdigit (c))
++	{
++	  ungetc (c, magic_file);
++	  break;
++	}
++      number_string[pos] = (char) c;
++      pos++;
++      if (pos == MAX_NUMBER_SIZE)
++	break;
++    }
++  if (pos &gt; 0)
++    {
++      number_string[pos] = '\000';
++      errno = 0;
++      retval = strtol (number_string, NULL, 10);
++
++      if ((retval &lt; INT_MIN) || (retval &gt; INT_MAX) || (errno != 0))
++	return -1;
++    }
++
++  return retval;
++}
++
++/* Headers are of the format:
++ * [&lt;priority&gt;:&lt;mime-type&gt;]
++ */
++static XdgMimeMagicState
++_xdg_mime_magic_parse_header (FILE *magic_file, XdgMimeMagicMatch *match)
++{
++  int c;
++  char *buffer;
++  char *end_ptr;
++  int end_of_file = 0;
++
++  assert (magic_file != NULL);
++  assert (match != NULL);
++
++  c = getc_unlocked (magic_file);
++  if (c == EOF)
++    return XDG_MIME_MAGIC_EOF;
++  if (c != '[')
++    return XDG_MIME_MAGIC_ERROR;
++
++  match-&gt;priority = _xdg_mime_magic_read_a_number (magic_file, &amp;end_of_file);
++  if (end_of_file)
++    return XDG_MIME_MAGIC_EOF;
++  if (match-&gt;priority == -1)
++    return XDG_MIME_MAGIC_ERROR;
++
++  c = getc_unlocked (magic_file);
++  if (c == EOF)
++    return XDG_MIME_MAGIC_EOF;
++  if (c != ':')
++    return XDG_MIME_MAGIC_ERROR;
++
++  buffer = (char *)_xdg_mime_magic_read_to_newline (magic_file, &amp;end_of_file);
++  if (end_of_file)
++    return XDG_MIME_MAGIC_EOF;
++
++  end_ptr = buffer;
++  while (*end_ptr != ']' &amp;&amp; *end_ptr != '\000' &amp;&amp; *end_ptr != '\n')
++    end_ptr++;
++  if (*end_ptr != ']')
++    {
++      free (buffer);
++      return XDG_MIME_MAGIC_ERROR;
++    }
++  *end_ptr = '\000';
++
++  match-&gt;mime_type = strdup (buffer);
++  free (buffer);
++
++  return XDG_MIME_MAGIC_MAGIC;
++}
++
++static XdgMimeMagicState
++_xdg_mime_magic_parse_error (FILE *magic_file)
++{
++  int c;
++
++  while (1)
++    {
++      c = getc_unlocked (magic_file);
++      if (c == EOF)
++	return XDG_MIME_MAGIC_EOF;
++      if (c == '\n')
++	return XDG_MIME_MAGIC_SECTION;
++    }
++}
++
++/* Headers are of the format:
++ * [ indent ] &quot;&gt;&quot; start-offset &quot;=&quot; value
++ * [ &quot;&amp;&quot; mask ] [ &quot;~&quot; word-size ] [ &quot;+&quot; range-length ] &quot;\n&quot;
++ */
++static XdgMimeMagicState
++_xdg_mime_magic_parse_magic_line (FILE              *magic_file,
++				  XdgMimeMagicMatch *match)
++{
++  XdgMimeMagicMatchlet *matchlet;
++  int c;
++  int end_of_file;
++  int indent = 0;
++  int bytes_read;
++
++  assert (magic_file != NULL);
++
++  /* Sniff the buffer to make sure it's a valid line */
++  c = getc_unlocked (magic_file);
++  if (c == EOF)
++    return XDG_MIME_MAGIC_EOF;
++  else if (c == '[')
++    {
++      ungetc (c, magic_file);
++      return XDG_MIME_MAGIC_SECTION;
++    }
++  else if (c == '\n')
++    return XDG_MIME_MAGIC_MAGIC;
++
++  /* At this point, it must be a digit or a '&gt;' */
++  end_of_file = FALSE;
++  if (isdigit (c))
++    {
++      ungetc (c, magic_file);
++      indent = _xdg_mime_magic_read_a_number (magic_file, &amp;end_of_file);
++      if (end_of_file)
++	return XDG_MIME_MAGIC_EOF;
++      if (indent == -1)
++	return XDG_MIME_MAGIC_ERROR;
++      c = getc_unlocked (magic_file);
++      if (c == EOF)
++	return XDG_MIME_MAGIC_EOF;
++    }
++
++  if (c != '&gt;')
++    return XDG_MIME_MAGIC_ERROR;
++
++  matchlet = _xdg_mime_magic_matchlet_new ();
++  matchlet-&gt;indent = indent;
++  matchlet-&gt;offset = _xdg_mime_magic_read_a_number (magic_file, &amp;end_of_file);
++  if (end_of_file)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_EOF;
++    }
++  if (matchlet-&gt;offset == -1)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_ERROR;
++    }
++  c = getc_unlocked (magic_file);
++  if (c == EOF)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_EOF;
++    }
++  else if (c != '=')
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_ERROR;
++    }
++
++  /* Next two bytes determine how long the value is */
++  matchlet-&gt;value_length = 0;
++  c = getc_unlocked (magic_file);
++  if (c == EOF)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_EOF;
++    }
++  matchlet-&gt;value_length = c &amp; 0xFF;
++  matchlet-&gt;value_length = matchlet-&gt;value_length &lt;&lt; 8;
++
++  c = getc_unlocked (magic_file);
++  if (c == EOF)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_EOF;
++    }
++  matchlet-&gt;value_length = matchlet-&gt;value_length + (c &amp; 0xFF);
++
++  matchlet-&gt;value = malloc (matchlet-&gt;value_length);
++
++  /* OOM */
++  if (matchlet-&gt;value == NULL)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      return XDG_MIME_MAGIC_ERROR;
++    }
++  bytes_read = fread (matchlet-&gt;value, 1, matchlet-&gt;value_length, magic_file);
++  if (bytes_read != matchlet-&gt;value_length)
++    {
++      _xdg_mime_magic_matchlet_free (matchlet);
++      if (feof (magic_file))
++	return XDG_MIME_MAGIC_EOF;
++      else
++	return XDG_MIME_MAGIC_ERROR;
++    }
++
++  c = getc_unlocked (magic_file);
++  if (c == '&amp;')
++    {
++      matchlet-&gt;mask = malloc (matchlet-&gt;value_length);
++      /* OOM */
++      if (matchlet-&gt;mask == NULL)
++	{
++	  _xdg_mime_magic_matchlet_free (matchlet);
++	  return XDG_MIME_MAGIC_ERROR;
++	}
++      bytes_read = fread (matchlet-&gt;mask, 1, matchlet-&gt;value_length, magic_file);
++      if (bytes_read != matchlet-&gt;value_length)
++	{
++	  _xdg_mime_magic_matchlet_free (matchlet);
++	  if (feof (magic_file))
++	    return XDG_MIME_MAGIC_EOF;
++	  else
++	    return XDG_MIME_MAGIC_ERROR;
++	}
++      c = getc_unlocked (magic_file);
++    }
++
++  if (c == '~')
++    {
++      matchlet-&gt;word_size = _xdg_mime_magic_read_a_number (magic_file, &amp;end_of_file);
++      if (end_of_file)
++	{
++	  _xdg_mime_magic_matchlet_free (matchlet);
++	  return XDG_MIME_MAGIC_EOF;
++	}
++      if (matchlet-&gt;word_size != 0 &amp;&amp;
++	  matchlet-&gt;word_size != 1 &amp;&amp;
++	  matchlet-&gt;word_size != 2 &amp;&amp;
++	  matchlet-&gt;word_size != 4)
++	{
++	  _xdg_mime_magic_matchlet_free (matchlet);
++	  return XDG_MIME_MAGIC_ERROR;
++	}
++      c = getc_unlocked (magic_file);
++    }
++
++  if (c == '+')
++    {
++      matchlet-&gt;range_length = _xdg_mime_magic_read_a_number (magic_file, &amp;end_of_file);
++      if (end_of_file)
++	{
++	  _xdg_mime_magic_matchlet_free (matchlet);
++	  return XDG_MIME_MAGIC_EOF;
++	}
++      if (matchlet-&gt;range_length == -1)
++	{
++	  _xdg_mime_magic_matchlet_free (matchlet);
++	  return XDG_MIME_MAGIC_ERROR;
++	}
++      c = getc_unlocked (magic_file);
++    }
++
++
++  if (c == '\n')
++    {
++      /* We clean up the matchlet, byte swapping if needed */
++      if (matchlet-&gt;word_size &gt; 1)
++	{
++	  int i;
++	  if (matchlet-&gt;value_length % matchlet-&gt;word_size != 0)
++	    {
++	      _xdg_mime_magic_matchlet_free (matchlet);
++	      return XDG_MIME_MAGIC_ERROR;
++	    }
++	  /* FIXME: need to get this defined in a &lt;config.h&gt; style file */
++#if LITTLE_ENDIAN
++	  for (i = 0; i &lt; matchlet-&gt;value_length; i = i + matchlet-&gt;word_size)
++	    {
++	      if (matchlet-&gt;word_size == 2)
++		*((xdg_uint16_t *) matchlet-&gt;value + i) = SWAP_BE16_TO_LE16 (*((xdg_uint16_t *) (matchlet-&gt;value + i)));
++	      else if (matchlet-&gt;word_size == 4)
++		*((xdg_uint32_t *) matchlet-&gt;value + i) = SWAP_BE32_TO_LE32 (*((xdg_uint32_t *) (matchlet-&gt;value + i)));
++	      if (matchlet-&gt;mask)
++		{
++		  if (matchlet-&gt;word_size == 2)
++		    *((xdg_uint16_t *) matchlet-&gt;mask + i) = SWAP_BE16_TO_LE16 (*((xdg_uint16_t *) (matchlet-&gt;mask + i)));
++		  else if (matchlet-&gt;word_size == 4)
++		    *((xdg_uint32_t *) matchlet-&gt;mask + i) = SWAP_BE32_TO_LE32 (*((xdg_uint32_t *) (matchlet-&gt;mask + i)));
++
++		}
++	    }
++#endif
++	}
++
++      matchlet-&gt;next = match-&gt;matchlet;
++      match-&gt;matchlet = matchlet;
++
++
++      return XDG_MIME_MAGIC_MAGIC;
++    }
++
++  _xdg_mime_magic_matchlet_free (matchlet);
++  if (c == EOF)
++    return XDG_MIME_MAGIC_EOF;
++
++  return XDG_MIME_MAGIC_ERROR;
++}
++
++static int
++_xdg_mime_magic_matchlet_compare_to_data (XdgMimeMagicMatchlet *matchlet,
++					  const void           *data,
++					  size_t                len)
++{
++  int i, j;
++  for (i = matchlet-&gt;offset; i &lt; matchlet-&gt;offset + matchlet-&gt;range_length; i++)
++    {
++      int valid_matchlet = TRUE;
++
++      if (i + matchlet-&gt;value_length &gt; len)
++	return FALSE;
++
++      if (matchlet-&gt;mask)
++	{
++	  for (j = 0; j &lt; matchlet-&gt;value_length; j++)
++	    {
++	      if ((matchlet-&gt;value[j] &amp; matchlet-&gt;mask[j]) !=
++		  ((((unsigned char *) data)[j + i]) &amp; matchlet-&gt;mask[j]))
++		{
++		  valid_matchlet = FALSE;
++		  break;
++		}
++	    }
++	}
++      else
++	{
++	  for (j = 0; j &lt;  matchlet-&gt;value_length; j++)
++	    {
++	      if (matchlet-&gt;value[j] != ((unsigned char *) data)[j + i])
++		{
++		  valid_matchlet = FALSE;
++		  break;
++		}
++	    }
++	}
++      if (valid_matchlet)
++	return TRUE;
++    }
++  return FALSE;
++}
++
++static int
++_xdg_mime_magic_matchlet_compare_level (XdgMimeMagicMatchlet *matchlet,
++					const void           *data,
++					size_t                len,
++					int                   indent)
++{
++  while ((matchlet != NULL) &amp;&amp; (matchlet-&gt;indent == indent))
++    {
++      if (_xdg_mime_magic_matchlet_compare_to_data (matchlet, data, len))
++	{
++	  if ((matchlet-&gt;next == NULL) ||
++	      (matchlet-&gt;next-&gt;indent &lt;= indent))
++	    return TRUE;
++
++	  if (_xdg_mime_magic_matchlet_compare_level (matchlet-&gt;next,
++						      data,
++						      len,
++						      indent + 1))
++	    return TRUE;
++	}
++
++      do
++	{
++	  matchlet = matchlet-&gt;next;
++	}
++      while (matchlet &amp;&amp; matchlet-&gt;indent &gt; indent);
++    }
++
++  return FALSE;
++}
++
++static int
++_xdg_mime_magic_match_compare_to_data (XdgMimeMagicMatch *match,
++				       const void        *data,
++				       size_t             len)
++{
++  return _xdg_mime_magic_matchlet_compare_level (match-&gt;matchlet, data, len, 0);
++}
++
++static void
++_xdg_mime_magic_insert_match (XdgMimeMagic      *mime_magic,
++			      XdgMimeMagicMatch *match)
++{
++  XdgMimeMagicMatch *list;
++
++  if (mime_magic-&gt;match_list == NULL)
++    {
++      mime_magic-&gt;match_list = match;
++      return;
++    }
++
++  if (match-&gt;priority &gt; mime_magic-&gt;match_list-&gt;priority)
++    {
++      match-&gt;next = mime_magic-&gt;match_list;
++      mime_magic-&gt;match_list = match;
++      return;
++    }
++
++  list = mime_magic-&gt;match_list;
++  while (list-&gt;next != NULL)
++    {
++      if (list-&gt;next-&gt;priority &lt; match-&gt;priority)
++	{
++	  match-&gt;next = list-&gt;next;
++	  list-&gt;next = match;
++	  return;
++	}
++      list = list-&gt;next;
++    }
++  list-&gt;next = match;
++  match-&gt;next = NULL;
++}
++
++XdgMimeMagic *
++_xdg_mime_magic_new (void)
++{
++  return calloc (1, sizeof (XdgMimeMagic));
++}
++
++void
++_xdg_mime_magic_free (XdgMimeMagic *mime_magic)
++{
++  if (mime_magic) {
++    _xdg_mime_magic_match_free (mime_magic-&gt;match_list);
++    free (mime_magic);
++  }
++}
++
++int
++_xdg_mime_magic_get_buffer_extents (XdgMimeMagic *mime_magic)
++{
++  return mime_magic-&gt;max_extent;
++}
++
++const char *
++_xdg_mime_magic_lookup_data (XdgMimeMagic *mime_magic,
++			     const void   *data,
++			     size_t        len,
++                             const char   *mime_types[],
++                             int           n_mime_types)
++{
++  XdgMimeMagicMatch *match;
++  const char *mime_type;
++  int n;
++  int priority;
++  int had_match;
++
++  mime_type = NULL;
++  priority = 0;
++  had_match = 0;
++  for (match = mime_magic-&gt;match_list; match; match = match-&gt;next)
++    {
++      if (_xdg_mime_magic_match_compare_to_data (match, data, len))
++	{
++	  if (!had_match || match-&gt;priority &gt; priority ||
++	      (mime_type != NULL &amp;&amp; xdg_mime_mime_type_subclass (match-&gt;mime_type, mime_type)))
++	    {
++	      mime_type = match-&gt;mime_type;
++	      priority = match-&gt;priority;
++	    }
++	  else if (had_match &amp;&amp; match-&gt;priority == priority)
++	    /* multiple unrelated patterns with the same priority matched,
++	     * so we can't tell what type this is. */
++	    mime_type = NULL;
++
++	  had_match = 1;
++	}
++      else 
++	{
++	  for (n = 0; n &lt; n_mime_types; n++)
++	    {
++	      if (mime_types[n] &amp;&amp; 
++		  xdg_mime_mime_type_equal (mime_types[n], match-&gt;mime_type))
++		mime_types[n] = NULL;
++	    }
++	}
++    }
++
++  if (mime_type == NULL)
++    {
++      for (n = 0; n &lt; n_mime_types; n++)
++	{
++	  if (mime_types[n])
++	    mime_type = mime_types[n];
++	}
++    }
++
++  return mime_type;
++}
++
++static void
++_xdg_mime_update_mime_magic_extents (XdgMimeMagic *mime_magic)
++{
++  XdgMimeMagicMatch *match;
++  int max_extent = 0;
++
++  for (match = mime_magic-&gt;match_list; match; match = match-&gt;next)
++    {
++      XdgMimeMagicMatchlet *matchlet;
++
++      for (matchlet = match-&gt;matchlet; matchlet; matchlet = matchlet-&gt;next)
++	{
++	  int extent;
++
++	  extent = matchlet-&gt;value_length + matchlet-&gt;offset + matchlet-&gt;range_length;
++	  if (max_extent &lt; extent)
++	    max_extent = extent;
++	}
++    }
++
++  mime_magic-&gt;max_extent = max_extent;
++}
++
++static XdgMimeMagicMatchlet *
++_xdg_mime_magic_matchlet_mirror (XdgMimeMagicMatchlet *matchlets)
++{
++  XdgMimeMagicMatchlet *new_list;
++  XdgMimeMagicMatchlet *tmp;
++
++  if ((matchlets == NULL) || (matchlets-&gt;next == NULL))
++    return matchlets;
++
++  new_list = NULL;
++  tmp = matchlets;
++  while (tmp != NULL)
++    {
++      XdgMimeMagicMatchlet *matchlet;
++
++      matchlet = tmp;
++      tmp = tmp-&gt;next;
++      matchlet-&gt;next = new_list;
++      new_list = matchlet;
++    }
++
++  return new_list;
++
++}
++
++static void
++_xdg_mime_magic_read_magic_file (XdgMimeMagic *mime_magic,
++				 FILE         *magic_file)
++{
++  XdgMimeMagicState state;
++  XdgMimeMagicMatch *match = NULL; /* Quiet compiler */
++
++  state = XDG_MIME_MAGIC_SECTION;
++
++  while (state != XDG_MIME_MAGIC_EOF)
++    {
++      switch (state)
++	{
++	case XDG_MIME_MAGIC_SECTION:
++	  match = _xdg_mime_magic_match_new ();
++	  state = _xdg_mime_magic_parse_header (magic_file, match);
++	  if (state == XDG_MIME_MAGIC_EOF || state == XDG_MIME_MAGIC_ERROR)
++	    _xdg_mime_magic_match_free (match);
++	  break;
++	case XDG_MIME_MAGIC_MAGIC:
++	  state = _xdg_mime_magic_parse_magic_line (magic_file, match);
++	  if (state == XDG_MIME_MAGIC_SECTION ||
++	      (state == XDG_MIME_MAGIC_EOF &amp;&amp; match-&gt;mime_type))
++	    {
++	      match-&gt;matchlet = _xdg_mime_magic_matchlet_mirror (match-&gt;matchlet);
++	      _xdg_mime_magic_insert_match (mime_magic, match);
++	    }
++	  else if (state == XDG_MIME_MAGIC_EOF || state == XDG_MIME_MAGIC_ERROR)
++	    _xdg_mime_magic_match_free (match);
++	  break;
++	case XDG_MIME_MAGIC_ERROR:
++	  state = _xdg_mime_magic_parse_error (magic_file);
++	  break;
++	case XDG_MIME_MAGIC_EOF:
++	default:
++	  /* Make the compiler happy */
++	  assert (0);
++	}
++    }
++  _xdg_mime_update_mime_magic_extents (mime_magic);
++}
++
++void
++_xdg_mime_magic_read_from_file (XdgMimeMagic *mime_magic,
++				const char   *file_name)
++{
++  FILE *magic_file;
++  char header[12];
++
++  magic_file = fopen (file_name, &quot;r&quot;);
++
++  if (magic_file == NULL)
++    return;
++
++  if (fread (header, 1, 12, magic_file) == 12)
++    {
++      if (memcmp (&quot;MIME-Magic\0\n&quot;, header, 12) == 0)
++        _xdg_mime_magic_read_magic_file (mime_magic, magic_file);
++    }
++
++  fclose (magic_file);
++}
+
+Added: trunk/Utils/xdgmime/xdgmimemagic.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimemagic.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimemagic.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,56 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimemagic.h: Private file.  Datastructure for storing the magic files.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2003  Red Hat, Inc.
++ * Copyright (C) 2003  Jonathan Blandford &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">jrb at alum.mit.edu</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifndef __XDG_MIME_MAGIC_H__
++#define __XDG_MIME_MAGIC_H__
++
++#include &lt;unistd.h&gt;
++#include &quot;xdgmime.h&quot;
++typedef struct XdgMimeMagic XdgMimeMagic;
++
++#ifdef XDG_PREFIX
++#define _xdg_mime_glob_read_from_file             XDG_ENTRY(glob_read_from_file)
++#define _xdg_mime_magic_new                       XDG_ENTRY(magic_new)
++#define _xdg_mime_magic_read_from_file            XDG_ENTRY(magic_read_from_file)
++#define _xdg_mime_magic_free                      XDG_ENTRY(magic_free)
++#define _xdg_mime_magic_get_buffer_extents        XDG_ENTRY(magic_get_buffer_extents)
++#define _xdg_mime_magic_lookup_data               XDG_ENTRY(magic_lookup_data)
++#endif
++
++
++XdgMimeMagic *_xdg_mime_magic_new                (void);
++void          _xdg_mime_magic_read_from_file     (XdgMimeMagic *mime_magic,
++						  const char   *file_name);
++void          _xdg_mime_magic_free               (XdgMimeMagic *mime_magic);
++int           _xdg_mime_magic_get_buffer_extents (XdgMimeMagic *mime_magic);
++const char   *_xdg_mime_magic_lookup_data        (XdgMimeMagic *mime_magic,
++						  const void   *data,
++						  size_t        len,
++						  const char   *mime_types[],
++						  int           n_mime_types);
++
++#endif /* __XDG_MIME_MAGIC_H__ */
+
+Added: trunk/Utils/xdgmime/xdgmimeparent.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeparent.c	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimeparent.c	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,219 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimealias.c: Private file.  Datastructure for storing the hierarchy.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2004  Red Hat, Inc.
++ * Copyright (C) 2004  Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include &lt;config.h&gt;
++#endif
++
++#include &quot;xdgmimeparent.h&quot;
++#include &quot;xdgmimeint.h&quot;
++#include &lt;stdlib.h&gt;
++#include &lt;stdio.h&gt;
++#include &lt;assert.h&gt;
++#include &lt;string.h&gt;
++#include &lt;fnmatch.h&gt;
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++typedef struct XdgMimeParents XdgMimeParents;
++
++struct XdgMimeParents
++{
++  char *mime;
++  char **parents;
++  int n_parents;
++};
++
++struct XdgParentList
++{
++  struct XdgMimeParents *parents;
++  int n_mimes;
++};
++
++XdgParentList *
++_xdg_mime_parent_list_new (void)
++{
++  XdgParentList *list;
++
++  list = malloc (sizeof (XdgParentList));
++
++  list-&gt;parents = NULL;
++  list-&gt;n_mimes = 0;
++
++  return list;
++}
++
++void         
++_xdg_mime_parent_list_free (XdgParentList *list)
++{
++  int i;
++  char **p;
++
++  if (list-&gt;parents)
++    {
++      for (i = 0; i &lt; list-&gt;n_mimes; i++)
++	{
++	  for (p = list-&gt;parents[i].parents; *p; p++)
++	    free (*p);
++
++	  free (list-&gt;parents[i].parents);
++	  free (list-&gt;parents[i].mime);
++	}
++      free (list-&gt;parents);
++    }
++  free (list);
++}
++
++static int
++parent_entry_cmp (const void *v1, const void *v2)
++{
++  return strcmp (((XdgMimeParents *)v1)-&gt;mime, ((XdgMimeParents *)v2)-&gt;mime);
++}
++
++const char **
++_xdg_mime_parent_list_lookup (XdgParentList *list,
++			      const char    *mime)
++{
++  XdgMimeParents *entry;
++  XdgMimeParents key;
++
++  if (list-&gt;n_mimes &gt; 0)
++    {
++      key.mime = (char *)mime;
++      key.parents = NULL;
++
++      entry = bsearch (&amp;key, list-&gt;parents, list-&gt;n_mimes,
++		       sizeof (XdgMimeParents), &amp;parent_entry_cmp);
++      if (entry)
++        return (const char **)entry-&gt;parents;
++    }
++
++  return NULL;
++}
++
++void
++_xdg_mime_parent_read_from_file (XdgParentList *list,
++				 const char    *file_name)
++{
++  FILE *file;
++  char line[255];
++  int i, alloc;
++  XdgMimeParents *entry;
++
++  file = fopen (file_name, &quot;r&quot;);
++
++  if (file == NULL)
++    return;
++
++  /* FIXME: Not UTF-8 safe.  Doesn't work if lines are greater than 255 chars.
++   * Blah */
++  alloc = list-&gt;n_mimes + 16;
++  list-&gt;parents = realloc (list-&gt;parents, alloc * sizeof (XdgMimeParents));
++  while (fgets (line, 255, file) != NULL)
++    {
++      char *sep;
++      if (line[0] == '#')
++	continue;
++
++      sep = strchr (line, ' ');
++      if (sep == NULL)
++	continue;
++      *(sep++) = '\000';
++      sep[strlen (sep) -1] = '\000';
++      entry = NULL;
++      for (i = 0; i &lt; list-&gt;n_mimes; i++)
++	{
++	  if (strcmp (list-&gt;parents[i].mime, line) == 0)
++	    {
++	      entry = &amp;(list-&gt;parents[i]);
++	      break;
++	    }
++	}
++      
++      if (!entry)
++	{
++	  if (list-&gt;n_mimes == alloc)
++	    {
++	      alloc &lt;&lt;= 1;
++	      list-&gt;parents = realloc (list-&gt;parents, 
++				       alloc * sizeof (XdgMimeParents));
++	    }
++	  list-&gt;parents[list-&gt;n_mimes].mime = strdup (line);
++	  list-&gt;parents[list-&gt;n_mimes].parents = NULL;
++	  entry = &amp;(list-&gt;parents[list-&gt;n_mimes]);
++	  list-&gt;n_mimes++;
++	}
++
++      if (!entry-&gt;parents)
++	{
++	  entry-&gt;n_parents = 1;
++	  entry-&gt;parents = malloc ((entry-&gt;n_parents + 1) * sizeof (char *));
++	}
++      else
++	{
++	  entry-&gt;n_parents += 1;
++	  entry-&gt;parents = realloc (entry-&gt;parents, 
++				    (entry-&gt;n_parents + 2) * sizeof (char *));
++	}
++      entry-&gt;parents[entry-&gt;n_parents - 1] = strdup (sep);
++      entry-&gt;parents[entry-&gt;n_parents] = NULL;
++    }
++
++  list-&gt;parents = realloc (list-&gt;parents, 
++			   list-&gt;n_mimes * sizeof (XdgMimeParents));
++
++  fclose (file);  
++  
++  if (list-&gt;n_mimes &gt; 1)
++    qsort (list-&gt;parents, list-&gt;n_mimes, 
++           sizeof (XdgMimeParents), &amp;parent_entry_cmp);
++}
++
++
++void         
++_xdg_mime_parent_list_dump (XdgParentList *list)
++{
++  int i;
++  char **p;
++
++  if (list-&gt;parents)
++    {
++      for (i = 0; i &lt; list-&gt;n_mimes; i++)
++	{
++	  for (p = list-&gt;parents[i].parents; *p; p++)
++	    printf (&quot;%s %s\n&quot;, list-&gt;parents[i].mime, *p);
++	}
++    }
++}
++
++
+
+Added: trunk/Utils/xdgmime/xdgmimeparent.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeparent.h	2006-04-14 06:07:55 UTC (rev 210)
++++ trunk/Utils/xdgmime/xdgmimeparent.h	2006-04-14 07:18:40 UTC (rev 211)
+@@ -0,0 +1,50 @@
++/* -*- mode: C; c-file-style: &quot;gnu&quot; -*- */
++/* xdgmimeparent.h: Private file.  Datastructure for storing the hierarchy.
++ *
++ * More info can be found at <A HREF="http://www.freedesktop.org/standards/">http://www.freedesktop.org/standards/</A>
++ *
++ * Copyright (C) 2004  Red Hat, Inc.
++ * Copyright (C) 200  Matthias Clasen &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">mclasen at redhat.com</A>&gt;
++ *
++ * Licensed under the Academic Free License version 2.0
++ * Or under the following terms:
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++ * Boston, MA 02111-1307, USA.
++ */
++
++#ifndef __XDG_MIME_PARENT_H__
++#define __XDG_MIME_PARENT_H__
++
++#include &quot;xdgmime.h&quot;
++
++typedef struct XdgParentList XdgParentList;
++
++#ifdef XDG_PREFIX
++#define _xdg_mime_parent_read_from_file        XDG_ENTRY(parent_read_from_file)
++#define _xdg_mime_parent_list_new              XDG_ENTRY(parent_list_new)
++#define _xdg_mime_parent_list_free             XDG_ENTRY(parent_list_free)
++#define _xdg_mime_parent_list_lookup           XDG_ENTRY(parent_list_lookup)
++#endif
++
++void          _xdg_mime_parent_read_from_file (XdgParentList *list,
++					       const char    *file_name);
++XdgParentList *_xdg_mime_parent_list_new       (void);
++void           _xdg_mime_parent_list_free      (XdgParentList *list);
++const char   **_xdg_mime_parent_list_lookup    (XdgParentList *list,
++						const char    *mime);
++void           _xdg_mime_parent_list_dump      (XdgParentList *list);
++
++#endif /* __XDG_MIME_PARENT_H__ */
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000208.html">[Pinot-svn] r210 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000209.html">[Pinot-svn] r212 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#211">[ date ]</a>
+              <a href="thread.html#211">[ thread ]</a>
+              <a href="subject.html#211">[ subject ]</a>
+              <a href="author.html#211">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

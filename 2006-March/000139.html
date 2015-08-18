@@ -1,0 +1,717 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r140 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r140%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200603061548.k26FmgoX013370%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000138.html">
+   <LINK REL="Next"  HREF="000140.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r140 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r140%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200603061548.k26FmgoX013370%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r140 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Mon Mar  6 16:48:42 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000138.html">[Pinot-svn] r139 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000140.html">[Pinot-svn] r141 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#139">[ date ]</a>
+              <a href="thread.html#139">[ thread ]</a>
+              <a href="subject.html#139">[ subject ]</a>
+              <a href="author.html#139">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-06 16:48:41 +0100 (Mon, 06 Mar 2006)
+New Revision: 140
+
+Modified:
+   trunk/UI/GTK2/src/IndexTree.cpp
+   trunk/UI/GTK2/src/IndexTree.h
+   trunk/UI/GTK2/src/MonitorHandler.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+First shot at unifying index browsing and label querying. LabelQueryThread has
+been dropped amongst other things.
+
+
+Modified: trunk/UI/GTK2/src/IndexTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.cpp	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/IndexTree.cpp	2006-03-06 15:48:41 UTC (rev 140)
+@@ -62,7 +62,7 @@
+ 
+ 	// The score column is used for status icons
+ 	TreeViewColumn *treeColumn = create_resizable_column_with_icon(_(&quot;Title&quot;), m_indexColumns.m_text,
+-		SigC::slot(*this, &amp;IndexTree::renderLabel));
++		SigC::slot(*this, &amp;IndexTree::renderColour));
+ 	if (treeColumn != NULL)
+ 	{
+ 		append_column(*manage(treeColumn));
+@@ -94,8 +94,8 @@
+ 	// Initially, don't display the list of indexed documents
+ 	m_listingIndex = false;
+ 
+-	// By default, no particular label is selected
+-	setCurrentLabelColour(0, 0, 0, false);
++	// By default, no particular colour is selected
++	setCurrentBackgroundColour(0, 0, 0, false);
+ 
+ 	// Show all
+ 	m_pIndexScrolledwindow-&gt;show();
+@@ -106,7 +106,7 @@
+ {
+ }
+ 
+-void IndexTree::renderLabel(CellRenderer *renderer, const TreeModel::iterator &amp;iter)
++void IndexTree::renderColour(CellRenderer *renderer, const TreeModel::iterator &amp;iter)
+ {
+ 	TreeModel::Row row = *iter;
+ 
+@@ -118,7 +118,7 @@
+ 	CellRendererText *textRenderer = dynamic_cast&lt;CellRendererText*&gt;(renderer);
+ 	if (textRenderer != NULL)
+ 	{
+-		if ((m_showingLabel == false) &amp;&amp;
++		if ((m_visibleColour == false) &amp;&amp;
+ 			(row[m_indexColumns.m_labeled] == true))
+ 		{
+ 			// Reset this
+@@ -127,7 +127,7 @@
+ 		else if (row[m_indexColumns.m_labeled] == true)
+ 		{
+ 			// Change the row's background
+-			textRenderer-&gt;property_background_gdk() = m_currentLabelColour;
++			textRenderer-&gt;property_background_gdk() = m_currentBackgroundColour;
+ 		}
+ 		else
+ 		{
+@@ -200,7 +200,7 @@
+ //
+ // Appends a new row in the index tree.
+ //
+-bool IndexTree::appendDocument(const IndexedDocument &amp;docInfo, bool labeled)
++bool IndexTree::appendDocument(const IndexedDocument &amp;docInfo, bool withColour)
+ {
+ 	TreeModel::iterator newRowIter = m_refStore-&gt;append();
+ 	TreeModel::Row childRow = *newRowIter;
+@@ -219,7 +219,7 @@
+ 	childRow[m_indexColumns.m_type] = to_utf8(docInfo.getType());
+ 	childRow[m_indexColumns.m_language] = to_utf8(docInfo.getLanguage());
+ 	childRow[m_indexColumns.m_timestamp] = to_utf8(docInfo.getTimestamp());
+-	childRow[m_indexColumns.m_labeled] = labeled;
++	childRow[m_indexColumns.m_labeled] = withColour;
+ 	childRow[m_indexColumns.m_id] = docInfo.getID();
+ 
+ 	// If the tree was empty, it is no longer
+@@ -327,19 +327,19 @@
+ }
+ 
+ //
+-// Sets the current label colour.
++// Sets the current background colour.
+ //
+-void IndexTree::setCurrentLabelColour(unsigned short red, unsigned short green, unsigned short blue,
+-	bool showingLabel)
++void IndexTree::setCurrentBackgroundColour(unsigned short red, unsigned short green, unsigned short blue,
++	bool isVisible)
+ {
+-	m_currentLabelColour.set_rgb(red, green, blue);
+-	m_showingLabel = showingLabel;
++	m_currentBackgroundColour.set_rgb(red, green, blue);
++	m_visibleColour = isVisible;
+ }
+ 
+ //
+-// Sets the documents that match the current label.
++// Sets the documents that match the current background colour.
+ //
+-void IndexTree::setLabel(const set&lt;unsigned int&gt; &amp;documentsList)
++void IndexTree::setColourDocuments(const set&lt;unsigned int&gt; &amp;documentsList)
+ {
+ 	// Unselect all
+ 	get_selection()-&gt;unselect_all();
+@@ -348,7 +348,7 @@
+ 	TreeModel::Children children = m_refStore-&gt;children();
+ 	for (TreeModel::Children::iterator iter = children.begin(); iter != children.end(); ++iter)
+ 	{
+-		// Does this document match the label ?
++		// Does this document match the colour ?
+ 		TreeModel::Row row = *iter;
+ 		unsigned int docId = row[m_indexColumns.m_id];
+ 
+@@ -356,9 +356,6 @@
+ 		if (docIter != documentsList.end())
+ 		{
+ 			// Yes, it does !
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;IndexTree::setLabel: label is in document &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+ 			row[m_indexColumns.m_labeled] = true;
+ 		}
+ 		else
+@@ -396,9 +393,9 @@
+ }
+ 
+ //
+-// Marks a document as labeled.
++// Marks a document as coloured.
+ //
+-void IndexTree::setDocumentLabeledState(unsigned int docId, bool labeled)
++void IndexTree::setDocumentColourState(unsigned int docId, bool withColour)
+ {
+ 	if (docId == 0)
+ 	{
+@@ -413,7 +410,7 @@
+ 
+ 		if (docId == row[m_indexColumns.m_id])
+ 		{
+-			row[m_indexColumns.m_labeled] = labeled;
++			row[m_indexColumns.m_labeled] = withColour;
+ 			break;
+ 		}
+ 	}
+@@ -442,7 +439,7 @@
+ 		itemPath = selectedItems.begin();
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;IndexTree::setLabel: deleted &quot; &lt;&lt; selectedItems.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;IndexTree::deleteSelection: deleted &quot; &lt;&lt; selectedItems.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	TreeModel::Children children = m_refStore-&gt;children();
+
+Modified: trunk/UI/GTK2/src/IndexTree.h
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.h	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/IndexTree.h	2006-03-06 15:48:41 UTC (rev 140)
+@@ -49,7 +49,7 @@
+ 		bool addDocuments(const std::vector&lt;IndexedDocument&gt; &amp;documentsList);
+ 
+ 		/// Appends a new row in the index tree.
+-		bool appendDocument(const IndexedDocument &amp;docInfo, bool labeled);
++		bool appendDocument(const IndexedDocument &amp;docInfo, bool withColour);
+ 
+ 		/// Gets the first selected item's URL.
+ 		Glib::ustring getFirstSelectionURL(void);
+@@ -60,18 +60,18 @@
+ 		/// Gets a list of selected items.
+ 		bool getSelection(std::vector&lt;IndexedDocument&gt; &amp;documentsList);
+ 
+-		/// Sets the current label colour.
+-		void setCurrentLabelColour(unsigned short red, unsigned short green, unsigned short blue,
+-			bool showingLabel = true);
++		/// Sets the current background colour.
++		void setCurrentBackgroundColour(unsigned short red, unsigned short green, unsigned short blue,
++			bool isVisible = true);
+ 
+-		/// Sets the documents that match the current label.
+-		void setLabel(const std::set&lt;unsigned int&gt; &amp;documentsList);
++		/// Sets the documents that match the current background colour.
++		void setColourDocuments(const std::set&lt;unsigned int&gt; &amp;documentsList);
+ 
+ 		/// Updates a document's properties.
+ 		void updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+ 
+-		/// Marks a document as labeled.
+-		void setDocumentLabeledState(unsigned int docId, bool labeled);
++		/// Marks a document as coloured.
++		void setDocumentColourState(unsigned int docId, bool withColour);
+ 
+ 		/**
+ 		  * Deletes the current selection.
+@@ -106,11 +106,11 @@
+ 		SigC::Signal1&lt;void, Glib::ustring&gt; m_signalSelectionChanged;
+ 		PinotSettings &amp;m_settings;
+ 		IndexModelColumns m_indexColumns;
+-		Gdk::Color m_currentLabelColour;
+-		bool m_showingLabel;
++		Gdk::Color m_currentBackgroundColour;
++		bool m_visibleColour;
+ 		bool m_listingIndex;
+ 
+-		void renderLabel(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
++		void renderColour(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
+ 
+ 		void onButtonPressEvent(GdkEventButton *ev);
+ 
+
+Modified: trunk/UI/GTK2/src/MonitorHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MonitorHandler.cpp	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/MonitorHandler.cpp	2006-03-06 15:48:41 UTC (rev 140)
+@@ -234,7 +234,7 @@
+ 	}
+ 
+ 	// Unindex all documents labeled with this source label
+-	if ((pIndex-&gt;getDocumentsWithLabel(sourceLabel, docIdList) == true) &amp;&amp;
++	if ((pIndex-&gt;listDocumentsWithLabel(sourceLabel, docIdList) == true) &amp;&amp;
+ 		(docIdList.empty() == false))
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-03-06 15:48:41 UTC (rev 140)
+@@ -340,9 +340,10 @@
+ }
+ 
+ IndexBrowserThread::IndexBrowserThread(const string &amp;indexName,
+-	unsigned int maxDocsCount, unsigned int startDoc) :
++	const string &amp;labelName, unsigned int maxDocsCount, unsigned int startDoc) :
+ 	WorkerThread(),
+ 	m_indexName(indexName),
++	m_labelName(labelName),
+ 	m_indexDocsCount(0),
+ 	m_maxDocsCount(maxDocsCount),
+ 	m_startDoc(startDoc)
+@@ -363,6 +364,11 @@
+ 	return m_indexName;
+ }
+ 
++string IndexBrowserThread::getLabelName(void) const
++{
++	return m_labelName;
++}
++
+ unsigned int IndexBrowserThread::getDocumentsCount(void) const
+ {
+ 	return m_indexDocsCount;
+@@ -423,7 +429,14 @@
+ 	cout &lt;&lt; &quot;IndexBrowserThread::doWork: &quot; &lt;&lt; m_maxDocsCount &lt;&lt; &quot; off &quot; &lt;&lt; m_indexDocsCount
+ 		&lt;&lt; &quot; documents to browse, starting at &quot; &lt;&lt; m_startDoc &lt;&lt; endl;
+ #endif
+-	index.listDocuments(docIDList, m_maxDocsCount, m_startDoc);
++	if (m_labelName.empty() == true)
++	{
++		index.listDocuments(docIDList, m_maxDocsCount, m_startDoc);
++	}
++	else
++	{
++		index.listDocumentsWithLabel(m_labelName, docIDList, m_maxDocsCount, m_startDoc);
++	}
+ 	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+ 	{
+ 		if (m_done == true)
+@@ -567,71 +580,6 @@
+ 	delete engine;
+ }
+ 
+-LabelQueryThread::LabelQueryThread(const string &amp;indexName, const string &amp;labelName) :
+-	WorkerThread(),
+-	m_indexName(indexName),
+-	m_labelName(labelName)
+-{
+-}
+-
+-LabelQueryThread::~LabelQueryThread()
+-{
+-}
+-
+-string LabelQueryThread::getType(void) const
+-{
+-	return &quot;LabelQueryThread&quot;;
+-}
+-
+-string LabelQueryThread::getIndexName(void) const
+-{
+-	return m_indexName;
+-}
+-
+-string LabelQueryThread::getLabelName(void) const
+-{
+-	return m_labelName;
+-}
+-
+-bool LabelQueryThread::stop(void)
+-{
+-	m_done = true;
+-	m_status = _(&quot;Stopped querying index labels&quot;);
+-	return true;
+-}
+-
+-const set&lt;unsigned int&gt; &amp;LabelQueryThread::getDocumentsList(void) const
+-{
+-	return m_documentsList;
+-}
+-
+-void LabelQueryThread::doWork(void)
+-{
+-	const map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
+-
+-	map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(m_indexName);
+-	if (mapIter == indexesMap.end())
+-	{
+-		m_status = _(&quot;Index&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_indexName;
+-		m_status += &quot; &quot;;
+-		m_status += _(&quot;doesn't exist&quot;);
+-		return;
+-	}
+-
+-	XapianIndex index(mapIter-&gt;second);
+-	if (index.isGood() == false)
+-	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += mapIter-&gt;second;
+-		return;
+-	}
+-
+-	index.getDocumentsWithLabel(m_labelName, m_documentsList);
+-}
+-
+ LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToDelete,
+ 	const map&lt;string, string&gt; &amp;labelsToRename)
+ {
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-03-06 15:48:41 UTC (rev 140)
+@@ -126,7 +126,7 @@
+ class IndexBrowserThread : public WorkerThread
+ {
+ 	public:
+-		IndexBrowserThread(const std::string &amp;indexName,
++		IndexBrowserThread(const std::string &amp;indexName, const std::string &amp;labelName,
+ 			unsigned int maxDocsCount, unsigned int startDoc);
+ 		~IndexBrowserThread();
+ 
+@@ -134,6 +134,8 @@
+ 
+ 		std::string getIndexName(void) const;
+ 
++		std::string getLabelName(void) const;
++
+ 		unsigned int getDocumentsCount(void) const;
+ 
+ 		virtual bool stop(void);
+@@ -142,6 +144,7 @@
+ 
+ 	protected:
+ 		std::string m_indexName;
++		std::string m_labelName;
+ 		unsigned int m_indexDocsCount;
+ 		unsigned int m_maxDocsCount;
+ 		unsigned int m_startDoc;
+@@ -188,35 +191,6 @@
+ 
+ };
+ 
+-class LabelQueryThread : public WorkerThread
+-{
+-	public:
+-		LabelQueryThread(const std::string &amp;indexName, const std::string &amp;labelName);
+-		virtual ~LabelQueryThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		std::string getIndexName(void) const;
+-
+-		std::string getLabelName(void) const;
+-
+-		virtual bool stop(void);
+-
+-		const std::set&lt;unsigned int&gt; &amp;getDocumentsList(void) const;
+-
+-	protected:
+-		std::string m_indexName;
+-		std::string m_labelName;
+-		std::set&lt;unsigned int&gt; m_documentsList;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		LabelQueryThread(const LabelQueryThread &amp;other);
+-		LabelQueryThread &amp;operator=(const LabelQueryThread &amp;other);
+-
+-};
+-
+ class LabelUpdateThread : public WorkerThread
+ {
+ 	public:
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-03-06 15:48:41 UTC (rev 140)
+@@ -543,6 +543,7 @@
+ {
+ 	IndexTree *pIndexTree = NULL;
+ 	IndexPage *pIndexPage = NULL;
++	ustring labelName;
+ 	bool foundPage = false;
+ 
+ #ifdef DEBUG
+@@ -559,6 +560,7 @@
+ 		{
+ 			pIndexTree-&gt;clear();
+ 		}
++		labelName = pIndexPage-&gt;getLabelName();
+ 		foundPage = true;
+ 	}
+ 
+@@ -603,7 +605,7 @@
+ 
+ 	if (foundPage == true)
+ 	{
+-		browse_index(indexName, 0);
++		browse_index(indexName, labelName, 0);
+ 	}
+ }
+ 
+@@ -626,16 +628,7 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;mainWindow::on_label_changed: called on &quot; &lt;&lt; labelName &lt;&lt; endl;
+ #endif
+-	pIndexTree-&gt;setCurrentLabelColour(0, 0, 0, false);
+-	if (labelName.empty() == true)
+-	{
+-		// User selected no label
+-		set_status(_(&quot;No label&quot;));
+-		return;
+-	}
+-
+-	// Get the documents that match this label
+-	start_thread(new LabelQueryThread(indexName, labelName));
++	browse_index(indexName, labelName, 0);
+ }
+ 
+ //
+@@ -762,6 +755,7 @@
+ 		IndexPage *pIndexPage = NULL;
+ 		IndexTree *pIndexTree = NULL;
+ 		ustring indexName = to_utf8(pBrowseThread-&gt;getIndexName());
++		ustring labelName = to_utf8(pBrowseThread-&gt;getLabelName());
+ 
+ 		// Find the page for this index
+ 		pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+@@ -900,70 +894,6 @@
+ 			}
+ 		}
+ 	}
+-	else if (type == &quot;LabelQueryThread&quot;)
+-	{
+-		LabelQueryThread *pLabelQueryThread = dynamic_cast&lt;LabelQueryThread *&gt;(pThread);
+-		if (pLabelQueryThread == NULL)
+-		{
+-			delete pThread;
+-			return;
+-		}
+-		ustring indexName = to_utf8(pLabelQueryThread-&gt;getIndexName());
+-
+-		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+-		if (pIndexPage == NULL)
+-		{
+-			return;
+-		}
+-		IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-		if (pIndexTree == NULL)
+-		{
+-			return;
+-		}
+-
+-		// Don't bother if the index is not being listed, or if the user
+-		// changed the label in the meantime
+-		ustring labelName = pIndexPage-&gt;getLabelName();
+-		if ((pIndexTree-&gt;isEmpty() == false) &amp;&amp;
+-			(labelName.empty() == false) &amp;&amp;
+-			(labelName == to_utf8(pLabelQueryThread-&gt;getLabelName())))
+-		{
+-			const set&lt;unsigned int&gt; &amp;documentsList = pLabelQueryThread-&gt;getDocumentsList();
+-			char docsCountStr[64];
+-			unsigned int docsCount = documentsList.size();
+-
+-			status = _(&quot;Label&quot;);
+-			status += &quot; &quot;;
+-			status += labelName;
+-			status += &quot; &quot;;
+-			status += _(&quot;matches&quot;);
+-			status += &quot; &quot;;
+-			snprintf(docsCountStr, 64, &quot;%u&quot;, docsCount);
+-			status += docsCountStr;
+-			status += &quot; &quot;;
+-			status += _(&quot;document(s)&quot;);
+-			set_status(status);
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_thread_end: current label is &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
+-			// Get the actual label colour from the settings
+-			for (set&lt;PinotSettings::Label&gt;::iterator labelIter = m_settings.m_labels.begin();
+-				labelIter != m_settings.m_labels.end(); ++labelIter)
+-			{
+-				if (labelName == labelIter-&gt;m_name)
+-				{
+-					// Display the selected label's colour in the index tree
+-					pIndexTree-&gt;setCurrentLabelColour(labelIter-&gt;m_red, labelIter-&gt;m_green, labelIter-&gt;m_blue);
+-					pIndexTree-&gt;setLabel(documentsList);
+-
+-					// Switch to the index page
+-					m_pNotebook-&gt;set_current_page(get_page_number(indexName, NotebookPageBox::INDEX_PAGE));
+-					break;
+-				}
+-			}
+-		}
+-	}
+ 	else if (type == &quot;LabelUpdateThread&quot;)
+ 	{
+ 		LabelUpdateThread *pLabelUpdateThread = dynamic_cast&lt;LabelUpdateThread *&gt;(pThread);
+@@ -1144,7 +1074,7 @@
+ 				if ((docsCount &gt;= pIndexPage-&gt;getFirstDocument() + m_maxDocsCount))
+ 				{
+ 					// Refresh this page
+-					browse_index(indexName, pIndexPage-&gt;getFirstDocument());
++					browse_index(indexName, pIndexPage-&gt;getLabelName(), pIndexPage-&gt;getFirstDocument());
+ 				}
+ 			}
+ 		}
+@@ -1351,10 +1281,6 @@
+ 					IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+ 
+ 					// Synchronize the labels list with the new settings
+-					if (pIndexTree != NULL)
+-					{
+-						pIndexTree-&gt;setCurrentLabelColour(0, 0, 0, false);
+-					}
+ 					pIndexPage-&gt;populateLabelCombobox();
+ 				}
+ 			}
+@@ -1780,11 +1706,11 @@
+ 
+ 		// Is the index still being shown ?
+ 		IndexTree *pIndexTree = NULL;
+-		NotebookPageBox *pPage = get_page(indexName, NotebookPageBox::INDEX_PAGE);
+-		if (pPage != NULL)
++		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
++		if (pIndexPage != NULL)
+ 		{
+ 			// Refresh
+-			browse_index(indexName, 0);
++			browse_index(indexName, pIndexPage-&gt;getLabelName(), 0);
+ 		}
+ 	}
+ }
+@@ -1980,7 +1906,7 @@
+ 		if (matchesLabel != matchedLabel)
+ 		{
+ 			// Update this document to the index tree
+-			pIndexTree-&gt;setDocumentLabeledState(docId, matchesLabel);
++			pIndexTree-&gt;setDocumentColourState(docId, matchesLabel);
+ 		}
+ 
+ 		// Did the title change ?
+@@ -1999,7 +1925,7 @@
+ 		{
+ 			// The current label may have been applied to or removed from
+ 			// one or more of the selected documents, so refresh the list
+-			start_thread(new LabelQueryThread(indexName, labelName));
++			start_thread(new IndexBrowserThread(indexName, labelName, 0, 0));
+ 		}
+ 	}
+ }
+@@ -2376,7 +2302,7 @@
+ 	{
+ 		if (pIndexPage-&gt;getFirstDocument() &gt;= m_maxDocsCount)
+ 		{
+-			browse_index(indexName, pIndexPage-&gt;getFirstDocument() - m_maxDocsCount);
++			browse_index(indexName, pIndexPage-&gt;getLabelName(), pIndexPage-&gt;getFirstDocument() - m_maxDocsCount);
+ 		}
+ 	}
+ }
+@@ -2394,14 +2320,14 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: first&quot; &lt;&lt; endl;
+ #endif
+-			browse_index(indexName, 0);
++			browse_index(indexName, pIndexPage-&gt;getLabelName(), 0);
+ 		}
+ 		else if (pIndexPage-&gt;getDocumentsCount() &gt;= pIndexPage-&gt;getFirstDocument() + m_maxDocsCount)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: next&quot; &lt;&lt; endl;
+ #endif
+-			browse_index(indexName, pIndexPage-&gt;getFirstDocument() + m_maxDocsCount);
++			browse_index(indexName, pIndexPage-&gt;getLabelName(), pIndexPage-&gt;getFirstDocument() + m_maxDocsCount);
+ 		}
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: counts &quot;
+@@ -2797,7 +2723,8 @@
+ //
+ // Browse an index
+ //
+-void mainWindow::browse_index(const ustring &amp;indexName, unsigned int startDoc)
++void mainWindow::browse_index(const ustring &amp;indexName,
++	const ustring &amp;labelName, unsigned int startDoc)
+ {
+ 	// Rudimentary lock
+ 	if (m_state.m_browsingIndex == true)
+@@ -2823,7 +2750,7 @@
+ 
+ 	// Spawn a new thread to browse the index
+ 	IndexBrowserThread *pBrowseThread = new IndexBrowserThread(
+-		from_utf8(indexName), m_maxDocsCount, startDoc);
++		from_utf8(indexName), labelName, m_maxDocsCount, startDoc);
+ 	pBrowseThread-&gt;getUpdateSignal().connect(SigC::slot(*this,
+ 		&amp;mainWindow::on_message_indexupdate));
+ 	start_thread(pBrowseThread);
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-03-06 15:46:49 UTC (rev 139)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-03-06 15:48:41 UTC (rev 140)
+@@ -126,7 +126,8 @@
+ 		unsigned int docId = 0);
+ 	void edit_query(QueryProperties &amp;queryProps, bool newQuery);
+ 	void run_search(const QueryProperties &amp;queryProps);
+-	void browse_index(const Glib::ustring &amp;indexName, unsigned int startDoc);
++	void browse_index(const Glib::ustring &amp;indexName,
++		const Glib::ustring &amp;labelName, unsigned int startDoc);
+ 	void index_document(const DocumentInfo &amp;docInfo, const std::string &amp;labelName,
+ 		unsigned int docId = 0);
+ 	bool view_document(const std::string &amp;url, bool internalViewerOnly = false);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000138.html">[Pinot-svn] r139 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000140.html">[Pinot-svn] r141 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#139">[ date ]</a>
+              <a href="thread.html#139">[ thread ]</a>
+              <a href="subject.html#139">[ subject ]</a>
+              <a href="author.html#139">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,217 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r731 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r731%20-%20trunk/Index&In-Reply-To=%3C200702211434.l1LEY2FS032424%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000724.html">
+   <LINK REL="Next"  HREF="000726.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r731 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r731%20-%20trunk/Index&In-Reply-To=%3C200702211434.l1LEY2FS032424%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r731 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 21 15:34:02 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000724.html">[Pinot-svn] r730 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000726.html">[Pinot-svn] r732 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#725">[ date ]</a>
+              <a href="thread.html#725">[ thread ]</a>
+              <a href="subject.html#725">[ subject ]</a>
+              <a href="author.html#725">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-21 15:34:01 +0100 (Wed, 21 Feb 2007)
+New Revision: 731
+
+Modified:
+   trunk/Index/FilterWrapper.cpp
+   trunk/Index/FilterWrapper.h
+Log:
+Handles unsupported types.
+
+
+Modified: trunk/Index/FilterWrapper.cpp
+===================================================================
+--- trunk/Index/FilterWrapper.cpp	2007-02-20 11:38:06 UTC (rev 730)
++++ trunk/Index/FilterWrapper.cpp	2007-02-21 14:34:01 UTC (rev 731)
+@@ -20,11 +20,11 @@
+ 
+ #include &quot;Url.h&quot;
+ #include &quot;FilterFactory.h&quot;
++#include &quot;TextFilter.h&quot;
+ #include &quot;FilterUtils.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ 
+ using std::cout;
+-using std::cerr;
+ using std::endl;
+ using std::string;
+ using std::set;
+@@ -41,32 +41,45 @@
+ bool FilterWrapper::indexDocument(IndexInterface &amp;index, const Document &amp;doc,
+ 	const set&lt;string&gt; &amp;labels, unsigned int &amp;docId)
+ {
+-	Document docCopy(doc);
+-
+-	return filterDocument(index, docCopy, 0, labels, docId, false);
++	return filterDocument(index, doc, 0, labels, docId, false);
+ }
+ 
+ bool FilterWrapper::updateDocument(unsigned int docId, IndexInterface &amp;index, const Document &amp;doc)
+ {
+-	Document docCopy(doc);
+ 	set&lt;string&gt; labels;
+ 
+-	return filterDocument(index, docCopy, 0, labels, docId, true);
++	return filterDocument(index, doc, 0, labels, docId, true);
+ }
+ 
+-bool FilterWrapper::filterDocument(IndexInterface &amp;index, Document &amp;doc,
+-	unsigned int count, const set&lt;string&gt; &amp;labels, unsigned int &amp;docId,
+-	bool doUpdate)
++bool FilterWrapper::filterDocument(IndexInterface &amp;index, const Document &amp;doc,
++	unsigned int count, const set&lt;string&gt; &amp;labels,
++	unsigned int &amp;docId, bool doUpdate)
+ {
+ 	Filter *pFilter = FilterFactory::getFilter(doc.getType());
+-	bool success = false;
++	bool fedFilter = false, success = false;
+ 
+-	if (pFilter == NULL)
++	if (pFilter != NULL)
+ 	{
+-		return false;
++		fedFilter = FilterUtils::feedFilter(doc, pFilter);
+ 	}
++	else
++	{
++		// Chances are this type is not supported
++		pFilter = new TextFilter(&quot;text/plain&quot;);
+ 
+-	if (FilterUtils::feedFilter(doc, pFilter) == false)
++		Document emptyDoc(doc.getTitle(), doc.getLocation(), doc.getType(), doc.getLanguage());
++
++		emptyDoc.setTimestamp(doc.getTimestamp());
++		emptyDoc.setSize(doc.getSize());
++		emptyDoc.setData(&quot; &quot;, 1);
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;FilterWrapper::filterDocument: unsupported type &quot; &lt;&lt; doc.getType() &lt;&lt; endl;
++#endif
++		fedFilter = FilterUtils::feedFilter(emptyDoc, pFilter);
++	}
++
++	if (fedFilter == false)
+ 	{
+ 		delete pFilter;
+ 
+@@ -75,13 +88,16 @@
+ 
+ 	while (pFilter-&gt;has_documents() == true)
+ 	{
+-		Document filteredDoc(doc.getTitle(), doc.getLocation(), &quot;text/plain&quot;, doc.getLanguage());
+-
+ 		if (pFilter-&gt;next_document() == false)
+ 		{
+ 			break;
+ 		}
+ 
++		Document filteredDoc(doc.getTitle(), doc.getLocation(), &quot;text/plain&quot;, doc.getLanguage());
++
++		filteredDoc.setTimestamp(doc.getTimestamp());
++		filteredDoc.setSize(doc.getSize());
++
+ 		if (FilterUtils::populateDocument(filteredDoc, pFilter) == false)
+ 		{
+ 			continue;
+@@ -90,12 +106,16 @@
+ 		// Pass it down to another filter ?
+ 		if (filteredDoc.getType() != &quot;text/plain&quot;)
+ 		{
+-			filterDocument(index, filteredDoc, count, labels, docId, doUpdate);
++			success = filterDocument(index, filteredDoc, count, labels, docId, doUpdate);
++			delete pFilter;
++
++			return success;
+ 		}
+ 		else
+ 		{
++			filteredDoc.setType(doc.getType());
++
+ 			Tokenizer tokens(&amp;filteredDoc);
+-
+ 			if (doUpdate == false)
+ 			{
+ 				success = index.indexDocument(tokens, labels, docId);
+@@ -109,5 +129,12 @@
+ 
+ 	delete pFilter;
+ 
++#ifdef DEBUG
++	if (success == false)
++	{
++		cout &lt;&lt; &quot;FilterWrapper::filterDocument: didn't index &quot; &lt;&lt; doc.getLocation() &lt;&lt; endl;
++	}
++#endif
++
+ 	return success;
+ }
+
+Modified: trunk/Index/FilterWrapper.h
+===================================================================
+--- trunk/Index/FilterWrapper.h	2007-02-20 11:38:06 UTC (rev 730)
++++ trunk/Index/FilterWrapper.h	2007-02-21 14:34:01 UTC (rev 731)
+@@ -43,9 +43,9 @@
+ 	protected:
+ 		FilterWrapper();
+ 
+-		static bool filterDocument(IndexInterface &amp;index, Document &amp;doc,
+-			unsigned int count, const std::set&lt;std::string&gt; &amp;labels, unsigned int &amp;docId,
+-			bool doUpdate);
++		static bool filterDocument(IndexInterface &amp;index, const Document &amp;doc,
++			unsigned int count, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId, bool doUpdate);
+ 
+ 	private:
+ 		FilterWrapper(const FilterWrapper &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000724.html">[Pinot-svn] r730 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000726.html">[Pinot-svn] r732 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#725">[ date ]</a>
+              <a href="thread.html#725">[ thread ]</a>
+              <a href="subject.html#725">[ subject ]</a>
+              <a href="author.html#725">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,454 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1264 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1264%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200805201445.m4KEj9kP026956%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001257.html">
+   <LINK REL="Next"  HREF="001259.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1264 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1264%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200805201445.m4KEj9kP026956%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1264 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue May 20 16:45:09 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001257.html">[Pinot-svn] r1263 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="001259.html">[Pinot-svn] r1265 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1258">[ date ]</a>
+              <a href="thread.html#1258">[ thread ]</a>
+              <a href="subject.html#1258">[ subject ]</a>
+              <a href="author.html#1258">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-20 16:45:08 +0200 (Tue, 20 May 2008)
+New Revision: 1264
+
+Modified:
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/QueryHistory.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+We might as well drop the Language column since it was used as charset and all
+the fields stored in this table are converted to UTF-8 prior to insertion.
+
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2008-05-20 12:49:34 UTC (rev 1263)
++++ trunk/SQL/QueryHistory.cpp	2008-05-20 14:45:08 UTC (rev 1264)
+@@ -22,6 +22,7 @@
+ #include &lt;iostream&gt;
+ #include &lt;cstdlib&gt;
+ 
++#include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ 
+@@ -51,8 +52,8 @@
+ 
+ 	SQLiteBase db(database);
+ 	string tableDefinition(&quot;QueryName VARCHAR(255), EngineName VARCHAR(255), HostName VARCHAR(255), \
+-		Url VARCHAR(255), Title VARCHAR(255), Extract VARCHAR(255), Language VARCHAR(255), \
+-		Score FLOAT, Date INTEGER, PRIMARY KEY(QueryName, EngineName, Url, Date)&quot;);
++		Url VARCHAR(255), Title VARCHAR(255), Extract VARCHAR(255), Score FLOAT, Date INTEGER, \
++		PRIMARY KEY(QueryName, EngineName, Url, Date)&quot;);
+ 
+ 	// Does QueryHistory exist ?
+ 	if (db.executeSimpleStatement(&quot;SELECT * FROM QueryHistory LIMIT 1;&quot;) == false)
+@@ -65,14 +66,14 @@
+ 	}
+ 	else
+ 	{
+-		// Previous versions had a PrevScore field, so check for it
+-		if (db.executeSimpleStatement(&quot;SELECT PrevScore FROM QueryHistory LIMIT 1;&quot;) == true)
++		// Previous versions had PrevScore and Language columns, so check for one of them
++		if (db.executeSimpleStatement(&quot;SELECT Language FROM QueryHistory LIMIT 1;&quot;) == true)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;QueryHistory::create: QueryHistory needs updating&quot; &lt;&lt; endl;
+ #endif
+ 			db.alterTable(&quot;QueryHistory&quot;,
+-				&quot;QueryName, EngineName, HostName, Url, Title, Extract, Language, Score, Date&quot;,
++				&quot;QueryName, EngineName, HostName, Url, Title, Extract, Score, Date&quot;,
+ 				tableDefinition);
+ 		}
+ 	}
+@@ -81,18 +82,19 @@
+ }
+ 
+ /// Inserts an URL.
+-bool QueryHistory::insertItem(const string &amp;queryName, const string &amp;engineName, const string &amp;url,
+-	const string &amp;title, const string &amp;extract, const string &amp;charset, float score)
++bool QueryHistory::insertItem(const string &amp;queryName, const string &amp;engineName,
++	const string &amp;url, const string &amp;title, const string &amp;extract,
++	float score, const string &amp;date)
+ {
+ 	Url urlObj(url);
+ 	string hostName(urlObj.getHost());
+ 	bool success = false;
+ 
+ 	SQLResults *results = executeStatement(&quot;INSERT INTO QueryHistory \
+-		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%q', '%f', '%d');&quot;,
++		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%f', '%d');&quot;,
+ 		queryName.c_str(), engineName.c_str(), hostName.c_str(),
+-		Url::escapeUrl(url).c_str(), title.c_str(), extract.c_str(), charset.c_str(),
+-		score, time(NULL));
++		Url::escapeUrl(url).c_str(), title.c_str(), extract.c_str(),
++		score, TimeConverter::fromTimestamp(date));
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+@@ -144,7 +146,7 @@
+ 	bool success = false;
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT EngineName FROM QueryHistory \
+-		WHERE QueryName='%q' GROUP BY EngineName&quot;,
++		WHERE QueryName='%q' GROUP BY EngineName;&quot;,
+ 		queryName.c_str());
+ 	if (results != NULL)
+ 	{
+@@ -174,7 +176,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLResults *results = executeStatement(&quot;SELECT Title, Url, Language, Extract, Score \
++	SQLResults *results = executeStatement(&quot;SELECT Title, Url, Extract, Score, Date \
+ 		FROM QueryHistory WHERE QueryName='%q' AND EngineName='%q' ORDER BY Date, Score DESC \
+ 		LIMIT %u;&quot;, queryName.c_str(), engineName.c_str(), max);
+ 	if (results != NULL)
+@@ -189,9 +191,11 @@
+ 
+ 			DocumentInfo result(row-&gt;getColumn(0),
+ 				Url::unescapeUrl(row-&gt;getColumn(1)).c_str(),
+-				&quot;&quot;, row-&gt;getColumn(2));
+-			result.setExtract(row-&gt;getColumn(3));
+-			result.setScore((float)atof(row-&gt;getColumn(4).c_str()));
++				&quot;&quot;, &quot;&quot;);
++			result.setExtract(row-&gt;getColumn(2));
++			result.setScore((float)atof(row-&gt;getColumn(3).c_str()));
++			int runDate = atoi(row-&gt;getColumn(4).c_str());
++			result.setTimestamp(TimeConverter::toTimestamp((time_t)runDate));
+ 
+ 			resultsList.push_back(result);
+ 			success = true;
+@@ -207,11 +211,11 @@
+ 
+ /// Gets an item's extract.
+ string QueryHistory::getItemExtract(const string &amp;queryName, const string &amp;engineName,
+-	const string &amp;url, string &amp;charset)
++	const string &amp;url)
+ {
+ 	string extract;
+ 
+-	SQLResults *results = executeStatement(&quot;SELECT Extract, Language FROM QueryHistory \
++	SQLResults *results = executeStatement(&quot;SELECT Extract FROM QueryHistory \
+ 		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q' ORDER BY Date DESC;&quot;,
+ 		queryName.c_str(), engineName.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+@@ -220,7 +224,6 @@
+ 		if (row != NULL)
+ 		{
+ 			extract = row-&gt;getColumn(0);
+-			charset = row-&gt;getColumn(1);
+ 
+ 			delete row;
+ 		}
+@@ -242,7 +245,7 @@
+ 	}
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Url FROM QueryHistory \
+-		WHERE Url LIKE '%q%%' ORDER BY Url LIMIT %u&quot;,
++		WHERE Url LIKE '%q%%' ORDER BY Url LIMIT %u;&quot;,
+ 		Url::escapeUrl(url).c_str(), count);
+ 	if (results != NULL)
+ 	{
+
+Modified: trunk/SQL/QueryHistory.h
+===================================================================
+--- trunk/SQL/QueryHistory.h	2008-05-20 12:49:34 UTC (rev 1263)
++++ trunk/SQL/QueryHistory.h	2008-05-20 14:45:08 UTC (rev 1264)
+@@ -37,8 +37,9 @@
+ 		static bool create(const std::string &amp;database);
+ 
+ 		/// Inserts an URL.
+-		bool insertItem(const std::string &amp;queryName, const std::string &amp;engineName, const std::string &amp;url,
+-			const std::string &amp;title, const std::string &amp;extract, const std::string &amp;charset, float score);
++		bool insertItem(const std::string &amp;queryName, const std::string &amp;engineName,
++			const std::string &amp;url, const std::string &amp;title, const std::string &amp;extract,
++			float score, const std::string &amp;date);
+ 
+ 		/**
+ 		  * Checks if an URL is in the query's history.
+@@ -56,7 +57,7 @@
+ 
+ 		/// Gets an item's extract.
+ 		std::string getItemExtract(const std::string &amp;queryName, const std::string &amp;engineName,
+-			const std::string &amp;url, std::string &amp;charset);
++			const std::string &amp;url);
+ 
+ 		/// Finds URLs.
+ 		bool findUrlsLike(const std::string &amp;url, unsigned int count,
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2008-05-20 12:49:34 UTC (rev 1263)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2008-05-20 14:45:08 UTC (rev 1264)
+@@ -31,8 +31,8 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
++#include &quot;ViewHistory.h&quot;
+ #include &quot;ResultsExporter.h&quot;
+-#include &quot;ViewHistory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -475,50 +475,66 @@
+ 		rootType = ResultsModelColumns::ROW_HOST;
+ 	}
+ 
++	unsigned int indexId = 0;
++	unsigned int engineId = 0;
++
+ 	// Find out what the search engine ID is
+-	unsigned int indexId = 0;
+-	unsigned int engineId = m_settings.getEngineId(engineName);
+-	if (engineId == 0)
++	if (engineName.empty() == false)
+ 	{
+-		// Chances are this engine is an index
+-		std::map&lt;string, string&gt;::const_iterator mapIter = m_settings.getIndexes().find(engineName);
+-		if (mapIter != m_settings.getIndexes().end())
++		engineId = m_settings.getEngineId(engineName);
++		if (engineId == 0)
+ 		{
+-			// Yes, it is
+-			indexId = m_settings.getIndexIdByName(engineName);
+-			engineId = m_settings.getEngineId(m_settings.m_defaultBackend);
++			// Chances are this engine is an index
++			std::map&lt;string, string&gt;::const_iterator mapIter = m_settings.getIndexes().find(engineName);
++			if (mapIter != m_settings.getIndexes().end())
++			{
++				// Yes, it is
++				indexId = m_settings.getIndexIdByName(engineName);
++				engineId = m_settings.getEngineId(m_settings.m_defaultBackend);
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;ResultsTree::addResults: engine is index &quot; &lt;&lt; engineName &lt;&lt; &quot; &quot; &lt;&lt; indexId &lt;&lt; &quot; &quot; &lt;&lt; engineId &lt;&lt; endl;
++				cout &lt;&lt; &quot;ResultsTree::addResults: engine is index &quot; &lt;&lt; engineName &lt;&lt; &quot; &quot; &lt;&lt; indexId &lt;&lt; &quot; &quot; &lt;&lt; engineId &lt;&lt; endl;
+ #endif
++			}
++#ifdef DEBUG
++			else cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; engineName &lt;&lt; &quot; is not an index&quot; &lt;&lt;  endl;
++#endif
+ 		}
+ #ifdef DEBUG
+-		else cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; engineName &lt;&lt; &quot; is not an index&quot; &lt;&lt;  endl;
++		else cout &lt;&lt; &quot;ResultsTree::addResults: ID for engine &quot; &lt;&lt; engineName &lt;&lt; &quot; is &quot; &lt;&lt; engineId &lt;&lt;  endl;
+ #endif
+ 	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;ResultsTree::addResults: ID for engine &quot; &lt;&lt; engineName &lt;&lt; &quot; is &quot; &lt;&lt; engineId &lt;&lt;  endl;
+-#endif
+ 
+ 	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
+ 	ViewHistory viewHistory(m_settings.getHistoryDatabaseName());
+-	string lastRun(queryHistory.getLastRun(m_treeName, engineName));
+-	time_t lastRunTime = 0;
++	set&lt;time_t&gt; latestRuns;
++	time_t secondLastRunTime = 0;
+ 	bool isNewQuery = false;
+ 
+ 	// Is this a new query ?
+-	if (lastRun.empty() == true)
++	if ((queryHistory.getLatestRuns(m_treeName, engineName, 2, latestRuns) == false) ||
++		(latestRuns.empty() == true))
+ 	{
+ 		isNewQuery = true;
+ 	}
+ 	else
+ 	{
+-		lastRunTime = TimeConverter::fromTimestamp(lastRun);
++		set&lt;time_t&gt;::const_iterator runIter = latestRuns.begin();
++
++		// We only need to keep the last two runs
++		if (runIter != latestRuns.end())
++		{
++			++runIter;
++			if (runIter != latestRuns.end())
++			{
++				secondLastRunTime = (*runIter);
++			}
++		}
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; resultsList.size() &lt;&lt; &quot; results, second last run &quot; &lt;&lt; secondLastRunTime &lt;&lt; endl;
++#endif
+ 
+ 	// Look at the results list
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; resultsList.size() &lt;&lt; &quot; results, last run &quot; &lt;&lt; lastRun &lt;&lt; endl;
+-#endif
+ 	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+ 		resultIter != resultsList.end(); ++resultIter)
+ 	{
+@@ -549,24 +565,17 @@
+ 			float oldestScore = 0;
+ 			float previousScore = queryHistory.hasItem(m_treeName, engineName,
+ 				location, oldestScore);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; location &lt;&lt; &quot; has scores &quot;
++				&lt;&lt; previousScore &lt;&lt; &quot;, &quot; &lt;&lt; oldestScore &lt;&lt; endl;
++#endif
+ 			if (previousScore &gt; 0)
+ 			{
+-				if (updateHistory == true)
+-				{
+-					// Update this result whatever the current and previous rankings were
+-					queryHistory.updateItem(m_treeName, engineName, location,
+-						title, extract, charset, currentScore);
+-				}
++				// Yes, it has
+ 				rankDiff = (int)(currentScore - previousScore);
+ 			}
+ 			else
+ 			{
+-				// No, this is a new result
+-				if (updateHistory == true)
+-				{
+-					queryHistory.insertItem(m_treeName, engineName, location,
+-						resultIter-&gt;getTitle(), extract, charset, currentScore);
+-				}
+ 				// New results are displayed as such only if the query has already been run on the engine
+ 				if (isNewQuery == false)
+ 				{
+@@ -574,6 +583,12 @@
+ 					rankDiff = 666;
+ 				}
+ 			}
++
++			if (updateHistory == true)
++			{
++				queryHistory.insertItem(m_treeName, engineName, location,
++					title, extract, currentScore, resultIter-&gt;getTimestamp());
++			}
+ 		}
+ 
+ 		++count;
+@@ -617,9 +632,9 @@
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;ResultsTree::addResults: removing items for &quot; &lt;&lt; m_treeName
+-			&lt;&lt; &quot;, &quot; &lt;&lt; engineName &lt;&lt; &quot; older than &quot; &lt;&lt; lastRunTime &lt;&lt; endl;
++			&lt;&lt; &quot;, &quot; &lt;&lt; engineName &lt;&lt; &quot; older than &quot; &lt;&lt; secondLastRunTime &lt;&lt; endl;
+ #endif
+-		queryHistory.deleteItems(m_treeName, engineName, lastRunTime);
++		queryHistory.deleteItems(m_treeName, engineName, secondLastRunTime);
+ 	}
+ 
+ 	if (count &gt; 0)
+@@ -1284,7 +1299,7 @@
+ 			set&lt;string&gt; engineNames, indexNames;
+ 			TreeModel::Row childRow = *childIter;
+ 			DocumentInfo result;
+-			string engineName, charset, serial(from_utf8(childRow[m_resultsColumns.m_serial]));
++			string engineName, serial(from_utf8(childRow[m_resultsColumns.m_serial]));
+ 			unsigned int engineIds = childRow[m_resultsColumns.m_engines];
+ 			unsigned int indexIds = childRow[m_resultsColumns.m_indexes];
+ 
+@@ -1310,7 +1325,7 @@
+ 			if (m_groupMode != FLAT)
+ 			{
+ 				result.setExtract(queryHistory.getItemExtract(from_utf8(m_treeName),
+-					engineName, result.getLocation(), charset));
++					engineName, result.getLocation()));
+ 			}
+ 			result.setTimestamp(from_utf8(childRow[m_resultsColumns.m_timestamp]));
+ 
+@@ -1528,7 +1543,7 @@
+ 	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
+ 	set&lt;string&gt; engineNames, indexNames;
+ 	string url(from_utf8(row[m_resultsColumns.m_url]));
+-	string extract, charset;
++	string extract;
+ 	unsigned int engineIds = row[m_resultsColumns.m_engines];
+ 	unsigned int indexIds = row[m_resultsColumns.m_indexes];
+ 
+@@ -1561,11 +1576,11 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;ResultsTree::findResultsExtract: engine or index &quot; &lt;&lt; engineName &lt;&lt; endl;
+ #endif
+-			extract = queryHistory.getItemExtract(from_utf8(m_treeName), engineName, url, charset);
++			extract = queryHistory.getItemExtract(from_utf8(m_treeName), engineName, url);
+ 			if (extract.empty() == false)
+ 			{
+ 				// Stop here
+-				return to_utf8(extract, charset);
++				return extract;
+ 			}
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-05-20 12:49:34 UTC (rev 1263)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-05-20 14:45:08 UTC (rev 1264)
+@@ -1154,6 +1154,8 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;EngineHistoryThread::EngineHistoryThread: engine &quot; &lt;&lt; m_engineDisplayableName &lt;&lt; endl;
+ #endif
++	// Results are converted to UTF-8 prior to insertion in the history database
++	m_resultsCharset = &quot;UTF-8&quot;;
+ 	m_isLive = false;
+ }
+ 
+@@ -1175,7 +1177,7 @@
+ 	{
+ 		// Get the first result's charset
+ 		queryHistory.getItemExtract(m_queryProps.getName(), m_engineDisplayableName,
+-			m_documentsList.front().getLocation(), m_resultsCharset);
++			m_documentsList.front().getLocation());
+ 	}
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001257.html">[Pinot-svn] r1263 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="001259.html">[Pinot-svn] r1265 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1258">[ date ]</a>
+              <a href="thread.html#1258">[ thread ]</a>
+              <a href="subject.html#1258">[ subject ]</a>
+              <a href="author.html#1258">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

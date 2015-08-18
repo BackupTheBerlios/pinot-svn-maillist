@@ -1,0 +1,313 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r742 - in trunk: Index SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r742%20-%20in%20trunk%3A%20Index%20SQL%20UI/GTK2/src&In-Reply-To=%3C200702231519.l1NFJn9X016018%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000735.html">
+   <LINK REL="Next"  HREF="000737.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r742 - in trunk: Index SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r742%20-%20in%20trunk%3A%20Index%20SQL%20UI/GTK2/src&In-Reply-To=%3C200702231519.l1NFJn9X016018%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r742 - in trunk: Index SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 23 16:19:49 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000735.html">[Pinot-svn] r741 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000737.html">[Pinot-svn] r743 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#736">[ date ]</a>
+              <a href="thread.html#736">[ thread ]</a>
+              <a href="subject.html#736">[ subject ]</a>
+              <a href="author.html#736">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-23 16:19:48 +0100 (Fri, 23 Feb 2007)
+New Revision: 742
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Overloaded IndexInterface::unindexDocuments() and added deleteItems() to
+CrawlHistory to be able to remove all documents under a given directory in one
+fell swoop.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/Index/DBusXapianIndex.cpp	2007-02-23 15:19:48 UTC (rev 742)
+@@ -497,8 +497,8 @@
+ 	return false;
+ }
+ 
+-/// Unindexes documents with the given label.
+-bool DBusXapianIndex::unindexDocuments(const string &amp;labelName)
++/// Unindexes documents with the given label or under the given directory.
++bool DBusXapianIndex::unindexDocuments(const string &amp;name, bool isDirectory)
+ {
+ 	cerr &lt;&lt; &quot;DBusXapianIndex::unindexDocuments: not allowed&quot; &lt;&lt; endl;
+ 	return false;
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/Index/DBusXapianIndex.h	2007-02-23 15:19:48 UTC (rev 742)
+@@ -100,8 +100,8 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
+-		/// Unindexes documents with the given label.
+-		virtual bool unindexDocuments(const std::string &amp;labelName);
++		/// Unindexes documents with the given label or under the given directory.
++		virtual bool unindexDocuments(const std::string &amp;name, bool isDirectory);
+ 
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/Index/IndexInterface.h	2007-02-23 15:19:48 UTC (rev 742)
+@@ -110,8 +110,8 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(const std::string &amp;location) = 0;
+ 
+-		/// Unindexes documents with the given label.
+-		virtual bool unindexDocuments(const std::string &amp;labelName) = 0;
++		/// Unindexes documents with the given label or under the given directory.
++		virtual bool unindexDocuments(const std::string &amp;name, bool isDirectory) = 0;
+ 
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/Index/XapianIndex.cpp	2007-02-23 15:19:48 UTC (rev 742)
+@@ -1002,7 +1002,8 @@
+ 	string term(&quot;XDIR:&quot;);
+ 
+ 	term += dirName;
+-	return listDocumentsWithTerm(term, docIds, maxDocsCount, startDoc);
++	return listDocumentsWithTerm(XapianDatabase::limitTermLength(term, true),
++		docIds, maxDocsCount, startDoc);
+ }
+ 
+ /// Indexes the given data.
+@@ -1374,12 +1375,12 @@
+ 	return unindexed;
+ }
+ 
+-/// Unindexes documents with the given label.
+-bool XapianIndex::unindexDocuments(const string &amp;labelName)
++/// Unindexes documents with the given label or under the given directory.
++bool XapianIndex::unindexDocuments(const string &amp;name, bool isDirectory)
+ {
+ 	bool unindexed = false;
+ 
+-	if (labelName.empty() == true)
++	if (name.empty() == true)
+ 	{
+ 		return false;
+ 	}
+@@ -1398,9 +1399,21 @@
+ 		{
+ 			string term(&quot;XLABEL:&quot;);
+ 
++			if (isDirectory == true)
++			{
++				term = XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + name, true);
++			}
++			else
++			{
++				term += name;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianIndex::unindexDocuments: term is &quot; &lt;&lt; term &lt;&lt; endl;
++#endif
++
+ 			// Delete documents from the index
+-			term += labelName;
+ 			pIndex-&gt;delete_document(term);
++
+ 			unindexed = true;
+ 		}
+ 	}
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/Index/XapianIndex.h	2007-02-23 15:19:48 UTC (rev 742)
+@@ -101,8 +101,8 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(const std::string &amp;location);
+ 
+-		/// Unindexes documents with the given label.
+-		virtual bool unindexDocuments(const std::string &amp;labelName);
++		/// Unindexes documents with the given label or under the given directory.
++		virtual bool unindexDocuments(const std::string &amp;name, bool isDirectory);
+ 
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/SQL/CrawlHistory.cpp	2007-02-23 15:19:48 UTC (rev 742)
+@@ -372,6 +372,22 @@
+ 	return success;
+ }
+ 
++/// Deletes all items under a given URL.
++bool CrawlHistory::deleteItems(const string &amp;url)
++{
++	bool success = false;
++
++	SQLiteResults *results = executeStatement(&quot;DELETE FROM CrawlHistory \
++		WHERE Url LIKE '%q%%';&quot;, Url::escapeUrl(url).c_str());
++	if (results != NULL)
++	{
++		success = true;
++		delete results;
++	}
++
++	return success;
++}
++
+ /// Deletes URLs belonging to a source.
+ bool CrawlHistory::deleteItems(unsigned int sourceId, CrawlStatus status)
+ {
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/SQL/CrawlHistory.h	2007-02-23 15:19:48 UTC (rev 742)
+@@ -74,6 +74,9 @@
+ 		/// Deletes an URL.
+ 		bool deleteItem(const string &amp;url);
+ 
++		/// Deletes all items under a given URL.
++		bool deleteItems(const string &amp;url);
++
+ 		/// Deletes URLs belonging to a source.
+ 		bool deleteItems(unsigned int sourceId, CrawlStatus status = UNKNOWN);
+ 
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2007-02-23 15:19:48 UTC (rev 742)
+@@ -280,7 +280,7 @@
+ 					&lt;&lt; sourceLabel &lt;&lt; endl;
+ #endif
+ 				// All documents with this label will be unindexed
+-				m_index.unindexDocuments(sourceLabel);
++				m_index.unindexDocuments(sourceLabel, false);
+ 
+ 				// Delete this item
+ 				m_history.deleteItem(*mailIter);
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-02-23 15:19:48 UTC (rev 742)
+@@ -186,7 +186,7 @@
+ 					&lt;&lt; &quot;, source &quot; &lt;&lt; sourceId &lt;&lt; &quot; was removed&quot; &lt;&lt; endl;
+ #endif
+ 				// All documents with this label will be unindexed
+-				if (m_index.unindexDocuments(sourceStr) == true)
++				if (m_index.unindexDocuments(sourceStr, false) == true)
+ 				{
+ 					// Delete the source itself and all its items
+ 					m_history.deleteSource(sourceId);
+@@ -356,25 +356,11 @@
+ 	cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: &quot; &lt;&lt; dirName &lt;&lt; endl;
+ #endif
+ 	pthread_mutex_lock(&amp;m_mutex);
+-	if (m_index.listDocumentsInDirectory(dirName, docIdList) == true)
++	if (m_index.unindexDocuments(dirName, true) == true)
+ 	{
+-		for (set&lt;unsigned int&gt;::const_iterator iter = docIdList.begin();
+-			iter != docIdList.end(); ++iter)
+-		{
+-			DocumentInfo docInfo;
+-
+-			if ((m_index.getDocumentInfo(*iter, docInfo) == true) &amp;&amp;
+-				(m_index.unindexDocument(*iter) == true))
+-			{
+-				m_history.deleteItem(docInfo.getLocation());
+-			}
+-		}
+-
++		m_history.deleteItems(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName);
+ 		handledEvent = true;
+ 	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: no documents in &quot; &lt;&lt; dirName &lt;&lt; endl;
+-#endif
+ 	pthread_mutex_unlock(&amp;m_mutex);
+ 
+ 	return handledEvent;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-23 13:30:13 UTC (rev 741)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-23 15:19:48 UTC (rev 742)
+@@ -1513,7 +1513,7 @@
+ 
+ 			// By unindexing all documents that match the label,
+ 			// we effectively delete the label from the index
+-			if (pIndex-&gt;unindexDocuments(labelName) == true)
++			if (pIndex-&gt;unindexDocuments(labelName, false) == true)
+ 			{
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;UnindexingThread::doWork: removed label &quot; &lt;&lt; labelName &lt;&lt; endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000735.html">[Pinot-svn] r741 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000737.html">[Pinot-svn] r743 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#736">[ date ]</a>
+              <a href="thread.html#736">[ thread ]</a>
+              <a href="subject.html#736">[ subject ]</a>
+              <a href="author.html#736">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

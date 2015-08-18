@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1698 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1698%20-%20trunk/SQL&In-Reply-To=%3C201003301305.o2UD5uk8010085%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001687.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1698 - trunk/SQL</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1698%20-%20trunk/SQL&In-Reply-To=%3C201003301305.o2UD5uk8010085%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1698 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 30 15:05:56 CEST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001687.html">[Pinot-svn] r1697 - in trunk: Monitor SQL Utils
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1688">[ date ]</a>
+              <a href="thread.html#1688">[ thread ]</a>
+              <a href="subject.html#1688">[ subject ]</a>
+              <a href="author.html#1688">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-03-30 15:05:52 +0200 (Tue, 30 Mar 2010)
+New Revision: 1698
+
+Modified:
+   trunk/SQL/SQLiteBase.cpp
+   trunk/SQL/SQLiteBase.h
+Log:
+Fix for INSERT, UPDATE and DELETE as prepared statements.
+Don't be greedy, if the database is busy, sleep for a short while!
+
+
+Modified: trunk/SQL/SQLiteBase.cpp
+===================================================================
+--- trunk/SQL/SQLiteBase.cpp	2010-03-21 13:22:53 UTC (rev 1697)
++++ trunk/SQL/SQLiteBase.cpp	2010-03-30 13:05:52 UTC (rev 1698)
+@@ -35,7 +35,8 @@
+ 
+ static int busyHandler(void *pData, int lockNum)
+ {
+-	// Try again
++	// Try again after 100 ms
++	usleep(100000);
+ 	return 1;
+ }
+ 
+@@ -100,7 +101,7 @@
+ 	if (nColumn &lt; m_nColumns)
+ 	{
+ 		vector&lt;string&gt;::const_iterator colIter = m_columns.begin();
+-		for (int i = 0; (i &lt; m_nColumns) &amp;&amp; (colIter != m_columns.end()); ++i)
++		for (unsigned int i = 0; (i &lt; m_nColumns) &amp;&amp; (colIter != m_columns.end()); ++i)
+ 		{
+ 			if (i == nColumn)
+ 			{
+@@ -118,7 +119,8 @@
+ SQLiteResults::SQLiteResults(char **results, unsigned long nRows, unsigned int nColumns) :
+ 	SQLResults(nRows, nColumns),
+ 	m_results(results),
+-	m_pStatement(NULL)
++	m_pStatement(NULL),
++	m_done(false)
+ {
+ 	// Check we actually have results
+ 	if ((m_results == NULL) ||
+@@ -132,7 +134,8 @@
+ SQLiteResults::SQLiteResults(sqlite3_stmt *pStatement) :
+ 	SQLResults(0, sqlite3_column_count(pStatement)),
+ 	m_results(NULL),
+-	m_pStatement(pStatement)
++	m_pStatement(pStatement),
++	m_done(false)
+ {
+ }
+ 
+@@ -152,8 +155,7 @@
+ {
+ 	if (m_pStatement != NULL)
+ 	{
+-		// There's no way to tell
+-		return true;
++		return !m_done;
+ 	}
+ 
+ 	return SQLResults::hasMoreRows();
+@@ -178,11 +180,21 @@
+ {
+ 	if (m_pStatement != NULL)
+ 	{
+-		if (sqlite3_step(m_pStatement) == SQLITE_ROW)
++		if (m_done == true)
+ 		{
++			return NULL;
++		}
++
++		int stepCode = sqlite3_step(m_pStatement);
++		if (stepCode == SQLITE_ROW)
++		{
+ 			++m_nCurrentRow;
+ 			return new SQLiteRow(m_pStatement, m_nColumns);
+ 		}
++		else if (stepCode == SQLITE_DONE)
++		{
++			m_done = true;
++		}
+ #ifdef DEBUG
+ 		clog &lt;&lt; &quot;SQLiteResults::nextRow: no more row&quot; &lt;&lt; endl;
+ #endif
+@@ -222,7 +234,14 @@
+ 	SQLResults::rewind();
+ 	if (m_pStatement != NULL)
+ 	{
++		if (m_done == false)
++		{
++			// Complete the statement
++			sqlite3_step(m_pStatement);
++		}
++
+ 		sqlite3_reset(m_pStatement);
++		m_done = false;
+ 	}
+ 
+ 	return true;
+
+Modified: trunk/SQL/SQLiteBase.h
+===================================================================
+--- trunk/SQL/SQLiteBase.h	2010-03-21 13:22:53 UTC (rev 1697)
++++ trunk/SQL/SQLiteBase.h	2010-03-30 13:05:52 UTC (rev 1698)
+@@ -62,6 +62,7 @@
+ 	protected:
+ 		char **m_results;
+ 		sqlite3_stmt *m_pStatement;
++		bool m_done;
+ 
+ 	private:
+ 		SQLiteResults(const SQLiteResults &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001687.html">[Pinot-svn] r1697 - in trunk: Monitor SQL Utils
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1688">[ date ]</a>
+              <a href="thread.html#1688">[ thread ]</a>
+              <a href="subject.html#1688">[ subject ]</a>
+              <a href="author.html#1688">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

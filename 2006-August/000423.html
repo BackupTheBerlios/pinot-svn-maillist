@@ -1,0 +1,514 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r430 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r430%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608260341.k7Q3fBvo031934%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000422.html">
+   <LINK REL="Next"  HREF="000424.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r430 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r430%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608260341.k7Q3fBvo031934%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r430 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 26 05:41:11 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000422.html">[Pinot-svn] r429 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000424.html">[Pinot-svn] r431 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#423">[ date ]</a>
+              <a href="thread.html#423">[ thread ]</a>
+              <a href="subject.html#423">[ subject ]</a>
+              <a href="author.html#423">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-26 05:41:09 +0200 (Sat, 26 Aug 2006)
+New Revision: 430
+
+Modified:
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+   trunk/UI/GTK2/src/prefsDialog_glade.cc
+   trunk/UI/GTK2/src/prefsDialog_glade.hh
+Log:
+Manage the list of indexable locations.
+
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2006-08-26 03:39:36 UTC (rev 429)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2006-08-26 03:41:09 UTC (rev 430)
+@@ -35,8 +35,6 @@
+ using namespace Gdk;
+ using namespace Gtk;
+ 
+-unsigned int prefsDialog::m_maxDirLevel = 1;
+-
+ prefsDialog::prefsDialog() :
+ 	prefsDialog_glade(),
+ 	m_settings(PinotSettings::getInstance())
+@@ -68,6 +66,14 @@
+ 	labelsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	populate_labelsTreeview();
+ 
++	// Associate the columns model to the directories tree
++	m_refDirectoriesTree = ListStore::create(m_directoriesColumns);
++	directoriesTreeview-&gt;set_model(m_refDirectoriesTree);
++	directoriesTreeview-&gt;append_column(_(&quot;Location&quot;), m_directoriesColumns.m_location);
++	// Allow only single selection
++	directoriesTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
++	populate_directoriesTreeview();
++
+ 	// Associate the columns model to the mail accounts tree
+ 	m_refMailTree = ListStore::create(m_mailColumns);
+ 	mailTreeview-&gt;set_model(m_refMailTree);
+@@ -98,11 +104,6 @@
+ 	return m_renamedLabels;
+ }
+ 
+-const set&lt;string&gt; &amp;prefsDialog::getMailLabelsToDelete(void) const
+-{
+-	return m_deletedMail;
+-}
+-
+ void prefsDialog::populate_labelsTreeview()
+ {
+ 	TreeModel::iterator iter;
+@@ -175,6 +176,75 @@
+ 	return true;
+ }
+ 
++void prefsDialog::populate_directoriesTreeview()
++{
++	TreeModel::iterator iter;
++	TreeModel::Row row;
++
++	if (m_settings.m_indexableLocations.empty() == true)
++	{
++		// These buttons will stay disabled until directories are added to the list
++		editDirectoryButton-&gt;set_sensitive(false);
++		removeDirectoryButton-&gt;set_sensitive(false);
++		return;
++	}
++
++	// Populate the tree
++	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator dirIter = m_settings.m_indexableLocations.begin();
++		dirIter != m_settings.m_indexableLocations.end();
++		++dirIter)
++	{
++		// Create a new row
++		iter = m_refDirectoriesTree-&gt;append();
++		row = *iter;
++		// Set its name, type and minium date
++		row[m_directoriesColumns.m_location] = dirIter-&gt;m_name;
++		row[m_directoriesColumns.m_mTime] = dirIter-&gt;m_modTime;
++	}
++
++	editDirectoryButton-&gt;set_sensitive(true);
++	removeDirectoryButton-&gt;set_sensitive(true);
++}
++
++bool prefsDialog::save_directoriesTreeview()
++{
++	// Clear the current settings
++	m_settings.m_indexableLocations.clear();
++
++	// Go through the directories tree
++	TreeModel::Children children = m_refDirectoriesTree-&gt;children();
++	if (children.empty() == false)
++	{
++		TreeModel::Children::iterator iter = children.begin();
++		for (; iter != children.end(); ++iter)
++		{
++			TreeModel::Row row = *iter;
++			PinotSettings::TimestampedItem indexableLocation;
++
++			// Add this new directory to the settings
++			indexableLocation.m_name = row[m_directoriesColumns.m_location];
++			indexableLocation.m_modTime = row[m_directoriesColumns.m_mTime];
++
++			string dirLabel(&quot;<A HREF="file://">file://</A>&quot;);
++			dirLabel += from_utf8(indexableLocation.m_name);
++
++			// Check user didn't recreate this directory after having deleted it
++			set&lt;string&gt;::iterator dirIter = m_deletedDirectories.find(dirLabel);
++			if (dirIter != m_deletedDirectories.end())
++			{
++				m_deletedDirectories.erase(dirIter);
++			}
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;prefsDialog::save_directoriesTreeview: &quot; &lt;&lt; indexableLocation.m_name &lt;&lt; endl;
++#endif
++			m_settings.m_indexableLocations.insert(indexableLocation);
++		}
++	}
++
++	return true;
++}
++
+ void prefsDialog::populate_mailTreeview()
+ {
+ 	TreeModel::iterator iter;
+@@ -182,7 +252,7 @@
+ 
+ 	if (m_settings.m_mailAccounts.empty() == true)
+ 	{
+-		// These buttons will stay disabled until labels are added to the list
++		// These buttons will stay disabled until mail is added to the list
+ 		editAccountButton-&gt;set_sensitive(false);
+ 		removeAccountButton-&gt;set_sensitive(false);
+ 		return;
+@@ -312,6 +382,82 @@
+ 	return false;
+ }
+ 
++void prefsDialog::on_addDirectoryButton_clicked()
++{
++	ustring dirName;
++
++	TreeModel::Children children = m_refDirectoriesTree-&gt;children();
++	bool wasEmpty = children.empty();
++
++	if (select_file_name(*this, _(&quot;Directory to index&quot;), dirName, true, true) == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog::on_addDirectoryButton_clicked: &quot;
++			&lt;&lt; dirName &lt;&lt; endl;
++#endif
++		// Create a new entry in the directories list
++		TreeModel::iterator iter = m_refDirectoriesTree-&gt;append();
++		TreeModel::Row row = *iter;
++	
++		row[m_directoriesColumns.m_location] = to_utf8(dirName);
++		row[m_directoriesColumns.m_mTime] = time(NULL);
++
++		if (wasEmpty == true)
++		{
++			// Enable these buttons
++			editDirectoryButton-&gt;set_sensitive(true);
++			removeDirectoryButton-&gt;set_sensitive(true);
++		}
++	}
++}
++
++void prefsDialog::on_editDirectoryButton_clicked()
++{
++	// Get the selected directory in the list
++	TreeModel::iterator iter = directoriesTreeview-&gt;get_selection()-&gt;get_selected();
++	if (iter)
++	{
++		TreeModel::Row row = *iter;
++		ustring dirName = row[m_directoriesColumns.m_location];
++		// Let the user edit the location
++		if (select_file_name(*this, _(&quot;Directory to index&quot;), dirName, true, true) == true)
++		{
++			row[m_directoriesColumns.m_location] = dirName;
++		}
++	}
++}
++
++void prefsDialog::on_removeDirectoryButton_clicked()
++{
++	// Get the selected directory in the list
++	TreeModel::iterator iter = directoriesTreeview-&gt;get_selection()-&gt;get_selected();
++	if (iter)
++	{
++		string dirLabel(&quot;<A HREF="file://">file://</A>&quot;);
++
++		// Unselect
++		directoriesTreeview-&gt;get_selection()-&gt;unselect(iter);
++		// Select another row
++		TreeModel::Path path = m_refDirectoriesTree-&gt;get_path(iter);
++		path.next();
++		directoriesTreeview-&gt;get_selection()-&gt;select(path);
++
++		// Erase
++		TreeModel::Row row = *iter;
++		dirLabel += from_utf8(row[m_directoriesColumns.m_location]);
++		m_deletedDirectories.insert(dirLabel);
++		m_refDirectoriesTree-&gt;erase(row);
++
++		TreeModel::Children children = m_refDirectoriesTree-&gt;children();
++		if (children.empty() == true)
++		{
++			// Disable these buttons
++			editDirectoryButton-&gt;set_sensitive(false);
++			removeDirectoryButton-&gt;set_sensitive(false);
++		}
++	}
++}
++
+ void prefsDialog::on_addAccountButton_clicked()
+ {
+ 	ustring fileName;
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2006-08-26 03:39:36 UTC (rev 429)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2006-08-26 03:41:09 UTC (rev 430)
+@@ -38,19 +38,22 @@
+ 
+ 	const std::map&lt;std::string, std::string&gt; &amp;getLabelsToRename(void) const;
+ 
+-	const std::set&lt;std::string&gt; &amp;getMailLabelsToDelete(void) const;
+-
+ protected:
+ 	virtual void on_prefsOkbutton_clicked();
+ 	virtual void on_addLabelButton_clicked();
+ 	virtual void on_removeLabelButton_clicked();
+ 	virtual bool on_mailTreeview_button_press_event(GdkEventButton *ev);
++	virtual void on_addDirectoryButton_clicked();
++	virtual void on_editDirectoryButton_clicked();
++	virtual void on_removeDirectoryButton_clicked();
+ 	virtual void on_addAccountButton_clicked();
+ 	virtual void on_editAccountButton_clicked();
+ 	virtual void on_removeAccountButton_clicked();
+ 
+ 	void populate_labelsTreeview();
+ 	bool save_labelsTreeview();
++	void populate_directoriesTreeview();
++	bool save_directoriesTreeview();
+ 	void populate_mailTreeview();
+ 	bool save_mailTreeview();
+ 
+@@ -58,16 +61,16 @@
+ 	PinotSettings &amp;m_settings;
+ 	ComboModelColumns m_viewColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refViewTree;
+-	OtherIndexModelColumns m_otherIndexColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refOtherIndexTree;
+ 	LabelModelColumns m_labelsColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelsTree;
+-	MailAccountModelColumns m_mailColumns;
++	TimestampedModelColumns m_directoriesColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refDirectoriesTree;
++	TimestampedModelColumns m_mailColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refMailTree;
+ 	std::set&lt;std::string&gt; m_deletedLabels;
+ 	std::map&lt;std::string, std::string&gt; m_renamedLabels;
++	std::set&lt;std::string&gt; m_deletedDirectories;
+ 	std::set&lt;std::string&gt; m_deletedMail;
+-	static unsigned int m_maxDirLevel;
+ 
+ };
+ #endif
+
+Modified: trunk/UI/GTK2/src/prefsDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog_glade.cc	2006-08-26 03:39:36 UTC (rev 429)
++++ trunk/UI/GTK2/src/prefsDialog_glade.cc	2006-08-26 03:41:09 UTC (rev 430)
+@@ -1,9 +1,9 @@
+-// generated 2006/6/7 21:55:30 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2006/8/20 15:34:17 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.8.17 and gtkmm 2.8.3
++// for gtk 2.8.20 and gtkmm 2.8.8
+ //
+ // Please modify the corresponding derived classes in ./src/prefsDialog.cc
+ 
+@@ -94,6 +94,22 @@
+    Gtk::HBox *labelsHbox = Gtk::manage(new class Gtk::HBox(false, 0));
+    Gtk::VBox *labelsVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    Gtk::Label *labelsLabel = Gtk::manage(new class Gtk::Label(_(&quot;Labels&quot;)));
++   Gtk::Label *directoriesLabel = Gtk::manage(new class Gtk::Label(_(&quot;These directories will be monitored and indexed:&quot;)));
++   directoriesTreeview = Gtk::manage(new class Gtk::TreeView());
++   
++   Gtk::ScrolledWindow *directoriesScrolledwindow = Gtk::manage(new class Gtk::ScrolledWindow());
++   Gtk::Image *image609 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-add&quot;), Gtk::IconSize(4)));
++   Gtk::Label *label58 = Gtk::manage(new class Gtk::Label(_(&quot;Add&quot;)));
++   Gtk::HBox *hbox54 = Gtk::manage(new class Gtk::HBox(false, 2));
++   Gtk::Alignment *alignment35 = Gtk::manage(new class Gtk::Alignment(0.5, 0.5, 0, 0));
++   addDirectoryButton = Gtk::manage(new class Gtk::Button());
++   editDirectoryButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-edit&quot;)));
++   removeDirectoryButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-remove&quot;)));
++   
++   Gtk::VButtonBox *directoriesVbuttonbox = Gtk::manage(new class Gtk::VButtonBox(Gtk::BUTTONBOX_START, 0));
++   Gtk::HBox *directoriesHbox = Gtk::manage(new class Gtk::HBox(false, 0));
++   Gtk::VBox *directoriesVbox = Gtk::manage(new class Gtk::VBox(false, 0));
++   Gtk::Label *docsLabel = Gtk::manage(new class Gtk::Label(_(&quot;My Documents&quot;)));
+    Gtk::Label *mailAccountsLabel = Gtk::manage(new class Gtk::Label(_(&quot;Mail boxes of type mbox can be monitored and indexed:&quot;)));
+    mailTreeview = Gtk::manage(new class Gtk::TreeView());
+    
+@@ -234,6 +250,60 @@
+    labelsLabel-&gt;set_line_wrap(false);
+    labelsLabel-&gt;set_use_markup(false);
+    labelsLabel-&gt;set_selectable(false);
++   directoriesLabel-&gt;set_alignment(0,0.5);
++   directoriesLabel-&gt;set_padding(4,4);
++   directoriesLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   directoriesLabel-&gt;set_line_wrap(true);
++   directoriesLabel-&gt;set_use_markup(false);
++   directoriesLabel-&gt;set_selectable(false);
++   directoriesTreeview-&gt;set_flags(Gtk::CAN_FOCUS);
++   directoriesTreeview-&gt;set_headers_visible(true);
++   directoriesTreeview-&gt;set_rules_hint(false);
++   directoriesTreeview-&gt;set_reorderable(false);
++   directoriesTreeview-&gt;set_enable_search(true);
++   directoriesScrolledwindow-&gt;set_flags(Gtk::CAN_FOCUS);
++   directoriesScrolledwindow-&gt;set_border_width(4);
++   directoriesScrolledwindow-&gt;set_shadow_type(Gtk::SHADOW_NONE);
++   directoriesScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
++   directoriesScrolledwindow-&gt;property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
++   directoriesScrolledwindow-&gt;add(*directoriesTreeview);
++   image609-&gt;set_alignment(0.5,0.5);
++   image609-&gt;set_padding(0,0);
++   label58-&gt;set_alignment(0.5,0.5);
++   label58-&gt;set_padding(0,0);
++   label58-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   label58-&gt;set_line_wrap(false);
++   label58-&gt;set_use_markup(false);
++   label58-&gt;set_selectable(false);
++   hbox54-&gt;pack_start(*image609, Gtk::PACK_SHRINK, 0);
++   hbox54-&gt;pack_start(*label58, Gtk::PACK_SHRINK, 0);
++   alignment35-&gt;add(*hbox54);
++   addDirectoryButton-&gt;set_flags(Gtk::CAN_FOCUS);
++   addDirectoryButton-&gt;set_flags(Gtk::CAN_DEFAULT);
++   addDirectoryButton-&gt;set_border_width(4);
++   addDirectoryButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   addDirectoryButton-&gt;add(*alignment35);
++   editDirectoryButton-&gt;set_flags(Gtk::CAN_FOCUS);
++   editDirectoryButton-&gt;set_flags(Gtk::CAN_DEFAULT);
++   editDirectoryButton-&gt;set_border_width(4);
++   editDirectoryButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   removeDirectoryButton-&gt;set_flags(Gtk::CAN_FOCUS);
++   removeDirectoryButton-&gt;set_flags(Gtk::CAN_DEFAULT);
++   removeDirectoryButton-&gt;set_border_width(4);
++   removeDirectoryButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   directoriesVbuttonbox-&gt;pack_start(*addDirectoryButton);
++   directoriesVbuttonbox-&gt;pack_start(*editDirectoryButton);
++   directoriesVbuttonbox-&gt;pack_start(*removeDirectoryButton);
++   directoriesHbox-&gt;pack_start(*directoriesScrolledwindow);
++   directoriesHbox-&gt;pack_start(*directoriesVbuttonbox, Gtk::PACK_SHRINK, 0);
++   directoriesVbox-&gt;pack_start(*directoriesLabel, Gtk::PACK_SHRINK, 4);
++   directoriesVbox-&gt;pack_start(*directoriesHbox, Gtk::PACK_EXPAND_WIDGET, 4);
++   docsLabel-&gt;set_alignment(0.5,0.5);
++   docsLabel-&gt;set_padding(0,0);
++   docsLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   docsLabel-&gt;set_line_wrap(false);
++   docsLabel-&gt;set_use_markup(false);
++   docsLabel-&gt;set_selectable(false);
+    mailAccountsLabel-&gt;set_alignment(0,0.5);
+    mailAccountsLabel-&gt;set_padding(4,4);
+    mailAccountsLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+@@ -297,6 +367,8 @@
+    prefsNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+    prefsNotebook-&gt;append_page(*labelsVbox, *labelsLabel);
+    prefsNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
++   prefsNotebook-&gt;append_page(*directoriesVbox, *docsLabel);
++   prefsNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+    prefsNotebook-&gt;append_page(*mailVbox, *mailLabel);
+    prefsNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+    prefsDialog-&gt;get_vbox()-&gt;set_homogeneous(false);
+@@ -339,6 +411,20 @@
+    labelsHbox-&gt;show();
+    labelsVbox-&gt;show();
+    labelsLabel-&gt;show();
++   directoriesLabel-&gt;show();
++   directoriesTreeview-&gt;show();
++   directoriesScrolledwindow-&gt;show();
++   image609-&gt;show();
++   label58-&gt;show();
++   hbox54-&gt;show();
++   alignment35-&gt;show();
++   addDirectoryButton-&gt;show();
++   editDirectoryButton-&gt;show();
++   removeDirectoryButton-&gt;show();
++   directoriesVbuttonbox-&gt;show();
++   directoriesHbox-&gt;show();
++   directoriesVbox-&gt;show();
++   docsLabel-&gt;show();
+    mailAccountsLabel-&gt;show();
+    mailTreeview-&gt;show();
+    mailScrolledwindow-&gt;show();
+@@ -358,6 +444,10 @@
+    prefsOkbutton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_prefsOkbutton_clicked), false);
+    addLabelButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_addLabelButton_clicked), false);
+    removeLabelButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_removeLabelButton_clicked), false);
++   directoriesTreeview-&gt;signal_button_press_event().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_mailTreeview_button_press_event), false);
++   addDirectoryButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_addDirectoryButton_clicked), false);
++   editDirectoryButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_editDirectoryButton_clicked), false);
++   removeDirectoryButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_removeDirectoryButton_clicked), false);
+    mailTreeview-&gt;signal_button_press_event().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_mailTreeview_button_press_event), false);
+    addAccountButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_addAccountButton_clicked), false);
+    editAccountButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_editAccountButton_clicked), false);
+
+Modified: trunk/UI/GTK2/src/prefsDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog_glade.hh	2006-08-26 03:39:36 UTC (rev 429)
++++ trunk/UI/GTK2/src/prefsDialog_glade.hh	2006-08-26 03:41:09 UTC (rev 430)
+@@ -1,9 +1,9 @@
+-// generated 2006/6/7 21:55:30 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2006/8/20 15:34:17 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.8.17 and gtkmm 2.8.3
++// for gtk 2.8.20 and gtkmm 2.8.8
+ //
+ // Please modify the corresponding derived classes in ./src/prefsDialog.hh and./src/prefsDialog.cc
+ 
+@@ -57,6 +57,10 @@
+         class Gtk::TreeView * labelsTreeview;
+         class Gtk::Button * addLabelButton;
+         class Gtk::Button * removeLabelButton;
++        class Gtk::TreeView * directoriesTreeview;
++        class Gtk::Button * addDirectoryButton;
++        class Gtk::Button * editDirectoryButton;
++        class Gtk::Button * removeDirectoryButton;
+         class Gtk::TreeView * mailTreeview;
+         class Gtk::Button * addAccountButton;
+         class Gtk::Button * editAccountButton;
+@@ -71,6 +75,9 @@
+         virtual void on_addLabelButton_clicked() = 0;
+         virtual void on_removeLabelButton_clicked() = 0;
+         virtual bool on_mailTreeview_button_press_event(GdkEventButton *ev) = 0;
++        virtual void on_addDirectoryButton_clicked() = 0;
++        virtual void on_editDirectoryButton_clicked() = 0;
++        virtual void on_removeDirectoryButton_clicked() = 0;
+         virtual void on_addAccountButton_clicked() = 0;
+         virtual void on_editAccountButton_clicked() = 0;
+         virtual void on_removeAccountButton_clicked() = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000422.html">[Pinot-svn] r429 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000424.html">[Pinot-svn] r431 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#423">[ date ]</a>
+              <a href="thread.html#423">[ thread ]</a>
+              <a href="subject.html#423">[ subject ]</a>
+              <a href="author.html#423">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

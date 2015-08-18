@@ -1,0 +1,333 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1142 - trunk/IndexSearch
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1142%20-%20trunk/IndexSearch&In-Reply-To=%3C200712191219.lBJCJ2nG032257%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001135.html">
+   <LINK REL="Next"  HREF="001137.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1142 - trunk/IndexSearch</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1142%20-%20trunk/IndexSearch&In-Reply-To=%3C200712191219.lBJCJ2nG032257%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1142 - trunk/IndexSearch">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Dec 19 13:19:02 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001135.html">[Pinot-svn] r1141 - trunk/Monitor
+</A></li>
+        <LI>Next message: <A HREF="001137.html">[Pinot-svn] r1143 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1136">[ date ]</a>
+              <a href="thread.html#1136">[ thread ]</a>
+              <a href="subject.html#1136">[ subject ]</a>
+              <a href="author.html#1136">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-19 13:19:00 +0100 (Wed, 19 Dec 2007)
+New Revision: 1142
+
+Modified:
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/DBusIndex.h
+Log:
+DBus-enabled overloads are used automatically if there's no nested Index.
+
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2007-12-19 12:15:54 UTC (rev 1141)
++++ trunk/IndexSearch/DBusIndex.cpp	2007-12-19 12:19:00 UTC (rev 1142)
+@@ -74,8 +74,11 @@
+ 
+ DBusIndex::~DBusIndex()
+ {
+-	// Noone else is going to delete this
+-	delete m_pROIndex;
++	if (m_pROIndex != NULL)
++	{
++		// Noone else is going to delete this
++		delete m_pROIndex;
++	}
+ }
+ 
+ DBusIndex &amp;DBusIndex::operator=(const DBusIndex &amp;other)
+@@ -332,12 +335,22 @@
+ /// Returns false if the index couldn't be opened.
+ bool DBusIndex::isGood(void) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	return m_pROIndex-&gt;isGood();
+ }
+ 
+ /// Gets the version number.
+ string DBusIndex::getVersion(void) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return &quot;&quot;;
++	}
++
+ 	return m_pROIndex-&gt;getVersion();
+ }
+ 
+@@ -351,12 +364,22 @@
+ /// Gets the index location.
+ string DBusIndex::getLocation(void) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return &quot;&quot;;
++	}
++
+ 	return m_pROIndex-&gt;getLocation();
+ }
+ 
+ /// Returns a document's properties.
+ bool DBusIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;getDocumentInfo(docId, docInfo);
+@@ -365,6 +388,11 @@
+ /// Returns a document's terms count.
+ unsigned int DBusIndex::getDocumentTermsCount(unsigned int docId) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;getDocumentTermsCount(docId);
+@@ -374,6 +402,11 @@
+ bool DBusIndex::getDocumentTerms(unsigned int docId,
+ 	map&lt;unsigned int, string&gt; &amp;wordsBuffer) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;getDocumentTerms(docId, wordsBuffer);
+@@ -389,20 +422,13 @@
+ /// Gets the list of known labels.
+ bool DBusIndex::getLabels(set&lt;string&gt; &amp;labels) const
+ {
+-	reopen();
+-
+-	return m_pROIndex-&gt;getLabels(labels);
+-}
+-
+-/// Gets the list of known labels.
+-bool DBusIndex::getLabels(set&lt;string&gt; &amp;labels, bool forceDBus) const
+-{
+ 	bool gotLabels = false;
+ 
+-	if (forceDBus == false)
++	if (m_pROIndex != NULL)
+ 	{
+-		// Call overload
+-		return getLabels(labels);
++		reopen();
++
++		return m_pROIndex-&gt;getLabels(labels);
+ 	}
+ 
+ 	DBusGConnection *pBus = getBusConnection();
+@@ -589,6 +615,11 @@
+ /// Determines whether a document has a label.
+ bool DBusIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;hasLabel(docId, name);
+@@ -597,20 +628,13 @@
+ /// Returns a document's labels.
+ bool DBusIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
+ {
+-	reopen();
+-
+-	return m_pROIndex-&gt;getDocumentLabels(docId, labels);
+-}
+-
+-/// Returns a document's labels.
+-bool DBusIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels, bool forceDBus) const
+-{
+ 	bool gotLabels = false;
+ 
+-	if (forceDBus == false)
++	if (m_pROIndex != NULL)
+ 	{
+-		// Call overload
+-		return getDocumentLabels(docId, labels);
++		reopen();
++
++		return m_pROIndex-&gt;getDocumentLabels(docId, labels);
+ 	}
+ 
+ 	DBusGConnection *pBus = getBusConnection();
+@@ -807,6 +831,11 @@
+ /// Checks whether the given URL is in the index.
+ unsigned int DBusIndex::hasDocument(const string &amp;url) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;hasDocument(url);
+@@ -815,6 +844,11 @@
+ /// Gets terms with the same root.
+ unsigned int DBusIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;getCloseTerms(term, suggestions);
+@@ -823,6 +857,11 @@
+ /// Returns the ID of the last document.
+ unsigned int DBusIndex::getLastDocumentID(void) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;getLastDocumentID();
+@@ -831,6 +870,11 @@
+ /// Returns the number of documents.
+ unsigned int DBusIndex::getDocumentsCount(const string &amp;labelName) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;getDocumentsCount(labelName);
+@@ -840,6 +884,11 @@
+ unsigned int DBusIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
+ 	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;listDocuments(docIds, maxDocsCount, startDoc);
+@@ -849,6 +898,11 @@
+ bool DBusIndex::listDocuments(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
+ 	NameType type, unsigned int maxDocsCount, unsigned int startDoc) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	reopen();
+ 
+ 	return m_pROIndex-&gt;listDocuments(name, docIds, type, maxDocsCount, startDoc);
+@@ -1000,6 +1054,11 @@
+ /// Reopens the index.
+ bool DBusIndex::reopen(void) const
+ {
++	if (m_pROIndex == NULL)
++	{
++		return false;
++	}
++
+ 	return m_pROIndex-&gt;reopen();
+ }
+ 
+
+Modified: trunk/IndexSearch/DBusIndex.h
+===================================================================
+--- trunk/IndexSearch/DBusIndex.h	2007-12-19 12:15:54 UTC (rev 1141)
++++ trunk/IndexSearch/DBusIndex.h	2007-12-19 12:19:00 UTC (rev 1142)
+@@ -84,9 +84,6 @@
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
+ 
+-		/// Gets the list of known labels.
+-		bool getLabels(std::set&lt;std::string&gt; &amp;labels, bool forceDBus) const;
+-
+ 		/// Adds a label.
+ 		virtual bool addLabel(const std::string &amp;name);
+ 
+@@ -102,10 +99,6 @@
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+ 
+-		/// Returns a document's labels.
+-		bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels,
+-			bool forceDBus) const;
+-
+ 		/// Sets a document's labels.
+ 		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+ 			bool resetLabels = true);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001135.html">[Pinot-svn] r1141 - trunk/Monitor
+</A></li>
+	<LI>Next message: <A HREF="001137.html">[Pinot-svn] r1143 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1136">[ date ]</a>
+              <a href="thread.html#1136">[ thread ]</a>
+              <a href="subject.html#1136">[ subject ]</a>
+              <a href="author.html#1136">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

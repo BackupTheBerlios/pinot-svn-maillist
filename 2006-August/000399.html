@@ -1,0 +1,347 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r406 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r406%20-%20trunk/Index&In-Reply-To=%3C200608191126.k7JBQm1s016169%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000398.html">
+   <LINK REL="Next"  HREF="000400.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r406 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r406%20-%20trunk/Index&In-Reply-To=%3C200608191126.k7JBQm1s016169%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r406 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 19 13:26:48 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000398.html">[Pinot-svn] r405 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000400.html">[Pinot-svn] r407 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#399">[ date ]</a>
+              <a href="thread.html#399">[ thread ]</a>
+              <a href="subject.html#399">[ subject ]</a>
+              <a href="author.html#399">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-19 13:26:26 +0200 (Sat, 19 Aug 2006)
+New Revision: 406
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/Makefile.am
+   trunk/Index/WritableXapianIndex.cpp
+   trunk/Index/WritableXapianIndex.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Index object are copiable.
+Build new classes.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/DBusXapianIndex.cpp	2006-08-19 11:26:26 UTC (rev 406)
+@@ -69,10 +69,23 @@
+ {
+ }
+ 
++DBusXapianIndex::DBusXapianIndex(const DBusXapianIndex &amp;other) :
++	WritableIndexInterface(other),
++	XapianIndex(other)
++{
++}
++
+ DBusXapianIndex::~DBusXapianIndex()
+ {
+ }
+ 
++DBusXapianIndex &amp;DBusXapianIndex::operator=(const DBusXapianIndex &amp;other)
++{
++	WritableIndexInterface::operator=(other);
++	XapianIndex::operator=(other);
++	return *this;
++}
++
+ void DBusXapianIndex::reopen(void)
+ {
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/DBusXapianIndex.h	2006-08-19 11:26:26 UTC (rev 406)
+@@ -27,8 +27,11 @@
+ {
+ 	public:
+ 		DBusXapianIndex(const std::string &amp;indexName);
++		DBusXapianIndex(const DBusXapianIndex &amp;other);
+ 		virtual ~DBusXapianIndex();
+ 
++		DBusXapianIndex &amp;operator=(const DBusXapianIndex &amp;other);
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const;
+ 
+@@ -96,10 +99,6 @@
+ 	protected:
+ 		void reopen(void);
+ 
+-	private:
+-		DBusXapianIndex(const DBusXapianIndex &amp;other);
+-		DBusXapianIndex &amp;operator=(const DBusXapianIndex &amp;other);
+-
+ };
+ 
+ #endif // _DBUS_XAPIAN_INDEX_H
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/IndexInterface.h	2006-08-19 11:26:26 UTC (rev 406)
+@@ -27,8 +27,11 @@
+ class IndexInterface
+ {
+ 	public:
++		IndexInterface(const IndexInterface &amp;other) {};
+ 		virtual ~IndexInterface() {};
+ 
++		IndexInterface &amp;operator=(const IndexInterface &amp;other) {};
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const = 0;
+ 
+@@ -67,18 +70,23 @@
+ 	protected:
+ 		IndexInterface() { };
+ 
+-	private:
+-		IndexInterface(const IndexInterface &amp;other);
+-		IndexInterface &amp;operator=(const IndexInterface &amp;other);
+-
+ };
+ 
+ /// Interface implemented by read-write indexes.
+ class WritableIndexInterface : public IndexInterface
+ {
+ 	public:
++		WritableIndexInterface(const WritableIndexInterface &amp;other) :
++			IndexInterface(other), m_stemMode(other.m_stemMode) {};
+ 		virtual ~WritableIndexInterface() {};
+ 
++		WritableIndexInterface &amp;operator=(const WritableIndexInterface &amp;other)
++		{
++			IndexInterface::operator=(other);
++			m_stemMode = other.m_stemMode;
++			return *this;
++		};
++
+ 		typedef enum { STORE_UNSTEM = 0, STORE_STEM, STORE_BOTH } StemmingMode;
+ 
+ 		/// Sets the stemming mode.
+@@ -116,12 +124,9 @@
+ 	protected:
+ 		StemmingMode m_stemMode;
+ 
+-		WritableIndexInterface() : IndexInterface(), m_stemMode(STORE_UNSTEM) { };
++		WritableIndexInterface() :
++			IndexInterface(), m_stemMode(STORE_UNSTEM) { };
+ 
+-	private:
+-		WritableIndexInterface(const WritableIndexInterface &amp;other);
+-		WritableIndexInterface &amp;operator=(const WritableIndexInterface &amp;other);
+-
+ };
+ 
+ #endif // _INDEX_INTERFACE_H
+
+Modified: trunk/Index/Makefile.am
+===================================================================
+--- trunk/Index/Makefile.am	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/Makefile.am	2006-08-19 11:26:26 UTC (rev 406)
+@@ -1,6 +1,8 @@
+ # Process this file with automake to produce Makefile.in
+ 
+ noinst_HEADERS = \
++	DBusXapianIndex.h \
++	IndexFactory.h \
+ 	IndexInterface.h \
+ 	LanguageDetector.h \
+ 	WritableXapianIndex.h \
+@@ -11,6 +13,8 @@
+ bin_PROGRAMS = pinot-index
+ 
+ libIndex_la_SOURCES = \
++	DBusXapianIndex.cpp \
++	IndexFactory.cpp \
+ 	LanguageDetector.cpp \
+ 	WritableXapianIndex.cpp \
+ 	XapianIndex.cpp
+
+Modified: trunk/Index/WritableXapianIndex.cpp
+===================================================================
+--- trunk/Index/WritableXapianIndex.cpp	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/WritableXapianIndex.cpp	2006-08-19 11:26:26 UTC (rev 406)
+@@ -79,10 +79,25 @@
+ 	}
+ }
+ 
++WritableXapianIndex::WritableXapianIndex(const WritableXapianIndex &amp;other) :
++	WritableIndexInterface(other),
++	XapianIndex(other),
++	m_stemLanguage(other.m_stemLanguage)
++{
++}
++
+ WritableXapianIndex::~WritableXapianIndex()
+ {
+ }
+ 
++WritableXapianIndex &amp;WritableXapianIndex::operator=(const WritableXapianIndex &amp;other)
++{
++	WritableIndexInterface::operator=(other);
++	XapianIndex::operator=(other);
++	m_stemLanguage = other.m_stemLanguage;
++	return *this;
++}
++
+ bool WritableXapianIndex::badField(const string &amp;field)
+ {
+ 	regex_t fieldRegex;
+@@ -1068,4 +1083,3 @@
+ 
+ 	return flushed;
+ }
+-
+
+Modified: trunk/Index/WritableXapianIndex.h
+===================================================================
+--- trunk/Index/WritableXapianIndex.h	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/WritableXapianIndex.h	2006-08-19 11:26:26 UTC (rev 406)
+@@ -29,8 +29,11 @@
+ {
+ 	public:
+ 		WritableXapianIndex(const std::string &amp;indexName);
++		WritableXapianIndex(const WritableXapianIndex &amp;other);
+ 		virtual ~WritableXapianIndex();
+ 
++		WritableXapianIndex &amp;operator=(const WritableXapianIndex &amp;other);
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const;
+ 
+@@ -120,10 +123,6 @@
+ 		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
+ 			unsigned int maxDocsCount, unsigned int startDoc) const;
+ 
+-	private:
+-		WritableXapianIndex(const WritableXapianIndex &amp;other);
+-		WritableXapianIndex &amp;operator=(const WritableXapianIndex &amp;other);
+-
+ };
+ 
+ #endif // _WRITABLE_XAPIAN_INDEX_H
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/XapianIndex.cpp	2006-08-19 11:26:26 UTC (rev 406)
+@@ -62,10 +62,25 @@
+ 	}
+ }
+ 
++XapianIndex::XapianIndex(const XapianIndex &amp;other) :
++	IndexInterface(other),
++	m_databaseName(other.m_databaseName),
++	m_goodIndex(other .m_goodIndex)
++{
++}
++
+ XapianIndex::~XapianIndex()
+ {
+ }
+ 
++XapianIndex &amp;XapianIndex::operator=(const XapianIndex &amp;other)
++{
++	IndexInterface::operator=(other);
++	m_databaseName = other.m_databaseName;
++	m_goodIndex = other .m_goodIndex;
++	return *this;
++}
++
+ string XapianIndex::limitTermLength(const string &amp;term, bool makeUnique)
+ {
+ 	if (term.length() &gt; XapianIndex::m_maxTermLength)
+@@ -501,4 +516,3 @@
+ 	term += name;
+ 	return listDocumentsWithTerm(term, docIds, maxDocsCount, startDoc);
+ }
+-
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-08-19 11:22:04 UTC (rev 405)
++++ trunk/Index/XapianIndex.h	2006-08-19 11:26:26 UTC (rev 406)
+@@ -29,8 +29,11 @@
+ {
+ 	public:
+ 		XapianIndex(const std::string &amp;indexName);
++		XapianIndex(const XapianIndex &amp;other);
+ 		virtual ~XapianIndex();
+ 
++		XapianIndex &amp;operator=(const XapianIndex &amp;other);
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const;
+ 
+@@ -77,10 +80,6 @@
+ 		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+-	private:
+-		XapianIndex(const XapianIndex &amp;other);
+-		XapianIndex &amp;operator=(const XapianIndex &amp;other);
+-
+ };
+ 
+ #endif // _XAPIAN_INDEX_H
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000398.html">[Pinot-svn] r405 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000400.html">[Pinot-svn] r407 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#399">[ date ]</a>
+              <a href="thread.html#399">[ thread ]</a>
+              <a href="subject.html#399">[ subject ]</a>
+              <a href="author.html#399">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

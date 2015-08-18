@@ -1,0 +1,679 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1337 - in trunk/IndexSearch: . Xapian XesamGLib
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1337%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian%20XesamGLib&In-Reply-To=%3C200808191340.m7JDefZ3029401%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001327.html">
+   <LINK REL="Next"  HREF="001329.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1337 - in trunk/IndexSearch: . Xapian XesamGLib</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1337%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian%20XesamGLib&In-Reply-To=%3C200808191340.m7JDefZ3029401%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1337 - in trunk/IndexSearch: . Xapian XesamGLib">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug 19 15:40:41 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001327.html">[Pinot-svn] r1336 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001329.html">[Pinot-svn] r1338 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1328">[ date ]</a>
+              <a href="thread.html#1328">[ thread ]</a>
+              <a href="subject.html#1328">[ subject ]</a>
+              <a href="author.html#1328">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-08-19 15:40:26 +0200 (Tue, 19 Aug 2008)
+New Revision: 1337
+
+Added:
+   trunk/IndexSearch/ModuleProperties.h
+Modified:
+   trunk/IndexSearch/Makefile.am
+   trunk/IndexSearch/ModuleFactory.cpp
+   trunk/IndexSearch/ModuleFactory.h
+   trunk/IndexSearch/SearchPluginProperties.cpp
+   trunk/IndexSearch/SearchPluginProperties.h
+   trunk/IndexSearch/Xapian/ModuleExports.cpp
+   trunk/IndexSearch/XesamGLib/ModuleExports.cpp
+   trunk/IndexSearch/pinot-index.cpp
+   trunk/IndexSearch/pinot-search.cpp
+Log:
+Spun some properties out of SearchPluginProperties into ModuleProperties.
+Backends must implement ModuleProperties *getModuleProperties() instead of
+string getModuleType().
+
+
+Modified: trunk/IndexSearch/Makefile.am
+===================================================================
+--- trunk/IndexSearch/Makefile.am	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/Makefile.am	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -5,6 +5,7 @@
+ 	FilterWrapper.h \
+ 	IndexInterface.h \
+ 	ModuleFactory.h \
++	ModuleProperties.h \
+ 	OpenSearchParser.h \
+ 	PluginParsers.h \
+ 	PluginWebEngine.h \
+
+Modified: trunk/IndexSearch/ModuleFactory.cpp
+===================================================================
+--- trunk/IndexSearch/ModuleFactory.cpp	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/ModuleFactory.cpp	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007,2008 Fabrice Colin
++ *  Copyright 2007-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -20,6 +20,7 @@
+ #include &lt;unistd.h&gt;
+ #include &lt;dirent.h&gt;
+ #include &lt;dlfcn.h&gt;
++#include &lt;utility&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;DBusIndex.h&quot;
+@@ -37,14 +38,14 @@
+ #define DLOPEN_FLAGS (RTLD_NOW|RTLD_LOCAL)
+ #endif
+ 
+-#define GETMODULETYPEFUNC	&quot;getModuleType&quot;
++#define GETMODULEPROPERTIESFUNC	&quot;getModuleProperties&quot;
+ #define OPENORCREATEINDEXFUNC	&quot;openOrCreateIndex&quot;
+ #define MERGEINDEXESFUNC	&quot;mergeIndexes&quot;
+ #define GETINDEXFUNC		&quot;getIndex&quot;
+ #define GETSEARCHENGINEFUNC	&quot;getSearchEngine&quot;
+ #define CLOSEALLFUNC		&quot;closeAll&quot;
+ 
+-typedef string (getModuleTypeFunc)(void);
++typedef ModuleProperties *(getModulePropertiesFunc)(void);
+ typedef bool (openOrCreateIndexFunc)(const string &amp;, bool &amp;, bool, bool);
+ typedef bool (mergeIndexesFunc)(const string &amp;, const string &amp;, const string &amp;);
+ typedef IndexInterface *(getIndexFunc)(const string &amp;);
+@@ -59,9 +60,9 @@
+ using std::set;
+ using std::pair;
+ 
+-LoadableModule::LoadableModule(const string &amp;type, const string &amp;location,
+-	void *pHandle) :
+-	m_type(type),
++LoadableModule::LoadableModule(ModuleProperties *pProperties,
++	const string &amp;location, void *pHandle) :
++	m_pProperties(pProperties),
+ 	m_location(location),
+ 	m_canSearch(false),
+ 	m_canIndex(false),
+@@ -70,25 +71,41 @@
+ }
+ 
+ LoadableModule::LoadableModule(const LoadableModule &amp;other) :
+-	m_type(other.m_type),
++	m_pProperties(NULL),
+ 	m_location(other.m_location),
+ 	m_canSearch(other.m_canSearch),
+ 	m_canIndex(other.m_canIndex),
+ 	m_pHandle(other.m_pHandle)
+ {
++	if (other.m_pProperties != NULL)
++	{
++		m_pProperties = new ModuleProperties(*other.m_pProperties);
++	}
+ }
+ 
+ LoadableModule::~LoadableModule()
+ {
++	if (m_pProperties != NULL)
++	{
++		delete m_pProperties;
++	}
+ }
+ 
+ LoadableModule &amp;LoadableModule::operator=(const LoadableModule &amp;other)
+ {
+-	m_type = other.m_type;
+-	m_location = other.m_location;
+-	m_canSearch = other.m_canSearch;
+-	m_canIndex = other.m_canIndex;
+-	m_pHandle = other.m_pHandle;
++	if (this != &amp;other)
++	{
++		if (m_pProperties != NULL)
++		{
++			delete m_pProperties;
++			m_pProperties = NULL;
++		}
++		m_pProperties = other.m_pProperties;
++		m_location = other.m_location;
++		m_canSearch = other.m_canSearch;
++		m_canIndex = other.m_canIndex;
++		m_pHandle = other.m_pHandle;
++	}
+ 
+ 	return *this;
+ }
+@@ -215,35 +232,39 @@
+ 				if (pHandle != NULL)
+ 				{
+ 					// What type does this export ?
+-					getModuleTypeFunc *pTypeFunc = (getModuleTypeFunc *)dlsym(pHandle,
+-						GETMODULETYPEFUNC);
+-					if (pTypeFunc != NULL)
++					getModulePropertiesFunc *pPropsFunc = (getModulePropertiesFunc *)dlsym(pHandle,
++						GETMODULEPROPERTIESFUNC);
++					if (pPropsFunc != NULL)
+ 					{
+-						string moduleType((*pTypeFunc)());
+-						LoadableModule module(moduleType, fileName, pHandle);
++						LoadableModule module((*pPropsFunc)(), fileName, pHandle);
+ 
+-						// Can it search ?
+-						getSearchEngineFunc *pSearchFunc = (getSearchEngineFunc *)dlsym(pHandle,
+-							GETSEARCHENGINEFUNC);
+-						if (pSearchFunc != NULL)
++						if (module.m_pProperties != NULL)
+ 						{
+-							module.m_canSearch = true;
+-						}
++							string moduleType(module.m_pProperties-&gt;m_name);
+ 
+-						// Can it index ?
+-						getIndexFunc *pIndexFunc = (getIndexFunc *)dlsym(pHandle,
+-							GETINDEXFUNC);
+-						if (pIndexFunc != NULL)
+-						{
+-							module.m_canIndex = true;
+-						}
++							// Can it search ?
++							getSearchEngineFunc *pSearchFunc = (getSearchEngineFunc *)dlsym(pHandle,
++								GETSEARCHENGINEFUNC);
++							if (pSearchFunc != NULL)
++							{
++								module.m_canSearch = true;
++							}
+ 
+-						// Add a record for this module
+-						m_types.insert(pair&lt;string, LoadableModule&gt;(moduleType, module));
++							// Can it index ?
++							getIndexFunc *pIndexFunc = (getIndexFunc *)dlsym(pHandle,
++								GETINDEXFUNC);
++							if (pIndexFunc != NULL)
++							{
++								module.m_canIndex = true;
++							}
++
++							// Add a record for this module
++							m_types.insert(pair&lt;string, LoadableModule&gt;(moduleType, module));
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;ModuleFactory::loadModules: type &quot; &lt;&lt; moduleType
+-							&lt;&lt; &quot; is supported by &quot; &lt;&lt; pEntryName &lt;&lt; endl;
++							cout &lt;&lt; &quot;ModuleFactory::loadModules: &quot; &lt;&lt; moduleType
++								&lt;&lt; &quot; is supported by &quot; &lt;&lt; pEntryName &lt;&lt; endl;
+ #endif
++						}
+ 					}
+ 					else cerr &lt;&lt; &quot;ModuleFactory::loadModules: &quot; &lt;&lt; dlerror() &lt;&lt; endl;
+ 				}
+@@ -393,20 +414,26 @@
+ 	return type;
+ }
+ 
+-void ModuleFactory::getSupportedEngines(map&lt;string, bool&gt; &amp;engines)
++void ModuleFactory::getSupportedEngines(map&lt;ModuleProperties, bool&gt; &amp;engines)
+ {
+ 	engines.clear();
+ 
+ 	// Built-in engines
+ #ifdef HAVE_BOOST_SPIRIT
+-	engines[&quot;sherlock&quot;] = false;
++	engines.insert(pair&lt;ModuleProperties, bool&gt;(ModuleProperties(&quot;sherlock&quot;, &quot;Sherlock&quot;, &quot;&quot;, &quot;&quot;), false));
+ #endif
+-	engines[&quot;opensearch&quot;] = false;
++	engines.insert(pair&lt;ModuleProperties, bool&gt;(ModuleProperties(&quot;opensearch&quot;, &quot;OpenSearch&quot;, &quot;&quot;, &quot;&quot;), false));
++
+ 	// Library-handled engines
+ 	for (map&lt;string, LoadableModule&gt;::iterator typeIter = m_types.begin();
+ 		typeIter != m_types.end(); ++typeIter)
+ 	{
+-		engines[typeIter-&gt;first] = true;
++		ModuleProperties *pProps = typeIter-&gt;second.m_pProperties;
++
++		if (pProps != NULL)
++		{
++			engines.insert(pair&lt;ModuleProperties, bool&gt;(*pProps, true));
++		}
+ 	}
+ }
+ 
+
+Modified: trunk/IndexSearch/ModuleFactory.h
+===================================================================
+--- trunk/IndexSearch/ModuleFactory.h	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/ModuleFactory.h	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007,2008 Fabrice Colin
++ *  Copyright 2007-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -23,20 +23,21 @@
+ #include &lt;map&gt;
+ 
+ #include &quot;IndexInterface.h&quot;
++#include &quot;SearchPluginProperties.h&quot;
+ #include &quot;SearchEngineInterface.h&quot;
+ 
+ /// Loadable module.
+ class LoadableModule
+ {
+ 	public:
+-		LoadableModule(const std::string &amp;type, const std::string &amp;location,
+-			void *pHandle);
++		LoadableModule(ModuleProperties *pProperties,
++			const std::string &amp;location, void *pHandle);
+ 		LoadableModule(const LoadableModule &amp;other);
+ 		virtual ~LoadableModule();
+ 
+ 		LoadableModule &amp;operator=(const LoadableModule &amp;other);
+ 
+-		std::string m_type;
++		ModuleProperties *m_pProperties;
+ 		std::string m_location;
+ 		bool m_canSearch;
+ 		bool m_canIndex;
+@@ -71,7 +72,7 @@
+ 		static string getSearchEngineName(const std::string &amp;type, const std::string &amp;option);
+ 
+ 		/// Returns all supported engines.
+-		static void getSupportedEngines(std::map&lt;std::string, bool&gt; &amp;engines);
++		static void getSupportedEngines(std::map&lt;ModuleProperties, bool&gt; &amp;engines);
+ 
+ 		/// Indicates whether a search engine or index is supported or not.
+ 		static bool isSupported(const std::string &amp;type, bool asIndex = false);
+
+Added: trunk/IndexSearch/ModuleProperties.h
+===================================================================
+--- trunk/IndexSearch/ModuleProperties.h	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/ModuleProperties.h	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -0,0 +1,101 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _MODULE_PROPERTIES_H
++#define _MODULE_PROPERTIES_H
++
++#include &lt;string&gt;
++#include &lt;set&gt;
++
++/// Properties of a module.
++class ModuleProperties
++{
++	public:
++		ModuleProperties()
++		{
++		}
++		ModuleProperties(const std::string &amp;name,
++			const std::string &amp;longName,
++			const std::string &amp;option,
++			const std::string &amp;channel) :
++			m_name(name),
++			m_longName(longName),
++			m_option(option),
++			m_channel(channel)
++		{
++		}
++		ModuleProperties(const ModuleProperties &amp;other) :
++			m_name(other.m_name),
++			m_longName(other.m_longName),
++			m_option(other.m_option),
++			m_channel(other.m_channel)
++		{
++		}
++		virtual ~ModuleProperties()
++		{
++		}
++
++		ModuleProperties&amp; operator=(const ModuleProperties&amp; other)
++		{
++			if (this != &amp;other)
++			{
++				m_name = other.m_name;
++				m_longName = other.m_longName;
++				m_option = other.m_option;
++				m_channel = other.m_channel;
++			}
++
++			return *this;
++		}
++
++		bool operator==(const ModuleProperties &amp;other) const
++		{
++			if ((m_name == other.m_name) &amp;&amp;
++				(m_longName == other.m_longName))
++			{
++				return true;
++			}
++
++			return false;
++		}
++		bool operator&lt;(const ModuleProperties &amp;other) const
++		{
++			if (m_name &lt; other.m_name)
++			{
++				return true;
++			}
++			else if (m_name == other.m_name)
++			{
++				if (m_longName &lt; other.m_longName)
++				{
++					return true;
++				}
++			}
++
++			return false;
++		}
++
++		// Description
++		std::string m_name;
++		std::string m_longName;
++		std::string m_option;
++		std::string m_channel;
++
++};
++
++#endif // _MODULE_PROPERTIES_H
+
+Modified: trunk/IndexSearch/SearchPluginProperties.cpp
+===================================================================
+--- trunk/IndexSearch/SearchPluginProperties.cpp	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/SearchPluginProperties.cpp	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -23,6 +23,7 @@
+ using std::set;
+ 
+ SearchPluginProperties::SearchPluginProperties() :
++	ModuleProperties(),
+ 	m_method(GET_METHOD),
+ 	m_scrolling(PER_PAGE),
+ 	m_nextIncrement(0),
+@@ -32,10 +33,7 @@
+ }
+ 
+ SearchPluginProperties::SearchPluginProperties(const SearchPluginProperties &amp;other) :
+-	m_name(other.m_name),
+-	m_longName(other.m_longName),
+-	m_description(other.m_description),
+-	m_channel(other.m_channel),
++	ModuleProperties(other),
+ 	m_languages(other.m_languages),
+ 	m_baseUrl(other.m_baseUrl),
+ 	m_method(other.m_method),
+@@ -56,12 +54,10 @@
+ 
+ SearchPluginProperties&amp; SearchPluginProperties::operator=(const SearchPluginProperties&amp; other)
+ {
++	ModuleProperties::operator=(other);
++
+ 	if (this != &amp;other)
+ 	{
+-		m_name = other.m_name;
+-		m_longName = other.m_longName;
+-		m_description = other.m_description;
+-		m_channel = other.m_channel;
+ 		m_languages = other.m_languages;
+ 		m_baseUrl = other.m_baseUrl;
+ 		m_method = other.m_method;
+@@ -80,7 +76,7 @@
+ 
+ bool SearchPluginProperties::operator==(const SearchPluginProperties &amp;other) const
+ {
+-	if (m_name == other.m_name)
++	if (ModuleProperties::operator==(other) == true)
+ 	{
+ 		return true;
+ 	}
+@@ -90,10 +86,11 @@
+ 
+ bool SearchPluginProperties::operator&lt;(const SearchPluginProperties &amp;other) const
+ {
+-	if (m_name &lt; other.m_name)
++	if (ModuleProperties::operator&lt;(other) == true)
+ 	{
+ 		return true;
+ 	}
+ 
+ 	return false;
+ }
++
+
+Modified: trunk/IndexSearch/SearchPluginProperties.h
+===================================================================
+--- trunk/IndexSearch/SearchPluginProperties.h	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/SearchPluginProperties.h	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -23,8 +23,10 @@
+ #include &lt;map&gt;
+ #include &lt;set&gt;
+ 
+-/// Properties of a search plugin.
+-class SearchPluginProperties
++#include &quot;ModuleProperties.h&quot;
++
++/// Properties of a search engine plugin.
++class SearchPluginProperties : public ModuleProperties
+ {
+ 	public:
+ 		SearchPluginProperties();
+@@ -47,10 +49,6 @@
+ 			RSS_RESPONSE, ATOM_RESPONSE } Response;
+ 
+ 		// Description
+-		std::string m_name;
+-		std::string m_longName;
+-		std::string m_description;
+-		std::string m_channel;
+ 		std::set&lt;std::string&gt; m_languages;
+ 		// Query
+ 		std::string m_baseUrl;
+
+Modified: trunk/IndexSearch/Xapian/ModuleExports.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/ModuleExports.cpp	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/Xapian/ModuleExports.cpp	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -21,6 +21,7 @@
+ 
+ #include &quot;config.h&quot;
+ #include &quot;Visibility.h&quot;
++#include &quot;ModuleProperties.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;XapianEngine.h&quot;
+ #include &quot;XapianIndex.h&quot;
+@@ -29,7 +30,7 @@
+ 
+ extern &quot;C&quot;
+ {
+-	PINOT_EXPORT string getModuleType(void);
++	PINOT_EXPORT ModuleProperties *getModuleProperties(void);
+ 	PINOT_EXPORT bool openOrCreateIndex(const string &amp;databaseName, bool &amp;obsoleteFormat,
+ 		bool readOnly, bool overwrite);
+ 	PINOT_EXPORT bool mergeIndexes(const string &amp;mergedDatabaseName,
+@@ -39,9 +40,9 @@
+ 	PINOT_EXPORT void closeAll(void);
+ }
+ 
+-string getModuleType(void)
++ModuleProperties *getModuleProperties(void)
+ {
+-	return &quot;xapian&quot;;
++	return new ModuleProperties(&quot;xapian&quot;, &quot;Xapian&quot;, &quot;&quot;, &quot;&quot;);
+ }
+ 
+ bool openOrCreateIndex(const string &amp;databaseName, bool &amp;obsoleteFormat,
+
+Modified: trunk/IndexSearch/XesamGLib/ModuleExports.cpp
+===================================================================
+--- trunk/IndexSearch/XesamGLib/ModuleExports.cpp	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/XesamGLib/ModuleExports.cpp	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -20,20 +20,21 @@
+ 
+ #include &quot;config.h&quot;
+ #include &quot;Visibility.h&quot;
++#include &quot;ModuleProperties.h&quot;
+ #include &quot;XesamEngine.h&quot;
+ 
+ using std::string;
+ 
+ extern &quot;C&quot;
+ {
+-	PINOT_EXPORT string getModuleType(void);
++	PINOT_EXPORT ModuleProperties *getModuleProperties(void);
+ 	PINOT_EXPORT SearchEngineInterface *getSearchEngine(const string &amp;dbusObject);
+ 	PINOT_EXPORT void closeAll(void);
+ }
+ 
+-string getModuleType(void)
++ModuleProperties *getModuleProperties(void)
+ {
+-	return &quot;xesam&quot;;
++	return new ModuleProperties(&quot;xesam&quot;, &quot;Xesam&quot;, &quot;&quot;, &quot;&quot;);
+ }
+ 
+ SearchEngineInterface *getSearchEngine(const string &amp;dbusObject)
+
+Modified: trunk/IndexSearch/pinot-index.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-index.cpp	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/pinot-index.cpp	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -51,7 +51,7 @@
+ 
+ static void printHelp(void)
+ {
+-	map&lt;string, bool&gt; engines;
++	map&lt;ModuleProperties, bool&gt; engines;
+ 
+ 	// Help
+ 	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/backends&quot;));
+@@ -70,12 +70,12 @@
+ 		&lt;&lt; &quot;  -s, --showinfo            show information about the document\n&quot;
+ 		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;
+ 		&lt;&lt; &quot;Supported back-ends are :&quot;;
+-	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
++	for (map&lt;ModuleProperties, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 	{
+ 		if ((engineIter-&gt;second == true) &amp;&amp;
+-			(ModuleFactory::isSupported(engineIter-&gt;first, true) == true))
++			(ModuleFactory::isSupported(engineIter-&gt;first.m_name, true) == true))
+ 		{
+-			cout &lt;&lt; &quot; '&quot; &lt;&lt; engineIter-&gt;first &lt;&lt; &quot;'&quot;;
++			cout &lt;&lt; &quot; '&quot; &lt;&lt; engineIter-&gt;first.m_name &lt;&lt; &quot;'&quot;;
+ 		}
+ 	}
+ 	ModuleFactory::unloadModules();
+
+Modified: trunk/IndexSearch/pinot-search.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-search.cpp	2008-08-19 13:38:49 UTC (rev 1336)
++++ trunk/IndexSearch/pinot-search.cpp	2008-08-19 13:40:26 UTC (rev 1337)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006,2007 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -80,7 +80,7 @@
+ 
+ static void printHelp(void)
+ {
+-	map&lt;string, bool&gt; engines;
++	map&lt;ModuleProperties, bool&gt; engines;
+ 
+ 	// Help
+ 	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/backends&quot;));
+@@ -102,9 +102,9 @@
+ 		&lt;&lt; &quot;  -q, --xesamql             query input is a file containing Xesam QL\n&quot;
+ 		&lt;&lt; &quot;  -u, --xesamul             query input is a file containing Xesam UL\n\n&quot;
+ 		&lt;&lt; &quot;Supported search engine types are :&quot;;
+-	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
++	for (map&lt;ModuleProperties, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 	{
+-		cout &lt;&lt; &quot; '&quot; &lt;&lt; engineIter-&gt;first &lt;&lt; &quot;'&quot;;
++		cout &lt;&lt; &quot; '&quot; &lt;&lt; engineIter-&gt;first.m_name &lt;&lt; &quot;'&quot;;
+ 	}
+ 	cout &lt;&lt; &quot;\n\nExamples:\n&quot;
+ #ifdef HAVE_GOOGLEAPI
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001327.html">[Pinot-svn] r1336 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001329.html">[Pinot-svn] r1338 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1328">[ date ]</a>
+              <a href="thread.html#1328">[ thread ]</a>
+              <a href="subject.html#1328">[ subject ]</a>
+              <a href="author.html#1328">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

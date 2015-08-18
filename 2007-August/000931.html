@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r937 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r937%20-%20trunk/Index&In-Reply-To=%3C200708171554.l7HFs0l4007845%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000930.html">
+   <LINK REL="Next"  HREF="000932.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r937 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r937%20-%20trunk/Index&In-Reply-To=%3C200708171554.l7HFs0l4007845%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r937 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug 17 17:54:00 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000930.html">[Pinot-svn] r936 - in trunk: . Index
+</A></li>
+        <LI>Next message: <A HREF="000932.html">[Pinot-svn] r938 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#931">[ date ]</a>
+              <a href="thread.html#931">[ thread ]</a>
+              <a href="subject.html#931">[ subject ]</a>
+              <a href="author.html#931">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-17 17:54:00 +0200 (Fri, 17 Aug 2007)
+New Revision: 937
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Spelling suggestions are not supported by all backends, eg Quartz, so try
+indexing again without populating the spelling database if we get an
+UnimplementedError.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-08-17 14:54:40 UTC (rev 936)
++++ trunk/Index/XapianIndex.cpp	2007-08-17 15:54:00 UTC (rev 937)
+@@ -55,7 +55,8 @@
+ XapianIndex::XapianIndex(const string &amp;indexName) :
+ 	IndexInterface(),
+ 	m_databaseName(indexName),
+-	m_goodIndex(false)
++	m_goodIndex(false),
++	m_supportSpellingCorrection(true)
+ {
+ 	// Open in read-only mode
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+@@ -70,6 +71,7 @@
+ 	IndexInterface(other),
+ 	m_databaseName(other.m_databaseName),
+ 	m_goodIndex(other .m_goodIndex),
++	m_supportSpellingCorrection(other.m_supportSpellingCorrection),
+ 	m_stemLanguage(other.m_stemLanguage)
+ {
+ }
+@@ -85,6 +87,7 @@
+ 		IndexInterface::operator=(other);
+ 		m_databaseName = other.m_databaseName;
+ 		m_goodIndex = other .m_goodIndex;
++		m_supportSpellingCorrection = other.m_supportSpellingCorrection;
+ 		m_stemLanguage = other.m_stemLanguage;
+ 	}
+ 
+@@ -143,7 +146,7 @@
+ }
+ 
+ void XapianIndex::addPostingsToDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, bool noStemming) const
++	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, bool noStemming)
+ {
+ 	Xapian::Stem *pStemmer = NULL;
+ 	Xapian::TermGenerator generator;
+@@ -167,12 +170,34 @@
+ 		}
+ 	}
+ 
+-	// The database is required for the spelling dictionary
+-	generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING);
+-	generator.set_database(db);
+-	generator.set_document(doc);
+-	generator.index_text(itor, 1, prefix);
++	try
++	{
++		// Older Xapian backends don't support spelling correction
++		if (m_supportSpellingCorrection == true)
++		{
++			// The database is required for the spelling dictionary
++			generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING);
++			generator.set_database(db);
++		}
++		generator.set_document(doc);
++		generator.index_text(itor, 1, prefix);
++	}
++	catch (const Xapian::UnimplementedError &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't index with spelling correction: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 
++		if (m_supportSpellingCorrection == true)
++		{
++			m_supportSpellingCorrection = false;
++
++			// Try again without spelling correction
++			// Let the caller catch the exception
++			generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING, Xapian::TermGenerator::FLAG_SPELLING);
++			generator.set_document(doc);
++			generator.index_text(itor, 1, prefix);
++		}
++	}
++
+ 	if (pStemmer != NULL)
+ 	{
+ 		delete pStemmer;
+@@ -308,7 +333,7 @@
+ }
+ 
+ void XapianIndex::addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-	const Xapian::WritableDatabase &amp;db) const
++	const Xapian::WritableDatabase &amp;db)
+ {
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-08-17 14:54:40 UTC (rev 936)
++++ trunk/Index/XapianIndex.h	2007-08-17 15:54:00 UTC (rev 937)
+@@ -122,19 +122,20 @@
+ 		static const std::string MAGIC_TERM;
+ 		std::string m_databaseName;
+ 		bool m_goodIndex;
++		bool m_supportSpellingCorrection;
+ 		std::string m_stemLanguage;
+ 
+ 		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+ 		void addPostingsToDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix, bool noStemming) const;
++			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix, bool noStemming);
+ 
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+ 			const std::string &amp;prefix, const std::string &amp;language, bool noStemming) const;
+ 
+ 		void addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-			const Xapian::WritableDatabase &amp;db) const;
++			const Xapian::WritableDatabase &amp;db);
+ 
+ 		void removeCommonTerms(Xapian::Document &amp;doc);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000930.html">[Pinot-svn] r936 - in trunk: . Index
+</A></li>
+	<LI>Next message: <A HREF="000932.html">[Pinot-svn] r938 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#931">[ date ]</a>
+              <a href="thread.html#931">[ thread ]</a>
+              <a href="subject.html#931">[ subject ]</a>
+              <a href="author.html#931">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

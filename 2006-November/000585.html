@@ -1,0 +1,630 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r592 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r592%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200611190635.kAJ6Z0uk015088%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000584.html">
+   <LINK REL="Next"  HREF="000586.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r592 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r592%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200611190635.kAJ6Z0uk015088%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r592 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov 19 07:35:00 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000584.html">[Pinot-svn] r591 - trunk/UI
+</A></li>
+        <LI>Next message: <A HREF="000586.html">[Pinot-svn] r593 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#585">[ date ]</a>
+              <a href="thread.html#585">[ thread ]</a>
+              <a href="subject.html#585">[ subject ]</a>
+              <a href="author.html#585">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-19 07:35:00 +0100 (Sun, 19 Nov 2006)
+New Revision: 592
+
+Added:
+   trunk/SQL/ActionQueue.cpp
+   trunk/SQL/ActionQueue.h
+Modified:
+   trunk/SQL/Makefile.am
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Replaced std::queue-based indexing queue with a database table appropriately
+named ActionQueue. This seems to lower first-crawl memory usage a good deal.
+
+
+Added: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/SQL/ActionQueue.cpp	2006-11-19 06:35:00 UTC (rev 592)
+@@ -0,0 +1,265 @@
++/*
++ *  Copyright 2005,2006 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;iostream&gt;
++
++#include &quot;Url.h&quot;
++#include &quot;StringManip.h&quot;
++#include &quot;TimeConverter.h&quot;
++#include &quot;ActionQueue.h&quot;
++
++using std::string;
++using std::cout;
++using std::endl;
++
++ActionQueue::ActionQueue(const string &amp;database, const string queueId) :
++	SQLiteBase(database),
++	m_queueId(queueId)
++{
++}
++
++ActionQueue::~ActionQueue()
++{
++}
++
++string ActionQueue::typeToText(ActionType type)
++{
++	string text;
++
++	switch (type)
++	{
++		case INDEX:
++			text = &quot;INDEX&quot;;
++			break;
++		case UNINDEX:
++			text = &quot;UNINDEX&quot;;
++			break;
++		default:
++			break;
++	}
++
++	return text;
++}
++
++ActionQueue::ActionType ActionQueue::textToType(const string &amp;text)
++{
++	ActionType type = INDEX;
++
++	if (text == &quot;UNINDEX&quot;)
++	{
++		type = UNINDEX;
++	}
++
++	return type;
++}
++
++/// Creates the ActionQueue table in the database.
++bool ActionQueue::create(const string &amp;database)
++{
++	bool success = true;
++
++	// The specified path must be a file
++	if (SQLiteBase::check(database) == false)
++	{
++		return false;
++	}
++
++	SQLiteBase db(database);
++
++	// Does ActionQueue exist ?
++	if (db.executeSimpleStatement(&quot;SELECT * FROM ActionQueue LIMIT 1;&quot;) == false)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ActionQueue::create: ActionQueue doesn't exist&quot; &lt;&lt; endl;
++#endif
++		// Create the table
++		if (db.executeSimpleStatement(&quot;CREATE TABLE ActionQueue (QueueId VARCHAR(255), \
++			Url VARCHAR(255), Type VARCHAR(255), Date INTEGER, Info TEXT, \
++			PRIMARY KEY(QueueId, Url));&quot;) == false)
++		{
++			success = false;
++		}
++	}
++
++	return success;
++}
++
++/// Pushes an item.
++bool ActionQueue::pushItem(ActionType type, const DocumentInfo &amp;docInfo)
++{
++	string url(docInfo.getLocation());
++	string info(&quot;caption=&quot;);
++	bool update = false, success = false;
++
++	// Is there already an item for this URL ?
++	SQLiteResults *results = executeStatement(&quot;SELECT Url FROM ActionQueue \
++		WHERE QueueId='%q' AND Url='%q'&quot;,
++		m_queueId.c_str(), Url::escapeUrl(url).c_str());
++	if (results != NULL)
++	{
++		SQLiteRow *row = results-&gt;nextRow();
++		if (row != NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;ActionQueue::pushItem: item &quot;
++				&lt;&lt; Url::unescapeUrl(row-&gt;getColumn(0)) &lt;&lt; &quot; exists&quot; &lt;&lt; endl;
++#endif
++			update = true;
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	// Serialize DocumentInfo
++	info += docInfo.getTitle();
++	info += &quot;\n&quot;;
++	info += &quot;url=&quot;;
++	info += url;
++	info += &quot;\n&quot;;
++	info += &quot;type=&quot;;
++	info += docInfo.getType();
++	info += &quot;\n&quot;;
++	info += &quot;language=&quot;;
++	info += docInfo.getLanguage();
++	info += &quot;\n&quot;;
++	info += &quot;modtime=&quot;;
++	info += docInfo.getTimestamp();
++	info += &quot;\n&quot;;
++
++	if (update == false)
++	{
++		results = executeStatement(&quot;INSERT INTO ActionQueue \
++			VALUES('%q', '%q', '%q', '%d', '%q');&quot;,
++			m_queueId.c_str(), Url::escapeUrl(url).c_str(),
++			typeToText(type).c_str(), time(NULL), Url::escapeUrl(info).c_str());
++	}
++	else
++	{
++		results = executeStatement(&quot;UPDATE ActionQueue \
++			SET Type='%q', Date='%d', Info='%q' WHERE \
++			QueueId='%q' AND Url='%q';&quot;,
++			typeToText(type).c_str(), time(NULL), Url::escapeUrl(info).c_str(),
++			m_queueId.c_str(), Url::escapeUrl(url).c_str());
++	}
++	if (results != NULL)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ActionQueue::pushItem: queue &quot; &lt;&lt; m_queueId
++			&lt;&lt; &quot;: &quot; &lt;&lt; type &lt;&lt; &quot; on &quot; &lt;&lt; url &lt;&lt; &quot;, &quot; &lt;&lt; update &lt;&lt; endl;
++#endif
++		success = true;
++
++		delete results;
++	}
++
++	return success;
++}
++
++/// Pops and deletes the oldest item.
++bool ActionQueue::popItem(ActionType &amp;type, DocumentInfo &amp;docInfo)
++{
++	string url;
++	bool success = false;
++
++	if (getOldestItem(type, docInfo) == false)
++	{
++		return false;
++	}
++	url = docInfo.getLocation();
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ActionQueue::popItem: queue &quot; &lt;&lt; m_queueId
++		&lt;&lt; &quot;: &quot; &lt;&lt; type &lt;&lt; &quot; on &quot; &lt;&lt; url &lt;&lt; endl;
++#endif
++
++	// Delete from ActionQueue
++	SQLiteResults *results = executeStatement(&quot;DELETE FROM ActionQueue \
++		WHERE QueueId='%q' AND Url='%q';&quot;,
++		m_queueId.c_str(), Url::escapeUrl(url).c_str());
++	if (results != NULL)
++	{
++		success = true;
++		delete results;
++	}
++
++	return success;
++}
++
++bool ActionQueue::getOldestItem(ActionType &amp;type, DocumentInfo &amp;docInfo) const
++{
++	bool success = false;
++
++	SQLiteResults *results = executeStatement(&quot;SELECT Url, Type, Info FROM ActionQueue \
++		WHERE QueueId='%q' ORDER BY Date DESC LIMIT 1&quot;,
++		m_queueId.c_str());
++	if (results != NULL)
++	{
++		SQLiteRow *row = results-&gt;nextRow();
++		if (row != NULL)
++		{
++			string url(Url::unescapeUrl(row-&gt;getColumn(0)));
++			type = textToType(row-&gt;getColumn(1));
++			string info(Url::unescapeUrl(row-&gt;getColumn(2)));
++			success = true;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;ActionQueue::getOldestItem: &quot; &lt;&lt; info &lt;&lt; endl;
++#endif
++
++			// Deserialize DocumentInfo
++			docInfo.setTitle(StringManip::extractField(info, &quot;caption=&quot;, &quot;\n&quot;));
++			docInfo.setLocation(url);
++			docInfo.setType(StringManip::extractField(info, &quot;type=&quot;, &quot;\n&quot;));
++			docInfo.setLanguage(StringManip::extractField(info, &quot;language=&quot;, &quot;\n&quot;));
++			docInfo.setTimestamp(StringManip::extractField(info, &quot;modtime=&quot;, &quot;\n&quot;));
++#ifdef DEBUG
++			cout &lt;&lt; &quot;ActionQueue::getOldestItem: &quot; &lt;&lt; docInfo.getTitle() &lt;&lt; &quot;, &quot;
++				&lt;&lt; docInfo.getLocation() &lt;&lt; &quot;, &quot;
++				&lt;&lt; docInfo.getType() &lt;&lt; &quot;, &quot;
++				&lt;&lt; docInfo.getLanguage() &lt;&lt; &quot;, &quot;
++				&lt;&lt; docInfo.getTimestamp() &lt;&lt; endl;
++#endif
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	return success;
++}
++
++/// Expires items older than the given date.
++bool ActionQueue::expireItems(time_t expiryDate)
++{
++	bool success = false;
++
++	SQLiteResults *results = executeStatement(&quot;DELETE FROM ActionQueue \
++		WHERE QueueId='%q' AND Date&lt;'%d';&quot;,
++		m_queueId.c_str(), expiryDate);
++	if (results != NULL)
++	{
++		success = true;
++		delete results;
++	}
++
++	return success;
++}
+
+Added: trunk/SQL/ActionQueue.h
+===================================================================
+--- trunk/SQL/ActionQueue.h	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/SQL/ActionQueue.h	2006-11-19 06:35:00 UTC (rev 592)
+@@ -0,0 +1,63 @@
++/*
++ *  Copyright 2005,2006 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _ACTION_QUEUE_H
++#define _ACTION_QUEUE_H
++
++#include &lt;time.h&gt;
++#include &lt;string&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;SQLiteBase.h&quot;
++
++class ActionQueue : public SQLiteBase
++{
++	public:
++		ActionQueue(const std::string &amp;database, const std::string queueId);
++		virtual ~ActionQueue();
++
++		/// Creates the ActionQueue table in the database.
++		static bool create(const std::string &amp;database);
++
++		typedef enum { INDEX = 0, UNINDEX } ActionType;
++
++		/// Pushes an item.
++		bool pushItem(ActionType type, const DocumentInfo &amp;docInfo);
++
++		/// Pops and deletes the oldest item.
++		bool popItem(ActionType &amp;type, DocumentInfo &amp;docInfo);
++
++		/// Expires items older than the given date.
++		bool expireItems(time_t expiryDate);
++
++        protected:
++		std::string m_queueId;
++
++		bool getOldestItem(ActionType &amp;type, DocumentInfo &amp;docInfo) const;
++
++		static std::string typeToText(ActionType type);
++
++		static ActionType textToType(const std::string &amp;text);
++
++        private:
++		ActionQueue(const ActionQueue &amp;other);
++		ActionQueue &amp;operator=(const ActionQueue &amp;other);
++
++};
++
++#endif // _ACTION_QUEUE_H
+
+Modified: trunk/SQL/Makefile.am
+===================================================================
+--- trunk/SQL/Makefile.am	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/SQL/Makefile.am	2006-11-19 06:35:00 UTC (rev 592)
+@@ -1,6 +1,7 @@
+ # Process this file with automake to produce Makefile.in
+ 
+ noinst_HEADERS = \
++	ActionQueue.h \
+ 	CrawlHistory.h \
+ 	QueryHistory.h \
+ 	SQLiteBase.h \
+@@ -9,6 +10,7 @@
+ noinst_LTLIBRARIES = libSQL.la
+ 
+ libSQL_la_SOURCES = \
++	ActionQueue.cpp \
+ 	CrawlHistory.cpp \
+ 	QueryHistory.cpp \
+ 	SQLiteBase.cpp \
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-19 06:35:00 UTC (rev 592)
+@@ -31,6 +31,7 @@
+ #include &lt;sigc++/class_slot.h&gt;
+ #include &lt;sigc++/compatibility.h&gt;
+ #include &lt;sigc++/slot.h&gt;
++#include &lt;glibmm/miscutils.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;XmlTokenizer.h&quot;
+@@ -40,6 +41,7 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabase.h&quot;
++#include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+@@ -505,12 +507,9 @@
+ 
+ 	if (addToQueue == true)
+ 	{
+-		if (write_lock_lists() == true)
+-		{
+-			m_indexQueue.push(docInfo);
++		ActionQueue queue(PinotSettings::getInstance().m_historyDatabase, get_application_name());
+ 
+-			unlock_lists();
+-		}
++		queue.pushItem(ActionQueue::INDEX, docInfo);
+ 
+ 		return &quot;&quot;;
+ 	}
+@@ -531,8 +530,6 @@
+ 		getItem = false;
+ 	}
+ 
+-	DocumentInfo docInfo;
+-
+ 	if (write_lock_lists() == true)
+ 	{
+ 		// Update the in-progress list
+@@ -548,10 +545,16 @@
+ 		// Get an item ?
+ 		if (getItem == true)
+ 		{
+-			while (m_indexQueue.empty() == false)
++			ActionQueue queue(PinotSettings::getInstance().m_historyDatabase, get_application_name());
++			ActionQueue::ActionType type;
++			DocumentInfo docInfo;
++
++			while (queue.popItem(type, docInfo) == true)
+ 			{
+-				docInfo = m_indexQueue.front();
+-				m_indexQueue.pop();
++				if (type != ActionQueue::INDEX)
++				{
++					continue;
++				}
+ 
+ 				ustring status = index_document(docInfo);
+ 				if (status.empty() == true)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-11-19 06:35:00 UTC (rev 592)
+@@ -139,7 +139,6 @@
+ 		unsigned int m_backgroundThreadsCount;
+ 		long m_numCPUs;
+ 		SigC::Signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+-		std::queue&lt;DocumentInfo&gt; m_indexQueue;
+ 		std::set&lt;std::string&gt; m_beingIndexed;
+ 
+ 		bool read_lock_threads(void);
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-11-19 06:35:00 UTC (rev 592)
+@@ -28,6 +28,7 @@
+ #include &lt;glibmm.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
++#include &lt;glibmm/miscutils.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/object.h&gt;
+ extern &quot;C&quot;
+@@ -45,6 +46,7 @@
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
++#include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+@@ -672,6 +674,8 @@
+ 	HtmlTokenizer::initialize();
+ 	DownloaderInterface::initialize();
+ 	Glib::thread_init();
++	g_refMainLoop = Glib::MainLoop::create();
++	Glib::set_application_name(&quot;Pinot DBus Daemon&quot;);
+ 
+ 	// This will create the necessary directories on the first run
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+@@ -734,6 +738,7 @@
+ 
+ 	// Do the same for the history database
+ 	if ((settings.m_historyDatabase.empty() == true) ||
++		(ActionQueue::create(settings.m_historyDatabase) == false) ||
+ 		(CrawlHistory::create(settings.m_historyDatabase) == false) ||
+ 		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+ 		(ViewHistory::create(settings.m_historyDatabase) == false))
+@@ -743,10 +748,13 @@
+ 	}
+ 	else
+ 	{
++		ActionQueue actionQueue(settings.m_historyDatabase, Glib::get_application_name());
+ 		QueryHistory queryHistory(settings.m_historyDatabase);
+ 		ViewHistory viewHistory(settings.m_historyDatabase);
+ 		time_t timeNow = time(NULL);
+ 
++		// Expire all actions left from last time
++		actionQueue.expireItems(timeNow);
+ 		// Expire items older than a month
+ 		queryHistory.expireItems(timeNow - 2592000);
+ 		viewHistory.expireItems(timeNow - 2592000);
+@@ -803,8 +811,6 @@
+ 
+ 		try
+ 		{
+-			// Get the main loop
+-			g_refMainLoop = Glib::MainLoop::create();
+ 
+ 			// Connect to threads' finished signal
+ 			server.connect();
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-11-19 06:03:24 UTC (rev 591)
++++ trunk/UI/GTK2/src/pinot.cc	2006-11-19 06:35:00 UTC (rev 592)
+@@ -26,6 +26,7 @@
+ #include &lt;glibmm.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
++#include &lt;glibmm/miscutils.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;gtkmm/main.h&gt;
+ 
+@@ -35,6 +36,7 @@
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
++#include &quot;ActionQueue.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+@@ -144,6 +146,7 @@
+ 	DownloaderInterface::initialize();
+ 	Glib::thread_init();
+ 	Gtk::Main m(&amp;argc, &amp;argv);
++	Glib::set_application_name(&quot;Pinot GTK2 UI&quot;);
+ 
+ 	// This will create the necessary directories on the first run
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+@@ -212,6 +215,7 @@
+ 
+ 	// Do the same for the history database
+ 	if ((settings.m_historyDatabase.empty() == true) ||
++		(ActionQueue::create(settings.m_historyDatabase) == false) ||
+ 		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+ 		(ViewHistory::create(settings.m_historyDatabase) == false))
+ 	{
+@@ -221,10 +225,13 @@
+ 	}
+ 	else
+ 	{
++		ActionQueue actionQueue(settings.m_historyDatabase, Glib::get_prgname());
+ 		QueryHistory queryHistory(settings.m_historyDatabase);
+ 		ViewHistory viewHistory(settings.m_historyDatabase);
+ 		time_t timeNow = time(NULL);
+ 
++		// Expire all actions left from last time
++		actionQueue.expireItems(timeNow);
+ 		// Expire items older than a month
+ 		queryHistory.expireItems(timeNow - 2592000);
+ 		viewHistory.expireItems(timeNow - 2592000);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000584.html">[Pinot-svn] r591 - trunk/UI
+</A></li>
+	<LI>Next message: <A HREF="000586.html">[Pinot-svn] r593 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#585">[ date ]</a>
+              <a href="thread.html#585">[ thread ]</a>
+              <a href="subject.html#585">[ subject ]</a>
+              <a href="author.html#585">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

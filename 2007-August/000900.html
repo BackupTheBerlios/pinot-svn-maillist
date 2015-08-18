@@ -1,0 +1,306 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r906 - in trunk: Index Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r906%20-%20in%20trunk%3A%20Index%20Search&In-Reply-To=%3C200708041541.l74FfOQ1016603%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000899.html">
+   <LINK REL="Next"  HREF="000901.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r906 - in trunk: Index Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r906%20-%20in%20trunk%3A%20Index%20Search&In-Reply-To=%3C200708041541.l74FfOQ1016603%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r906 - in trunk: Index Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug  4 17:41:24 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000899.html">[Pinot-svn] r905 - in trunk: SQL Search Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000901.html">[Pinot-svn] r907 - in trunk: Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#900">[ date ]</a>
+              <a href="thread.html#900">[ thread ]</a>
+              <a href="subject.html#900">[ subject ]</a>
+              <a href="author.html#900">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-04 17:41:23 +0200 (Sat, 04 Aug 2007)
+New Revision: 906
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/Search/XapianEngine.cpp
+Log:
+Support for spelling suggestions. No feedback is given yet.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-08-04 05:41:25 UTC (rev 905)
++++ trunk/Index/XapianIndex.cpp	2007-08-04 15:41:23 UTC (rev 906)
+@@ -143,7 +143,7 @@
+ }
+ 
+ void XapianIndex::addPostingsToDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-	const string &amp;prefix, Xapian::termcount &amp;termPos, bool noStemming) const
++	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, bool noStemming) const
+ {
+ 	Xapian::Stem *pStemmer = NULL;
+ 	Xapian::TermGenerator generator;
+@@ -167,9 +167,11 @@
+ 		}
+ 	}
+ 
++	// The database is required for the spelling dictionary
++	generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING);
++	generator.set_database(db);
+ 	generator.set_document(doc);
+ 	generator.index_text(itor, 1, prefix);
+-	termPos = generator.get_termpos();
+ 
+ 	if (pStemmer != NULL)
+ 	{
+@@ -205,6 +207,8 @@
+ 		}
+ 	}
+ 
++	// This temporary document enables to get to the same terms
++	// that were added at indexing time
+ 	generator.set_document(termsDoc);
+ 	generator.index_text(itor, 1, prefix);
+ 
+@@ -304,7 +308,7 @@
+ }
+ 
+ void XapianIndex::addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-	Xapian::termcount &amp;termPos) const
++	const Xapian::WritableDatabase &amp;db) const
+ {
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+@@ -319,8 +323,8 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianIndex::addCommonTerms: adding &quot; &lt;&lt; title &lt;&lt; endl;
+ #endif
+-		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, &quot;S&quot;, termPos, true);
+-		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, &quot;&quot;, termPos, false);
++		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;, true);
++		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, db, &quot;&quot;, false);
+ 	}
+ 
+ 	// Index the full URL with prefix U
+@@ -1136,32 +1140,29 @@
+ 	try
+ 	{
+ 		Xapian::Document doc;
+-		Xapian::termcount termPos = 0;
+ 
+-		// Populate the Xapian document
+-		addCommonTerms(docInfo, doc, termPos);
+-		termPos += 100;
+-		if ((pData != NULL) &amp;&amp;
+-			(dataLength &gt; 0))
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
+ 		{
+-			Xapian::Utf8Iterator itor(pData, dataLength);
+-			addPostingsToDocument(itor, doc, &quot;&quot;, termPos, false);
+-			termPos += 100;
+-		}
++			// Populate the Xapian document
++			addCommonTerms(docInfo, doc, *pIndex);
++			if ((pData != NULL) &amp;&amp;
++				(dataLength &gt; 0))
++			{
++				Xapian::Utf8Iterator itor(pData, dataLength);
++				addPostingsToDocument(itor, doc, *pIndex, &quot;&quot;, false);
++			}
+ 
+-		// Add labels
+-		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-			++labelIter)
+-		{
+-			doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
+-		}
++			// Add labels
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++				++labelIter)
++			{
++				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
++			}
+ 
+-		// Set data
+-		setDocumentData(docInfo, doc, m_stemLanguage);
++			// Set data
++			setDocumentData(docInfo, doc, m_stemLanguage);
+ 
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+ 			// Add this document to the Xapian index
+ 			docId = pIndex-&gt;add_document(doc);
+ 			indexed = true;
+@@ -1217,34 +1218,32 @@
+ 	{
+ 		set&lt;string&gt; labels;
+ 		Xapian::Document doc;
+-		Xapian::termcount termPos = 0;
+ 
+-		// Populate the Xapian document
+-		addCommonTerms(docInfo, doc, termPos);
+-		termPos += 100;
+-		if ((pData != NULL) &amp;&amp;
+-			(dataLength &gt; 0))
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
+ 		{
+-			Xapian::Utf8Iterator itor(pData, dataLength);
+-			addPostingsToDocument(itor, doc, &quot;&quot;, termPos, false);
+-		}
++			// Populate the Xapian document
++			addCommonTerms(docInfo, doc, *pIndex);
++			if ((pData != NULL) &amp;&amp;
++				(dataLength &gt; 0))
++			{
++				Xapian::Utf8Iterator itor(pData, dataLength);
++				addPostingsToDocument(itor, doc, *pIndex, &quot;&quot;, false);
++			}
+ 
+-		// Add labels
+-		if (getDocumentLabels(docId, labels) == true)
+-		{
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
++			// Add labels
++			if (getDocumentLabels(docId, labels) == true)
+ 			{
+-				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
++				for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++					++labelIter)
++				{
++					doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
++				}
+ 			}
+-		}
+ 
+-		// Set data
+-		setDocumentData(docInfo, doc, m_stemLanguage);
++			// Set data
++			setDocumentData(docInfo, doc, m_stemLanguage);
+ 
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+ 			// Update the document in the database
+ 			pIndex-&gt;replace_document(docId, doc);
+ 			updated = true;
+@@ -1286,12 +1285,11 @@
+ 		if (pIndex != NULL)
+ 		{
+ 			Xapian::Document doc = pIndex-&gt;get_document(docId);
+-			Xapian::termcount termPos = 0;
+ 
+ 			// Update the document data with the current language
+ 			m_stemLanguage = Languages::toEnglish(docInfo.getLanguage());
+ 			removeCommonTerms(doc);
+-			addCommonTerms(docInfo, doc, termPos);
++			addCommonTerms(docInfo, doc, *pIndex);
+ 			setDocumentData(docInfo, doc, m_stemLanguage);
+ 
+ 			pIndex-&gt;replace_document(docId, doc);
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-08-04 05:41:25 UTC (rev 905)
++++ trunk/Index/XapianIndex.h	2007-08-04 15:41:23 UTC (rev 906)
+@@ -132,13 +132,13 @@
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+ 		void addPostingsToDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-			const std::string &amp;prefix, Xapian::termcount &amp;termPos, bool noStemming) const;
++			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix, bool noStemming) const;
+ 
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+ 			const std::string &amp;prefix, const std::string &amp;language, bool noStemming) const;
+ 
+ 		void addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-			Xapian::termcount &amp;termPos) const;
++			const Xapian::WritableDatabase &amp;db) const;
+ 
+ 		void removeCommonTerms(Xapian::Document &amp;doc);
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-08-04 05:41:25 UTC (rev 905)
++++ trunk/Search/XapianEngine.cpp	2007-08-04 15:41:23 UTC (rev 906)
+@@ -227,7 +227,7 @@
+ 	}
+ 	if (pIndex != NULL)
+ 	{
+-		// The database is required for wildcards
++		// The database is required for wildcards and spelling
+ 		parser.set_database(*pIndex);
+ 	}
+ 	// ...including prefixes
+@@ -334,11 +334,18 @@
+ 		escapedFilterStart = freeQuery.find(&quot;:\&quot;&quot;, escapedFilterEnd);
+ 	}
+ 
+-	// Activate all options and parse
+-	Xapian::Query parsedQuery = parser.parse_query(freeQuery,
+-		Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|
++	// Activate all necessary options
++	unsigned int flags = Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|
+ 		Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|
+-		Xapian::QueryParser::FLAG_WILDCARD|Xapian::QueryParser::FLAG_PURE_NOT);
++		Xapian::QueryParser::FLAG_WILDCARD|Xapian::QueryParser::FLAG_PURE_NOT|
++		Xapian::QueryParser::FLAG_SPELLING_CORRECTION;
++
++	// Parse the query string
++	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianEngine::parseQuery: corrected spelling to: &quot; &lt;&lt; parser.get_corrected_query_string() &lt;&lt; endl;
++#endif
++
+ 	// Apply a date range ?
+ 	bool enableMin = queryProps.getMinimumDate(minDay, minMonth, minYear);
+ 	bool enableMax = queryProps.getMaximumDate(maxDay, maxMonth, maxYear);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000899.html">[Pinot-svn] r905 - in trunk: SQL Search Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000901.html">[Pinot-svn] r907 - in trunk: Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#900">[ date ]</a>
+              <a href="thread.html#900">[ thread ]</a>
+              <a href="subject.html#900">[ subject ]</a>
+              <a href="author.html#900">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

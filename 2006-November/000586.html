@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r593 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r593%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611211126.kALBQlv6021947%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000585.html">
+   <LINK REL="Next"  HREF="000587.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r593 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r593%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611211126.kALBQlv6021947%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r593 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Nov 21 12:26:47 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000585.html">[Pinot-svn] r592 - in trunk: SQL UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000587.html">[Pinot-svn] r594 - in trunk/Search: . Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#586">[ date ]</a>
+              <a href="thread.html#586">[ thread ]</a>
+              <a href="subject.html#586">[ subject ]</a>
+              <a href="author.html#586">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-21 12:26:46 +0100 (Tue, 21 Nov 2006)
+New Revision: 593
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Disconnect and get threads to stop before closing stuff down and exiting.
+Worker threads that have a signal disconnect it in their stop() method.
+DirectoryScanner didn't check whether it was supposed to exit. While crawling,
+the daemon should now be able to stop gracefully, whether because it was
+signalled or the Stop method was invoked.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-19 06:35:00 UTC (rev 592)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-21 11:26:46 UTC (rev 593)
+@@ -57,16 +57,30 @@
+ using namespace Glib;
+ using namespace std;
+ 
+-// A function object to stop and delete threads with for_each()
+-struct DeleteMapPointer
++// A function object to stop threads with for_each()
++struct StopThreadFunc
+ {
+ public:
+ 	void operator()(map&lt;WorkerThread *, Thread *&gt;::value_type &amp;p)
+ 	{
+ 		p.first-&gt;stop();
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DeleteMapPointer: waiting for thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
++		cout &lt;&lt; &quot;StopThreadFunc: stopped thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
+ #endif
++	}
++};
++
++// A function object to delete threads with for_each()
++struct DeleteThreadFunc
++{
++public:
++	void operator()(map&lt;WorkerThread *, Thread *&gt;::value_type &amp;p)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DeleteThreadFunc: waiting for thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
++#endif
++		// FIXME: the documentation says resources of the thread, including the Thread object
++		// are released by join()
+ 		p.second-&gt;join();
+ 		delete p.first;
+ 	}
+@@ -430,9 +444,12 @@
+ {
+ 	if (m_threads.empty() == false)
+ 	{
+-		if (read_lock_threads() == true)
++		if (write_lock_threads() == true)
+ 		{
+-			for_each(m_threads.begin(), m_threads.end(), DeleteMapPointer());
++			// Stop threads
++			for_each(m_threads.begin(), m_threads.end(), StopThreadFunc());
++			// Join them
++			for_each(m_threads.begin(), m_threads.end(), DeleteThreadFunc());
+ 			m_threads.clear();
+ 
+ 			unlock_threads();
+@@ -490,8 +507,14 @@
+ 	double averageLoad[3];
+ 	bool addToQueue = false;
+ 
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ThreadsManager::queue_index: called&quot; &lt;&lt; endl;
++#endif
+ 	if (get_threads_count() &gt;= m_maxIndexThreads)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::queue_index: too many threads&quot; &lt;&lt; endl;
++#endif
+ 		addToQueue = true;
+ 	}
+ 	// Get the load averaged over the last minute
+@@ -522,6 +545,9 @@
+ 	bool getItem = true;
+ 	bool foundItem = false;
+ 
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ThreadsManager::pop_queue: called&quot; &lt;&lt; endl;
++#endif
+ 	if (get_threads_count() &gt;= m_maxIndexThreads)
+ 	{
+ #ifdef DEBUG
+@@ -620,7 +646,19 @@
+ 
+ bool IndexBrowserThread::stop(void)
+ {
++	// Disconnect the signal
++	Signal3&lt;void, IndexedDocument, unsigned int, string&gt;::slot_list_type slotsList = m_signalUpdate.slots();
++	Signal3&lt;void, IndexedDocument, unsigned int, string&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
+ 	m_done = true;
++
+ 	return true;
+ }
+ 
+@@ -1487,8 +1525,20 @@
+ 
+ bool MonitorThread::stop(void)
+ {
++	// Disconnect the signal
++	Signal3&lt;void, const string&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalDirectoryFound.slots();
++	Signal3&lt;void, const string&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
+ 	m_done = true;
+ 	write(m_ctrlWritePipe, &quot;Stop&quot;, 4);
++
+ 	return true;
+ }
+ 
+@@ -1743,7 +1793,19 @@
+ 
+ bool DirectoryScannerThread::stop(void)
+ {
++	// Disconnect the signal
++	Signal3&lt;void, const string&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	Signal3&lt;void, const string&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
+ 	m_done = true;
++
+ 	return true;
+ }
+ 
+@@ -1756,7 +1818,8 @@
+ {
+ 	char labelStr[64];
+ 
+-	if (fileName.empty() == true)
++	if ((fileName.empty() == true) ||
++		(m_done == true))
+ 	{
+ 		return;
+ 	}
+@@ -1944,6 +2007,14 @@
+ 		m_status += m_dirName;
+ 	}
+ 
++	if (m_done == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DirectoryScannerThread::doWork: leaving cleanup until next crawl&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++
+ 	// All files with status set to CRAWLING were not found in this crawl
+ 	// Chances are they were removed after the previous crawl
+ 	if ((m_pHandler != NULL) &amp;&amp;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-11-19 06:35:00 UTC (rev 592)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-11-21 11:26:46 UTC (rev 593)
+@@ -769,7 +769,7 @@
+ 	}
+ 
+ 	// Initialize the GType and the D-Bus thread system
+-	g_type_init ();
++	g_type_init();
+ 	dbus_g_thread_init();
+ 
+ 	GError *pError = NULL;
+@@ -842,6 +842,10 @@
+ 		cerr &lt;&lt; &quot;Couldn't register object path: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+ 	}
+ 
++	// Stop everything before closing the connection
++	server.disconnect();
++	server.stop_threads();
++
+ 	dbus_error_free(&amp;error);
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;Closing connection...&quot; &lt;&lt; endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000585.html">[Pinot-svn] r592 - in trunk: SQL UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000587.html">[Pinot-svn] r594 - in trunk/Search: . Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#586">[ date ]</a>
+              <a href="thread.html#586">[ thread ]</a>
+              <a href="subject.html#586">[ subject ]</a>
+              <a href="author.html#586">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

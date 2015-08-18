@@ -1,0 +1,1351 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r713 - in trunk: Collect Index Tokenize UI/GTK2/src	Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r713%20-%20in%20trunk%3A%20Collect%20Index%20Tokenize%20UI/GTK2/src%0A%09Utils&In-Reply-To=%3C200702161502.l1GF2EKQ006541%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000706.html">
+   <LINK REL="Next"  HREF="000708.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r713 - in trunk: Collect Index Tokenize UI/GTK2/src	Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r713%20-%20in%20trunk%3A%20Collect%20Index%20Tokenize%20UI/GTK2/src%0A%09Utils&In-Reply-To=%3C200702161502.l1GF2EKQ006541%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r713 - in trunk: Collect Index Tokenize UI/GTK2/src	Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 16 16:02:14 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000706.html">[Pinot-svn] r712 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000708.html">[Pinot-svn] r714 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#707">[ date ]</a>
+              <a href="thread.html#707">[ thread ]</a>
+              <a href="subject.html#707">[ subject ]</a>
+              <a href="author.html#707">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-16 16:02:12 +0100 (Fri, 16 Feb 2007)
+New Revision: 713
+
+Added:
+   trunk/Tokenize/FilterUtils.cpp
+   trunk/Tokenize/FilterUtils.h
+Removed:
+   trunk/Utils/MboxParser.cpp
+   trunk/Utils/MboxParser.h
+Modified:
+   trunk/Collect/MboxCollector.cpp
+   trunk/Index/FilterWrapper.cpp
+   trunk/Index/FilterWrapper.h
+   trunk/Tokenize/Makefile.am
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+   trunk/Utils/Makefile.am
+Log:
+Moved FilterWrapper's non-indexing related methods to FilterUtils.
+The mbox filter obsoletes MboxParser. Updated MboxCollector and MboxHandler.
+
+
+Modified: trunk/Collect/MboxCollector.cpp
+===================================================================
+--- trunk/Collect/MboxCollector.cpp	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Collect/MboxCollector.cpp	2007-02-16 15:02:12 UTC (rev 713)
+@@ -19,9 +19,10 @@
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
+ 
+-#include &quot;MboxParser.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;FilterFactory.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;MboxCollector.h&quot;
+ 
+ using namespace std;
+@@ -43,9 +44,8 @@
+ Document *MboxCollector::retrieveUrl(const DocumentInfo &amp;docInfo)
+ {
+ 	Url thisUrl(docInfo.getLocation());
+-	string protocol = thisUrl.getProtocol();
+-	off_t messageOffset = 0;
+-	int partNum = 0;
++	string protocol(thisUrl.getProtocol());
++	string parameters(thisUrl.getParameters());
+ 
+ 	if (protocol != &quot;mailbox&quot;)
+ 	{
+@@ -53,36 +53,35 @@
+ 		return NULL;
+ 	}
+ 
+-	// Extract the offset
+-	string offset = StringManip::extractField(thisUrl.getParameters(), &quot;o=&quot;, &quot;&amp;p=&quot;);
+-	if (offset.empty() == true)
++	// Is there an offset and part number ?
++	if ((parameters.find(&quot;o=&quot;) == string::npos) ||
++		(parameters.find(&quot;p=&quot;) == string::npos))
+ 	{
+ 		return NULL;
+ 	}
+-	messageOffset = (off_t)atol(offset.c_str());
+-	// ...and the part number
+-	string number = StringManip::extractField(thisUrl.getParameters(), &quot;p=&quot;, &quot;&quot;);
+-	if (number.empty() == false)
++
++	// Get the mbox filter
++	Dijon::Filter *pFilter = Dijon::FilterFactory::getFilter(&quot;application/mbox&quot;);
++	if (pFilter == NULL)
+ 	{
+-		partNum = atoi(number.c_str());
++		return NULL;
+ 	}
+ 
+-	string directoryName = thisUrl.getLocation();
+-	string fileName = thisUrl.getFile();
+-	string fileLocation = directoryName;
+-	fileLocation += &quot;/&quot;;
+-	fileLocation += fileName;
++	Document *pMessage = new Document(docInfo);
++	if ((FilterUtils::feedFilter(*pMessage, pFilter) == false) ||
++		(pFilter-&gt;skip_to_document(parameters) == false))
++	{
++		delete pFilter;
++		return NULL;
++	}
+ 
+-	// Get a parser
+-	MboxParser boxParser(fileLocation, messageOffset, partNum);
+ 	// The first document should be the message we are interested in
+-	// FIXME: don't ignore the part number (p=...)
+-	const Document *pMessage = boxParser.getDocument();
+-	if (pMessage == NULL)
++	if (pFilter-&gt;has_documents() == true)
+ 	{
+-		return NULL;
++		FilterUtils::populateDocument(*pMessage, pFilter);
+ 	}
+ 
+-	// Copy the message
+-	return new Document(*pMessage);
++	delete pFilter;
++
++	return pMessage;
+ }
+
+Modified: trunk/Index/FilterWrapper.cpp
+===================================================================
+--- trunk/Index/FilterWrapper.cpp	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Index/FilterWrapper.cpp	2007-02-16 15:02:12 UTC (rev 713)
+@@ -17,10 +17,10 @@
+  */
+ 
+ #include &lt;iostream&gt;
+-#include &lt;map&gt;
+ 
+ #include &quot;Url.h&quot;
+ #include &quot;FilterFactory.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ 
+ using std::cout;
+@@ -28,7 +28,6 @@
+ using std::endl;
+ using std::string;
+ using std::set;
+-using std::map;
+ using namespace Dijon;
+ 
+ FilterWrapper::FilterWrapper()
+@@ -39,108 +38,6 @@
+ {
+ }
+ 
+-bool FilterWrapper::feedFilter(const Document &amp;doc, Dijon::Filter *pFilter)
+-{
+-	string location(doc.getLocation());
+-	Url urlObj(location);
+-	string fileName;
+-	unsigned int dataLength = 0;
+-	const char *pData = doc.getData(dataLength);
+-	bool fedInput = false, success = false;
+-
+-	if (pFilter == NULL)
+-	{
+-		return false;
+-	}
+-
+-	if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
+-		(location .length() &gt; 7))
+-	{
+-		fileName = location.substr(7);
+-	}
+-
+-	// Prefer feeding the data
+-	if (((dataLength &gt; 0) &amp;&amp; (pData != NULL)) &amp;&amp;
+-		(pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_DATA) == true))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterWrapper::getFilter: feeding data&quot; &lt;&lt; endl;
+-#endif
+-		fedInput = pFilter-&gt;set_document_data(pData, dataLength);
+-	}
+-	// ... to feeding the file
+-	if ((fedInput == false) &amp;&amp;
+-		(fileName.empty() == false))
+-	{ 
+-		if (pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_FILE_NAME) == true)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;FilterWrapper::getFilter: feeding file &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-			fedInput = pFilter-&gt;set_document_file(fileName);
+-		}
+-		// ...and to feeding the file's contents
+-		if ((fedInput == false) &amp;&amp;
+-			(pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_DATA) == true))
+-		{
+-			Document docCopy(doc);
+-
+-			if (docCopy.setDataFromFile(fileName) == false)
+-			{
+-				cerr &lt;&lt; &quot;Couldn't load &quot; &lt;&lt; fileName &lt;&lt; endl;
+-
+-				return false;
+-			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;FilterWrapper::getFilter: feeding contents of file &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-
+-			pData = docCopy.getData(dataLength);
+-			if ((dataLength &gt; 0) &amp;&amp;
+-				(pData != NULL))
+-			{
+-				fedInput = pFilter-&gt;set_document_data(pData, dataLength);
+-			}
+-		}
+-	}
+-
+-	if (fedInput == false)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't feed filter for &quot; &lt;&lt; doc.getLocation() &lt;&lt; endl;
+-
+-		return false;
+-	}
+-
+-	return true;
+-}
+-
+-string FilterWrapper::stripMarkup(const string &amp;text)
+-{
+-	Dijon::Filter *pFilter = Dijon::FilterFactory::getFilter(&quot;text/xml&quot;);
+-	string strippedText;
+-
+-	if (pFilter == NULL)
+-	{
+-		return &quot;&quot;;
+-	}
+-
+-	Document doc;
+-	doc.setData(text.c_str(), text.length());
+-	if (feedFilter(doc, pFilter) == true)
+-	{
+-		const map&lt;string, string&gt; &amp;metaData = pFilter-&gt;get_meta_data();
+-		map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;content&quot;);
+-		if (contentIter != metaData.end())
+-		{
+-			strippedText = contentIter-&gt;second;
+-		}
+-	}
+-
+-	delete pFilter;
+-
+-	return strippedText;
+-}
+-
+ bool FilterWrapper::indexDocument(IndexInterface &amp;index, const Document &amp;doc,
+ 	const set&lt;string&gt; &amp;labels, unsigned int &amp;docId)
+ {
+@@ -149,7 +46,6 @@
+ 	return filterDocument(index, docCopy, 0, labels, docId, false);
+ }
+ 
+-/// Updates the given document.
+ bool FilterWrapper::updateDocument(unsigned int docId, IndexInterface &amp;index, const Document &amp;doc)
+ {
+ 	Document docCopy(doc);
+@@ -170,7 +66,7 @@
+ 		return false;
+ 	}
+ 
+-	if (feedFilter(doc, pFilter) == false)
++	if (FilterUtils::feedFilter(doc, pFilter) == false)
+ 	{
+ 		delete pFilter;
+ 
+@@ -180,67 +76,20 @@
+ 	while (pFilter-&gt;has_documents() == true)
+ 	{
+ 		Document filteredDoc(doc.getTitle(), doc.getLocation(), &quot;text/plain&quot;, doc.getLanguage());
+-		string uri, ipath;
+-		unsigned int dataLength = 0;
+ 
+ 		if (pFilter-&gt;next_document() == false)
+ 		{
+ 			break;
+ 		}
+-		cout &lt;&lt; &quot;##### Document &quot; &lt;&lt; ++count &lt;&lt; endl;
+ 
+-		const map&lt;string, string&gt; &amp;metaData = pFilter-&gt;get_meta_data();
+-		for (map&lt;string, string&gt;::const_iterator metaIter = metaData.begin();
+-			metaIter != metaData.end(); ++metaIter)
++		if (FilterUtils::populateDocument(filteredDoc, pFilter) == false)
+ 		{
+-			if (metaIter-&gt;first == &quot;content&quot;)
+-			{
+-				filteredDoc.setData(metaIter-&gt;second.c_str(), metaIter-&gt;second.length());
+-
+-				cout &lt;&lt; &quot;Set &quot; &lt;&lt; metaIter-&gt;second.length() &lt;&lt; &quot; characters of data&quot; &lt;&lt; endl;
+-			}
+-			else if (metaIter-&gt;first == &quot;ipath&quot;)
+-			{
+-				ipath = metaIter-&gt;second;
+-			}
+-			else if (metaIter-&gt;first == &quot;language&quot;)
+-			{
+-				filteredDoc.setLanguage(metaIter-&gt;second);
+-			}
+-			else if (metaIter-&gt;first == &quot;mimetype&quot;)
+-			{
+-				filteredDoc.setType(metaIter-&gt;second);
+-			}
+-			else if (metaIter-&gt;first == &quot;size&quot;)
+-			{
+-				filteredDoc.setSize((off_t)atoi(metaIter-&gt;second.c_str()));
+-			}
+-			else if (metaIter-&gt;first == &quot;title&quot;)
+-			{
+-				filteredDoc.setTitle(metaIter-&gt;second);
+-			}
+-			else if (metaIter-&gt;first == &quot;uri&quot;)
+-			{
+-				uri = metaIter-&gt;second;
+-			}
++			continue;
+ 		}
+ 
+-		if (uri.empty() == false)
+-		{
+-			filteredDoc.setLocation(uri);
+-		}
+-		if (ipath.empty() == false)
+-		{
+-			filteredDoc.setLocation(filteredDoc.getLocation() + &quot;?&quot; + ipath);
+-		}
+-		cout &lt;&lt; &quot;Location: &quot; &lt;&lt; filteredDoc.getLocation() &lt;&lt; endl;
+-		cout &lt;&lt; &quot;MIME type: &quot; &lt;&lt; filteredDoc.getType() &lt;&lt; endl;
+-
+ 		// Pass it down to another filter ?
+ 		if (filteredDoc.getType() != &quot;text/plain&quot;)
+ 		{
+-			cout &lt;&lt; &quot;Passing down to another filter&quot; &lt;&lt; endl;
+-
+ 			filterDocument(index, filteredDoc, count, labels, docId, doUpdate);
+ 		}
+ 		else
+@@ -262,4 +111,3 @@
+ 
+ 	return success;
+ }
+-
+
+Modified: trunk/Index/FilterWrapper.h
+===================================================================
+--- trunk/Index/FilterWrapper.h	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Index/FilterWrapper.h	2007-02-16 15:02:12 UTC (rev 713)
+@@ -32,12 +32,6 @@
+ 	public:
+ 		virtual ~FilterWrapper();
+ 
+-		/// Feeds a document's data to a filter.
+-		static bool feedFilter(const Document &amp;doc, Dijon::Filter *pFilter);
+-
+-		/// Strips markup from a piece of text.
+-		static std::string stripMarkup(const std::string &amp;text);
+-
+ 		/// Indexes the given data.
+ 		static bool indexDocument(IndexInterface &amp;index, const Document &amp;doc,
+ 			const std::set&lt;std::string&gt; &amp;labels, unsigned int &amp;docId);
+
+Added: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Tokenize/FilterUtils.cpp	2007-02-16 15:02:12 UTC (rev 713)
+@@ -0,0 +1,212 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;iostream&gt;
++#include &lt;map&gt;
++
++#include &quot;Url.h&quot;
++#include &quot;FilterFactory.h&quot;
++#include &quot;FilterUtils.h&quot;
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::string;
++using std::set;
++using std::map;
++using namespace Dijon;
++
++FilterUtils::FilterUtils()
++{
++}
++
++FilterUtils::~FilterUtils()
++{
++}
++
++bool FilterUtils::feedFilter(const Document &amp;doc, Dijon::Filter *pFilter)
++{
++	string location(doc.getLocation());
++	Url urlObj(location);
++	string fileName;
++	unsigned int dataLength = 0;
++	const char *pData = doc.getData(dataLength);
++	bool fedInput = false, success = false;
++
++	if (pFilter == NULL)
++	{
++		return false;
++	}
++
++	if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
++		(location .length() &gt; 7))
++	{
++		fileName = location.substr(7);
++	}
++	else if ((urlObj.getProtocol() == &quot;mailbox&quot;) &amp;&amp;
++		(location .length() &gt; 10))
++	{
++		fileName = location.substr(10);
++		string::size_type pos = fileName.find(&quot;?&quot;);
++		if (pos != string::npos)
++		{
++			fileName.resize(pos);
++		}
++	}
++
++	// Prefer feeding the data
++	if (((dataLength &gt; 0) &amp;&amp; (pData != NULL)) &amp;&amp;
++		(pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_DATA) == true))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;FilterUtils::getFilter: feeding data&quot; &lt;&lt; endl;
++#endif
++		fedInput = pFilter-&gt;set_document_data(pData, dataLength);
++	}
++	// ... to feeding the file
++	if ((fedInput == false) &amp;&amp;
++		(fileName.empty() == false))
++	{ 
++		if (pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_FILE_NAME) == true)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;FilterUtils::getFilter: feeding file &quot; &lt;&lt; fileName &lt;&lt; endl;
++#endif
++			fedInput = pFilter-&gt;set_document_file(fileName);
++		}
++		// ...and to feeding the file's contents
++		if ((fedInput == false) &amp;&amp;
++			(pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_DATA) == true))
++		{
++			Document docCopy(doc);
++
++			if (docCopy.setDataFromFile(fileName) == false)
++			{
++				cerr &lt;&lt; &quot;Couldn't load &quot; &lt;&lt; fileName &lt;&lt; endl;
++
++				return false;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;FilterUtils::getFilter: feeding contents of file &quot; &lt;&lt; fileName &lt;&lt; endl;
++#endif
++
++			pData = docCopy.getData(dataLength);
++			if ((dataLength &gt; 0) &amp;&amp;
++				(pData != NULL))
++			{
++				fedInput = pFilter-&gt;set_document_data(pData, dataLength);
++			}
++		}
++	}
++
++	if (fedInput == false)
++	{
++		cerr &lt;&lt; &quot;Couldn't feed filter for &quot; &lt;&lt; doc.getLocation() &lt;&lt; endl;
++
++		return false;
++	}
++
++	return true;
++}
++
++bool FilterUtils::populateDocument(Document &amp;doc, Dijon::Filter *pFilter)
++{
++	string uri, ipath;
++
++	if (pFilter == NULL)
++	{
++		return false;
++	}
++
++	const map&lt;string, string&gt; &amp;metaData = pFilter-&gt;get_meta_data();
++	for (map&lt;string, string&gt;::const_iterator metaIter = metaData.begin();
++		metaIter != metaData.end(); ++metaIter)
++	{
++		if (metaIter-&gt;first == &quot;content&quot;)
++		{
++			doc.setData(metaIter-&gt;second.c_str(), metaIter-&gt;second.length());
++#ifdef DEBUG
++			cout &lt;&lt; &quot;FilterUtils:populateDocument: set &quot; &lt;&lt; metaIter-&gt;second.length()
++				&lt;&lt; &quot; characters of data&quot; &lt;&lt; endl;
++#endif
++		}
++		else if (metaIter-&gt;first == &quot;ipath&quot;)
++		{
++			ipath = metaIter-&gt;second;
++		}
++		else if (metaIter-&gt;first == &quot;language&quot;)
++		{
++			doc.setLanguage(metaIter-&gt;second);
++		}
++		else if (metaIter-&gt;first == &quot;mimetype&quot;)
++		{
++			doc.setType(metaIter-&gt;second);
++		}
++		else if (metaIter-&gt;first == &quot;size&quot;)
++		{
++			doc.setSize((off_t)atoi(metaIter-&gt;second.c_str()));
++		}
++		else if (metaIter-&gt;first == &quot;title&quot;)
++		{
++			doc.setTitle(metaIter-&gt;second);
++		}
++		else if (metaIter-&gt;first == &quot;uri&quot;)
++		{
++			uri = metaIter-&gt;second;
++		}
++	}
++
++	if (uri.empty() == false)
++	{
++		doc.setLocation(uri);
++	}
++	if (ipath.empty() == false)
++	{
++		doc.setLocation(doc.getLocation() + &quot;?&quot; + ipath);
++	}
++
++	return true;
++}
++
++string FilterUtils::stripMarkup(const string &amp;text)
++{
++	Dijon::Filter *pFilter = Dijon::FilterFactory::getFilter(&quot;text/xml&quot;);
++	string strippedText;
++
++	if (pFilter == NULL)
++	{
++		return &quot;&quot;;
++	}
++
++	Document doc;
++	doc.setData(text.c_str(), text.length());
++	if ((feedFilter(doc, pFilter) == true) &amp;&amp;
++		(pFilter-&gt;next_document() == true))
++	{
++		const map&lt;string, string&gt; &amp;metaData = pFilter-&gt;get_meta_data();
++		map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;content&quot;);
++		if (contentIter != metaData.end())
++		{
++			strippedText = contentIter-&gt;second;
++		}
++	}
++
++	delete pFilter;
++
++	return strippedText;
++}
+
+Added: trunk/Tokenize/FilterUtils.h
+===================================================================
+--- trunk/Tokenize/FilterUtils.h	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Tokenize/FilterUtils.h	2007-02-16 15:02:12 UTC (rev 713)
+@@ -0,0 +1,52 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _FILTER_UTILS_H
++#define _FILTER_UTILS_H
++
++#include &lt;string&gt;
++#include &lt;set&gt;
++
++#include &quot;Document.h&quot;
++#include &quot;Filter.h&quot;
++
++/// Utility functions for dealing with Dijon filters.
++class FilterUtils
++{
++	public:
++		virtual ~FilterUtils();
++
++		/// Feeds a document's data to a filter.
++		static bool feedFilter(const Document &amp;doc, Dijon::Filter *pFilter);
++
++		/// Populates a document based on metadata extracted by the filter.
++		static bool populateDocument(Document &amp;doc, Dijon::Filter *pFilter);
++
++		/// Strips markup from a piece of text.
++		static std::string stripMarkup(const std::string &amp;text);
++
++	protected:
++		FilterUtils();
++
++	private:
++		FilterUtils(const FilterUtils &amp;other);
++		FilterUtils &amp;operator=(const FilterUtils &amp;other);
++
++};
++
++#endif // _FILTER_UTILS_H
+
+Modified: trunk/Tokenize/Makefile.am
+===================================================================
+--- trunk/Tokenize/Makefile.am	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Tokenize/Makefile.am	2007-02-16 15:02:12 UTC (rev 713)
+@@ -1,6 +1,7 @@
+ # Process this file with automake to produce Makefile.in
+ 
+ noinst_HEADERS = \
++	FilterUtils.h \
+ 	Tokenizer.h \
+ 	filters/ExternalFilter.h \
+ 	filters/HtmlFilter.h \
+@@ -38,13 +39,14 @@
+ libtaglibfilter_la_LIBADD = -L../Utils -lBasicUtils
+ 
+ libTokenize_la_SOURCES = \
++	FilterUtils.cpp \
+ 	Tokenizer.cpp \
+ 	filters/FilterFactory.cc \
+ 	filters/HtmlFilter.cc \
+ 	filters/TextFilter.cc \
+ 	filters/XmlFilter.cc
+ 
+-AM_CXXFLAGS = -fPIC -I$(srcdir)/../Utils \
++AM_CXXFLAGS = -fPIC -I$(srcdir)/../Utils -Ifilters \
+ 	@GMIME_CFLAGS@ @XML_CFLAGS@ @TAGLIB_CFLAGS@ -D_DYNAMIC_DIJON_FILTERS \
+ 	-D_DIJON_EXTERNALFILTER_CONFFILE=\&quot;$(sysconfdir)/pinot/external-filters.xml\&quot;
+ 
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2007-02-16 15:02:12 UTC (rev 713)
+@@ -29,6 +29,8 @@
+ #include &quot;Timer.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;FilterFactory.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;MboxHandler.h&quot;
+@@ -123,11 +125,25 @@
+ 		return false;
+ 	}
+ 
+-	// Get a parser
+-	MboxParser boxParser(fileName, mboxOffset);
++	// Get the mbox filter
++	Dijon::Filter *pFilter = Dijon::FilterFactory::getFilter(&quot;application/mbox&quot;);
++	if (pFilter == NULL)
++	{
++		return false;
++	}
+ 
+-	bool indexedFile = parseMailAccount(boxParser, sourceLabel);
++	Document emptyDoc;
++	emptyDoc.setLocation(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
++	if (FilterUtils::feedFilter(emptyDoc, pFilter) == false)
++	{
++		delete pFilter;
++		return false;
++	}
+ 
++	bool indexedFile = parseMailAccount(pFilter, sourceLabel);
++
++	delete pFilter;
++
+ 	// Flush the index
+ 	m_index.flush();
+ 
+@@ -137,11 +153,10 @@
+ 	return indexedFile;
+ }
+ 
+-bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, const string &amp;sourceLabel)
++bool MboxHandler::parseMailAccount(Dijon::Filter *pFilter, const string &amp;sourceLabel)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
+ 	set&lt;string&gt; labels;
+-	const Document *pMessage = boxParser.getDocument();
+ 	char sourceStr[64];
+ 	unsigned int docNum = 0;
+ 	bool indexedFile = false;
+@@ -159,16 +174,20 @@
+ 	labels.insert(sourceLabel);
+ 
+ 	// Parse the mbox file
+-	while (pMessage != NULL)
++	while (pFilter-&gt;next_document() == true)
+ 	{
++		Document currentMessage;
++
++		FilterUtils::populateDocument(currentMessage, pFilter);
++
+ 		// Has this message already been indexed ?
+-		unsigned int docId = m_index.hasDocument(pMessage-&gt;getLocation());
++		unsigned int docId = m_index.hasDocument(currentMessage.getLocation());
+ 		if (docId == 0)
+ 		{
+ 			m_index.setStemmingMode(IndexInterface::STORE_BOTH);
+ 
+ 			unsigned int docId = 0;
+-			indexedFile = FilterWrapper::indexDocument(m_index, *pMessage, labels, docId);
++			indexedFile = FilterWrapper::indexDocument(m_index, currentMessage, labels, docId);
+ #ifdef DEBUG
+ 			if (indexedFile == false)
+ 			{
+@@ -190,15 +209,6 @@
+ 			}
+ 		}
+ 
+-		// More messages ?
+-		if (boxParser.nextMessage() == false)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: no more messages from parser&quot; &lt;&lt; endl;
+-#endif
+-			break;
+-		}
+-		pMessage = boxParser.getDocument();
+ 		++docNum;
+ 	}
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/UI/GTK2/src/MboxHandler.h	2007-02-16 15:02:12 UTC (rev 713)
+@@ -25,7 +25,7 @@
+ #include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;IndexedDocument.h&quot;
+-#include &quot;MboxParser.h&quot;
++#include &quot;Filter.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+ #include &quot;XapianIndex.h&quot;
+@@ -76,7 +76,7 @@
+ 		bool indexMessages(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount,
+ 			off_t mboxOffset);
+ 
+-		bool parseMailAccount(MboxParser &amp;boxParser, const std::string &amp;sourceLabel);
++		bool parseMailAccount(Dijon::Filter *pFilter, const std::string &amp;sourceLabel);
+ 
+ 		bool deleteMessages(std::set&lt;unsigned int&gt; &amp;docIdList);
+ 
+
+Modified: trunk/Utils/Makefile.am
+===================================================================
+--- trunk/Utils/Makefile.am	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Utils/Makefile.am	2007-02-16 15:02:12 UTC (rev 713)
+@@ -6,7 +6,6 @@
+ 	DocumentInfo.h \
+ 	IndexedDocument.h \
+ 	Languages.h \
+-	MboxParser.h \
+ 	MIMEScanner.h \
+ 	NLS.h \
+ 	Result.h \
+@@ -35,7 +34,6 @@
+ libUtils_la_SOURCES = \
+ 	IndexedDocument.cpp \
+ 	Languages.cpp \
+-	MboxParser.cpp \
+ 	MIMEScanner.cpp \
+ 	Result.cpp \
+ 	Timer.cpp \
+
+Deleted: trunk/Utils/MboxParser.cpp
+===================================================================
+--- trunk/Utils/MboxParser.cpp	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Utils/MboxParser.cpp	2007-02-16 15:02:12 UTC (rev 713)
+@@ -1,401 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;fcntl.h&gt;
+-#include &lt;regex.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;algorithm&gt;
+-
+-#include &lt;gmime/gmime.h&gt;
+-
+-#include &quot;TimeConverter.h&quot;
+-#include &quot;Url.h&quot;
+-#include &quot;MboxParser.h&quot;
+-
+-using std::cout;
+-using std::endl;
+-
+-MboxParser::MboxParser(const string &amp;fileName, off_t mboxOffset, int partNum) :
+-	m_fileName(fileName),
+-	m_fd(-1),
+-	m_pMboxStream(NULL),
+-	m_pParser(NULL),
+-	m_pMimeMessage(NULL),
+-	m_partsCount(-1),
+-	m_partNum(partNum),
+-	m_messageStart(mboxOffset),
+-	m_pCurrentDocument(NULL)
+-{
+-	if (initialize() == true)
+-	{
+-		DocumentInfo docInfo;
+-
+-		// Extract the first message
+-		extractMessage(&quot;&quot;);
+-	}
+-}
+-
+-MboxParser::~MboxParser()
+-{
+-	if (m_pMimeMessage != NULL)
+-	{
+-		g_mime_object_unref(GMIME_OBJECT(m_pMimeMessage));
+-	}
+-	if (m_pCurrentDocument != NULL)
+-	{
+-		delete m_pCurrentDocument;
+-	}
+-
+-	finalize();
+-}
+-
+-bool MboxParser::initialize(void)
+-{
+-	// Open the mbox file
+-	m_fd = open(m_fileName.c_str(), O_RDONLY);
+-	if (m_fd &lt; 0)
+-	{
+-		return false;
+-	}
+-
+-	// Initialize gmime
+-	g_mime_init(GMIME_INIT_FLAG_UTF8);
+-
+-	// Create a stream
+-	if (m_messageStart &gt; 0)
+-	{
+-		struct stat fileStat;
+-
+-		if ((fstat(m_fd, &amp;fileStat) == 0) &amp;&amp;
+-			(!S_ISREG(fileStat.st_mode)))
+-		{
+-			// This is not a file !
+-			return false;
+-		}
+-
+-		if (m_messageStart &gt; fileStat.st_size)
+-		{
+-			// This offset doesn't make sense !
+-			m_messageStart = 0;
+-		}
+-
+-		m_pMboxStream = g_mime_stream_fs_new_with_bounds(m_fd, m_messageStart, fileStat.st_size);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::initialize: stream starts at offset &quot; &lt;&lt; m_messageStart &lt;&lt; endl;
+-#endif
+-	}
+-	else
+-	{
+-		m_pMboxStream = g_mime_stream_fs_new(m_fd);
+-	}
+-
+-	// And a parser
+-	m_pParser = g_mime_parser_new();
+-	if ((m_pMboxStream != NULL) &amp;&amp;
+-		(m_pParser != NULL))
+-	{
+-		g_mime_parser_init_with_stream(m_pParser, m_pMboxStream);
+-		g_mime_parser_set_respect_content_length(m_pParser, TRUE);
+-		// Scan for mbox From-lines
+-		g_mime_parser_set_scan_from(m_pParser, TRUE);
+-
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-void MboxParser::finalize(void)
+-{
+-	if (m_pParser != NULL)
+-	{
+-		// FIXME: does the parser close the stream ?
+-		g_object_unref(G_OBJECT(m_pParser));
+-	}
+-	else if (m_pMboxStream != NULL)
+-	{
+-		g_object_unref(G_OBJECT(m_pMboxStream));
+-	}
+-	if (m_fd &gt;= 0)
+-	{
+-		close(m_fd);
+-	}
+-	g_mime_shutdown();
+-}
+-
+-char *MboxParser::extractPart(GMimeObject *part, string &amp;contentType, ssize_t &amp;partLen)
+-{
+-	char *pBuffer = NULL;
+-
+-	if (part == NULL)
+-	{
+-		return NULL;
+-	}
+-
+-	// Message parts may be nested
+-	while (GMIME_IS_MESSAGE_PART(part))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: nested message part&quot; &lt;&lt; endl;
+-#endif
+-		GMimeMessage *partMessage = g_mime_message_part_get_message(GMIME_MESSAGE_PART(part));
+-		part = g_mime_message_get_mime_part(partMessage);
+-		g_mime_object_unref(GMIME_OBJECT(partMessage));
+-	}
+-
+-	// Is this a multipart ?
+-	if (GMIME_IS_MULTIPART(part))
+-	{
+-		m_partsCount = g_mime_multipart_get_number(GMIME_MULTIPART(part));
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: message has &quot; &lt;&lt; m_partsCount &lt;&lt; &quot; parts&quot; &lt;&lt; endl;
+-#endif
+-		for (int partNum = max(m_partNum, 0); partNum &lt; m_partsCount; ++partNum)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxParser::extractPart: extracting part &quot; &lt;&lt; partNum &lt;&lt; endl;
+-#endif
+-			
+-			GMimeObject *multiMimePart = g_mime_multipart_get_part(GMIME_MULTIPART(part), partNum);
+-			if (multiMimePart == NULL)
+-			{
+-				continue;
+-			}
+-
+-			char *pPart = extractPart(multiMimePart, contentType, partLen);
+-			g_mime_object_unref(multiMimePart);
+-			if (pPart != NULL)
+-			{
+-				m_partNum = ++partNum;
+-				return pPart;
+-			}
+-		}
+-
+-		// None of the parts were suitable
+-		m_partsCount = m_partNum = -1;
+-	}
+-
+-	if (!GMIME_IS_PART(part))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: not a part&quot; &lt;&lt; endl;
+-#endif
+-		return NULL;
+-	}
+-	GMimePart *mimePart = GMIME_PART(part);
+-
+-	// Check the content type
+-	const GMimeContentType *mimeType = g_mime_part_get_content_type(mimePart);
+-	// Set this for caller
+-	char *partType = g_mime_content_type_to_string(mimeType);
+-	if (partType != NULL)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: type is &quot; &lt;&lt; partType &lt;&lt; endl;
+-#endif
+-		contentType = partType;
+-		g_free(partType);
+-	}
+-
+-	GMimePartEncodingType encodingType = g_mime_part_get_encoding(mimePart);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxParser::extractPart: encoding is &quot; &lt;&lt; encodingType &lt;&lt; endl;
+-#endif
+-
+-	// Write the part to memory
+-	g_mime_part_set_encoding(mimePart, GMIME_PART_ENCODING_QUOTEDPRINTABLE);
+-	GMimeStream *memStream = g_mime_stream_mem_new();
+-	GMimeDataWrapper *dataWrapper = g_mime_part_get_content_object(mimePart);
+-	if (dataWrapper != NULL)
+-	{
+-		ssize_t writeLen = g_mime_data_wrapper_write_to_stream(dataWrapper, memStream);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: wrote &quot; &lt;&lt; writeLen &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
+-#endif
+-		g_object_unref(dataWrapper);
+-	}
+-	g_mime_stream_flush(memStream);
+-	partLen = g_mime_stream_length(memStream);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxParser::extractPart: part is &quot; &lt;&lt; partLen &lt;&lt; &quot; bytes long&quot; &lt;&lt; endl;
+-#endif
+-
+-	pBuffer = (char*)malloc(partLen + 1);
+-	pBuffer[partLen] = '\0';
+-	g_mime_stream_reset(memStream);
+-	ssize_t readLen = g_mime_stream_read(memStream, pBuffer, partLen);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxParser::extractPart: read &quot; &lt;&lt; readLen &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
+-#endif
+-	g_mime_stream_unref(memStream);
+-
+-	return pBuffer;
+-}
+-
+-bool MboxParser::extractMessage(const string &amp;subject)
+-{
+-	string msgSubject(subject), contentType;
+-	char *pPart = NULL;
+-	ssize_t partLength = 0;
+-
+-	while (g_mime_stream_eos(m_pMboxStream) == FALSE)
+-	{
+-		// Does the previous message have parts left to parse ?
+-		if (m_partsCount == -1)
+-		{
+-			// No, it doesn't
+-			if (m_pMimeMessage != NULL)
+-			{
+-				g_mime_object_unref(GMIME_OBJECT(m_pMimeMessage));
+-				m_pMimeMessage = NULL;
+-			}
+-
+-			// Get the next message
+-			m_pMimeMessage = g_mime_parser_construct_message(m_pParser);
+-
+-			m_messageStart = g_mime_parser_get_from_offset(m_pParser);
+-			off_t messageEnd = g_mime_parser_tell(m_pParser);
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxParser::extractMessage: message between offsets &quot; &lt;&lt; m_messageStart
+-				&lt;&lt; &quot; and &quot; &lt;&lt; messageEnd &lt;&lt; endl;
+-#endif
+-			if (messageEnd &gt; m_messageStart)
+-			{
+-				// FIXME: this only applies to Mozilla
+-				const char *pMozStatus = g_mime_message_get_header(m_pMimeMessage, &quot;X-Mozilla-Status&quot;);
+-				if (pMozStatus != NULL)
+-				{
+-					long int mozStatus = strtol(pMozStatus, NULL, 16);
+-					// Watch out for Mozilla specific flags :
+-					// MSG_FLAG_EXPUNGED, MSG_FLAG_EXPIRED
+-					// They are defined in mailnews/MailNewsTypes.h and msgbase/nsMsgMessageFlags.h
+-					if ((mozStatus &amp; 0x0008) ||
+-						(mozStatus &amp; 0x0040))
+-					{
+-#ifdef DEBUG
+-						cout &lt;&lt; &quot;MboxParser::extractMessage: flagged by Mozilla&quot; &lt;&lt; endl;
+-#endif
+-						continue;
+-					}
+-				}
+-
+-				// How old is this message ?
+-				const char *pDate = g_mime_message_get_header(m_pMimeMessage, &quot;Date&quot;);
+-				if (pDate != NULL)
+-				{
+-					m_messageDate = pDate;
+-				}
+-				else
+-				{
+-					m_messageDate = TimeConverter::toTimestamp(time(NULL));
+-				}
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;MboxParser::extractMessage: message date is &quot; &lt;&lt; m_messageDate &lt;&lt; endl;
+-#endif
+-
+-				// Extract the subject
+-				const char *pSubject = g_mime_message_get_header(m_pMimeMessage, &quot;Subject&quot;);
+-				if (pSubject != NULL)
+-				{
+-					msgSubject = pSubject;
+-				}
+-			}
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractMessage: message subject is &quot; &lt;&lt; msgSubject &lt;&lt; endl;
+-#endif
+-
+-		if (m_pMimeMessage != NULL)
+-		{
+-			// Get the top-level MIME part in the message
+-			GMimeObject *pMimePart = g_mime_message_get_mime_part(m_pMimeMessage);
+-			if (pMimePart != NULL)
+-			{
+-				// Extract the part's text
+-				pPart = extractPart(pMimePart, contentType, partLength);
+-				if (pPart != NULL)
+-				{
+-					string location;
+-					char posStr[64];
+-
+-					// New location
+-					// FIXME: use the same scheme as Mozilla
+-					location = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
+-					location += m_fileName;
+-					location += &quot;?o=&quot;;
+-					snprintf(posStr, 64, &quot;%d&quot;, m_messageStart);
+-					location += posStr;
+-					location += &quot;&amp;p=&quot;;
+-					snprintf(posStr, 64, &quot;%d&quot;, max(m_partNum, 0));
+-					location += posStr;
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;MboxParser::extractMessage: message location is &quot; &lt;&lt; location &lt;&lt; endl;
+-#endif
+-
+-					// New document
+-					m_pCurrentDocument = new Document(msgSubject, location, contentType, &quot;&quot;);
+-					m_pCurrentDocument-&gt;setData(pPart, (unsigned int)partLength);
+-					m_pCurrentDocument-&gt;setTimestamp(m_messageDate);
+-					m_pCurrentDocument-&gt;setSize((off_t )partLength);
+-
+-					free(pPart);
+-					g_mime_object_unref(pMimePart);
+-
+-					return true;
+-				}
+-
+-				g_mime_object_unref(pMimePart);
+-			}
+-
+-			g_mime_object_unref(GMIME_OBJECT(m_pMimeMessage));
+-			m_pMimeMessage = NULL;
+-		}
+-
+-		// If we get there, no suitable parts were found
+-		m_partsCount = m_partNum = -1;
+-	}
+-
+-	return false;
+-}
+-
+-/// Jumps to the next message.
+-bool MboxParser::nextMessage(void)
+-{
+-	string subject;
+-
+-	if (m_pCurrentDocument != NULL)
+-	{
+-		subject = m_pCurrentDocument-&gt;getTitle();
+-
+-		delete m_pCurrentDocument;
+-		m_pCurrentDocument = NULL;
+-	}
+-
+-	return extractMessage(subject);
+-}
+-
+-/// Returns a pointer to the current message's document.
+-const Document *MboxParser::getDocument(void)
+-{
+-	// FIXME: this object can be invalidated by nextMessage() at any time;
+-	// use auto_ptr all the way ?
+-	return m_pCurrentDocument;
+-}
+
+Deleted: trunk/Utils/MboxParser.h
+===================================================================
+--- trunk/Utils/MboxParser.h	2007-02-10 06:11:30 UTC (rev 712)
++++ trunk/Utils/MboxParser.h	2007-02-16 15:02:12 UTC (rev 713)
+@@ -1,79 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _MBOX_PARSER_H
+-#define _MBOX_PARSER_H
+-
+-#include &lt;string&gt;
+-#include &lt;map&gt;
+-#include &lt;utility&gt;
+-#include &lt;set&gt;
+-
+-#include &lt;gmime/gmime-object.h&gt;
+-#include &lt;gmime/gmime-stream.h&gt;
+-#include &lt;gmime/gmime-parser.h&gt;
+-
+-#include &quot;Document.h&quot;
+-
+-using namespace std;
+-
+-/** A parser for mbox files. Each message is extracted and
+-  * returned in a separate document by getDocument(). The value
+-  * returned by getDocumentIncrement() enables to determine a new
+-  * message has been extracted and is ready to be tokenized.
+-  * See <A HREF="http://en.wikipedia.org/wiki/Mbox">http://en.wikipedia.org/wiki/Mbox</A> for details about the format.
+-  */
+-class MboxParser
+-{
+-	public:
+-		MboxParser(const string &amp;fileName, off_t mboxOffset = 0, int partNum = -1);
+-		virtual ~MboxParser();
+-
+-		/// Jumps to the next message.
+-		bool nextMessage(void);
+-
+-		/// Returns a pointer to the current message's document.
+-		virtual const Document *getDocument(void);
+-
+-	protected:
+-		string m_fileName;
+-		int m_fd;
+-		GMimeStream *m_pMboxStream;
+-		GMimeParser *m_pParser;
+-		GMimeMessage *m_pMimeMessage;
+-		int m_partsCount;
+-		int m_partNum;
+-		off_t m_messageStart;
+-		Document *m_pCurrentDocument;
+-		string m_messageDate;
+-
+-		bool initialize(void);
+-
+-		void finalize(void);
+-
+-		bool extractMessage(const string &amp;subject);
+-
+-		char *extractPart(GMimeObject *mimeObject, string &amp;contentType, ssize_t &amp;partLen);
+-
+-	private:
+-		MboxParser(const MboxParser &amp;other);
+-		MboxParser&amp; operator=(const MboxParser&amp; other);
+-
+-};
+-
+-#endif // _MBOX_PARSER_H
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000706.html">[Pinot-svn] r712 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000708.html">[Pinot-svn] r714 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#707">[ date ]</a>
+              <a href="thread.html#707">[ thread ]</a>
+              <a href="subject.html#707">[ subject ]</a>
+              <a href="author.html#707">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

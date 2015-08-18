@@ -1,0 +1,274 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1271 - trunk/Collect
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1271%20-%20trunk/Collect&In-Reply-To=%3C200805281426.m4SEQQsu017764%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001264.html">
+   <LINK REL="Next"  HREF="001266.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1271 - trunk/Collect</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1271%20-%20trunk/Collect&In-Reply-To=%3C200805281426.m4SEQQsu017764%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1271 - trunk/Collect">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed May 28 16:26:26 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001264.html">[Pinot-svn] r1270 - in trunk: SQL UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001266.html">[Pinot-svn] r1272 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1265">[ date ]</a>
+              <a href="thread.html#1265">[ thread ]</a>
+              <a href="subject.html#1265">[ subject ]</a>
+              <a href="author.html#1265">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-28 16:26:25 +0200 (Wed, 28 May 2008)
+New Revision: 1271
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+   trunk/Collect/DownloaderInterface.cpp
+   trunk/Collect/DownloaderInterface.h
+   trunk/Collect/NeonDownloader.cpp
+Log:
+Both Neon and CurlDownloader look for a Last-Modified header and use that as
+the document's timestamp.
+In DownloaderInterface, the timeout is in seconds.
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2008-05-23 15:31:01 UTC (rev 1270)
++++ trunk/Collect/CurlDownloader.cpp	2008-05-28 14:26:25 UTC (rev 1271)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -34,6 +34,7 @@
+ {
+ 	char *m_pContent;
+ 	size_t m_contentLen;
++	string m_lastModified;
+ };
+ 
+ size_t writeCallback(void *pData, size_t dataSize, size_t elementsCount, void *pStream)
+@@ -43,13 +44,10 @@
+ 
+ 	if (pStream == NULL)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;writeCallback: no stream&quot; &lt;&lt; endl;
+-#endif
+ 		return 0;
+ 	}
++	pInfo = (ContentInfo *)pStream;
+ 
+-	pInfo = (ContentInfo *)pStream;
+ 	char *pNewContent = (char*)realloc(pInfo-&gt;m_pContent, pInfo-&gt;m_contentLen + totalSize + 1);
+ 	if (pNewContent == NULL)
+ 	{
+@@ -84,6 +82,33 @@
+ 	return totalSize;
+ }
+ 
++size_t headerCallback(void *pData, size_t dataSize, size_t elementsCount, void *pStream)
++{
++	ContentInfo *pInfo = NULL;
++	size_t totalSize = elementsCount * dataSize;
++
++	if ((pStream == NULL) ||
++		(pData == NULL) ||
++		(totalSize == 0))
++	{
++		return 0;
++	}
++	pInfo = (ContentInfo *)pStream;
++
++	string header((const char*)pData, totalSize);
++	string::size_type pos = header.find(&quot;Last-Modified: &quot;);
++
++	if (pos != string::npos)
++	{
++		pInfo-&gt;m_lastModified = header.substr(15);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;headerCallback: Last-Modified &quot; &lt;&lt; pInfo-&gt;m_lastModified &lt;&lt; endl;
++#endif
++	}
++
++	return totalSize;
++}
++
+ unsigned int CurlDownloader::m_initialized = 0;
+ 
+ CurlDownloader::CurlDownloader() :
+@@ -187,6 +212,8 @@
+ #endif
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_WRITEFUNCTION, writeCallback);
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_WRITEDATA, pContentInfo);
++		curl_easy_setopt(pCurlHandler, CURLOPT_HEADERFUNCTION, headerCallback);
++		curl_easy_setopt(pCurlHandler, CURLOPT_HEADERDATA, pContentInfo);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: URL is &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
+@@ -237,11 +264,20 @@
+ 					pDocument-&gt;setType(pContentType);
+ 				}
+ 
++				// The Last-Modified date ?
++				if (pContentInfo-&gt;m_lastModified.empty() == false)
++				{
++					pDocument-&gt;setTimestamp(pContentInfo-&gt;m_lastModified);
++				}
++			}
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: document size is &quot; &lt;&lt; pContentInfo-&gt;m_contentLen &lt;&lt; endl;
++			else cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: no content for &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
+-			}
+ 		}
++		else
++		{
++			cerr &lt;&lt; &quot;Couldn't download &quot; &lt;&lt; url &lt;&lt; &quot;: &quot; &lt;&lt; curl_easy_strerror(res) &lt;&lt; endl;
++		}
+ 
+ 		if (pContentInfo-&gt;m_pContent != NULL)
+ 		{
+
+Modified: trunk/Collect/DownloaderInterface.cpp
+===================================================================
+--- trunk/Collect/DownloaderInterface.cpp	2008-05-23 15:31:01 UTC (rev 1270)
++++ trunk/Collect/DownloaderInterface.cpp	2008-05-28 14:26:25 UTC (rev 1271)
+@@ -118,7 +118,7 @@
+ }
+ 
+ /// Sets timeout.
+-void DownloaderInterface::setTimeout(unsigned int milliseconds)
++void DownloaderInterface::setTimeout(unsigned int seconds)
+ {
+-	m_timeout = milliseconds;
++	m_timeout = seconds;
+ }
+
+Modified: trunk/Collect/DownloaderInterface.h
+===================================================================
+--- trunk/Collect/DownloaderInterface.h	2008-05-23 15:31:01 UTC (rev 1270)
++++ trunk/Collect/DownloaderInterface.h	2008-05-28 14:26:25 UTC (rev 1271)
+@@ -45,7 +45,7 @@
+ 		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+ 
+ 		/// Sets timeout.
+-		virtual void setTimeout(unsigned int milliseconds);
++		virtual void setTimeout(unsigned int seconds);
+ 
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &amp;docInfo) = 0;
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2008-05-23 15:31:01 UTC (rev 1270)
++++ trunk/Collect/NeonDownloader.cpp	2008-05-28 14:26:25 UTC (rev 1271)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -158,13 +158,12 @@
+ 		return NULL;
+ 	}
+ 	Url urlObj(url);
+-	string protocol = urlObj.getProtocol();
+-	string hostName = urlObj.getHost();
+-	string location = urlObj.getLocation();
+-	string file = urlObj.getFile();
+-	string parameters = urlObj.getParameters();
+-	string locationHeaderValue;
+-	string contentTypeHeaderValue;
++	string protocol(urlObj.getProtocol());
++	string hostName(urlObj.getHost());
++	string location(urlObj.getLocation());
++	string file(urlObj.getFile());
++	string parameters(urlObj.getParameters());
++	string lastModifiedHeaderValue, locationHeaderValue, contentTypeHeaderValue;
+ 
+ 	// Create a session
+ 	ne_session *pSession = ne_session_create(protocol.c_str(), hostName.c_str(), 80); // urlObj.getPort());
+@@ -223,6 +222,7 @@
+ 	int requestStatus = NE_RETRY;
+ 	while (requestStatus == NE_RETRY)
+ 	{
++		lastModifiedHeaderValue.clear();
+ 		locationHeaderValue.clear();
+ 		contentTypeHeaderValue.clear();
+ 
+@@ -263,6 +263,11 @@
+ 			const char *pValue = ne_get_response_header(pRequest, &quot;Last-Modified&quot;);
+ 			if (pValue != NULL)
+ 			{
++				lastModifiedHeaderValue = pValue;
++			}
++			pValue = ne_get_response_header(pRequest, &quot;Location&quot;);
++			if (pValue != NULL)
++			{
+ 				locationHeaderValue = pValue;
+ 			}
+ 			pValue = ne_get_response_header(pRequest, &quot;Content-Type&quot;);
+@@ -372,6 +377,10 @@
+ 			pDocument-&gt;setData(pContent, contentLen);
+ 			pDocument-&gt;setLocation(url);
+ 			pDocument-&gt;setType(contentTypeHeaderValue);
++			if (lastModifiedHeaderValue.empty() == false)
++			{
++				pDocument-&gt;setTimestamp(lastModifiedHeaderValue);
++			}
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;NeonDownloader::retrieveUrl: document size is &quot; &lt;&lt; contentLen &lt;&lt; endl;
+ #endif
+@@ -385,3 +394,4 @@
+ 
+ 	return pDocument;
+ }
++
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001264.html">[Pinot-svn] r1270 - in trunk: SQL UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001266.html">[Pinot-svn] r1272 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1265">[ date ]</a>
+              <a href="thread.html#1265">[ thread ]</a>
+              <a href="subject.html#1265">[ subject ]</a>
+              <a href="author.html#1265">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

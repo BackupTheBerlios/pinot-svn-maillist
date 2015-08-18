@@ -1,0 +1,1097 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r999 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r999%20-%20trunk/Index&In-Reply-To=%3C200709300954.l8U9sVcM001186%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000992.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r999 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r999%20-%20trunk/Index&In-Reply-To=%3C200709300954.l8U9sVcM001186%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r999 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Sep 30 11:54:31 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000992.html">[Pinot-svn] r998 - in trunk: . Search UI/GTK2/src
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#993">[ date ]</a>
+              <a href="thread.html#993">[ thread ]</a>
+              <a href="subject.html#993">[ subject ]</a>
+              <a href="author.html#993">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-30 11:54:25 +0200 (Sun, 30 Sep 2007)
+New Revision: 999
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianDatabaseFactory.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+If database metadata is available (Xapian &gt;= 1.0.3), use it to store version and
+labels. New method reset() gets XapianDatabaseFactory::getDatabase() to
+overwrite and re-open the database.
+DBusXapianIndex makes use of the D-Bus method SetLabels.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-09-29 06:00:41 UTC (rev 998)
++++ trunk/Index/DBusXapianIndex.cpp	2007-09-30 09:54:25 UTC (rev 999)
+@@ -352,6 +352,74 @@
+ 	return XapianIndex::getDocumentInfo(docId, docInfo);
+ }
+ 
++/// Sets the list of known labels.
++bool DBusXapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
++{
++	gboolean updatedLabels = FALSE;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::setLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	dbus_uint32_t labelsCount = labels.size();
++	char **pLabels;
++	unsigned int labelIndex = 0;
++
++	pLabels = g_new(char *, labelsCount + 1);
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
++		++labelIndex;
++	}
++	pLabels[labelIndex] = NULL;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;SetLabels&quot;, &amp;pError,
++		G_TYPE_STRV, pLabels,
++		G_TYPE_INVALID,
++		G_TYPE_BOOLEAN, &amp;updatedLabels,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	// Free the array
++	g_strfreev(pLabels);
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	if (updatedLabels == TRUE)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++/// Gets the list of known labels.
++bool DBusXapianIndex::getLabels(set&lt;string&gt; &amp;labels) const
++{
++	reopen();
++
++	return XapianIndex::getLabels(labels);
++}
++
+ /// Determines whether a document has a label.
+ bool DBusXapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
+@@ -368,6 +436,149 @@
+ 	return XapianIndex::getDocumentLabels(docId, labels);
+ }
+ 
++/// Sets a document's labels.
++bool DBusXapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
++	bool resetLabels)
++{
++	bool updatedLabels = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	dbus_uint32_t labelsCount = labels.size();
++	char **pLabels;
++	unsigned int labelIndex = 0;
++
++	pLabels = g_new(char *, labelsCount + 1);
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
++		++labelIndex;
++	}
++	pLabels[labelIndex] = NULL;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentLabels&quot;, &amp;pError,
++		G_TYPE_UINT, docId,
++		G_TYPE_STRV, pLabels,
++		G_TYPE_BOOLEAN, (resetLabels == true ? TRUE : FALSE),
++		G_TYPE_INVALID,
++		G_TYPE_UINT, &amp;docId,
++		G_TYPE_INVALID) == TRUE)
++	{
++		updatedLabels = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	// Free the array
++	g_strfreev(pLabels);
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return updatedLabels;
++}
++
++/// Sets documents' labels.
++bool DBusXapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
++	const set&lt;string&gt; &amp;labels, bool resetLabels)
++{
++	gboolean updatedLabels = FALSE;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	dbus_uint32_t idsCount = docIds.size();
++	dbus_uint32_t labelsCount = labels.size();
++	char **pDocIds;
++	char **pLabels;
++	unsigned int idIndex = 0, labelIndex = 0;
++
++	pDocIds = g_new(char *, idsCount + 1);
++	pLabels = g_new(char *, labelsCount + 1);
++	for (set&lt;unsigned int&gt;::const_iterator idIter = docIds.begin();
++		idIter != docIds.end(); ++idIter)
++	{
++		pDocIds[idIndex] = g_strdup_printf(&quot;%u&quot;, *idIter); 
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: document &quot; &lt;&lt; pDocIds[idIndex] &lt;&lt; endl;
++#endif
++		++idIndex;
++	}
++	pDocIds[idIndex] = NULL;
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: label &quot; &lt;&lt; pLabels[labelIndex] &lt;&lt; endl;
++#endif
++		++labelIndex;
++	}
++	pLabels[labelIndex] = NULL;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentsLabels&quot;, &amp;pError,
++		G_TYPE_STRV, pDocIds,
++		G_TYPE_STRV, pLabels,
++		G_TYPE_BOOLEAN, (resetLabels == true ? TRUE : FALSE),
++		G_TYPE_INVALID,
++		G_TYPE_BOOLEAN, &amp;updatedLabels,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++		updatedLabels = false;
++	}
++
++	// Free the arrays
++	g_strfreev(pDocIds);
++	g_strfreev(pLabels);
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	if (updatedLabels == TRUE)
++	{
++		return true;
++	}
++
++	return false;
++}
++
+ /// Checks whether the given URL is in the index.
+ unsigned int DBusXapianIndex::hasDocument(const string &amp;url) const
+ {
+@@ -526,144 +737,6 @@
+ 	return updated;
+ }
+ 
+-/// Sets a document's labels.
+-bool DBusXapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
+-	bool resetLabels)
+-{
+-	bool updatedLabels = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	dbus_uint32_t labelsCount = labels.size();
+-	char **pLabels;
+-	unsigned int labelIndex = 0;
+-
+-	pLabels = g_new(char *, labelsCount + 1);
+-	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-		labelIter != labels.end(); ++labelIter)
+-	{
+-		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
+-		++labelIndex;
+-	}
+-	pLabels[labelIndex] = NULL;
+-
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentLabels&quot;, &amp;pError,
+-		G_TYPE_UINT, docId,
+-		G_TYPE_STRV, pLabels,
+-		G_TYPE_BOOLEAN, resetLabels,
+-		G_TYPE_INVALID,
+-		G_TYPE_UINT, &amp;docId,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		updatedLabels = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	// Free the array
+-	g_strfreev(pLabels);
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return updatedLabels;
+-}
+-
+-/// Sets documents' labels.
+-bool DBusXapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
+-	const set&lt;string&gt; &amp;labels, bool resetLabels)
+-{
+-	bool updatedLabels = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	dbus_uint32_t idsCount = docIds.size();
+-	dbus_uint32_t labelsCount = labels.size();
+-	char **pDocIds;
+-	char **pLabels;
+-	unsigned int idIndex = 0, labelIndex = 0;
+-
+-	pDocIds = g_new(char *, idsCount + 1);
+-	pLabels = g_new(char *, labelsCount + 1);
+-	for (set&lt;unsigned int&gt;::const_iterator idIter = docIds.begin();
+-		idIter != docIds.end(); ++idIter)
+-	{
+-		pDocIds[idIndex] = g_strdup_printf(&quot;%u&quot;, *idIter); 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: document &quot; &lt;&lt; pDocIds[idIndex] &lt;&lt; endl;
+-#endif
+-		++idIndex;
+-	}
+-	pDocIds[idIndex] = NULL;
+-	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-		labelIter != labels.end(); ++labelIter)
+-	{
+-		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: label &quot; &lt;&lt; pLabels[labelIndex] &lt;&lt; endl;
+-#endif
+-		++labelIndex;
+-	}
+-	pLabels[labelIndex] = NULL;
+-
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentsLabels&quot;, &amp;pError,
+-		G_TYPE_STRV, pDocIds,
+-		G_TYPE_STRV, pLabels,
+-		G_TYPE_BOOLEAN, resetLabels,
+-		G_TYPE_INVALID,
+-		G_TYPE_BOOLEAN, &amp;updatedLabels,
+-		G_TYPE_INVALID) == FALSE)
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-		updatedLabels = false;
+-	}
+-
+-	// Free the arrays
+-	g_strfreev(pDocIds);
+-	g_strfreev(pLabels);
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return updatedLabels;
+-}
+-
+ /// Unindexes the given document; true if success.
+ bool DBusXapianIndex::unindexDocument(unsigned int docId)
+ {
+@@ -778,6 +851,14 @@
+ /// Flushes recent changes to the disk.
+ bool DBusXapianIndex::flush(void)
+ {
+-	// There is no method for this because the daemon knows best when to flush
++	// The daemon knows best when to flush
+ 	return true;
+ }
++
++/// Resets the index.
++bool DBusXapianIndex::reset(void)
++{
++	// This can't be done here
++	return false;
++}
++
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-09-29 06:00:41 UTC (rev 998)
++++ trunk/Index/DBusXapianIndex.h	2007-09-30 09:54:25 UTC (rev 999)
+@@ -61,12 +61,26 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+ 
++		/// Sets the list of known labels.
++		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels);
++
++		/// Gets the list of known labels.
++		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+ 
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+ 
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true);
++
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
++
+ 		/// Checks whether the given URL is in the index.
+ 		virtual unsigned int hasDocument(const std::string &amp;url) const;
+ 
+@@ -97,14 +111,6 @@
+ 		/// Updates a document's properties.
+ 		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+ 
+-		/// Sets a document's labels.
+-		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+-			bool resetLabels = true);
+-
+-		/// Sets documents' labels.
+-		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
+-			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
+-
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
+@@ -123,6 +129,9 @@
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void);
+ 
++		/// Resets the index.
++		virtual bool reset(void);
++
+ 	protected:
+ 		void reopen(void) const;
+ 
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-09-29 06:00:41 UTC (rev 998)
++++ trunk/Index/IndexInterface.h	2007-09-30 09:54:25 UTC (rev 999)
+@@ -51,12 +51,26 @@
+ 		/// Returns a document's terms count.
+ 		virtual unsigned int getDocumentTermsCount(unsigned int docId) const = 0;
+ 
++		/// Sets the list of known labels.
++		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels) = 0;
++
++		/// Gets the list of known labels.
++		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const = 0;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const = 0;
+ 
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const = 0;
+ 
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true) = 0;
++
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true) = 0;
++
+ 		/// Checks whether the given URL is in the index.
+ 		virtual unsigned int hasDocument(const std::string &amp;url) const = 0;
+ 
+@@ -87,14 +101,6 @@
+ 		/// Updates a document's properties.
+ 		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo) = 0;
+ 
+-		/// Sets a document's labels.
+-		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+-			bool resetLabels = true) = 0;
+-
+-		/// Sets documents' labels.
+-		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
+-			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true) = 0;
+-
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId) = 0;
+ 
+@@ -116,6 +122,9 @@
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void) = 0;
+ 
++		/// Resets the index.
++		virtual bool reset(void) = 0;
++
+ 	protected:
+ 		IndexInterface() { };
+ 
+
+Modified: trunk/Index/XapianDatabaseFactory.cpp
+===================================================================
+--- trunk/Index/XapianDatabaseFactory.cpp	2007-09-29 06:00:41 UTC (rev 998)
++++ trunk/Index/XapianDatabaseFactory.cpp	2007-09-30 09:54:25 UTC (rev 999)
+@@ -81,12 +81,28 @@
+ 		return NULL;
+ 	}
+ 
++	// Is the database already open ?
+ 	map&lt;string, XapianDatabase *&gt;::iterator dbIter = m_databases.find(location);
+ 	if (dbIter != m_databases.end())
+ 	{
+ 		pDb = dbIter-&gt;second;
++
++		// Overwrite the database ?
++		if (overwrite == true)
++		{
++			dbIter-&gt;second = NULL;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianDatabaseFactory::getDatabase: closing &quot; &lt;&lt; dbIter-&gt;first &lt;&lt; endl;
++#endif
++			m_databases.erase(dbIter);
++			delete pDb;
++
++			dbIter = m_databases.end();
++		}
+ 	}
+-	else
++
++	// Open the database ?
++	if (dbIter == m_databases.end())
+ 	{
+ 		// Create a new instance
+ 		pDb = new XapianDatabase(location, readOnly, overwrite);
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-09-29 06:00:41 UTC (rev 998)
++++ trunk/Index/XapianIndex.cpp	2007-09-30 09:54:25 UTC (rev 999)
+@@ -682,9 +682,36 @@
+ /// Gets the version number.
+ string XapianIndex::getVersion(void) const
+ {
++	string version;
++
++#if ENABLE_XAPIAN_DB_METADATA&gt;0
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			version = pIndex-&gt;get_metadata(&quot;version&quot;);
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get database version: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get database version, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++#else
+ 	ifstream verFile;
+ 	string verFileName(m_databaseName + &quot;/version&quot;);
+-	string version;
+ 
+ 	verFile.open(verFileName.c_str());
+ 	if (verFile.good() == true)
+@@ -692,6 +719,7 @@
+ 		verFile &gt;&gt; version;
+ 	}
+ 	verFile.close();
++#endif
+ 
+ 	return version;
+ }
+@@ -699,10 +727,38 @@
+ /// Sets the version number.
+ bool XapianIndex::setVersion(const string &amp;version) const
+ {
++	bool setVer = false;
++
++#if ENABLE_XAPIAN_DB_METADATA&gt;0
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			pIndex-&gt;set_metadata(&quot;version&quot;, version);
++			setVer = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't set database version: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't set database version, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++#else
+ 	ofstream verFile, cacheDirFile;
+ 	string verFileName(m_databaseName + &quot;/version&quot;);
+ 	string cacheDirFileName(m_databaseName + &quot;/CACHEDIR.TAG&quot;);
+-	bool setVer = false;
+ 
+ 	verFile.open(verFileName.c_str(), ios::trunc);
+ 	if (verFile.good() == true)
+@@ -723,6 +779,7 @@
+ 		cacheDirFile &lt;&lt; &quot;# <A HREF="http://www.brynosaurus.com/cachedir/">http://www.brynosaurus.com/cachedir/</A>&quot; &lt;&lt; endl;
+ 	}
+ 	cacheDirFile.close();
++#endif
+ 
+ 	return setVer;
+ }
+@@ -840,6 +897,109 @@
+ 	return termsCount;
+ }
+ 
++/// Sets the list of known labels.
++bool XapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
++{
++	bool setLabels = false;
++
++#if ENABLE_XAPIAN_DB_METADATA&gt;0
++	string labelString;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		labelString += &quot;[&quot;;
++		labelString += Url::escapeUrl(*labelIter);
++		labelString += &quot;]&quot;;
++	}
++
++	try
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianIndex::setLabels: &quot; &lt;&lt; labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			pIndex-&gt;set_metadata(&quot;labels&quot;, labelString);
++			setLabels = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't set database labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't set database labels, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++#endif
++
++	return setLabels;
++}
++
++/// Gets the list of known labels.
++bool XapianIndex::getLabels(set&lt;string&gt; &amp;labels) const
++{
++#if ENABLE_XAPIAN_DB_METADATA&gt;0
++	string labelsString;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			labelsString = pIndex-&gt;get_metadata(&quot;labels&quot;);
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get database labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get database labels, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	if (labelsString.empty() == false)
++	{
++		string::size_type endPos = 0;
++		string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
++
++		while (label.empty() == false)
++		{
++			labels.insert(Url::unescapeUrl(label));
++
++			if (endPos == string::npos)
++			{
++				break;
++			}
++			label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
++		}
++
++		return true;
++	}
++#endif
++
++	return false;
++}
++
+ /// Determines whether a document has a label.
+ bool XapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
+@@ -940,6 +1100,89 @@
+ 	return gotLabels;
+ }
+ 
++/// Sets a document's labels.
++bool XapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
++	bool resetLabels)
++{
++	set&lt;unsigned int&gt; docIds;
++
++	docIds.insert(docId);
++	return setDocumentsLabels(docIds, labels, resetLabels);
++}
++
++/// Sets documents' labels.
++bool XapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
++	const set&lt;string&gt; &amp;labels, bool resetLabels)
++{
++	bool updatedLabels = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	for (set&lt;unsigned int&gt;::const_iterator docIter = docIds.begin();
++		docIter != docIds.end(); ++docIter)
++	{
++		try
++		{
++			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++			if (pIndex == NULL)
++			{
++				break;
++			}
++
++			unsigned int docId = (*docIter);
++			Xapian::Document doc = pIndex-&gt;get_document(docId);
++
++			// Reset existing labels ?
++			if (resetLabels == true)
++			{
++				Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
++				if (termIter != pIndex-&gt;termlist_end(docId))
++				{
++					for (termIter.skip_to(&quot;XLABEL:&quot;);
++						termIter != pIndex-&gt;termlist_end(docId); ++termIter)
++					{
++						// Is this a label ?
++						if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
++						{
++							doc.remove_term(*termIter);
++						}
++					}
++				}
++			}
++
++			// Set new labels
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++				++labelIter)
++			{
++				if (labelIter-&gt;empty() == false)
++				{
++					doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
++				}
++			}
++
++			pIndex-&gt;replace_document(docId, doc);
++			updatedLabels = true;
++		}
++		catch (const Xapian::Error &amp;error)
++		{
++			cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		}
++		catch (...)
++		{
++			cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
++		}
++
++		pDatabase-&gt;unlock();
++	}
++
++	return updatedLabels;
++}
++
+ /// Checks whether the given URL is in the index.
+ unsigned int XapianIndex::hasDocument(const string &amp;url) const
+ {
+@@ -1361,89 +1604,6 @@
+ 	return updated;
+ }
+ 
+-/// Sets a document's labels.
+-bool XapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
+-	bool resetLabels)
+-{
+-	set&lt;unsigned int&gt; docIds;
+-
+-	docIds.insert(docId);
+-	return setDocumentsLabels(docIds, labels, resetLabels);
+-}
+-
+-/// Sets documents' labels.
+-bool XapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
+-	const set&lt;string&gt; &amp;labels, bool resetLabels)
+-{
+-	bool updatedLabels = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	for (set&lt;unsigned int&gt;::const_iterator docIter = docIds.begin();
+-		docIter != docIds.end(); ++docIter)
+-	{
+-		try
+-		{
+-			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-			if (pIndex == NULL)
+-			{
+-				break;
+-			}
+-
+-			unsigned int docId = (*docIter);
+-			Xapian::Document doc = pIndex-&gt;get_document(docId);
+-
+-			// Reset existing labels ?
+-			if (resetLabels == true)
+-			{
+-				Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
+-				if (termIter != pIndex-&gt;termlist_end(docId))
+-				{
+-					for (termIter.skip_to(&quot;XLABEL:&quot;);
+-						termIter != pIndex-&gt;termlist_end(docId); ++termIter)
+-					{
+-						// Is this a label ?
+-						if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
+-						{
+-							doc.remove_term(*termIter);
+-						}
+-					}
+-				}
+-			}
+-
+-			// Set new labels
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
+-			{
+-				if (labelIter-&gt;empty() == false)
+-				{
+-					doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
+-				}
+-			}
+-
+-			pIndex-&gt;replace_document(docId, doc);
+-			updatedLabels = true;
+-		}
+-		catch (const Xapian::Error &amp;error)
+-		{
+-			cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-		}
+-		catch (...)
+-		{
+-			cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
+-		}
+-
+-		pDatabase-&gt;unlock();
+-	}
+-
+-	return updatedLabels;
+-}
+-
+ /// Unindexes the given document; true if success.
+ bool XapianIndex::unindexDocument(unsigned int docId)
+ {
+@@ -1655,3 +1815,17 @@
+ 	return flushed;
+ }
+ 
++/// Resets the index.
++bool XapianIndex::reset(void)
++{
++	// Overwrite and reopen
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false, true);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	return true;
++}
++
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-09-29 06:00:41 UTC (rev 998)
++++ trunk/Index/XapianIndex.h	2007-09-30 09:54:25 UTC (rev 999)
+@@ -25,6 +25,15 @@
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;IndexInterface.h&quot;
+ 
++#if !ENABLE_XAPIAN_DB_METADATA
++// Database metadata is only available in Xapian &gt; 1.0.2
++#if XAPIAN_NUM_VERSION &gt; 1000002
++#define ENABLE_XAPIAN_DB_METADATA 1
++#else
++#define ENABLE_XAPIAN_DB_METADATA 0
++#endif
++#endif
++
+ /// A Xapian-based index.
+ class XapianIndex : public IndexInterface
+ {
+@@ -53,12 +62,26 @@
+ 		/// Returns a document's terms count.
+ 		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
+ 
++		/// Sets the list of known labels.
++		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels);
++
++		/// Gets the list of known labels.
++		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+ 
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+ 
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true);
++
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
++
+ 		/// Checks whether the given URL is in the index.
+ 		virtual unsigned int hasDocument(const std::string &amp;url) const;
+ 
+@@ -89,14 +112,6 @@
+ 		/// Updates a document's properties.
+ 		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+ 
+-		/// Sets a document's labels.
+-		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+-			bool resetLabels = true);
+-
+-		/// Sets documents' labels.
+-		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
+-			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
+-
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
+@@ -118,6 +133,9 @@
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void);
+ 
++		/// Resets the index.
++		virtual bool reset(void);
++
+ 	protected:
+ 		static const std::string MAGIC_TERM;
+ 		std::string m_databaseName;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000992.html">[Pinot-svn] r998 - in trunk: . Search UI/GTK2/src
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#993">[ date ]</a>
+              <a href="thread.html#993">[ thread ]</a>
+              <a href="subject.html#993">[ subject ]</a>
+              <a href="author.html#993">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

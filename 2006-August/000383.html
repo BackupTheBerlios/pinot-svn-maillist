@@ -1,0 +1,297 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r390 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r390%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608101201.k7AC1Fs4021887%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000382.html">
+   <LINK REL="Next"  HREF="000384.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r390 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r390%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608101201.k7AC1Fs4021887%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r390 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug 10 14:01:15 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000382.html">[Pinot-svn] r389 - in trunk: Index Search
+</A></li>
+        <LI>Next message: <A HREF="000384.html">[Pinot-svn] r391 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#383">[ date ]</a>
+              <a href="thread.html#383">[ thread ]</a>
+              <a href="subject.html#383">[ subject ]</a>
+              <a href="author.html#383">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-10 14:00:27 +0200 (Thu, 10 Aug 2006)
+New Revision: 390
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+DaemonState uses file name as title, not the whole URL.
+In ThreadsManager::queue_index(), queue documents if the load is too high.
+DirectoryScannerThread checks the file's last modification time if it has
+already been crawled.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2006-08-10 11:55:17 UTC (rev 389)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2006-08-10 12:00:27 UTC (rev 390)
+@@ -21,6 +21,7 @@
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+ 
++#include &quot;Url.h&quot;
+ #include &quot;WritableXapianIndex.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;MboxHandler.h&quot;
+@@ -249,8 +250,10 @@
+ 
+ bool DaemonState::on_message_filefound(const string &amp;location)
+ {
+-	DocumentInfo docInfo(location, location, &quot;&quot;, &quot;&quot;);
++	Url urlObj(location);
+ 
++	DocumentInfo docInfo(urlObj.getFile(), location, &quot;&quot;, &quot;&quot;);
++
+ 	queue_index(docInfo);
+ 
+ 	// Don't request another file right now
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-10 11:55:17 UTC (rev 389)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-10 12:00:27 UTC (rev 390)
+@@ -30,7 +30,6 @@
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;XmlTokenizer.h&quot;
+-#include &quot;MIMEScanner.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+@@ -174,10 +173,13 @@
+ 	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+ 	m_nextId(1),
+-	m_backgroundThreadsCount(0)
++	m_backgroundThreadsCount(0),
++	m_numCPUs(1)
+ {
+ 	pthread_rwlock_init(&amp;m_threadsLock, NULL);
+ 	pthread_rwlock_init(&amp;m_listsLock, NULL);
++
++	m_numCPUs = sysconf(_SC_NPROCESSORS_ONLN);
+ }
+ 
+ ThreadsManager::~ThreadsManager()
+@@ -458,8 +460,27 @@
+ 
+ bool ThreadsManager::queue_index(const DocumentInfo &amp;docInfo)
+ {
++	double averageLoad[3];
++	bool addToQueue = false;
++
+ 	if (get_threads_count() &gt;= m_maxIndexThreads)
+ 	{
++		addToQueue = true;
++	}
++	// Get the load averaged over the last minute
++	else if (getloadavg(averageLoad, 3) != -1)
++	{
++		// FIXME: is LOADAVG_1MIN Solaris specific ?
++		if (averageLoad[0] &gt;= (double)m_numCPUs * 4)
++		{
++			// Don't add to the load, queue this
++			addToQueue = true;
++		}
++	}
++
++
++	if (addToQueue == true)
++	{
+ 		if (write_lock_lists() == true)
+ 		{
+ 			m_indexQueue.insert(docInfo);
+@@ -1359,8 +1380,7 @@
+ 	WorkerThread(),
+ 	m_ctrlReadPipe(-1),
+ 	m_ctrlWritePipe(-1),
+-	m_pHandler(pHandler),
+-	m_numCPUs(1)
++	m_pHandler(pHandler)
+ {
+ 	int pipeFds[2];
+ 
+@@ -1370,7 +1390,6 @@
+ 		m_ctrlReadPipe = pipeFds[0];
+ 		m_ctrlWritePipe = pipeFds[1];
+ 	}
+-	m_numCPUs = sysconf(_SC_NPROCESSORS_ONLN);
+ }
+ 
+ MonitorThread::~MonitorThread()
+@@ -1492,23 +1511,7 @@
+ 				(m_done == false))
+ 			{
+ 				MonitorEvent &amp;event = events.front();
+-				double averageLoad[3];
+ 
+-				// Get the load averaged over the last minute
+-				if (getloadavg(averageLoad, 3) != -1)
+-				{
+-					// FIXME: is LOADAVG_1MIN Solaris specific ?
+-					if (averageLoad[0] &gt;= (double)m_numCPUs * 4)
+-					{
+-						// Ignore pending events if the load has become too high
+-#ifdef DEBUG
+-						cout &lt;&lt; &quot;MonitorThread::doWork: ignoring events because of load (&quot;
+-							&lt;&lt; averageLoad[0] &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-						break;
+-					}
+-				}
+-
+ 				if ((event.m_location.empty() == true) ||
+ 					(event.m_type == MonitorEvent::UNKNOWN))
+ 				{
+@@ -1604,7 +1607,7 @@
+ 	if ((m_pMutex != NULL) &amp;&amp;
+ 		(m_pCondVar != NULL))
+ 	{
+-		string url(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
++		string url(&quot;<A HREF="file://">file://</A>&quot; + fileName);
+ 
+ 		m_pMutex-&gt;lock();
+ 		if (m_signalFileFound(url) == true)
+@@ -1663,15 +1666,29 @@
+ 	}
+ 	else if (S_ISREG(fileStat.st_mode))
+ 	{
+-		// It's actually a file
+-		// Skip dotfiles and those files we have already crawled
+-		if ((dirName[0] != '.') &amp;&amp;
+-			(history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, status, itemDate) == false))
++		// It's actually a file : skip dotfiles
++		if (dirName[0] != '.')
+ 		{
+-			foundFile(dirName);
++			bool reportFile = false;
+ 
+-			// Record it
+-			history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, m_sourceId, 0);
++			// ...and check whether the file was crawled since it was last modified
++			if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, status, itemDate) == false)
++			{
++				// Record it
++				history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++				reportFile = true;
++			}
++			else if (itemDate &lt; fileStat.st_mtime)
++			{
++				// Update the record
++				history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, fileStat.st_mtime);
++				reportFile = true;
++			}
++
++			if (reportFile == true)
++			{
++				foundFile(dirName);
++			}
+ 		}
+ 	}
+ 	else if (S_ISDIR(fileStat.st_mode))
+@@ -1717,14 +1734,26 @@
+ 				// File or directory
+ 				if (S_ISREG(fileStat.st_mode))
+ 				{
+-					// Has it already been crawled ?
++					bool reportFile = false;
++
++					// Was it crawled since it was last modified ?
+ 					if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, status, itemDate) == false)
+ 					{
+-						foundFile(entryName);
+-
+ 						// Record it
+-						history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, m_sourceId, 0);
++						history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++						reportFile = true;
+ 					}
++					else if (itemDate &lt; fileStat.st_mtime)
++					{
++						// Update the record
++						history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, fileStat.st_mtime);
++						reportFile = true;
++					}
++
++					if (reportFile == true)
++					{
++						foundFile(entryName);
++					}
+ 				}
+ 				else if (S_ISDIR(fileStat.st_mode))
+ 				{
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-10 11:55:17 UTC (rev 389)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-10 12:00:27 UTC (rev 390)
+@@ -133,6 +133,7 @@
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_nextId;
+ 		unsigned int m_backgroundThreadsCount;
++		long m_numCPUs;
+ 		SigC::Signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+ 		std::set&lt;DocumentInfo&gt; m_indexQueue;
+ 
+@@ -381,7 +382,6 @@
+ 		int m_ctrlReadPipe;
+ 		int m_ctrlWritePipe;
+ 		MonitorHandler *m_pHandler;
+-		long m_numCPUs;
+ 
+ 		virtual void doWork(void);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000382.html">[Pinot-svn] r389 - in trunk: Index Search
+</A></li>
+	<LI>Next message: <A HREF="000384.html">[Pinot-svn] r391 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#383">[ date ]</a>
+              <a href="thread.html#383">[ thread ]</a>
+              <a href="subject.html#383">[ subject ]</a>
+              <a href="author.html#383">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

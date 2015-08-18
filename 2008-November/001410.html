@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1419 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1419%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811220559.mAM5x2U0030057%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001409.html">
+   <LINK REL="Next"  HREF="001411.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1419 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1419%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811220559.mAM5x2U0030057%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1419 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Nov 22 06:59:02 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001409.html">[Pinot-svn] r1418 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001411.html">[Pinot-svn] r1420 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1410">[ date ]</a>
+              <a href="thread.html#1410">[ thread ]</a>
+              <a href="subject.html#1410">[ subject ]</a>
+              <a href="author.html#1410">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-22 06:58:42 +0100 (Sat, 22 Nov 2008)
+New Revision: 1419
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/UI/GTK2/src/prefsWindow.cc
+Log:
+Use the new PinotSettings::load() to load all settings.
+In pinot, each window is responsible for saving its own settings when closing.
+The main window saves its part before opening the preferences window as the
+daemon may subsequently reload all the settings.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-11-22 05:53:32 UTC (rev 1418)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-11-22 05:58:42 UTC (rev 1419)
+@@ -760,8 +760,7 @@
+ 		// Reload
+ 		PinotSettings &amp;settings = PinotSettings::getInstance();
+ 		settings.clear();
+-		settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
+-		settings.load();
++		settings.load(PinotSettings::LOAD_ALL);
+ 		m_reload = false;
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DaemonState::on_thread_end: reloading&quot; &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-11-22 05:53:32 UTC (rev 1418)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-11-22 05:58:42 UTC (rev 1419)
+@@ -296,6 +296,9 @@
+ 
+ 	// Save queries
+ 	save_queryTreeview();
++
++	// Save the settings
++	m_settings.save(PinotSettings::SAVE_CONFIG);
+ }
+ 
+ //
+@@ -1823,6 +1826,9 @@
+ 	MIMEAction prefsAction(&quot;pinot-prefs&quot;, &quot;pinot-prefs&quot;);
+ 	vector&lt;string&gt; arguments;
+ 
++	// Save the settings first as any change in preferences will make the daemon reload the whole thing
++	m_settings.save(PinotSettings::SAVE_CONFIG);
++
+ 	CommandLine::runAsync(prefsAction, arguments);
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-11-22 05:53:32 UTC (rev 1418)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-11-22 05:58:42 UTC (rev 1419)
+@@ -271,7 +271,6 @@
+ 
+ int main(int argc, char **argv)
+ {
+-	string prefixDir(PREFIX);
+ 	struct sigaction newAction;
+ 	int longOptionIndex = 0, priority = 15;
+ 	bool resetHistory = false;
+@@ -459,12 +458,8 @@
+ 	Languages::setIntlName(14, _(&quot;Swedish&quot;));
+ 	Languages::setIntlName(15, _(&quot;Turkish&quot;));
+ 
+-	// Load search engines
+-	settings.loadSearchEngines(prefixDir + &quot;/share/pinot/engines&quot;);
+-	settings.loadSearchEngines(confDirectory + &quot;/engines&quot;);
+ 	// Load the settings
+-	settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
+-	settings.load();
++	settings.load(PinotSettings::LOAD_ALL);
+ 
+ 	// Catch interrupts
+ 	sigemptyset(&amp;newAction.sa_mask);
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2008-11-22 05:53:32 UTC (rev 1418)
++++ trunk/UI/GTK2/src/pinot.cc	2008-11-22 05:58:42 UTC (rev 1419)
+@@ -70,13 +70,6 @@
+ {
+ 	cout &lt;&lt; &quot;Exiting...&quot; &lt;&lt; endl;
+ 
+-	// Save the settings
+-	PinotSettings &amp;settings = PinotSettings::getInstance();
+-	if (settings.save() == false)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't save configuration file&quot; &lt;&lt; endl;
+-	}
+-
+ 	// Close everything
+ 	ModuleFactory::unloadModules();
+ 	Dijon::FilterFactory::unloadFilters();
+@@ -277,12 +270,8 @@
+ 	Languages::setIntlName(14, _(&quot;Swedish&quot;));
+ 	Languages::setIntlName(15, _(&quot;Turkish&quot;));
+ 
+-	// Load search engines
+-	settings.loadSearchEngines(prefixDir + &quot;/share/pinot/engines&quot;);
+-	settings.loadSearchEngines(confDirectory + &quot;/engines&quot;);
+ 	// Load the settings
+-	settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
+-	settings.load();
++	settings.load(PinotSettings::LOAD_ALL);
+ 
+ 	// Catch interrupts
+ 	sigemptyset(&amp;newAction.sa_mask);
+@@ -337,33 +326,36 @@
+ 
+ 	atexit(closeAll);
+ 
+-	IndexInterface *pIndex = settings.getIndex(settings.m_docsIndexLocation);
+-	if (pIndex != NULL)
++	if (prefsMode == false)
+ 	{
+-		string indexVersion(pIndex-&gt;getMetadata(&quot;version&quot;));
+-
+-		// What version is the index at ?
+-		if (indexVersion.empty() == true)
++		IndexInterface *pIndex = settings.getIndex(settings.m_docsIndexLocation);
++		if (pIndex != NULL)
+ 		{
+-			indexVersion = &quot;0.0&quot;;
+-		}
+-		// Is an upgrade necessary ?
+-		if ((indexVersion &lt; PINOT_INDEX_MIN_VERSION) &amp;&amp;
+-			(pIndex-&gt;getDocumentsCount() &gt; 0))
+-		{
+-			warnAboutVersion = true;
+-		}
++			string indexVersion(pIndex-&gt;getMetadata(&quot;version&quot;));
++
++			// What version is the index at ?
++			if (indexVersion.empty() == true)
++			{
++				indexVersion = &quot;0.0&quot;;
++			}
++			// Is an upgrade necessary ?
++			if ((indexVersion &lt; PINOT_INDEX_MIN_VERSION) &amp;&amp;
++				(pIndex-&gt;getDocumentsCount() &gt; 0))
++			{
++				warnAboutVersion = true;
++			}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;My Web Pages was set to version &quot; &lt;&lt; indexVersion &lt;&lt; endl;
++			cout &lt;&lt; &quot;My Web Pages was set to version &quot; &lt;&lt; indexVersion &lt;&lt; endl;
+ #endif
+-		pIndex-&gt;setMetadata(&quot;version&quot;, VERSION);
++			pIndex-&gt;setMetadata(&quot;version&quot;, VERSION);
+ 
+-		delete pIndex;
++			delete pIndex;
++		}
++		if (warnAboutVersion == true)
++		{
++			settings.m_warnAboutVersion = warnAboutVersion;
++		}
+ 	}
+-	if (warnAboutVersion == true)
+-	{
+-		settings.m_warnAboutVersion = warnAboutVersion;
+-	}
+ 
+ 	try
+ 	{
+
+Modified: trunk/UI/GTK2/src/prefsWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsWindow.cc	2008-11-22 05:53:32 UTC (rev 1418)
++++ trunk/UI/GTK2/src/prefsWindow.cc	2008-11-22 05:58:42 UTC (rev 1419)
+@@ -62,7 +62,7 @@
+ 		virtual void doWork(void)
+ 		{
+ 			// Save the settings
+-			PinotSettings::getInstance().save();
++			PinotSettings::getInstance().save(PinotSettings::SAVE_PREFS);
+ 
+ 			// Ask the daemon to reload its configuration
+ 			// Let D-Bus activate the service if necessary
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001409.html">[Pinot-svn] r1418 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001411.html">[Pinot-svn] r1420 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1410">[ date ]</a>
+              <a href="thread.html#1410">[ thread ]</a>
+              <a href="subject.html#1410">[ subject ]</a>
+              <a href="author.html#1410">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

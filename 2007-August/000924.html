@@ -1,0 +1,322 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r930 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r930%20-%20trunk/Index&In-Reply-To=%3C200708161625.l7GGP7BU007017%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000923.html">
+   <LINK REL="Next"  HREF="000925.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r930 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r930%20-%20trunk/Index&In-Reply-To=%3C200708161625.l7GGP7BU007017%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r930 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug 16 18:25:07 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000923.html">[Pinot-svn] r929 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000925.html">[Pinot-svn] r931 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#924">[ date ]</a>
+              <a href="thread.html#924">[ thread ]</a>
+              <a href="subject.html#924">[ subject ]</a>
+              <a href="author.html#924">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-16 18:25:04 +0200 (Thu, 16 Aug 2007)
+New Revision: 930
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Merged listDocuments...() methods into one.
+XapianIndex adds an extra XFILE:-prefixed term to local documents so that the
+file monitor can list or delete stuff without having to worry about the protocol.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-08-15 13:58:38 UTC (rev 929)
++++ trunk/Index/DBusXapianIndex.cpp	2007-08-16 16:25:04 UTC (rev 930)
+@@ -404,7 +404,7 @@
+ 	return XapianIndex::getDocumentsCount(labelName);
+ }
+ 
+-/// Lists document IDs.
++/// Lists documents.
+ unsigned int DBusXapianIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
+ 	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
+@@ -413,24 +413,15 @@
+ 	return XapianIndex::listDocuments(docIds, maxDocsCount, startDoc);
+ }
+ 
+-/// Lists documents that have a specific label.
+-bool DBusXapianIndex::listDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
+-	unsigned int maxDocsCount, unsigned int startDoc) const
++/// Lists documents.
++bool DBusXapianIndex::listDocuments(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
++	NameType type, unsigned int maxDocsCount, unsigned int startDoc) const
+ {
+ 	reopen();
+ 
+-	return XapianIndex::listDocumentsWithLabel(name, docIds, maxDocsCount, startDoc);
++	return XapianIndex::listDocuments(name, docIds, type, maxDocsCount, startDoc);
+ }
+ 
+-/// Lists documents that have a specific directory.
+-bool DBusXapianIndex::listDocumentsInDirectory(const string &amp;dirName, set&lt;unsigned int&gt; &amp;docIds,
+-	unsigned int maxDocsCount, unsigned int startDoc) const
+-{
+-	reopen();
+-
+-	return XapianIndex::listDocumentsWithLabel(dirName, docIds, maxDocsCount, startDoc);
+-}
+-
+ /// Indexes the given data.
+ bool DBusXapianIndex::indexDocument(const Document &amp;doc, const set&lt;string&gt; &amp;labels,
+ 	unsigned int &amp;docId)
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-08-15 13:58:38 UTC (rev 929)
++++ trunk/Index/DBusXapianIndex.h	2007-08-16 16:25:04 UTC (rev 930)
+@@ -76,18 +76,14 @@
+ 		/// Returns the number of documents.
+ 		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
+ 
+-		/// Lists document IDs.
+-		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIds,
++		/// Lists documents.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+-		/// Lists documents that have a specific label.
+-		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++		/// Lists documents.
++		virtual bool listDocuments(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			NameType type, unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+-		/// Lists documents that are in a specific directory.
+-		virtual bool listDocumentsInDirectory(const std::string &amp;dirName, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+-
+ 		/// Indexes the given data.
+ 		virtual bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
+ 			unsigned int &amp;docId);
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-08-15 13:58:38 UTC (rev 929)
++++ trunk/Index/IndexInterface.h	2007-08-16 16:25:04 UTC (rev 930)
+@@ -31,6 +31,8 @@
+ 		IndexInterface(const IndexInterface &amp;other) {};
+ 		virtual ~IndexInterface() {};
+ 
++		typedef enum { BY_LABEL = 0, BY_DIRECTORY, BY_FILE } NameType;
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const = 0;
+ 
+@@ -67,18 +69,14 @@
+ 		/// Returns the number of documents.
+ 		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const = 0;
+ 
+-		/// Lists document IDs.
++		/// Lists documents.
+ 		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+ 
+-		/// Lists documents that have a specific label.
+-		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
++		/// Lists documents.
++		virtual bool listDocuments(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			NameType type, unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+ 
+-		/// Lists documents that are in a specific directory.
+-		virtual bool listDocumentsInDirectory(const std::string &amp;dirName, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+-
+ 		/// Indexes the given data.
+ 		virtual bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
+ 			unsigned int &amp;docId) = 0;
+@@ -103,8 +101,6 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(const std::string &amp;location) = 0;
+ 
+-		typedef enum { BY_LABEL = 0, BY_DIRECTORY, BY_FILE } NameType;
+-
+ 		/// Unindexes documents.
+ 		virtual bool unindexDocuments(const std::string &amp;name, NameType type) = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-08-15 13:58:38 UTC (rev 929)
++++ trunk/Index/XapianIndex.cpp	2007-08-16 16:25:04 UTC (rev 930)
+@@ -331,7 +331,17 @@
+ 	if ((urlObj.isLocal() == true) &amp;&amp;
+ 		(qmPos != string::npos))
+ 	{
+-		doc.add_term(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(location.substr(0, qmPos)), true));
++		string fileUrl(location.substr(0, qmPos));
++		string protocol(urlObj.getProtocol());
++
++		doc.add_term(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(fileUrl), true));
++		if ((urlObj.isLocal() == true) &amp;&amp;
++			(protocol != &quot;file&quot;))
++		{
++			// Add another term with file as protocol
++			fileUrl.replace(0, protocol.length(), &quot;file&quot;);
++			doc.add_term(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(fileUrl), true));
++		}
+ 	}
+ 	// ...the host name and included domains with prefix H
+ 	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+@@ -454,7 +464,18 @@
+ 	if ((urlObj.isLocal() == true) &amp;&amp;
+ 		(qmPos != string::npos))
+ 	{
+-		commonTerms.insert(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(location.substr(0, qmPos)), true));
++		string fileUrl(location.substr(0, qmPos));
++		string protocol(urlObj.getProtocol());
++
++		commonTerms.insert(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(fileUrl), true));
++
++		if ((urlObj.isLocal() == true) &amp;&amp;
++			(protocol != &quot;file&quot;))
++		{
++			// Add another term with file as protocol
++			fileUrl.replace(0, protocol.length(), &quot;file&quot;);
++			doc.add_term(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(fileUrl), true));
++		}
+ 	}
+ 	// Host name
+ 	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+@@ -1093,26 +1114,28 @@
+ 	return listDocumentsWithTerm(MAGIC_TERM, docIds, maxDocsCount, startDoc);
+ }
+ 
+-/// Lists documents that have a specific label.
+-bool XapianIndex::listDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
+-	unsigned int maxDocsCount, unsigned int startDoc) const
++/// Lists documents.
++bool XapianIndex::listDocuments(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
++	NameType type, unsigned int maxDocsCount, unsigned int startDoc) const
+ {
+-	string term(&quot;XLABEL:&quot;);
++	string term;
+ 
+-	term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
++	if (type == BY_LABEL)
++	{
++		term = string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(name));
++	}
++	else if (type == BY_DIRECTORY)
++	{
++		term = string(&quot;XDIR:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(name), true);
++	}
++	else if (type == BY_FILE)
++	{
++		term = string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(name), true);
++	}
++
+ 	return listDocumentsWithTerm(term, docIds, maxDocsCount, startDoc);
+ }
+ 
+-/// Lists documents that are in a specific directory.
+-bool XapianIndex::listDocumentsInDirectory(const string &amp;dirName, set&lt;unsigned int&gt; &amp;docIds,
+-	unsigned int maxDocsCount, unsigned int startDoc) const
+-{
+-	string term(Url::escapeUrl(dirName));
+-
+-	return listDocumentsWithTerm(string(&quot;XDIR:&quot;) + XapianDatabase::limitTermLength(term, true),
+-		docIds, maxDocsCount, startDoc);
+-}
+-
+ /// Indexes the given data.
+ bool XapianIndex::indexDocument(const Document &amp;document, const std::set&lt;std::string&gt; &amp;labels,
+ 	unsigned int &amp;docId)
+@@ -1164,6 +1187,9 @@
+ 			{
+ 				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
+ 			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianIndex::indexDocument: &quot; &lt;&lt; labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
+ 
+ 			// Set data
+ 			setDocumentData(docInfo, doc, m_stemLanguage);
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-08-15 13:58:38 UTC (rev 929)
++++ trunk/Index/XapianIndex.h	2007-08-16 16:25:04 UTC (rev 930)
+@@ -71,18 +71,14 @@
+ 		/// Returns the number of documents.
+ 		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
+ 
+-		/// Lists document IDs.
+-		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIds,
++		/// Lists documents.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+-		/// Lists documents that have a specific label.
+-		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++		/// Lists documents.
++		virtual bool listDocuments(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			NameType type, unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+-		/// Lists documents that are in a specific directory.
+-		virtual bool listDocumentsInDirectory(const std::string &amp;dirName, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+-
+ 		/// Indexes the given data.
+ 		virtual bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
+ 			unsigned int &amp;docId);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000923.html">[Pinot-svn] r929 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000925.html">[Pinot-svn] r931 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#924">[ date ]</a>
+              <a href="thread.html#924">[ thread ]</a>
+              <a href="subject.html#924">[ subject ]</a>
+              <a href="author.html#924">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

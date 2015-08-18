@@ -1,0 +1,259 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1154 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1154%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200801010121.m011LrrJ021103%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001147.html">
+   <LINK REL="Next"  HREF="001149.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1154 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1154%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200801010121.m011LrrJ021103%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1154 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jan  1 02:21:53 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001147.html">[Pinot-svn] r1153 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001149.html">[Pinot-svn] r1155 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1148">[ date ]</a>
+              <a href="thread.html#1148">[ thread ]</a>
+              <a href="subject.html#1148">[ subject ]</a>
+              <a href="author.html#1148">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-01-01 02:21:51 +0100 (Tue, 01 Jan 2008)
+New Revision: 1154
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/queryDialog.cc
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+   trunk/UI/GTK2/src/queryDialog_glade.hh
+Log:
+Load and save stored queries' stemming language attribute, make it configurable
+in queryDialog.
+EngineQueryThread uses it as the results' language if no lang filter is set.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-01-01 01:16:53 UTC (rev 1153)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-01-01 01:21:51 UTC (rev 1154)
+@@ -794,12 +794,7 @@
+ 		else if ((nodeName == &quot;language&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+ 		{
+-			if (freeQuery.empty() == false)
+-			{
+-				freeQuery += &quot; &quot;;
+-			}
+-			freeQuery += &quot;language:&quot;;
+-			freeQuery += nodeContent;
++			queryProps.setStemmingLanguage(nodeContent);
+ 		}
+ 		else if ((nodeName == &quot;hostfilter&quot;) &amp;&amp;
+ 			(nodeContent.empty() == false))
+@@ -1363,6 +1358,7 @@
+ 			addChildElement(pElem, &quot;name&quot;, queryIter-&gt;first);
+ 			addChildElement(pElem, &quot;sortorder&quot;, (queryIter-&gt;second.getSortOrder() == QueryProperties::DATE ? &quot;DATE&quot; : &quot;RELEVANCE&quot;));
+ 			addChildElement(pElem, &quot;text&quot;, queryIter-&gt;second.getFreeQuery());
++			addChildElement(pElem, &quot;language&quot;, queryIter-&gt;second.getStemmingLanguage());
+ 			sprintf(numStr, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
+ 			addChildElement(pElem, &quot;maxresults&quot;, numStr);
+ 			addChildElement(pElem, &quot;index&quot;, (queryIter-&gt;second.getIndexResults() ? &quot;ALL&quot; : &quot;NONE&quot;));
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-01-01 01:16:53 UTC (rev 1153)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-01-01 01:21:51 UTC (rev 1154)
+@@ -960,6 +960,10 @@
+ 		if (language.empty() == true)
+ 		{
+ 			language = m_queryProps.getFilter(&quot;lang&quot;);
++			if (language.empty() == true)
++			{
++				language = m_queryProps.getStemmingLanguage();
++			}
+ 		}
+ 		currentDoc.setLanguage(language);
+ 
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2008-01-01 01:16:53 UTC (rev 1153)
++++ trunk/UI/GTK2/src/queryDialog.cc	2008-01-01 01:21:51 UTC (rev 1154)
+@@ -23,6 +23,7 @@
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
++#include &quot;Languages.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;queryDialog.hh&quot;
+@@ -118,6 +119,22 @@
+ 		sortOrderCombobox-&gt;set_active(0);
+ 	}
+ 
++	// Stemming language
++	stemmingCombobox-&gt;append_text(_(&quot;None&quot;));
++	stemmingCombobox-&gt;set_active(0);
++	string language(m_properties.getStemmingLanguage());
++	for (unsigned int languageNum = 1; languageNum &lt; Languages::m_count; ++languageNum)
++	{
++		string languageName(Languages::getIntlName(languageNum));
++
++		stemmingCombobox-&gt;append_text(to_utf8(languageName));
++		// Is this the language we are looking for ?
++		if (language == languageName)
++		{
++			stemmingCombobox-&gt;set_active(languageNum);
++		}
++	}
++
+ 	// Labels
+ 	labelNameCombobox-&gt;append_text(_(&quot;None&quot;));
+ 	labelNameCombobox-&gt;set_active(0);
+@@ -183,6 +200,14 @@
+ 	{
+ 		m_properties.setSortOrder(QueryProperties::RELEVANCE);
+ 	}
++	// Stemming language
++	string languageName(from_utf8(stemmingCombobox-&gt;get_active_text()));
++	int chosenLanguagePos = stemmingCombobox-&gt;get_active_row_number();
++	if (chosenLanguagePos == 0)
++	{
++		languageName.clear();
++	}
++	m_properties.setStemmingLanguage(languageName);
+ 	// Index all results
+ 	m_properties.setIndexResults(indexCheckbutton-&gt;get_active());
+ 	// Index label
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2008-01-01 01:16:53 UTC (rev 1153)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2008-01-01 01:21:51 UTC (rev 1154)
+@@ -1,9 +1,9 @@
+-// generated 2007/9/26 15:21:49 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2007/12/23 10:48:41 CET by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+-// glade-- /home/fabrice/Projects/pinot-0.76/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.14 and gtkmm 2.10.11
++// glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
++// for gtk 2.12.3 and gtkmm 2.12.3
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.cc
+ 
+@@ -88,7 +88,9 @@
+    
+    Gtk::Label *sortOrderLabel = Gtk::manage(new class Gtk::Label(_(&quot;Sort order:&quot;)));
+    sortOrderCombobox = Gtk::manage(new class Gtk::ComboBoxText());
++   stemmingCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
++   Gtk::Label *stemmingLabel = Gtk::manage(new class Gtk::Label(_(&quot;Stemming:&quot;)));
+    Gtk::Table *actionsTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    Gtk::VBox *queryVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    queryCancelbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+@@ -173,14 +175,22 @@
+    sortOrderLabel-&gt;set_line_wrap(false);
+    sortOrderLabel-&gt;set_use_markup(false);
+    sortOrderLabel-&gt;set_selectable(false);
++   stemmingLabel-&gt;set_alignment(0,0.5);
++   stemmingLabel-&gt;set_padding(0,0);
++   stemmingLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   stemmingLabel-&gt;set_line_wrap(false);
++   stemmingLabel-&gt;set_use_markup(false);
++   stemmingLabel-&gt;set_selectable(false);
+    actionsTable-&gt;set_row_spacings(0);
+    actionsTable-&gt;set_col_spacings(0);
+-   actionsTable-&gt;attach(*indexCheckbutton, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
+-   actionsTable-&gt;attach(*labelNameCombobox, 1, 2, 2, 3, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*indexCheckbutton, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*labelNameCombobox, 1, 2, 3, 4, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*resultsCountLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*resultsCountSpinbutton, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*sortOrderLabel, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*sortOrderCombobox, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*stemmingCombobox, 1, 2, 2, 3, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*stemmingLabel, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
+    queryVbox-&gt;pack_start(*nameTable, Gtk::PACK_SHRINK, 0);
+    queryVbox-&gt;pack_start(*queryHbox, Gtk::PACK_SHRINK, 0);
+    queryVbox-&gt;pack_start(*queryFrame, Gtk::PACK_EXPAND_WIDGET, 4);
+@@ -216,6 +226,8 @@
+    resultsCountSpinbutton-&gt;show();
+    sortOrderLabel-&gt;show();
+    sortOrderCombobox-&gt;show();
++   stemmingCombobox-&gt;show();
++   stemmingLabel-&gt;show();
+    actionsTable-&gt;show();
+    queryVbox-&gt;show();
+    queryDialog-&gt;show();
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.hh	2008-01-01 01:16:53 UTC (rev 1153)
++++ trunk/UI/GTK2/src/queryDialog_glade.hh	2008-01-01 01:21:51 UTC (rev 1154)
+@@ -1,9 +1,9 @@
+-// generated 2007/9/26 15:21:49 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2007/12/23 10:48:41 CET by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+-// glade-- /home/fabrice/Projects/pinot-0.76/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.14 and gtkmm 2.10.11
++// glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
++// for gtk 2.12.3 and gtkmm 2.12.3
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.hh and./src/queryDialog.cc
+ 
+@@ -54,6 +54,7 @@
+         class Gtk::ComboBoxText * labelNameCombobox;
+         class Gtk::SpinButton * resultsCountSpinbutton;
+         class Gtk::ComboBoxText * sortOrderCombobox;
++        class Gtk::ComboBoxText * stemmingCombobox;
+         
+         queryDialog_glade();
+         
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001147.html">[Pinot-svn] r1153 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001149.html">[Pinot-svn] r1155 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1148">[ date ]</a>
+              <a href="thread.html#1148">[ thread ]</a>
+              <a href="subject.html#1148">[ subject ]</a>
+              <a href="author.html#1148">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

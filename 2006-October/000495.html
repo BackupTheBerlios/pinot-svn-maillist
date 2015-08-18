@@ -1,0 +1,499 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r502 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r502%20-%20trunk/Utils&In-Reply-To=%3C200610061445.k96Ej5eG021736%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000494.html">
+   <LINK REL="Next"  HREF="000496.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r502 - trunk/Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r502%20-%20trunk/Utils&In-Reply-To=%3C200610061445.k96Ej5eG021736%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r502 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct  6 16:45:05 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000494.html">[Pinot-svn] r501 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000496.html">[Pinot-svn] r503 - in trunk: Collect Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#495">[ date ]</a>
+              <a href="thread.html#495">[ thread ]</a>
+              <a href="subject.html#495">[ subject ]</a>
+              <a href="author.html#495">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-06 16:45:04 +0200 (Fri, 06 Oct 2006)
+New Revision: 502
+
+Modified:
+   trunk/Utils/MboxParser.cpp
+   trunk/Utils/MboxParser.h
+Log:
+Go through all of a message's parts. Don't skip parts based on their MIME type.
+
+
+Modified: trunk/Utils/MboxParser.cpp
+===================================================================
+--- trunk/Utils/MboxParser.cpp	2006-10-05 14:36:22 UTC (rev 501)
++++ trunk/Utils/MboxParser.cpp	2006-10-06 14:45:04 UTC (rev 502)
+@@ -32,30 +32,37 @@
+ using std::cout;
+ using std::endl;
+ 
+-MboxParser::MboxParser(const string &amp;fileName, off_t mboxOffset)
++MboxParser::MboxParser(const string &amp;fileName, off_t mboxOffset) :
++	m_fileName(fileName),
++	m_fd(-1),
++	m_pMboxStream(NULL),
++	m_pParser(NULL),
++	m_pMimeMessage(NULL),
++	m_partsCount(-1),
++	m_partNum(-1),
++	m_messageStart(mboxOffset),
++	m_pCurrentDocument(NULL),
++	m_messageDate(0)
+ {
+-	m_fileName = fileName;
+-	m_fd = -1;
+-	m_pMboxStream = NULL;
+-	m_pParser = NULL;
+-	m_partsCount = m_partNum = -1;
+-	m_messageStart = mboxOffset;
+-	m_pCurrentMessage = NULL;
+-	m_messageDate = 0;
+-
+ 	if (initialize() == true)
+ 	{
++		DocumentInfo docInfo;
++
+ 		// Extract the first message
+-		extractMessage();
++		extractMessage(&quot;&quot;);
+ 	}
+ }
+ 
+ MboxParser::~MboxParser()
+ {
+-	if (m_pCurrentMessage != NULL)
++	if (m_pMimeMessage != NULL)
+ 	{
+-		delete m_pCurrentMessage;
++		g_mime_object_unref(GMIME_OBJECT(m_pMimeMessage));
+ 	}
++	if (m_pCurrentDocument != NULL)
++	{
++		delete m_pCurrentDocument;
++	}
+ 
+ 	finalize();
+ }
+@@ -178,7 +185,7 @@
+ 			if (pPart != NULL)
+ 			{
+ 				m_partNum = ++partNum;
+-				return NULL;
++				return pPart;
+ 			}
+ 		}
+ 
+@@ -197,181 +204,180 @@
+ 
+ 	// Check the content type
+ 	const GMimeContentType *mimeType = g_mime_part_get_content_type(mimePart);
+-	if (g_mime_content_type_is_type(mimeType, &quot;text&quot;, &quot;*&quot;) == TRUE)
++	// Set this for caller
++	char *partType = g_mime_content_type_to_string(mimeType);
++	if (partType != NULL)
+ 	{
+-		// Set this for caller
+-		char *partType = g_mime_content_type_to_string(mimeType);
+-		if (partType != NULL)
+-		{
+-			contentType = partType;
+-			g_free(partType);
+-		}
+-
+-		GMimePartEncodingType encodingType = g_mime_part_get_encoding(mimePart);
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: encoding is &quot; &lt;&lt; encodingType &lt;&lt; endl;
++		cout &lt;&lt; &quot;MboxParser::extractPart: type is &quot; &lt;&lt; partType &lt;&lt; endl;
+ #endif
++		contentType = partType;
++		g_free(partType);
++	}
+ 
+-		// Write the part to memory
+-		g_mime_part_set_encoding(mimePart, GMIME_PART_ENCODING_QUOTEDPRINTABLE);
+-		GMimeStream *memStream = g_mime_stream_mem_new();
+-		GMimeDataWrapper *dataWrapper = g_mime_part_get_content_object(mimePart);
+-		if (dataWrapper != NULL)
+-		{
+-			ssize_t writeLen = g_mime_data_wrapper_write_to_stream(dataWrapper, memStream);
++	GMimePartEncodingType encodingType = g_mime_part_get_encoding(mimePart);
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxParser::extractPart: wrote &quot; &lt;&lt; writeLen &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;MboxParser::extractPart: encoding is &quot; &lt;&lt; encodingType &lt;&lt; endl;
+ #endif
+-			g_object_unref(dataWrapper);
+-		}
+-		g_mime_stream_flush(memStream);
+-		partLen = g_mime_stream_length(memStream);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: part is &quot; &lt;&lt; partLen &lt;&lt; &quot; bytes long&quot; &lt;&lt; endl;
+-#endif
+ 
+-		pBuffer = (char*)malloc(partLen + 1);
+-		pBuffer[partLen] = '\0';
+-		g_mime_stream_reset(memStream);
+-		ssize_t readLen = g_mime_stream_read(memStream, pBuffer, partLen);
++	// Write the part to memory
++	g_mime_part_set_encoding(mimePart, GMIME_PART_ENCODING_QUOTEDPRINTABLE);
++	GMimeStream *memStream = g_mime_stream_mem_new();
++	GMimeDataWrapper *dataWrapper = g_mime_part_get_content_object(mimePart);
++	if (dataWrapper != NULL)
++	{
++		ssize_t writeLen = g_mime_data_wrapper_write_to_stream(dataWrapper, memStream);
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractPart: read &quot; &lt;&lt; readLen &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;MboxParser::extractPart: wrote &quot; &lt;&lt; writeLen &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
+ #endif
+-		g_mime_stream_unref(memStream);
++		g_object_unref(dataWrapper);
+ 	}
++	g_mime_stream_flush(memStream);
++	partLen = g_mime_stream_length(memStream);
+ #ifdef DEBUG
+-	else	cout &lt;&lt; &quot;MboxParser::extractPart: part is not text&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;MboxParser::extractPart: part is &quot; &lt;&lt; partLen &lt;&lt; &quot; bytes long&quot; &lt;&lt; endl;
+ #endif
+ 
++	pBuffer = (char*)malloc(partLen + 1);
++	pBuffer[partLen] = '\0';
++	g_mime_stream_reset(memStream);
++	ssize_t readLen = g_mime_stream_read(memStream, pBuffer, partLen);
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxParser::extractPart: read &quot; &lt;&lt; readLen &lt;&lt; &quot; bytes&quot; &lt;&lt; endl;
++#endif
++	g_mime_stream_unref(memStream);
++
+ 	return pBuffer;
+ }
+ 
+-bool MboxParser::extractMessage(void)
++bool MboxParser::extractMessage(const string &amp;subject)
+ {
+-	string fromLine, contentType;
++	string fromLine, msgSubject(subject), contentType;
++	char *pPart = NULL;
++	ssize_t partLength = 0;
+ 
+ 	while (g_mime_stream_eos(m_pMboxStream) == FALSE)
+ 	{
+-		if (m_partsCount != -1)
++		// Does the previous message have parts left to parse ?
++		if (m_partsCount == -1)
+ 		{
+-			// FIXME: the previous message has parts left to parse
+-			// The parser doesn't allow to poke at the stream
+-			// See g_mime_parser_init_with_stream() here :
+-			// <A HREF="http://spruce.sourceforge.net/gmime/doc/gmime-gmime-parser.html">http://spruce.sourceforge.net/gmime/doc/gmime-gmime-parser.html</A>
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxParser::extractMessage: skipping parts...&quot; &lt;&lt; endl;
+-#endif
+-			m_partsCount = m_partNum = -1;
+-		}
+-		// Get the next message
+-		GMimeMessage *mimeMessage = g_mime_parser_construct_message(m_pParser);
++			// No, it doesn't
++			if (m_pMimeMessage != NULL)
++			{
++				g_mime_object_unref(GMIME_OBJECT(m_pMimeMessage));
++				m_pMimeMessage = NULL;
++			}
+ 
+-		m_messageStart = g_mime_parser_get_from_offset(m_pParser);
+-		off_t messageEnd = g_mime_parser_tell(m_pParser);
++			// Get the next message
++			m_pMimeMessage = g_mime_parser_construct_message(m_pParser);
+ 
++			m_messageStart = g_mime_parser_get_from_offset(m_pParser);
++			off_t messageEnd = g_mime_parser_tell(m_pParser);
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxParser::extractMessage: message between offsets &quot; &lt;&lt; m_messageStart
+-			&lt;&lt; &quot; and &quot; &lt;&lt; messageEnd &lt;&lt; endl;
++			cout &lt;&lt; &quot;MboxParser::extractMessage: message between offsets &quot; &lt;&lt; m_messageStart
++				&lt;&lt; &quot; and &quot; &lt;&lt; messageEnd &lt;&lt; endl;
+ #endif
+-		if (messageEnd &gt; m_messageStart)
+-		{
+-			char *msgFromLine = g_mime_parser_get_from(m_pParser);
+-			if (msgFromLine != NULL)
++			if (messageEnd &gt; m_messageStart)
+ 			{
+-				fromLine = msgFromLine;
+-				g_free(msgFromLine);
+-			}
++				char *pFromLine = g_mime_parser_get_from(m_pParser);
++				if (pFromLine != NULL)
++				{
++					fromLine = pFromLine;
++					g_free(pFromLine);
++				}
+ 
+-			// FIXME: this only applies to Mozilla
+-			const char *msgMozStatus = g_mime_message_get_header(mimeMessage, &quot;X-Mozilla-Status&quot;);
+-			if (msgMozStatus != NULL)
+-			{
+-				long int mozStatus = strtol(msgMozStatus, NULL, 16);
+-				// Watch out for Mozilla specific flags :
+-				// MSG_FLAG_EXPUNGED, MSG_FLAG_EXPIRED
+-				// They are defined in mailnews/MailNewsTypes.h and msgbase/nsMsgMessageFlags.h
+-				if ((mozStatus &amp; 0x0008) ||
+-					(mozStatus &amp; 0x0040))
++				// FIXME: this only applies to Mozilla
++				const char *pMozStatus = g_mime_message_get_header(m_pMimeMessage, &quot;X-Mozilla-Status&quot;);
++				if (pMozStatus != NULL)
+ 				{
++					long int mozStatus = strtol(pMozStatus, NULL, 16);
++					// Watch out for Mozilla specific flags :
++					// MSG_FLAG_EXPUNGED, MSG_FLAG_EXPIRED
++					// They are defined in mailnews/MailNewsTypes.h and msgbase/nsMsgMessageFlags.h
++					if ((mozStatus &amp; 0x0008) ||
++						(mozStatus &amp; 0x0040))
++					{
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;MboxParser::extractMessage: flagged by Mozilla&quot; &lt;&lt; endl;
++						cout &lt;&lt; &quot;MboxParser::extractMessage: flagged by Mozilla&quot; &lt;&lt; endl;
+ #endif
+-					g_mime_object_unref(GMIME_OBJECT(mimeMessage));
+-					continue;
++						continue;
++					}
+ 				}
+-			}
+ 
+-			// How old is this message ?
+-			const char *msgDate = g_mime_message_get_header(mimeMessage, &quot;Date&quot;);
+-			if (msgDate != NULL)
+-			{
+-				m_messageDate = TimeConverter::fromTimestamp(msgDate);
++				// How old is this message ?
++				const char *pDate = g_mime_message_get_header(m_pMimeMessage, &quot;Date&quot;);
++				if (pDate != NULL)
++				{
++					m_messageDate = TimeConverter::fromTimestamp(pDate);
++				}
++				else
++				{
++					m_messageDate = 0;
++				}
++#ifdef DEBUG
++				cout &lt;&lt; &quot;MboxParser::extractMessage: message date is &quot; &lt;&lt; m_messageDate &lt;&lt; endl;
++#endif
++
++				// Extract the subject
++				const char *pSubject = g_mime_message_get_header(m_pMimeMessage, &quot;Subject&quot;);
++				if (pSubject != NULL)
++				{
++					msgSubject = pSubject;
++				}
+ 			}
+-			else
+-			{
+-				m_messageDate = 0;
+-			}
++		}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxParser::extractMessage: message date is &quot; &lt;&lt; m_messageDate &lt;&lt; endl;
++		cout &lt;&lt; &quot;MboxParser::extractMessage: message subject is &quot; &lt;&lt; msgSubject &lt;&lt; endl;
+ #endif
+ 
+-			// Extract the subject and source address
+-			const char *msgSubject = g_mime_message_get_header(mimeMessage, &quot;Subject&quot;);
+-			const char *msgFrom = g_mime_message_get_header(mimeMessage, &quot;From&quot;);
+-
++		if (m_pMimeMessage != NULL)
++		{
+ 			// Get the top-level MIME part in the message
+-			GMimeObject *mimePart = g_mime_message_get_mime_part(mimeMessage);
+-
+-			// Extract the part's text
+-			ssize_t partLength = 0;
+-			char *pPart = extractPart(mimePart, contentType, partLength);
+-			if (pPart != NULL)
++			GMimeObject *pMimePart = g_mime_message_get_mime_part(m_pMimeMessage);
++			if (pMimePart != NULL)
+ 			{
+-				string location, subject;
+-				char posStr[64];
++				// Extract the part's text
++				pPart = extractPart(pMimePart, contentType, partLength);
++				if (pPart != NULL)
++				{
++					string location;
++					char posStr[64];
+ 
+-				// New location
+-				// FIXME: use the same scheme as Mozilla
+-				location = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
+-				location += m_fileName;
+-				location += &quot;?o=&quot;;
+-				snprintf(posStr, 64, &quot;%d&quot;, m_messageStart);
+-				location += posStr;
+-				location += &quot;&amp;p=&quot;;
+-				snprintf(posStr, 64, &quot;%d&quot;, max(m_partNum, 0));
+-				location += posStr;
+-				location += &quot;&amp;h=&quot;;
+-				location += StringManip::hashString(fromLine);
++					// New location
++					// FIXME: use the same scheme as Mozilla
++					location = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
++					location += m_fileName;
++					location += &quot;?o=&quot;;
++					snprintf(posStr, 64, &quot;%d&quot;, m_messageStart);
++					location += posStr;
++					location += &quot;&amp;p=&quot;;
++					snprintf(posStr, 64, &quot;%d&quot;, max(m_partNum, 0));
++					location += posStr;
++					location += &quot;&amp;h=&quot;;
++					location += StringManip::hashString(fromLine);
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;MboxParser::extractMessage: message location is &quot; &lt;&lt; location &lt;&lt; endl;
++					cout &lt;&lt; &quot;MboxParser::extractMessage: message location is &quot; &lt;&lt; location &lt;&lt; endl;
+ #endif
+ 
+-				if (msgSubject != NULL)
+-				{
+-					subject = msgSubject;
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;MboxParser::extractMessage: message subject is &quot; &lt;&lt; subject &lt;&lt; endl;
+-#endif
+-				}
+-#ifdef DEBUG
+-				else cout &lt;&lt; &quot;MboxParser::extractMessage: message has no subject&quot; &lt;&lt; endl;
+-#endif
++					// New document
++					m_pCurrentDocument = new Document(msgSubject, location, contentType, &quot;&quot;);
++					m_pCurrentDocument-&gt;setData(pPart, (unsigned int)partLength);
+ 
+-				// New message
+-				m_pCurrentMessage = new Document(subject, location, contentType, &quot;&quot;);
+-				m_pCurrentMessage-&gt;setData(pPart, (unsigned int)partLength);
++					free(pPart);
++					g_mime_object_unref(pMimePart);
+ 
+-				free(pPart);
+-				g_mime_object_unref(mimePart);
+-				g_mime_object_unref(GMIME_OBJECT(mimeMessage));
++					return true;
++				}
+ 
+-				return true;
++				g_mime_object_unref(pMimePart);
+ 			}
+ 
+-			g_mime_object_unref(mimePart);
++			g_mime_object_unref(GMIME_OBJECT(m_pMimeMessage));
++			m_pMimeMessage = NULL;
+ 		}
+ 
+-		g_mime_object_unref(GMIME_OBJECT(mimeMessage));
++		// If we get there, no suitable parts were found
++		m_partsCount = m_partNum = -1;
+ 	}
+ 
+ 	return false;
+@@ -386,10 +392,17 @@
+ /// Jumps to the next message.
+ bool MboxParser::nextMessage(void)
+ {
+-	delete m_pCurrentMessage;
+-	m_pCurrentMessage = NULL;
+-	// Get the next message from the original document
+-	return extractMessage();
++	string subject;
++
++	if (m_pCurrentDocument != NULL)
++	{
++		subject = m_pCurrentDocument-&gt;getTitle();
++
++		delete m_pCurrentDocument;
++		m_pCurrentDocument = NULL;
++	}
++
++	return extractMessage(subject);
+ }
+ 
+ /// Returns a pointer to the current message's document.
+@@ -397,5 +410,5 @@
+ {
+ 	// FIXME: this object can be invalidated by nextMessage() at any time;
+ 	// use auto_ptr all the way ?
+-	return m_pCurrentMessage;
++	return m_pCurrentDocument;
+ }
+
+Modified: trunk/Utils/MboxParser.h
+===================================================================
+--- trunk/Utils/MboxParser.h	2006-10-05 14:36:22 UTC (rev 501)
++++ trunk/Utils/MboxParser.h	2006-10-06 14:45:04 UTC (rev 502)
+@@ -58,17 +58,18 @@
+ 		int m_fd;
+ 		GMimeStream *m_pMboxStream;
+ 		GMimeParser *m_pParser;
++		GMimeMessage *m_pMimeMessage;
+ 		int m_partsCount;
+ 		int m_partNum;
+ 		off_t m_messageStart;
+-		Document *m_pCurrentMessage;
++		Document *m_pCurrentDocument;
+ 		time_t m_messageDate;
+ 
+ 		bool initialize(void);
+ 
+ 		void finalize(void);
+ 
+-		bool extractMessage(void);
++		bool extractMessage(const string &amp;subject);
+ 
+ 		char *extractPart(GMimeObject *mimeObject, string &amp;contentType, ssize_t &amp;partLen);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000494.html">[Pinot-svn] r501 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000496.html">[Pinot-svn] r503 - in trunk: Collect Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#495">[ date ]</a>
+              <a href="thread.html#495">[ thread ]</a>
+              <a href="subject.html#495">[ subject ]</a>
+              <a href="author.html#495">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

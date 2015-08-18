@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r289 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r289%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606051432.k55EWx7M003371%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000282.html">
+   <LINK REL="Next"  HREF="000284.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r289 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r289%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606051432.k55EWx7M003371%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r289 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Mon Jun  5 16:32:59 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000282.html">[Pinot-svn] r288 - in trunk: Tokenize Utils
+</A></li>
+        <LI>Next message: <A HREF="000284.html">[Pinot-svn] r290 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#283">[ date ]</a>
+              <a href="thread.html#283">[ thread ]</a>
+              <a href="subject.html#283">[ subject ]</a>
+              <a href="author.html#283">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-05 16:32:58 +0200 (Mon, 05 Jun 2006)
+New Revision: 289
+
+Modified:
+   trunk/UI/GTK2/src/PinotUtils.cpp
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Some fixes for charset conversions.
+
+
+Modified: trunk/UI/GTK2/src/PinotUtils.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotUtils.cpp	2006-06-02 15:46:51 UTC (rev 288)
++++ trunk/UI/GTK2/src/PinotUtils.cpp	2006-06-05 14:32:58 UTC (rev 289)
+@@ -215,7 +215,7 @@
+ 	{
+ 		if (charset.empty() == false)
+ 		{
+-			return convert_with_fallback(text, &quot;UTF-8&quot;, charset);
++			return convert_with_fallback(text, &quot;UTF-8&quot;, charset, &quot; &quot;);
+ 		}
+ 		else
+ 		{
+@@ -224,6 +224,13 @@
+ 	}
+ 	catch (ConvertError &amp;ce)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;to_utf8: cannot convert from &quot; &lt;&lt; charset &lt;&lt; &quot;: &quot; &lt;&lt; ce.what() &lt;&lt; endl;
++#endif
++		if (charset.empty() == false)
++		{
++			return to_utf8(text);
++		}
+ 	}
+ 
+ 	return &quot;&quot;;
+@@ -238,6 +245,9 @@
+ 	}
+ 	catch (ConvertError &amp;ce)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;from_utf8: &quot; &lt;&lt; ce.what() &lt;&lt; endl;
++#endif
+ 	}
+ 
+ 	return &quot;&quot;;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-06-02 15:46:51 UTC (rev 288)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-06-05 14:32:58 UTC (rev 289)
+@@ -512,9 +512,9 @@
+ 	for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 		resultIter != resultsList.end(); ++resultIter)
+ 	{
+-		string title(resultIter-&gt;getTitle());
+-		string location(resultIter-&gt;getLocation());
+-		string extract(resultIter-&gt;getExtract());
++		ustring title(to_utf8(resultIter-&gt;getTitle(), charset));
++		ustring location(to_utf8(resultIter-&gt;getLocation(), charset));
++		ustring extract(to_utf8(resultIter-&gt;getExtract(), charset));
+ 		float currentScore = resultIter-&gt;getScore();
+ 		string score;
+ 		int rankDiff = 0;
+@@ -546,14 +546,14 @@
+ 			{
+ 				// Update this result whatever the current and previous rankings were
+ 				history.updateItem(queryName, registeredEngineName, location,
+-					title, to_utf8(extract, charset).c_str(), language, currentScore);
++					title, extract, language, currentScore);
+ 				rankDiff = (int)(currentScore - previousScore);
+ 			}
+ 			else
+ 			{
+ 				// No, this is a new result
+ 				history.insertItem(queryName, registeredEngineName, location,
+-					resultIter-&gt;getTitle(), to_utf8(extract, charset).c_str(), language, currentScore);
++					resultIter-&gt;getTitle(), extract, language, currentScore);
+ 				// New results are displayed as such only if the query has already been run on the engine
+ 				if (isNewQuery == false)
+ 				{
+@@ -563,9 +563,8 @@
+ 			}
+ 
+ 			++count;
+-			if (appendResult(to_utf8(title, charset), to_utf8(location, charset),
+-				currentScore, language, rankDiff, queryName, engineId, indexId,
+-				titleIter, &amp;(*groupIter), true) == true)
++			if (appendResult(title, location, currentScore, language, rankDiff,
++				queryName, engineId, indexId, titleIter, &amp;(*groupIter), true) == true)
+ 			{
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-06-02 15:46:51 UTC (rev 288)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-06-05 14:32:58 UTC (rev 289)
+@@ -530,7 +530,7 @@
+ {
+ 	charset = m_resultsCharset;
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;QueryingThread::getResults: charset is &quot; &lt;&lt; charset &lt;&lt; endl;
++	cout &lt;&lt; &quot;QueryingThread::getResults: charset for &quot; &lt;&lt; m_engineDisplayableName &lt;&lt; &quot; is &quot; &lt;&lt; charset &lt;&lt; endl;
+ #endif
+ 
+ 	return m_resultsList;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000282.html">[Pinot-svn] r288 - in trunk: Tokenize Utils
+</A></li>
+	<LI>Next message: <A HREF="000284.html">[Pinot-svn] r290 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#283">[ date ]</a>
+              <a href="thread.html#283">[ thread ]</a>
+              <a href="subject.html#283">[ subject ]</a>
+              <a href="author.html#283">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

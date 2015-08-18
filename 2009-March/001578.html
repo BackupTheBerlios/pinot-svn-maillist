@@ -1,0 +1,334 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1588 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1588%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200903171437.n2HEbN4b017086%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001577.html">
+   <LINK REL="Next"  HREF="001579.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1588 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1588%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200903171437.n2HEbN4b017086%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1588 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 17 15:37:23 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001577.html">[Pinot-svn] r1587 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001579.html">[Pinot-svn] r1589 - in trunk: . Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1578">[ date ]</a>
+              <a href="thread.html#1578">[ thread ]</a>
+              <a href="subject.html#1578">[ subject ]</a>
+              <a href="author.html#1578">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-17 15:37:13 +0100 (Tue, 17 Mar 2009)
+New Revision: 1588
+
+Modified:
+   trunk/IndexSearch/Xapian/LanguageDetector.cpp
+   trunk/IndexSearch/Xapian/LanguageDetector.h
+   trunk/IndexSearch/Xapian/XapianDatabaseFactory.h
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+Log:
+LanguageDetector is a singleton, and textcat is initialized once.
+
+
+Modified: trunk/IndexSearch/Xapian/LanguageDetector.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/LanguageDetector.cpp	2009-03-11 14:30:17 UTC (rev 1587)
++++ trunk/IndexSearch/Xapian/LanguageDetector.cpp	2009-03-17 14:37:13 UTC (rev 1588)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,13 +16,9 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &quot;config.h&quot;
+ #include &lt;strings.h&gt;
+ #include &lt;sys/time.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;utility&gt;
+-#include &lt;cstring&gt;
+-
+-#include &quot;config.h&quot;
+ extern &quot;C&quot;
+ {
+ #define USE_TEXTCAT 1
+@@ -36,6 +32,9 @@
+ #endif
+ #endif
+ }
++#include &lt;iostream&gt;
++#include &lt;utility&gt;
++#include &lt;cstring&gt;
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;Timer.h&quot;
+@@ -49,32 +48,17 @@
+ using std::vector;
+ using std::min;
+ 
+-unsigned int LanguageDetector::m_maxTextSize = 1000;
++#define MAX_TEXT_SIZE 1000
+ 
+-LanguageDetector::LanguageDetector()
+-{
+-}
++LanguageDetector LanguageDetector::m_instance;
+ 
+-LanguageDetector::~LanguageDetector()
++LanguageDetector::LanguageDetector() :
++	m_pHandle(NULL)
+ {
+-}
+-
+-/**
+-  * Attempts to guess the language.
+-  * Returns a list of candidates, or &quot;unknown&quot; if detection failed.
+-  */
+-void LanguageDetector::guessLanguage(const char *pData, unsigned int dataLength,
+-			std::vector&lt;std::string&gt; &amp;candidates)
+-{
+ #ifdef USE_TEXTCAT
+ 	string confFile(SYSCONFDIR);
+ 	char *textCatVersion = textcat_Version();
+-#ifdef HAVE_TEXTCAT_CAT
+-	const char *catResults[10];
+-#endif
+ 
+-	candidates.clear();
+-
+ 	// What configuration file should we use ?
+ 	confFile += &quot;/pinot/&quot;;
+ #ifdef DEBUG
+@@ -91,22 +75,58 @@
+ 	}
+ 
+ 	// Initialize
+-	void *td = textcat_Init(confFile.c_str());
+-	if (td == NULL)
++	pthread_mutex_init(&amp;m_mutex, NULL);
++	m_pHandle = textcat_Init(confFile.c_str());
++#endif
++}
++
++LanguageDetector::~LanguageDetector()
++{
++#ifdef USE_TEXTCAT
++	// Close the descriptor
++	textcat_Done(m_pHandle);
++	pthread_mutex_destroy(&amp;m_mutex);
++#endif
++}
++
++LanguageDetector &amp;LanguageDetector::getInstance(void)
++{
++	return m_instance;
++}
++
++/**
++  * Attempts to guess the language.
++  * Returns a list of candidates, or &quot;unknown&quot; if detection failed.
++  */
++void LanguageDetector::guessLanguage(const char *pData, unsigned int dataLength,
++	vector&lt;string&gt; &amp;candidates)
++{
++#ifdef HAVE_TEXTCAT_CAT
++	const char *catResults[10];
++#endif
++
++	candidates.clear();
++#ifdef USE_TEXTCAT
++	if (m_pHandle == NULL)
+ 	{
+ 		candidates.push_back(&quot;unknown&quot;);
+ 		return;
+ 	}
+ 
+-	// Classify
+ #ifdef DEBUG
+ 	Timer timer;
+ 	timer.start();
+-	cout &lt;&lt; &quot;LanguageDetector::guessLanguage: starting&quot; &lt;&lt; endl;
+ #endif
++	// Lock the handle
++	if (pthread_mutex_lock(&amp;m_mutex) != 0)
++	{
++		return;
++	}
++
++	// Classify
+ #ifdef HAVE_TEXTCAT_CAT
+-	unsigned int resultNum = textcat_Cat(td, pData,
+-		min(dataLength, m_maxTextSize), catResults, 10);
++	unsigned int resultNum = textcat_Cat(m_pHandle, pData,
++		min(dataLength, (unsigned int)MAX_TEXT_SIZE), catResults, 10);
+ 	if (resultNum == 0 )
+ 	{
+ 		candidates.push_back(&quot;unknown&quot;);
+@@ -130,8 +150,8 @@
+ 		}
+ 	}
+ #else
+-	const char *languages = textcat_Classify(td, pData,
+-		min(dataLength, m_maxTextSize));
++	const char *languages = textcat_Classify(m_pHandle, pData,
++		min(dataLength, (unsigned int)MAX_TEXT_SIZE));
+ 	if (languages == NULL)
+ 	{
+ 		candidates.push_back(&quot;unknown&quot;);
+@@ -176,13 +196,13 @@
+ 		}
+ 	}
+ #endif
++
++	// Unlock
++	pthread_mutex_unlock(&amp;m_mutex);
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;LanguageDetector::guessLanguage: language guessing took &quot;
+ 		&lt;&lt; timer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ #endif
+-
+-	// Close the descriptor
+-	textcat_Done(td);
+ #else
+ 	candidates.push_back(&quot;unknown&quot;);
+ #endif
+
+Modified: trunk/IndexSearch/Xapian/LanguageDetector.h
+===================================================================
+--- trunk/IndexSearch/Xapian/LanguageDetector.h	2009-03-11 14:30:17 UTC (rev 1587)
++++ trunk/IndexSearch/Xapian/LanguageDetector.h	2009-03-17 14:37:13 UTC (rev 1588)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -19,6 +19,7 @@
+ #ifndef _LANGUAGE_DETECTOR_H
+ #define _LANGUAGE_DETECTOR_H
+ 
++#include &lt;pthread.h&gt;
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
+ 
+@@ -26,9 +27,10 @@
+ class LanguageDetector
+ {
+ 	public:
+-		LanguageDetector();
+ 		virtual ~LanguageDetector();
+ 
++		static LanguageDetector &amp;getInstance(void);
++
+ 		/**
+ 		  * Attempts to guess the language.
+ 		  * Returns a list of candidates, or &quot;unknown&quot; if detection failed.
+@@ -37,8 +39,12 @@
+ 			std::vector&lt;std::string&gt; &amp;candidates);
+ 
+ 	protected:
+-		static unsigned int m_maxTextSize;
++		static LanguageDetector m_instance;
++		pthread_mutex_t m_mutex;
++		void *m_pHandle;
+ 
++		LanguageDetector();
++
+ 	private:
+ 		LanguageDetector(const LanguageDetector &amp;other);
+ 		LanguageDetector &amp;operator=(const LanguageDetector &amp;other);
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabaseFactory.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabaseFactory.h	2009-03-11 14:30:17 UTC (rev 1587)
++++ trunk/IndexSearch/Xapian/XapianDatabaseFactory.h	2009-03-17 14:37:13 UTC (rev 1588)
+@@ -19,9 +19,9 @@
+ #ifndef _XAPIAN_DATABASE_FACTORY_H
+ #define _XAPIAN_DATABASE_FACTORY_H
+ 
++#include &lt;pthread.h&gt;
+ #include &lt;string&gt;
+ #include &lt;map&gt;
+-#include &lt;pthread.h&gt;
+ 
+ #include &quot;XapianDatabase.h&quot;
+ 
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-03-11 14:30:17 UTC (rev 1587)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-03-17 14:37:13 UTC (rev 1588)
+@@ -838,7 +838,6 @@
+ string XapianIndex::scanDocument(const string &amp;suggestedLanguage,
+ 	const char *pData, unsigned int dataLength)
+ {
+-	LanguageDetector lang;
+ 	vector&lt;string&gt; candidates;
+ 	string language;
+ 	bool scannedDocument = false;
+@@ -851,7 +850,7 @@
+ 	else
+ 	{
+ 		// Try to determine the document's language right away
+-		lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
++		LanguageDetector::getInstance().guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
+ 
+ 		scannedDocument = true;
+ 	}
+@@ -878,7 +877,7 @@
+ 			{
+ 				// The suggested language is not suitable
+ 				candidates.clear();
+-				lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
++				LanguageDetector::getInstance().guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
+ 
+ 				langIter = candidates.begin();
+ 				scannedDocument = true;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001577.html">[Pinot-svn] r1587 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001579.html">[Pinot-svn] r1589 - in trunk: . Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1578">[ date ]</a>
+              <a href="thread.html#1578">[ thread ]</a>
+              <a href="subject.html#1578">[ subject ]</a>
+              <a href="author.html#1578">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

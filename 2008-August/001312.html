@@ -1,0 +1,437 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1318 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1318%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200808031522.m73FMhO0024245%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001311.html">
+   <LINK REL="Next"  HREF="001313.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1318 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1318%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200808031522.m73FMhO0024245%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1318 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Aug  3 17:22:43 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001311.html">[Pinot-svn] r1317 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001313.html">[Pinot-svn] r1319 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1312">[ date ]</a>
+              <a href="thread.html#1312">[ thread ]</a>
+              <a href="subject.html#1312">[ subject ]</a>
+              <a href="author.html#1312">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-08-03 17:22:35 +0200 (Sun, 03 Aug 2008)
+New Revision: 1318
+
+Added:
+   trunk/UI/GTK2/src/UniqueApplication.cpp
+   trunk/UI/GTK2/src/UniqueApplication.h
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Moved code that enforced the daemon's uniqueness to UniqueApplication and
+prepare for an eventual switch to Unique (<A HREF="http://www.gnome.org/~ebassi/source/">http://www.gnome.org/~ebassi/source/</A>).
+
+
+Added: trunk/UI/GTK2/src/UniqueApplication.cpp
+===================================================================
+--- trunk/UI/GTK2/src/UniqueApplication.cpp	2008-08-03 13:02:29 UTC (rev 1317)
++++ trunk/UI/GTK2/src/UniqueApplication.cpp	2008-08-03 15:22:35 UTC (rev 1318)
+@@ -0,0 +1,177 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;sys/types.h&gt;
++#include &lt;signal.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;errno.h&gt;
++#include &lt;iostream&gt;
++#include &lt;fstream&gt;
++#include &lt;sstream&gt;
++
++#include &quot;UniqueApplication.h&quot;
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::string;
++using std::fstream;
++using std::stringstream;
++
++UniqueApplication::UniqueApplication(const string &amp;name)
++{
++#ifdef HAVE_UNIQUE
++	m_pApp = unique_app_new(name.c_str(), NULL);
++#ifdef DEBUG
++	if (m_pApp != NULL)
++	{
++		cout &lt;&lt; &quot;UniqueApplication: registered&quot; &lt;&lt; endl;
++	}
++	else
++	{
++		cout &lt;&lt; &quot;UniqueApplication: failed to register&quot; &lt;&lt; endl;
++	}
++#endif
++#endif
++}
++
++UniqueApplication::~UniqueApplication()
++{
++#ifdef HAVE_UNIQUE
++	if (m_pApp != NULL)
++	{
++		g_object_unref(m_pApp);
++	}
++#endif
++}
++
++bool UniqueApplication::isRunning(void)
++{
++#ifdef HAVE_UNIQUE
++	if ((m_pApp != NULL) &amp;&amp;
++		(unique_app_is_running(m_pApp) == TRUE))
++	{
++		return true;
++	}
++#endif
++
++	return false;
++}
++
++bool UniqueApplication::isRunning(const string &amp;pidFileName, const string &amp;processName)
++{
++	fstream pidFile;
++
++	// Open the PID file
++	pidFile.open(pidFileName.c_str(), std::ios::in);
++	if (pidFile.is_open() == false)
++	{
++		// The application may still be running even though the PID file doesn't exist
++		if (isRunning() == true)
++		{
++			return true;
++		}
++		// Keep going
++	}
++	else
++	{
++		pid_t processID = 0;
++		bool stillRunning = false, processDied = false;
++
++		pidFile &gt;&gt; processID;
++		pidFile.close();
++
++		// Is another process running ?
++		if (processID &gt; 0)
++		{
++#ifdef HAVE_UNIQUE
++			if (m_pApp != NULL)
++			{
++				if (unique_app_is_running(m_pApp) == TRUE)
++				{
++					// It's still running
++					stillRunning = true;
++				}
++				else
++				{
++					// It most likely died
++					processDied = true;
++				}
++			}
++#else
++			fstream cmdLineFile;
++			stringstream cmdLineFileName;
++			bool checkProcess = true;
++
++			// FIXME: check for existence of /proc
++			cmdLineFileName &lt;&lt; &quot;/proc/&quot; &lt;&lt; processID &lt;&lt; &quot;/cmdline&quot;;
++			cmdLineFile.open(cmdLineFileName.str().c_str(), std::ios::in);
++			if (cmdLineFile.is_open() == true)
++			{
++				string cmdLine;
++
++				cmdLineFile &gt;&gt; cmdLine;
++				cmdLineFile.close();
++
++				if (cmdLine.find(processName) == string::npos)
++				{
++					// It's another process
++					checkProcess = false;
++					processDied = true;
++				}
++			}
++
++			if (checkProcess == true)
++			{
++				if (kill(processID, 0) == 0)
++				{
++					// It's still running
++					stillRunning = true;
++				}
++				else if (errno == ESRCH)
++				{
++					// This PID doesn't exist
++					processDied = true;
++				}
++			}
++#endif
++
++			if (stillRunning == true)
++			{
++				cout &lt;&lt; &quot;Process &quot; &lt;&lt; processName &lt;&lt; &quot; (&quot; &lt;&lt; processID &lt;&lt; &quot;) is still running&quot; &lt;&lt; endl;
++				return true;
++			}
++
++			if (processDied == true)
++			{
++				cerr &lt;&lt; &quot;Previous instance &quot; &lt;&lt; processID &lt;&lt; &quot; died prematurely&quot; &lt;&lt; endl;
++			}
++		}
++	}
++
++	// Now save our PID
++	pidFile.open(pidFileName.c_str(), std::ios::out);
++	if (pidFile.is_open() == true)
++	{
++		pidFile &lt;&lt; getpid() &lt;&lt; endl;
++		pidFile.close();
++	}
++
++	return false;
++}
++
+
+Added: trunk/UI/GTK2/src/UniqueApplication.h
+===================================================================
+--- trunk/UI/GTK2/src/UniqueApplication.h	2008-08-03 13:02:29 UTC (rev 1317)
++++ trunk/UI/GTK2/src/UniqueApplication.h	2008-08-03 15:22:35 UTC (rev 1318)
+@@ -0,0 +1,49 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _UNIQUEAPPLICATION_HH
++#define _UNIQUEAPPLICATION_HH
++
++#include &lt;string&gt;
++
++#ifdef HAVE_UNIQUE
++#include &lt;unique/unique.h&gt;
++#endif
++
++class UniqueApplication
++{
++	public:
++		UniqueApplication(const std::string &amp;name);
++		~UniqueApplication();
++
++		bool isRunning(void);
++
++		bool isRunning(const std::string &amp;pidFileName,
++			const std::string &amp;processName);
++
++	private:
++#ifdef HAVE_UNIQUE
++		UniqueApp *m_pApp;
++#endif
++
++		UniqueApplication(const UniqueApplication &amp;other);
++		UniqueApplication &amp;operator=(const UniqueApplication &amp;other);
++
++};
++
++#endif // _UNIQUEAPPLICATION_HH
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-08-03 13:02:29 UTC (rev 1317)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-08-03 15:22:35 UTC (rev 1318)
+@@ -50,6 +50,7 @@
+ #include &quot;DaemonState.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;ServerThreads.h&quot;
++#include &quot;UniqueApplication.h&quot;
+ 
+ using namespace std;
+ 
+@@ -388,91 +389,40 @@
+ 		}
+ 	}
+ 
+-	// This will create the necessary directories on the first run
+-	PinotSettings &amp;settings = PinotSettings::getInstance();
+-	// This is the daemon so disable client-side code 
+-	settings.enableClientMode(false);
+-
++	// Make sure only one instance runs
++	UniqueApplication uniqueApp(&quot;de.berlios.PinotDBusDaemon&quot;);
+ 	string confDirectory = PinotSettings::getConfigurationDirectory();
++	g_pidFileName = confDirectory + &quot;/pinot-dbus-daemon.pid&quot;;
+ 	if (chdir(confDirectory.c_str()) == 0)
+ 	{
+-		fstream pidFile;
+-		string fileName(confDirectory);
++		if (uniqueApp.isRunning(g_pidFileName, &quot;pinot-dbus-daemon&quot;) == true)
++		{
++			return EXIT_SUCCESS;
++		}
+ 
+ 		// Redirect cout and cerr to a file
++		string fileName(confDirectory);
+ 		fileName += &quot;/pinot-dbus-daemon.log&quot;;
+ 		g_outputFile.open(fileName.c_str());
+ 		g_coutBuf = cout.rdbuf();
+ 		g_cerrBuf = cerr.rdbuf();
+ 		cout.rdbuf(g_outputFile.rdbuf());
+ 		cerr.rdbuf(g_outputFile.rdbuf());
+-
+-		// Open the PID file
+-		g_pidFileName = confDirectory + &quot;/pinot-dbus-daemon.pid&quot;;
+-		pidFile.open(g_pidFileName.c_str(), std::ios::in);
+-		if (pidFile.is_open() == true)
++	}
++	else
++	{
++		// We can't rely on the PID file
++		if (uniqueApp.isRunning() == true)
+ 		{
+-			pid_t daemonPID = 0;
+-			bool checkProcess = true, daemonDied = false;
+-
+-			pidFile &gt;&gt; daemonPID;
+-			pidFile.close();
+-
+-			// Is another daemon running ?
+-			if (daemonPID &gt; 0)
+-			{
+-				fstream cmdLineFile;
+-				stringstream cmdLineFileName;
+-
+-				// FIXME: check for existence of /proc
+-				cmdLineFileName &lt;&lt; &quot;/proc/&quot; &lt;&lt; daemonPID &lt;&lt; &quot;/cmdline&quot;;
+-				cmdLineFile.open(cmdLineFileName.str().c_str(), std::ios::in);
+-				if (cmdLineFile.is_open() == true)
+-				{
+-					string cmdLine;
+-
+-					cmdLineFile &gt;&gt; cmdLine;
+-					cmdLineFile.close();
+-
+-					if (cmdLine.find(&quot;pinot-dbus-daemon&quot;) == string::npos)
+-					{
+-						// It's another process
+-						checkProcess = false;
+-						daemonDied = true;
+-					}
+-				}
+-
+-				if (checkProcess == true)
+-				{
+-					if (kill(daemonPID, 0) == 0)
+-					{
+-						// It's still running
+-						cout &lt;&lt; &quot;Daemon instance &quot; &lt;&lt; daemonPID &lt;&lt; &quot; is still running&quot; &lt;&lt; endl;
+-						return EXIT_SUCCESS;
+-					}
+-					else if (errno == ESRCH)
+-					{
+-						// This PID doesn't exist
+-						daemonDied = true;
+-					}
+-				}
+-
+-				if (daemonDied == true)
+-				{
+-					cerr &lt;&lt; &quot;Previous daemon instance &quot; &lt;&lt; daemonPID &lt;&lt; &quot; died prematurely&quot; &lt;&lt; endl;
+-				}
+-			}
++			return EXIT_SUCCESS;
+ 		}
+-
+-		// Now save our PID
+-		pidFile.open(g_pidFileName.c_str(), std::ios::out);
+-		if (pidFile.is_open() == true)
+-		{
+-			pidFile &lt;&lt; getpid() &lt;&lt; endl;
+-			pidFile.close();
+-		}
+ 	}
+ 
++	// This will create the necessary directories on the first run
++	PinotSettings &amp;settings = PinotSettings::getInstance();
++	// This is the daemon so disable client-side code 
++	settings.enableClientMode(false);
++
+ 	// Initialize utility classes
+ 	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local&quot;,
+ 		string(SHARED_MIME_INFO_PREFIX)) == false)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001311.html">[Pinot-svn] r1317 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001313.html">[Pinot-svn] r1319 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1312">[ date ]</a>
+              <a href="thread.html#1312">[ thread ]</a>
+              <a href="subject.html#1312">[ subject ]</a>
+              <a href="author.html#1312">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

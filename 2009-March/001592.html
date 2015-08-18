@@ -1,0 +1,361 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1602 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1602%20-%20trunk/SQL&In-Reply-To=%3C200903311300.n2VD0o0J018827%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001591.html">
+   <LINK REL="Next"  HREF="001593.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1602 - trunk/SQL</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1602%20-%20trunk/SQL&In-Reply-To=%3C200903311300.n2VD0o0J018827%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1602 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 31 15:00:50 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001591.html">[Pinot-svn] r1601 - in trunk: IndexSearch Tokenize
+</A></li>
+        <LI>Next message: <A HREF="001593.html">[Pinot-svn] r1603 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1592">[ date ]</a>
+              <a href="thread.html#1592">[ thread ]</a>
+              <a href="subject.html#1592">[ subject ]</a>
+              <a href="author.html#1592">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-31 15:00:45 +0200 (Tue, 31 Mar 2009)
+New Revision: 1602
+
+Modified:
+   trunk/SQL/MetaDataBackup.cpp
+   trunk/SQL/MetaDataBackup.h
+Log:
+Changes to accomodate ipath.
+
+
+Modified: trunk/SQL/MetaDataBackup.cpp
+===================================================================
+--- trunk/SQL/MetaDataBackup.cpp	2009-03-28 03:50:41 UTC (rev 1601)
++++ trunk/SQL/MetaDataBackup.cpp	2009-03-31 13:00:45 UTC (rev 1602)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -50,16 +50,18 @@
+ {
+ }
+ 
+-bool MetaDataBackup::setAttribute(const string &amp;url,
++bool MetaDataBackup::setAttribute(const DocumentInfo &amp;docInfo,
+ 	const string &amp;name, const string &amp;value, bool noXAttr)
+ {
++	string url(docInfo.getLocation());
++	string urlWithIPath(docInfo.getLocation(true));
+ #ifdef HAVE_ATTR_XATTR_H
+ 	Url urlObj(url);
+ 
+ 	// If the file is local and isn't a nested document, use an extended attribute
+ 	if ((noXAttr == false) &amp;&amp;
+ 		(urlObj.isLocal() == true) &amp;&amp;
+-		(urlObj.getParameters().empty() == true))
++		(docInfo.getInternalPath().empty() == true))
+ 	{
+ 		string fileName(url.substr(urlObj.getProtocol().length() + 3));
+ 		string attrName(&quot;pinot.&quot; + name);
+@@ -79,7 +81,7 @@
+ 	// Is there already such an item for this URL ?
+ 	SQLResults *results = executeStatement(&quot;SELECT Url FROM MetaDataBackup \
+ 		WHERE Url='%q' AND Name='%q';&quot;,
+-		Url::escapeUrl(url).c_str(), name.c_str());
++		Url::escapeUrl(urlWithIPath).c_str(), name.c_str());
+ 	if (results != NULL)
+ 	{
+ 		SQLRow *row = results-&gt;nextRow();
+@@ -98,13 +100,13 @@
+ 	{
+ 		results = executeStatement(&quot;INSERT INTO MetaDataBackup \
+ 			VALUES('%q', '%q', '%q');&quot;,
+-			Url::escapeUrl(url).c_str(), name.c_str(), value.c_str());
++			Url::escapeUrl(urlWithIPath).c_str(), name.c_str(), value.c_str());
+ 	}
+ 	else
+ 	{
+ 		results = executeStatement(&quot;UPDATE MetaDataBackup \
+ 			SET Value='%q' WHERE Url='%q' AND Name='%q';&quot;,
+-			value.c_str(), Url::escapeUrl(url).c_str(), name.c_str());
++			value.c_str(), Url::escapeUrl(urlWithIPath).c_str(), name.c_str());
+ 	}
+ 	if (results != NULL)
+ 	{
+@@ -117,9 +119,11 @@
+ 
+ }
+ 
+-bool MetaDataBackup::getAttribute(const string &amp;url,
++bool MetaDataBackup::getAttribute(const DocumentInfo &amp;docInfo,
+ 	const string &amp;name, string &amp;value, bool noXAttr)
+ {
++	string url(docInfo.getLocation());
++	string urlWithIPath(docInfo.getLocation(true));
+ 	bool success = false;
+ #ifdef HAVE_ATTR_XATTR_H
+ 	Url urlObj(url);
+@@ -127,7 +131,7 @@
+ 	// If the file is local and isn't a nested document, use an extended attribute
+ 	if ((noXAttr == false) &amp;&amp;
+ 		(urlObj.isLocal() == true) &amp;&amp;
+-		(urlObj.getParameters().empty() == true))
++		(docInfo.getInternalPath().empty() == true))
+ 	{
+ 		string fileName(url.substr(urlObj.getProtocol().length() + 3));
+ 		string attrName(&quot;pinot.&quot; + name);
+@@ -156,7 +160,7 @@
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Value FROM MetaDataBackup \
+ 		WHERE Url='%q' AND Name='%q';&quot;,
+-		Url::escapeUrl(url).c_str(), name.c_str());
++		Url::escapeUrl(urlWithIPath).c_str(), name.c_str());
+ 	if (results != NULL)
+ 	{
+ 		SQLRow *row = results-&gt;nextRow();
+@@ -174,16 +178,18 @@
+ 	return success;
+ }
+ 
+-bool MetaDataBackup::getAttributes(const string &amp;url,
++bool MetaDataBackup::getAttributes(const DocumentInfo &amp;docInfo,
+ 	const string &amp;name, set&lt;string&gt; &amp;values)
+ {
++	string url(docInfo.getLocation());
++	string urlWithIPath(docInfo.getLocation(true));
+ 	bool success = false;
+ #if 0
+ 	Url urlObj(url);
+ 
+ 	// If the file is local and isn't a nested document, use an extended attribute
+ 	if ((urlObj.isLocal() == true) &amp;&amp;
+-		(urlObj.getParameters().empty() == true))
++		(docInfo.getInternalPath().empty() == true))
+ 	{
+ 		string likeName(&quot;pinot.&quot; + name);
+ 
+@@ -233,7 +239,7 @@
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Value FROM MetaDataBackup \
+ 		WHERE Url='%q' AND Name LIKE '%q%%';&quot;,
+-		Url::escapeUrl(url).c_str(), name.c_str());
++		Url::escapeUrl(urlWithIPath).c_str(), name.c_str());
+ 	if (results != NULL)
+ 	{
+ 		while (results-&gt;hasMoreRows() == true)
+@@ -256,11 +262,12 @@
+ 	return success;
+ }
+ 
+-bool MetaDataBackup::removeAttribute(const string &amp;url,
++bool MetaDataBackup::removeAttribute(const DocumentInfo &amp;docInfo, 
+ 	const string &amp;name, bool noXAttr, bool likeName)
+ {
++	string url(docInfo.getLocation());
++	string urlWithIPath(docInfo.getLocation(true));
+ 	bool success = false;
+-
+ #ifdef HAVE_ATTR_XATTR_H
+ 	Url urlObj(url);
+ 
+@@ -268,7 +275,7 @@
+ 	if ((noXAttr == false) &amp;&amp;
+ 		(url.empty() == false) &amp;&amp;
+ 		(urlObj.isLocal() == true) &amp;&amp;
+-		(urlObj.getParameters().empty() == true))
++		(docInfo.getInternalPath().empty() == true))
+ 	{
+ 		string fileName(url.substr(urlObj.getProtocol().length() + 3));
+ 		string attrName(&quot;pinot.&quot; + name);
+@@ -288,19 +295,19 @@
+ 	// Delete from MetaDataBackup
+ 	SQLResults *results = NULL;
+ 
+-	if (url.empty() == false)
++	if (urlWithIPath.empty() == false)
+ 	{
+ 		if (likeName == false)
+ 		{
+ 			results = executeStatement(&quot;DELETE FROM MetaDataBackup \
+ 				WHERE Url='%q' AND NAME='%q';&quot;,
+-				Url::escapeUrl(url).c_str(), name.c_str());
++				Url::escapeUrl(urlWithIPath).c_str(), name.c_str());
+ 		}
+ 		else
+ 		{
+ 			results = executeStatement(&quot;DELETE FROM MetaDataBackup \
+ 				WHERE Url='%q' AND NAME LIKE '%q%%';&quot;,
+-				Url::escapeUrl(url).c_str(), name.c_str());
++				Url::escapeUrl(urlWithIPath).c_str(), name.c_str());
+ 		}
+ 	}
+ 	else
+@@ -351,13 +358,12 @@
+ /// Adds an item.
+ bool MetaDataBackup::addItem(const DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent)
+ {
+-	string url(docInfo.getLocation());
+ 	bool success = false;
+ 
+ 	if ((extent == DocumentInfo::SERIAL_FIELDS) ||
+ 		(extent == DocumentInfo::SERIAL_ALL))
+ 	{
+-		if (setAttribute(url, &quot;fields&quot;,
++		if (setAttribute(docInfo, &quot;fields&quot;,
+ 			docInfo.serialize(DocumentInfo::SERIAL_FIELDS)) == false)
+ 		{
+ 			return false;
+@@ -380,7 +386,7 @@
+ 				continue;
+ 			}
+ 
+-			if (setAttribute(url, string(&quot;label.&quot;) + *labelIter, *labelIter, true) == false)
++			if (setAttribute(docInfo, string(&quot;label.&quot;) + *labelIter, *labelIter, true) == false)
+ 			{
+ 				success = false;
+ 			}
+@@ -393,13 +399,13 @@
+ /// Gets an item.
+ bool MetaDataBackup::getItem(DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent)
+ {
+-	string url(docInfo.getLocation()), value;
++	string value;
+ 	bool success = false;
+ 
+ 	if ((extent == DocumentInfo::SERIAL_FIELDS) ||
+ 		(extent == DocumentInfo::SERIAL_ALL))
+ 	{
+-		if (getAttribute(url, &quot;fields&quot;, value) == false)
++		if (getAttribute(docInfo, &quot;fields&quot;, value) == false)
+ 		{
+ 			return false;
+ 		}
+@@ -414,7 +420,7 @@
+ 
+ 		success = true;
+ 
+-		if (getAttributes(url, &quot;label&quot;, labels) == false)
++		if (getAttributes(docInfo, &quot;label&quot;, labels) == false)
+ 		{
+ 			success = false;
+ 		}
+@@ -473,13 +479,12 @@
+ bool MetaDataBackup::deleteItem(const DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent,
+ 	const string &amp;value)
+ {
+-	string url(docInfo.getLocation());
+ 	bool success = false;
+ 
+ 	if ((extent == DocumentInfo::SERIAL_FIELDS) ||
+ 		(extent == DocumentInfo::SERIAL_ALL))
+ 	{
+-		if (removeAttribute(url, &quot;fields&quot;) == false)
++		if (removeAttribute(docInfo, &quot;fields&quot;) == false)
+ 		{
+ 			return false;
+ 		}
+@@ -491,11 +496,11 @@
+ 	{
+ 		if (value.empty() == false)
+ 		{
+-			success = removeAttribute(url, string(&quot;label.&quot;) + value, true);
++			success = removeAttribute(docInfo, string(&quot;label.&quot;) + value, true);
+ 		}
+ 		else
+ 		{
+-			success = removeAttribute(url, &quot;label.&quot;, true, true);
++			success = removeAttribute(docInfo, &quot;label.&quot;, true, true);
+ 		}
+ 	}
+ 
+@@ -506,7 +511,8 @@
+ bool MetaDataBackup::deleteLabel(const string &amp;value)
+ {
+ 	if ((value.empty() == true) ||
+-		(removeAttribute(&quot;&quot;, string(&quot;label.&quot;) + value, true) == false))
++		(removeAttribute(DocumentInfo(&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;),
++			string(&quot;label.&quot;) + value, true) == false))
+ 	{
+ 		return false;
+ 	}
+
+Modified: trunk/SQL/MetaDataBackup.h
+===================================================================
+--- trunk/SQL/MetaDataBackup.h	2009-03-28 03:50:41 UTC (rev 1601)
++++ trunk/SQL/MetaDataBackup.h	2009-03-31 13:00:45 UTC (rev 1602)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -55,18 +55,18 @@
+ 		bool deleteLabel(const std::string &amp;value);
+ 
+         protected:
+-		bool setAttribute(const std::string &amp;url,
++		bool setAttribute(const DocumentInfo &amp;docInfo,
+ 			const std::string &amp;name, const std::string &amp;value,
+ 			bool noXAttr = false);
+ 
+-		bool getAttribute(const std::string &amp;url,
++		bool getAttribute(const DocumentInfo &amp;docInfo,
+ 			const std::string &amp;name, std::string &amp;value,
+ 			bool noXAttr = false);
+ 
+-		bool getAttributes(const std::string &amp;url,
++		bool getAttributes(const DocumentInfo &amp;docInfo,
+ 			const std::string &amp;name, std::set&lt;std::string&gt; &amp;values);
+ 
+-		bool removeAttribute(const std::string &amp;url,
++		bool removeAttribute(const DocumentInfo &amp;docInfo,
+ 			const std::string &amp;name,
+ 			bool noXAttr = false, bool likeName = false);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001591.html">[Pinot-svn] r1601 - in trunk: IndexSearch Tokenize
+</A></li>
+	<LI>Next message: <A HREF="001593.html">[Pinot-svn] r1603 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1592">[ date ]</a>
+              <a href="thread.html#1592">[ thread ]</a>
+              <a href="subject.html#1592">[ subject ]</a>
+              <a href="author.html#1592">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

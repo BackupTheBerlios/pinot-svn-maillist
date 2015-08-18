@@ -1,0 +1,490 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r247 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r247%20-%20trunk/Monitor&In-Reply-To=%3C200605171433.k4HEXaIL011987%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000244.html">
+   <LINK REL="Next"  HREF="000246.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r247 - trunk/Monitor</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r247%20-%20trunk/Monitor&In-Reply-To=%3C200605171433.k4HEXaIL011987%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r247 - trunk/Monitor">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed May 17 16:33:36 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000244.html">[Pinot-svn] r246 - in trunk: Tokenize Utils
+</A></li>
+        <LI>Next message: <A HREF="000246.html">[Pinot-svn] r248 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#245">[ date ]</a>
+              <a href="thread.html#245">[ thread ]</a>
+              <a href="subject.html#245">[ subject ]</a>
+              <a href="author.html#245">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-17 16:33:35 +0200 (Wed, 17 May 2006)
+New Revision: 247
+
+Added:
+   trunk/Monitor/MonitorFactory.cpp
+   trunk/Monitor/MonitorFactory.h
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/INotifyMonitor.h
+   trunk/Monitor/Makefile.am
+   trunk/Monitor/MonitorInterface.h
+Log:
+Some fixes, new class MonitorFactory.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2006-05-17 12:59:37 UTC (rev 246)
++++ trunk/Monitor/INotifyMonitor.cpp	2006-05-17 14:33:35 UTC (rev 247)
+@@ -35,10 +35,11 @@
+ 
+ INotifyMonitor::~INotifyMonitor()
+ {
++	close(m_monitorFd);
+ }
+ 
+-/// Starts monitoring a directory.
+-bool INotifyMonitor::addDirectory(const string &amp;directory)
++/// Starts monitoring a location.
++bool INotifyMonitor::addLocation(const string &amp;directory)
+ {
+ 	uint32_t eventsMask = IN_CLOSE_WRITE|IN_MOVE|IN_CREATE|IN_DELETE|IN_DELETE_SELF|IN_MOVE_SELF;
+ 
+@@ -49,6 +50,13 @@
+ 		return false;
+ 	}
+ 
++	map&lt;string, int&gt;::iterator watchIter = m_watches.find(directory);
++	if (watchIter != m_watches.end())
++	{
++		// This is already being monitored
++		return true;
++	}
++
+ 	// FIXME: check the maximum number of watches hasn't been reached (MAX_FILE_WATCHES ?)
+ 	int dirWd = inotify_add_watch(m_monitorFd, directory.c_str(), eventsMask);
+ 	if (dirWd &gt;= 0)
+@@ -57,13 +65,13 @@
+ 
+ 		return true;
+ 	}
+-	cerr &lt;&lt; &quot;INotifyMonitor::addDirectory: couldn't monitor &quot; &lt;&lt; directory &lt;&lt; endl;
++	cerr &lt;&lt; &quot;INotifyMonitor::addLocation: couldn't monitor &quot; &lt;&lt; directory &lt;&lt; endl;
+ 
+ 	return false;
+ }
+ 
+-/// Stops monitoring a directory.
+-bool INotifyMonitor::removeDirectory(const string &amp;directory)
++/// Stops monitoring a location.
++bool INotifyMonitor::removeLocation(const string &amp;directory)
+ {
+ 	if ((directory.empty() == true) ||
+ 		(m_monitorFd &lt; 0))
+@@ -79,7 +87,7 @@
+ 
+ 		return true;
+ 	}
+-	cerr &lt;&lt; &quot;INotifyMonitor::removeDirectory: &quot; &lt;&lt; directory &lt;&lt; &quot; is not being monitored&quot; &lt;&lt; endl;
++	cerr &lt;&lt; &quot;INotifyMonitor::removeLocation: &quot; &lt;&lt; directory &lt;&lt; &quot; is not being monitored&quot; &lt;&lt; endl;
+ 
+ 	return false;
+ }
+@@ -90,96 +98,103 @@
+ 	char buffer[1024];
+ 	size_t offset = 0;
+ 
++	events.clear();
+ 	if (m_monitorFd &lt; 0)
+ 	{
+ 		return false;
+ 	}
+ 
++#ifdef DEBUG
++	cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: reading events&quot; &lt;&lt; endl;
++#endif
+ 	int bytesRead = read(m_monitorFd, buffer, 1024); 
+ 	while (bytesRead - offset &gt; 0)
+ 	{
+-		struct inotify_event *pEvent = (struct inotify_event *)(buffer + offset);
++		struct inotify_event *pEvent = (struct inotify_event *)&amp;buffer[offset];
+ 		size_t eventSize = sizeof(struct inotify_event) + pEvent-&gt;len;
+ 
+ 		// The length includes the terminating NULL
+-		if (pEvent-&gt;len &gt; 1)
++		if (pEvent-&gt;len &lt; 1)
+ 		{
+-			MonitorEvent monEvent;
+-			map&lt;uint32_t, string&gt;::iterator iter = m_movedFrom.end();
++#ifdef DEBUG
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: no name for watch &quot;
++				&lt;&lt; pEvent-&gt;wd &lt;&lt; endl;
++#endif
++			offset += eventSize;
++			continue;
++		}
++		MonitorEvent monEvent;
++		map&lt;uint32_t, string&gt;::iterator iter = m_movedFrom.end();
+ 
+-			// Get the whole event structure
+-			pEvent = (struct inotify_event *)malloc(eventSize);
+-			if (pEvent != NULL)
+-			{
+-				memmove((void *)pEvent, (const void *)(buffer + offset), eventSize);
+-				monEvent.m_location = pEvent-&gt;name;
+-			}
+-			if (pEvent-&gt;mask &amp; IN_ISDIR)
+-			{
+-				monEvent.m_isDirectory = true;
+-			}
++		// Get the whole event structure
++		if (pEvent-&gt;name != NULL)
++		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: event on &quot;
+-				&lt;&lt; monEvent.m_location &lt;&lt; endl;
++				&lt;&lt; pEvent-&gt;name &lt;&lt; endl;
+ #endif
++			monEvent.m_location = pEvent-&gt;name;
++		}
++		if (pEvent-&gt;mask &amp; IN_ISDIR)
++		{
++			monEvent.m_isDirectory = true;
++		}
+ 
+-			// What type of event ?
+-			switch (pEvent-&gt;mask)
+-			{
+-				case IN_CREATE:
+-					// Skip regular files
++		// What type of event ?
++		switch (pEvent-&gt;mask)
++		{
++			case IN_CREATE:
++				// Skip regular files
++				if (monEvent.m_isDirectory == true)
++				{
++					monEvent.m_type = MonitorEvent::CREATED;
++				}
++				break;
++			case IN_CLOSE_WRITE:
++				monEvent.m_type = MonitorEvent::WRITE_CLOSED;
++				break;
++			case IN_MOVED_FROM:
++				// Store this until we receive a IN_MOVED_TO event
++				m_movedFrom.insert(pair&lt;uint32_t, string&gt;(pEvent-&gt;cookie, monEvent.m_location));
++				break;
++			case IN_MOVED_TO:
++				// What was the previous location ?
++				iter = m_movedFrom.find(pEvent-&gt;cookie);
++				if (iter != m_movedFrom.end())
++				{
++					monEvent.m_previousLocation = iter-&gt;second;
++					monEvent.m_type = MonitorEvent::MOVED;
++
+ 					if (monEvent.m_isDirectory == true)
+ 					{
+-						monEvent.m_type = MonitorEvent::CREATED;
+-					}
+-					break;
+-				case IN_CLOSE_WRITE:
+-					monEvent.m_type = MonitorEvent::WRITE_CLOSED;
+-					break;
+-				case IN_MOVED_FROM:
+-					// Store this until we receive a IN_MOVED_TO event
+-					m_movedFrom.insert(pair&lt;uint32_t, string&gt;(pEvent-&gt;cookie, monEvent.m_location));
+-					break;
+-				case IN_MOVED_TO:
+-					// What was the previous location ?
+-					iter = m_movedFrom.find(pEvent-&gt;cookie);
+-					if (iter != m_movedFrom.end())
+-					{
+-						monEvent.m_previousLocation = iter-&gt;second;
+-						monEvent.m_type = MonitorEvent::MOVED;
+-
+-						if (monEvent.m_isDirectory == true)
++						// We can already stop watching the old directory
++						if (removeLocation(monEvent.m_previousLocation) == true)
+ 						{
+-							// We can already stop watching the old directory
+-							if (removeDirectory(monEvent.m_previousLocation) == true)
+-							{
+-								// ...and watch this one instead
+-								addDirectory(monEvent.m_location);
+-							}
++							// ...and watch this one instead
++							addLocation(monEvent.m_location);
+ 						}
+-						m_movedFrom.erase(iter);
+ 					}
++					m_movedFrom.erase(iter);
++				}
+ #ifdef DEBUG
+-					else cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: don't know where file was moved from&quot; &lt;&lt; endl;
++				else cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: don't know where file was moved from&quot; &lt;&lt; endl;
+ #endif
+-					break;
+-				case IN_DELETE_SELF:
+-					monEvent.m_type = MonitorEvent::DELETED;
+-					break;
+-				default:
++				break;
++			case IN_DELETE_SELF:
++				monEvent.m_type = MonitorEvent::DELETED;
++				break;
++			default:
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: ignoring event&quot; &lt;&lt; endl;
++				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: ignoring event &quot;
++					&lt;&lt; pEvent-&gt;mask &lt;&lt; endl;
+ #endif
+-					break;
+-			}
++				break;
++		}
+ 
+-			free(pEvent);
+-
+-			// Return event ?
+-			if (monEvent.m_type != MonitorEvent::UNKNOWN)
+-			{
+-				events.insert(monEvent);
+-			}
++		// Return event ?
++		if (monEvent.m_type != MonitorEvent::UNKNOWN)
++		{
++			events.insert(monEvent);
+ 		}
+ 
+ 		offset += eventSize;
+
+Modified: trunk/Monitor/INotifyMonitor.h
+===================================================================
+--- trunk/Monitor/INotifyMonitor.h	2006-05-17 12:59:37 UTC (rev 246)
++++ trunk/Monitor/INotifyMonitor.h	2006-05-17 14:33:35 UTC (rev 247)
+@@ -21,7 +21,6 @@
+ #include &lt;map&gt;
+ #include &lt;set&gt;
+ 
+-#include &quot;MonitorEvent.h&quot;
+ #include &quot;MonitorInterface.h&quot;
+ 
+ class INotifyMonitor : public MonitorInterface
+@@ -30,11 +29,11 @@
+ 		INotifyMonitor();
+ 		virtual ~INotifyMonitor();
+ 
+-		/// Adds a watch for the specified directory.
+-		virtual bool addDirectory(const std::string &amp;directory);
++		/// Adds a watch for the specified location.
++		virtual bool addLocation(const std::string &amp;directory);
+ 
+-		/// Removed the watch for the specified directory.
+-		virtual bool removeDirectory(const std::string &amp;directory);
++		/// Removed the watch for the specified location.
++		virtual bool removeLocation(const std::string &amp;directory);
+ 
+ 		/// Retrieves pending events.
+ 		virtual bool retrievePendingEvents(std::set&lt;MonitorEvent&gt; &amp;events);
+
+Modified: trunk/Monitor/Makefile.am
+===================================================================
+--- trunk/Monitor/Makefile.am	2006-05-17 12:59:37 UTC (rev 246)
++++ trunk/Monitor/Makefile.am	2006-05-17 14:33:35 UTC (rev 247)
+@@ -3,13 +3,15 @@
+ noinst_HEADERS = \
+ 	INotifyMonitor.h \
+ 	MonitorEvent.h \
++	MonitorFactory.h \
+ 	MonitorInterface.h
+ 
+ noinst_LTLIBRARIES = libMonitor.la
+ 
+ libMonitor_la_SOURCES = \
+ 	INotifyMonitor.cpp \
+-	MonitorEvent.cpp
++	MonitorEvent.cpp \
++	MonitorFactory.cpp
+ 
+ AM_CXXFLAGS = -I../Utils
+ 
+
+Added: trunk/Monitor/MonitorFactory.cpp
+===================================================================
+--- trunk/Monitor/MonitorFactory.cpp	2006-05-17 12:59:37 UTC (rev 246)
++++ trunk/Monitor/MonitorFactory.cpp	2006-05-17 14:33:35 UTC (rev 247)
+@@ -0,0 +1,32 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &quot;INotifyMonitor.h&quot;
++#include &quot;MonitorFactory.h&quot;
++
++MonitorFactory::MonitorFactory()
++{
++}
++
++MonitorFactory::~MonitorFactory()
++{
++}
++
++/// Returns a Monitor.
++MonitorInterface *MonitorFactory::getMonitor(void)
++{
++	return new INotifyMonitor();
++}
+
+
+Property changes on: trunk/Monitor/MonitorFactory.cpp
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/Monitor/MonitorFactory.h
+===================================================================
+--- trunk/Monitor/MonitorFactory.h	2006-05-17 12:59:37 UTC (rev 246)
++++ trunk/Monitor/MonitorFactory.h	2006-05-17 14:33:35 UTC (rev 247)
+@@ -0,0 +1,39 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _MONITOR_FACTORY_H
++#define _MONITOR_FACTORY_H
++
++#include &quot;MonitorInterface.h&quot;
++
++class MonitorFactory
++{
++	public:
++		virtual ~MonitorFactory();
++
++		/// Returns a Monitor.
++		static MonitorInterface *getMonitor(void);
++
++	protected:
++		MonitorFactory();
++
++	private:
++		MonitorFactory(const MonitorFactory &amp;other);
++		MonitorFactory&amp; operator=(const MonitorFactory&amp; other);
++
++};
++
++#endif // _MONITOR_FACTORY_H
+
+
+Property changes on: trunk/Monitor/MonitorFactory.h
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Modified: trunk/Monitor/MonitorInterface.h
+===================================================================
+--- trunk/Monitor/MonitorInterface.h	2006-05-17 12:59:37 UTC (rev 246)
++++ trunk/Monitor/MonitorInterface.h	2006-05-17 14:33:35 UTC (rev 247)
+@@ -21,10 +21,14 @@
+ #include &lt;map&gt;
+ #include &lt;set&gt;
+ 
++#include &quot;MonitorEvent.h&quot;
++
+ class MonitorInterface
+ {
+ 	public:
+-		virtual ~MonitorInterface();
++		virtual ~MonitorInterface()
++		{
++		}
+ 
+ 		/// Returns the file descriptor to poll for events.
+ 		virtual int getFileDescriptor(void) const
+@@ -32,14 +36,14 @@
+ 			return m_monitorFd;
+ 		}
+ 
+-		/// Adds a watch for the specified directory.
+-		virtual bool addDirectory(const std::string &amp;directory) = 0;
++		/// Adds a watch for the specified location.
++		virtual bool addLocation(const std::string &amp;directory) = 0;
+ 
+-		/// Removed the watch for the specified directory.
+-		virtual bool removeDirectory(const std::string &amp;directory) = 0;
++		/// Removed the watch for the specified location.
++		virtual bool removeLocation(const std::string &amp;directory) = 0;
+ 
+ 		/// Retrieves pending events.
+-		virtual bool retrievePendingEvents(std::set&lt;MonitorEvent&gt; &amp;events);
++		virtual bool retrievePendingEvents(std::set&lt;MonitorEvent&gt; &amp;events) = 0;
+ 
+ 	protected:
+ 		int m_monitorFd;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000244.html">[Pinot-svn] r246 - in trunk: Tokenize Utils
+</A></li>
+	<LI>Next message: <A HREF="000246.html">[Pinot-svn] r248 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#245">[ date ]</a>
+              <a href="thread.html#245">[ thread ]</a>
+              <a href="subject.html#245">[ subject ]</a>
+              <a href="author.html#245">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

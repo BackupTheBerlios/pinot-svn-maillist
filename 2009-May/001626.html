@@ -1,0 +1,564 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1636 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1636%20-%20trunk/Core&In-Reply-To=%3C200905300413.n4U4DVFQ023414%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001625.html">
+   <LINK REL="Next"  HREF="001627.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1636 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1636%20-%20trunk/Core&In-Reply-To=%3C200905300413.n4U4DVFQ023414%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1636 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat May 30 06:13:31 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001625.html">[Pinot-svn] r1635 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001627.html">[Pinot-svn] r1637 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1626">[ date ]</a>
+              <a href="thread.html#1626">[ thread ]</a>
+              <a href="subject.html#1626">[ subject ]</a>
+              <a href="author.html#1626">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-05-30 06:13:19 +0200 (Sat, 30 May 2009)
+New Revision: 1636
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/DaemonState.h
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/ServerThreads.h
+   trunk/Core/pinot-dbus-daemon.cpp
+   trunk/Core/pinot-dbus-daemon.xml
+Log:
+Send the signal IndexFlushed when the index is flushed.
+Synced with changes to DBusIndex. Some cleanup.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-05-24 09:25:15 UTC (rev 1635)
++++ trunk/Core/DaemonState.cpp	2009-05-30 04:13:19 UTC (rev 1636)
+@@ -194,8 +194,11 @@
+ 		m_pReply = NULL;
+ 	}
+ 
++	string fullName(PINOT_DBUS_SERVICE_NAME);
++	fullName += &quot;.&quot;;
++	fullName += name;
+ 	m_pReply = dbus_message_new_error(m_pRequest,
+-		name.c_str(), message.c_str());
++		fullName.c_str(), message.c_str());
+         if (m_pReply != NULL)
+         {
+                 return true;
+@@ -263,7 +266,7 @@
+ 			// The document ID isn't needed here
+ 			if (DBusIndex::documentInfoToDBus(&amp;subIter, 0, *resultIter) == false)
+ 			{
+-				newErrorReply(&quot;de.berlios.Pinot.Query&quot;, &quot;Unknown error&quot;);
++				newErrorReply(&quot;Query&quot;, &quot;Unknown error&quot;);
+ 				return false;
+ 			}
+ 		}
+@@ -781,10 +784,7 @@
+ 		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+ 		if (pIndex != NULL)
+ 		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DaemonState::on_thread_end: flushing&quot; &lt;&lt; endl;
+-#endif
+-			pIndex-&gt;flush();
++			DBusServletThread::flushIndexAndSignal(pIndex);
+ 
+ 			delete pIndex;
+ 		}
+
+Modified: trunk/Core/DaemonState.h
+===================================================================
+--- trunk/Core/DaemonState.h	2009-05-24 09:25:15 UTC (rev 1635)
++++ trunk/Core/DaemonState.h	2009-05-30 04:13:19 UTC (rev 1636)
+@@ -23,19 +23,11 @@
+ #include &lt;string&gt;
+ #include &lt;queue&gt;
+ #include &lt;set&gt;
+-#ifdef HAVE_DBUS
+-extern &quot;C&quot;
+-{
+-#if DBUS_VERSION &lt; 1000000
+-#define DBUS_API_SUBJECT_TO_CHANGE
+-#endif
+-#include &lt;dbus/dbus.h&gt;
+-#include &lt;dbus/dbus-glib.h&gt;
+-#include &lt;dbus/dbus-glib-lowlevel.h&gt;
+-}
+-#endif
+ #include &lt;sigc++/sigc++.h&gt;
+ 
++#ifdef HAVE_DBUS
++#include &quot;DBusIndex.h&quot;
++#endif
+ #include &quot;MonitorInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-05-24 09:25:15 UTC (rev 1635)
++++ trunk/Core/ServerThreads.cpp	2009-05-30 04:13:19 UTC (rev 1636)
+@@ -36,9 +36,6 @@
+ #include &quot;Timer.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;MetaDataBackup.h&quot;
+-#ifdef HAVE_DBUS
+-#include &quot;DBusIndex.h&quot;
+-#endif
+ #include &quot;ModuleFactory.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -395,6 +392,8 @@
+ }
+ 
+ #ifdef HAVE_DBUS
++DBusGConnection *DBusServletThread::m_pBus = NULL;
++
+ DBusServletThread::DBusServletThread(DaemonState *pServer, DBusServletInfo *pInfo) :
+ 	WorkerThread(),
+ 	m_pServer(pServer),
+@@ -407,6 +406,44 @@
+ {
+ }
+ 
++void DBusServletThread::flushIndexAndSignal(IndexInterface *pIndex)
++{
++	if (pIndex == NULL)
++	{
++		return;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DBusServletThread::flushIndexAndSignal: flushing&quot; &lt;&lt; endl;
++#endif
++
++	// Flush
++	pIndex-&gt;flush();
++
++	// Signal
++	if (m_pBus != NULL)
++	{
++		DBusMessage *pMessage = dbus_message_new_signal(PINOT_DBUS_OBJECT_PATH,
++			PINOT_DBUS_SERVICE_NAME, &quot;IndexFlushed&quot;);
++		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
++
++		dbus_message_append_args(pMessage,
++			DBUS_TYPE_UINT32, &amp;docsCount,
++			DBUS_TYPE_INVALID);
++		DBusConnection *pConnection = dbus_g_connection_get_connection(m_pBus);
++		if (pConnection != NULL)
++		{
++			dbus_connection_send(pConnection, pMessage, NULL);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::flushIndexAndSignal: sent signal IndexFlushed &quot; &lt;&lt; docsCount &lt;&lt; endl;
++#endif
++		}
++		dbus_message_unref(pMessage);
++	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;DBusServletThread::flushIndexAndSignal: no bus&quot; &lt;&lt; endl;
++#endif
++}
++
+ string DBusServletThread::getType(void) const
+ {
+ 	return &quot;DBusServletThread&quot;;
+@@ -458,7 +495,7 @@
+ 	}
+ #endif
+ 
+-	if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetStatistics&quot;) == TRUE)
++	if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;GetStatistics&quot;) == TRUE)
+ 	{
+ 		CrawlHistory crawlHistory(settings.getHistoryDatabaseName());
+ 		unsigned int crawledFilesCount = crawlHistory.getItemsCount(CrawlHistory::CRAWLED);
+@@ -497,7 +534,7 @@
+ 				DBUS_TYPE_INVALID);
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Reload&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;Reload&quot;) == TRUE)
+ 	{
+ 		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_INVALID) == TRUE)
+@@ -518,7 +555,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Stop&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;Stop&quot;) == TRUE)
+ 	{
+ 		if (dbus_message_get_args(m_pServletInfo-&gt;m_pRequest, &amp;error,
+ 			DBUS_TYPE_INVALID) == TRUE)
+@@ -541,7 +578,7 @@
+ 			m_mustQuit = true;
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;HasDocument&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;HasDocument&quot;) == TRUE)
+ 	{
+ 		char *pUrl = NULL;
+ 		unsigned int docId = 0;
+@@ -570,7 +607,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;GetLabels&quot;) == TRUE)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: received GetLabels&quot; &lt;&lt; endl;
+@@ -589,7 +626,7 @@
+ 		// Prepare the reply
+ 		m_pServletInfo-&gt;newReplyWithArray();
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;AddLabel&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;AddLabel&quot;) == TRUE)
+ 	{
+ 		char *pLabel = NULL;
+ 
+@@ -624,7 +661,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;RenameLabel&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;RenameLabel&quot;) == TRUE)
+ 	{
+ 		char *pOldLabel = NULL;
+ 		char *pNewLabel = NULL;
+@@ -648,7 +685,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;DeleteLabel&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;DeleteLabel&quot;) == TRUE)
+ 	{
+ 		char *pLabel = NULL;
+ 
+@@ -684,7 +721,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;GetDocumentLabels&quot;) == TRUE)
+ 	{
+ 		unsigned int docId = 0;
+ 
+@@ -714,12 +751,12 @@
+ 			}
+ 			else
+ 			{
+-				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.GetDocumentLabels&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;GetDocumentLabels&quot;,
+ 					&quot; failed&quot;);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;SetDocumentLabels&quot;) == TRUE)
+ 	{
+ 		char **ppLabels = NULL;
+ 		dbus_uint32_t labelsCount = 0;
+@@ -774,7 +811,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentsLabels&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;SetDocumentsLabels&quot;) == TRUE)
+ 	{
+ 		char **ppDocIds = NULL;
+ 		char **ppLabels = NULL;
+@@ -848,7 +885,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentInfo&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;GetDocumentInfo&quot;) == TRUE)
+ 	{
+ 		unsigned int docId = 0;
+ 
+@@ -872,19 +909,19 @@
+ 					if (DBusIndex::documentInfoToDBus(&amp;iter, 0, docInfo) == false)
+ 					{
+ 						dbus_message_unref(m_pServletInfo-&gt;m_pReply);
+-						m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
++						m_pServletInfo-&gt;newErrorReply(&quot;GetDocumentInfo&quot;,
+ 							&quot;Unknown error&quot;);
+ 					}
+ 				}
+ 			}
+ 			else
+ 			{
+-				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;GetDocumentInfo&quot;,
+ 					&quot;Unknown document&quot;);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentInfo&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;SetDocumentInfo&quot;) == TRUE)
+ 	{
+ 		DBusMessageIter iter;
+ 		DocumentInfo docInfo;
+@@ -893,7 +930,7 @@
+ 		dbus_message_iter_init(m_pServletInfo-&gt;m_pRequest, &amp;iter);
+ 		if (DBusIndex::documentInfoFromDBus(&amp;iter, docId, docInfo) == false)
+ 		{
+-			m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.SetDocumentInfo&quot;,
++			m_pServletInfo-&gt;newErrorReply(&quot;SetDocumentInfo&quot;,
+ 				&quot;Unknown error&quot;);
+ 		}
+ 		else
+@@ -917,7 +954,7 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Query&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;Query&quot;) == TRUE)
+ 	{
+ 		char *pSearchText = NULL;
+ 		char *pEngineType = NULL;
+@@ -969,13 +1006,13 @@
+ 
+ 			if (replyWithError == true)
+ 			{
+-				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.SimpleQuery&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;SimpleQuery&quot;,
+ 					&quot;Query failed&quot;);
+ 			}
+ 		}
+ 	}
+ 	// FIXME: this method will soon be obsoleted
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SimpleQuery&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;SimpleQuery&quot;) == TRUE)
+ 	{
+ 		char *pSearchText = NULL;
+ 		dbus_uint32_t maxHits = 0;
+@@ -1008,12 +1045,12 @@
+ 
+ 			if (replyWithError == true)
+ 			{
+-				m_pServletInfo-&gt;newErrorReply(&quot;de.berlios.Pinot.SimpleQuery&quot;,
++				m_pServletInfo-&gt;newErrorReply(&quot;SimpleQuery&quot;,
+ 					&quot;Query failed&quot;);
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;UpdateDocument&quot;) == TRUE)
++	else if (dbus_message_is_method_call(m_pServletInfo-&gt;m_pRequest, PINOT_DBUS_SERVICE_NAME, &quot;UpdateDocument&quot;) == TRUE)
+ 	{
+ 		unsigned int docId = 0;
+ 
+@@ -1095,8 +1132,7 @@
+ 	// Flush the index ?
+ 	if (flushIndex == true)
+ 	{
+-		// Flush now for the sake of the client application
+-		pIndex-&gt;flush();
++		flushIndexAndSignal(pIndex);
+ 	}
+ 
+ 	delete pIndex;
+
+Modified: trunk/Core/ServerThreads.h
+===================================================================
+--- trunk/Core/ServerThreads.h	2009-05-24 09:25:15 UTC (rev 1635)
++++ trunk/Core/ServerThreads.h	2009-05-30 04:13:19 UTC (rev 1636)
+@@ -27,6 +27,10 @@
+ 
+ #include &quot;DocumentInfo.h&quot;
+ #include &quot;CrawlHistory.h&quot;
++#include &quot;IndexInterface.h&quot;
++#ifdef HAVE_DBUS
++#include &quot;DBusIndex.h&quot;
++#endif
+ #include &quot;MonitorInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+ #include &quot;QueryProperties.h&quot;
+@@ -78,6 +82,10 @@
+ 		DBusServletThread(DaemonState *pServer, DBusServletInfo *pInfo);
+ 		virtual ~DBusServletThread();
+ 
++		static DBusGConnection *m_pBus;
++
++		static void flushIndexAndSignal(IndexInterface *pIndex);
++
+ 		virtual std::string getType(void) const;
+ 
+ 		DBusServletInfo *getServletInfo(void) const;
+
+Modified: trunk/Core/pinot-dbus-daemon.cpp
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.cpp	2009-05-24 09:25:15 UTC (rev 1635)
++++ trunk/Core/pinot-dbus-daemon.cpp	2009-05-30 04:13:19 UTC (rev 1636)
+@@ -73,8 +73,6 @@
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
+-static const char *g_pinotDBusService = &quot;de.berlios.Pinot&quot;;
+-static const char *g_pinotDBusObjectPath = &quot;/de/berlios/Pinot&quot;;
+ static void unregisteredHandler(DBusConnection *pConnection, void *pData);
+ static DBusHandlerResult messageHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData);
+ static DBusObjectPathVTable g_callVTable = {
+@@ -199,6 +197,8 @@
+ 			}
+ 		}
+ 		dbus_error_free(&amp;error);
++
++		return DBUS_HANDLER_RESULT_HANDLED;
+ 	}
+ 
+ 	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+@@ -232,12 +232,12 @@
+ 	return DBUS_HANDLER_RESULT_HANDLED;
+ }
+ 
+-static bool getBatteryState(DBusGConnection *pBus, const string &amp;name, const string &amp;path,
++static bool getBatteryState(const string &amp;name, const string &amp;path,
+ 	const string &amp;method, gboolean &amp;result)
+ {
+ 	bool callSuccess = true;
+ 
+-	if ((pBus == NULL) ||
++	if ((DBusServletThread::m_pBus == NULL) ||
+ 		(name.empty() == true) ||
+ 		(path.empty() == true) ||
+ 		(method.empty() == true))
+@@ -245,7 +245,7 @@
+ 		return false;
+ 	}
+ 
+-	DBusGProxy *pBusProxy = dbus_g_proxy_new_for_name(pBus, name.c_str(),
++	DBusGProxy *pBusProxy = dbus_g_proxy_new_for_name(DBusServletThread::m_pBus, name.c_str(),
+ 		path.c_str(), name.c_str());
+ 	if (pBusProxy == NULL)
+ 	{
+@@ -538,8 +538,8 @@
+ #endif
+ 
+ 	GError *pError = NULL;
+-	DBusGConnection *pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+-	if (pBus == NULL)
++	DBusServletThread::m_pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
++	if (DBusServletThread::m_pBus == NULL)
+ 	{
+ 		if (pError != NULL)
+ 		{
+@@ -554,7 +554,7 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	DBusConnection *pConnection = dbus_g_connection_get_connection(pBus);
++	DBusConnection *pConnection = dbus_g_connection_get_connection(DBusServletThread::m_pBus);
+ 	if (pConnection == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't get connection&quot; &lt;&lt; endl;
+@@ -569,12 +569,12 @@
+ 	dbus_connection_set_exit_on_disconnect(pConnection, FALSE);
+ 	dbus_connection_setup_with_g_main(pConnection, NULL);
+ 
+-	if (dbus_connection_register_object_path(pConnection, g_pinotDBusObjectPath,
++	if (dbus_connection_register_object_path(pConnection, PINOT_DBUS_OBJECT_PATH,
+ 		&amp;g_callVTable, &amp;server) == TRUE)
+ 	{
+ 		// Request to be identified by this name
+ 		// FIXME: flags are currently broken ?
+-		dbus_bus_request_name(pConnection, g_pinotDBusService, 0, &amp;error);
++		dbus_bus_request_name(pConnection, PINOT_DBUS_SERVICE_NAME, 0, &amp;error);
+ 		if (dbus_error_is_set(&amp;error) == FALSE)
+ 		{
+ 			// See power management signals
+@@ -588,7 +588,7 @@
+ 		}
+ 		else
+ 		{
+-			cerr &lt;&lt; &quot;Couldn't obtain name &quot; &lt;&lt; g_pinotDBusService &lt;&lt; endl;
++			cerr &lt;&lt; &quot;Couldn't obtain name &quot; &lt;&lt; PINOT_DBUS_SERVICE_NAME &lt;&lt; endl;
+ 			if (error.message != NULL)
+ 			{
+ 				cerr &lt;&lt; &quot;Error is &quot; &lt;&lt; error.message &lt;&lt; endl;
+@@ -681,9 +681,9 @@
+ 
+ 			// Try and get the battery state
+ 			gboolean result = FALSE;
+-			if ((getBatteryState(pBus, &quot;org.freedesktop.PowerManagement&quot;,
++			if ((getBatteryState(&quot;org.freedesktop.PowerManagement&quot;,
+ 				&quot;/org/freedesktop/PowerManagement&quot;, &quot;GetOnBattery&quot;, result) == true) ||
+-				(getBatteryState(pBus, &quot;org.freedesktop.PowerManagement&quot;,
++				(getBatteryState(&quot;org.freedesktop.PowerManagement&quot;,
+ 				&quot;/org/freedesktop/PowerManagement&quot;, &quot;GetBatteryState&quot;, result) == true))
+ 			{
+ 				if (result == TRUE)
+@@ -691,7 +691,7 @@
+ 					onBattery = true;
+ 				}
+ 			}
+-			else if (getBatteryState(pBus, &quot;org.gnome.PowerManager&quot;,
++			else if (getBatteryState(&quot;org.gnome.PowerManager&quot;,
+ 				&quot;/org/gnome/PowerManager&quot;, &quot;GetOnAc&quot;, result) == true)
+ 			{
+ 				if (result == FALSE)
+
+Modified: trunk/Core/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.xml	2009-05-24 09:25:15 UTC (rev 1635)
++++ trunk/Core/pinot-dbus-daemon.xml	2009-05-30 04:13:19 UTC (rev 1636)
+@@ -9,6 +9,10 @@
+ 	WARNING: This interface WILL change before 1.0 is released !
+ 	--&gt;
+   &lt;interface name=&quot;de.berlios.Pinot&quot;&gt;
++    &lt;signal name=&quot;IndexFlushed&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.IndexFlushed&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docsCount&quot; direction=&quot;out&quot;/&gt;
++    &lt;/signal&gt;
+     &lt;!--
+ 	Retrieves statistics.
+ 	 crawledCount: the number of documents crawled
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001625.html">[Pinot-svn] r1635 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001627.html">[Pinot-svn] r1637 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1626">[ date ]</a>
+              <a href="thread.html#1626">[ thread ]</a>
+              <a href="subject.html#1626">[ subject ]</a>
+              <a href="author.html#1626">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

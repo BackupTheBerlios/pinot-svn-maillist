@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1182 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1182%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200802211432.m1LEWo6L007169%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001175.html">
+   <LINK REL="Next"  HREF="001177.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1182 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1182%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200802211432.m1LEWo6L007169%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1182 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 21 15:32:50 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001175.html">[Pinot-svn] r1181 - in trunk: . IndexSearch IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001177.html">[Pinot-svn] r1183 - in trunk: SQL UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1176">[ date ]</a>
+              <a href="thread.html#1176">[ thread ]</a>
+              <a href="subject.html#1176">[ subject ]</a>
+              <a href="author.html#1176">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-02-21 15:32:49 +0100 (Thu, 21 Feb 2008)
+New Revision: 1182
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+Log:
+findResultsExtract() tries all engines the result belongs to until a proper
+extract is found.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2008-02-20 14:40:56 UTC (rev 1181)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2008-02-21 14:32:49 UTC (rev 1182)
+@@ -372,8 +372,6 @@
+ 	const TreeModel::iterator iter = model-&gt;get_iter(node_path);
+ 	const TreeModel::Row row = *iter;
+ 
+-	m_indexNames.clear();
+-
+ 	if (path_currently_selected == false)
+ 	{
+ 		// Clear the extract
+@@ -578,7 +576,9 @@
+ 
+ 		++count;
+ 
+-		unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
++		// We already got indexId from PinotSettings::getIndexIdByName()
++		unsigned int docIndexId = 0;
++		unsigned int docId = resultIter-&gt;getIsIndexed(docIndexId);
+ 		bool isIndexed = false;
+ 
+ 		if (docId &gt; 0)
+@@ -597,8 +597,8 @@
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count
+-				&lt;&lt; &quot;, &quot; &lt;&lt; currentScore &lt;&lt; &quot;, &quot; &lt;&lt; isIndexed &lt;&lt; &quot; &quot; &lt;&lt; indexId
+-				&lt;&lt; &quot; &quot; &lt;&lt; resultIter-&gt;getTimestamp() &lt;&lt; endl;
++				&lt;&lt; &quot;, &quot; &lt;&lt; currentScore &lt;&lt; &quot;, &quot; &lt;&lt; isIndexed &lt;&lt; &quot; &quot; &lt;&lt; docId
++				&lt;&lt; &quot; &quot; &lt;&lt; indexId &lt;&lt; &quot; &quot; &lt;&lt; resultIter-&gt;getTimestamp() &lt;&lt; endl;
+ #endif
+ 
+ 			if (groupIter)
+@@ -1531,37 +1531,42 @@
+ 	unsigned int indexIds = row[m_resultsColumns.m_indexes];
+ 
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;ResultsTree::findResultsExtract: engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
++	cout &lt;&lt; &quot;ResultsTree::findResultsExtract: &quot; &lt;&lt; url &lt;&lt; &quot; has engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
+ #endif
+ 	m_settings.getEngineNames(engineIds, engineNames);
+-	if (engineNames.empty() == false)
++	for (set&lt;string&gt;::const_iterator engineIter = engineNames.begin();
++		engineIter != engineNames.end(); ++engineIter)
+ 	{
+-		// Get the first engine this result was obtained from
+-		string engineName(*engineNames.begin());
++		string engineName(*engineIter);
++
++		indexNames.clear();
+ 		if (engineName == m_settings.m_defaultBackend)
+ 		{
+ 			m_settings.getIndexNames(indexIds, indexNames);
+-			if (indexNames.empty() == false)
+-			{
+-				// Use the name of the first index as engine name
+-				engineName = (*indexNames.begin());
+-
+-				// Any internal index in there ?
+-				for (set&lt;string&gt;::iterator indexIter = indexNames.begin(); indexIter != indexNames.end(); ++indexIter)
+-				{
+-					if  (m_settings.isInternalIndex(*indexIter) == true)
+-					{
+-						m_indexNames.insert(*indexIter);
+-					}
+-				}
+-			}
+ 		}
++		else
++		{
++			// That's not an index but pretend it is
++			indexNames.insert(engineName);
++		}
+ 
++		for (set&lt;string&gt;::const_iterator indexIter = indexNames.begin();
++			indexIter != indexNames.end(); ++indexIter)
++		{
++			// Use the name of this index as engine name
++			engineName = (*indexNames.begin());
++
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;ResultsTree::findResultsExtract: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
++			cout &lt;&lt; &quot;ResultsTree::findResultsExtract: engine or index &quot; &lt;&lt; engineName &lt;&lt; endl;
+ #endif
+-		extract = queryHistory.getItemExtract(from_utf8(m_treeName), engineName, url, charset);
++			extract = queryHistory.getItemExtract(from_utf8(m_treeName), engineName, url, charset);
++			if (extract.empty() == false)
++			{
++				// Stop here
++				return to_utf8(extract, charset);
++			}
++		}
+ 	}
+ 
+-	return to_utf8(extract, charset);
++	return &quot;&quot;;
+ }
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2008-02-20 14:40:56 UTC (rev 1181)
++++ trunk/UI/GTK2/src/ResultsTree.h	2008-02-21 14:32:49 UTC (rev 1182)
+@@ -129,7 +129,6 @@
+ 		Gtk::TreeView *m_extractTreeView;
+ 		Glib::RefPtr&lt;Gtk::ListStore&gt; m_refExtractStore;
+ 		ComboModelColumns m_extractColumns;
+-		std::set&lt;std::string&gt; m_indexNames;
+ 		bool m_showExtract;
+ 		GroupByMode m_groupMode;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001175.html">[Pinot-svn] r1181 - in trunk: . IndexSearch IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001177.html">[Pinot-svn] r1183 - in trunk: SQL UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1176">[ date ]</a>
+              <a href="thread.html#1176">[ thread ]</a>
+              <a href="subject.html#1176">[ subject ]</a>
+              <a href="author.html#1176">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,329 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1669 - in trunk: Core UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1669%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C200908300107.n7U17A4q003687%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001658.html">
+   <LINK REL="Next"  HREF="001660.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1669 - in trunk: Core UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1669%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C200908300107.n7U17A4q003687%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1669 - in trunk: Core UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Aug 30 03:07:10 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001658.html">[Pinot-svn] r1668 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001660.html">[Pinot-svn] r1670 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1659">[ date ]</a>
+              <a href="thread.html#1659">[ thread ]</a>
+              <a href="subject.html#1659">[ subject ]</a>
+              <a href="author.html#1659">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-08-30 03:07:01 +0200 (Sun, 30 Aug 2009)
+New Revision: 1669
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/pinot-dbus-daemon.cpp
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Build those when HAVE_DBUS isn't set.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-08-30 01:04:33 UTC (rev 1668)
++++ trunk/Core/DaemonState.cpp	2009-08-30 01:07:01 UTC (rev 1669)
+@@ -24,6 +24,7 @@
+ #include &lt;dirent.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;unistd.h&gt;
++#include &lt;stdio.h&gt;
+ #include &lt;stdint.h&gt;
+ #include &lt;stdlib.h&gt;
+ #ifdef HAVE_STATFS
+@@ -73,7 +74,6 @@
+ #include &quot;DaemonState.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+-#include &quot;PinotUtils.h&quot;
+ #include &quot;ServerThreads.h&quot;
+ 
+ using namespace std;
+@@ -490,7 +490,9 @@
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+ 	if (pIndex != NULL)
+ 	{
++#ifdef HAVE_DBUS
+ 		DBusServletThread::flushIndexAndSignal(pIndex);
++#endif
+ 
+ 		delete pIndex;
+ 	}
+
+Modified: trunk/Core/pinot-dbus-daemon.cpp
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.cpp	2009-08-30 01:04:33 UTC (rev 1668)
++++ trunk/Core/pinot-dbus-daemon.cpp	2009-08-30 01:07:01 UTC (rev 1669)
+@@ -74,6 +74,7 @@
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
++#ifdef HAVE_DBUS
+ static void unregisteredHandler(DBusConnection *pConnection, void *pData);
+ static DBusHandlerResult messageHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData);
+ static DBusObjectPathVTable g_callVTable = {
+@@ -81,6 +82,7 @@
+         (DBusObjectPathMessageFunction)messageHandler,
+ 	NULL,
+ };
++#endif
+ static Glib::RefPtr&lt;Glib::MainLoop&gt; g_refMainLoop;
+ 
+ static void closeAll(void)
+@@ -123,6 +125,7 @@
+ 	}
+ }
+ 
++#ifdef HAVE_DBUS
+ static DBusHandlerResult filterHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
+ 	DaemonState *pServer = (DaemonState *)pData;
+@@ -276,9 +279,15 @@
+ 
+ 	return callSuccess;
+ }
++#endif
+ 
+ int main(int argc, char **argv)
+ {
++#ifdef HAVE_DBUS
++	string programName(&quot;pinot-dbus-daemon&quot;);
++#else
++	string programName(&quot;pinot-daemon&quot;);
++#endif
+ 	int longOptionIndex = 0, priority = 15;
+ 	bool resetHistory = false;
+ 	bool resetLabels = false;
+@@ -293,8 +302,8 @@
+ 		{
+ 			case 'h':
+ 				// Help
+-				cout &lt;&lt; &quot;pinot-dbus-daemon - D-Bus search and index daemon\n\n&quot;
+-					&lt;&lt; &quot;Usage: pinot-dbus-daemon [OPTIONS]\n\n&quot;
++				cout &lt;&lt; programName &lt;&lt; &quot; - D-Bus search and index daemon\n\n&quot;
++					&lt;&lt; &quot;Usage: &quot; &lt;&lt; programName &lt;&lt; &quot; [OPTIONS]\n\n&quot;
+ 					&lt;&lt; &quot;Options:\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+ 					&lt;&lt; &quot;  -i, --ignore-version	ignore the index version number\n&quot;
+@@ -321,7 +330,7 @@
+ 				reindex = true;
+ 				break;
+ 			case 'v':
+-				cout &lt;&lt; &quot;pinot-dbus-daemon - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot; 
++				cout &lt;&lt; programName &lt;&lt; &quot; - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot; 
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+ 					&lt;&lt; &quot;the GNU General Public License &lt;<A HREF="http://www.gnu.org/licenses/old-licenses/gpl-2.0.html">http://www.gnu.org/licenses/old-licenses/gpl-2.0.html</A>&gt;.\n&quot;
+ 					&lt;&lt; &quot;There is NO WARRANTY, to the extent permitted by law.&quot; &lt;&lt; endl;
+@@ -350,10 +359,16 @@
+ #if DBUS_NUM_VERSION &gt; 1000000
+ 	dbus_threads_init_default();
+ #endif
++#ifdef HAVE_DBUS
+ 	dbus_g_thread_init();
++#endif
+ 
+ 	g_refMainLoop = Glib::MainLoop::create();
++#ifdef HAVE_DBUS
+ 	Glib::set_application_name(&quot;Pinot DBus Daemon&quot;);
++#else
++	Glib::set_application_name(&quot;Pinot Daemon&quot;);
++#endif
+ 
+ 	// This should make Xapian use Flint rather than Quartz
+ 	Glib::setenv(&quot;XAPIAN_PREFER_FLINT&quot;, &quot;1&quot;);
+@@ -394,19 +409,25 @@
+ 	}
+ 
+ 	// Make sure only one instance runs
++#ifdef HAVE_DBUS
+ 	UniqueApplication uniqueApp(&quot;de.berlios.PinotDBusDaemon&quot;);
++#else
++	UniqueApplication uniqueApp(&quot;de.berlios.PinotDaemon&quot;);
++#endif
+ 	string confDirectory(PinotSettings::getConfigurationDirectory());
+-	g_pidFileName = confDirectory + &quot;/pinot-dbus-daemon.pid&quot;;
++	g_pidFileName = confDirectory + &quot;/&quot; + programName + &quot;.pid&quot;;
+ 	if (chdir(confDirectory.c_str()) == 0)
+ 	{
+-		if (uniqueApp.isRunning(g_pidFileName, &quot;pinot-dbus-daemon&quot;) == true)
++		if (uniqueApp.isRunning(g_pidFileName, programName) == true)
+ 		{
+ 			return EXIT_SUCCESS;
+ 		}
+ 
+ 		// Redirect cout and cerr to a file
+ 		string fileName(confDirectory);
+-		fileName += &quot;/pinot-dbus-daemon.log&quot;;
++		fileName += &quot;/&quot;;
++		fileName += programName;
++		fileName += &quot;.log&quot;;
+ 		g_outputFile.open(fileName.c_str());
+ 		g_coutBuf = cout.rdbuf();
+ 		g_cerrBuf = cerr.rdbuf();
+@@ -544,6 +565,7 @@
+ 	}
+ #endif
+ 
++#ifdef HAVE_DBUS
+ 	GError *pError = NULL;
+ 	DBusServletThread::m_pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+ 	if (DBusServletThread::m_pBus == NULL)
+@@ -567,11 +589,13 @@
+ 		cerr &lt;&lt; &quot;Couldn't get connection&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
++#endif
+ 
+-	DBusError error;
+ 	DaemonState server;
+ 	IndexInterface *pIndex = NULL;
+ 
++#ifdef HAVE_DBUS
++	DBusError error;
+ 	dbus_error_init(&amp;error);
+ 	dbus_connection_set_exit_on_disconnect(pConnection, FALSE);
+ 	dbus_connection_setup_with_g_main(pConnection, NULL);
+@@ -601,6 +625,7 @@
+ 				cerr &lt;&lt; &quot;Error is &quot; &lt;&lt; error.message &lt;&lt; endl;
+ 			}
+ 		}
++#endif
+ 
+ 		try
+ 		{
+@@ -635,7 +660,9 @@
+ 				{
+ 					// Reset the index so that all documents are reindexed
+ 					pIndex-&gt;reset();
++#ifdef HAVE_DBUS
+ 					DBusServletThread::flushIndexAndSignal(pIndex);
++#endif
+ 
+ 					cout &lt;&lt; &quot;Reset index&quot; &lt;&lt; endl;
+ 
+@@ -687,6 +714,7 @@
+ 			// Connect to threads' finished signal
+ 			server.connect();
+ 
++#ifdef HAVE_DBUS
+ 			// Try and get the battery state
+ 			gboolean result = FALSE;
+ 			if ((getBatteryState(&quot;org.freedesktop.PowerManagement&quot;,
+@@ -715,6 +743,7 @@
+ 
+ 				cout &lt;&lt; &quot;System is on battery&quot; &lt;&lt; endl;
+ 			}
++#endif
+ 
+ 			server.start(reindex);
+ 
+@@ -737,12 +766,14 @@
+ 			cerr &lt;&lt; &quot;Unknown exception&quot; &lt;&lt; endl;
+ 			return EXIT_FAILURE;
+ 		}
++#ifdef HAVE_DBUS
+ 	}
+ 	else
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't register object path&quot; &lt;&lt; endl;
+ 	}
+ 	dbus_error_free(&amp;error);
++#endif
+ 
+ 	if (pIndex != NULL)
+ 	{
+@@ -767,3 +798,4 @@
+ 
+ 	return EXIT_SUCCESS;
+ }
++
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2009-08-30 01:04:33 UTC (rev 1668)
++++ trunk/UI/GTK2/src/pinot.cc	2009-08-30 01:07:01 UTC (rev 1669)
+@@ -94,6 +94,7 @@
+ 	Gtk::Main::quit();
+ }
+ 
++#ifdef HAVE_DBUS
+ static DBusHandlerResult filterHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
+ 	// Are we about to be disconnected ?
+@@ -146,6 +147,7 @@
+ 
+ 	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+ }
++#endif
+ 
+ int main(int argc, char **argv)
+ {
+@@ -388,6 +390,7 @@
+ 
+ 	if (prefsMode == false)
+ 	{
++#ifdef HAVE_DBUS
+ 		GError *pError = NULL;
+ 		DBusGConnection *pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+ 		DBusConnection *pConnection = NULL;
+@@ -429,6 +432,7 @@
+ 
+ 			dbus_error_free(&amp;error);
+ 		}
++#endif
+ 
+ 		IndexInterface *pIndex = settings.getIndex(settings.m_docsIndexLocation);
+ 		if (pIndex != NULL)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001658.html">[Pinot-svn] r1668 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001660.html">[Pinot-svn] r1670 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1659">[ date ]</a>
+              <a href="thread.html#1659">[ thread ]</a>
+              <a href="subject.html#1659">[ subject ]</a>
+              <a href="author.html#1659">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

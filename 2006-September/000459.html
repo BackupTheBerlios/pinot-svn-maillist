@@ -1,0 +1,389 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r466 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r466%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200609071141.k87BfLgE021258%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000458.html">
+   <LINK REL="Next"  HREF="000460.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r466 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r466%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200609071141.k87BfLgE021258%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r466 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Sep  7 13:41:21 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000458.html">[Pinot-svn] r465 - trunk/Monitor
+</A></li>
+        <LI>Next message: <A HREF="000460.html">[Pinot-svn] r467 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#459">[ date ]</a>
+              <a href="thread.html#459">[ thread ]</a>
+              <a href="subject.html#459">[ subject ]</a>
+              <a href="author.html#459">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-07 13:41:21 +0200 (Thu, 07 Sep 2006)
+New Revision: 466
+
+Modified:
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+Log:
+OnDisk adds a label for the source the document being indexed belongs to.
+Protect against concurrent access.
+Removed unnecessary call to setDocumentLabels() in Mbox.
+
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-09-07 11:38:20 UTC (rev 465)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-09-07 11:41:21 UTC (rev 466)
+@@ -138,20 +138,22 @@
+ bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, const string &amp;sourceLabel)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
++	set&lt;string&gt; labels;
++	const Document *pMessage = boxParser.getDocument();
++	char sourceStr[64];
++	unsigned int docNum = 0;
+ 	bool indexedFile = false;
+-
+ #ifdef DEBUG
+ 	Timer timer;
+ 	timer.start();
+ #endif
+-	set&lt;string&gt; labels;
+-	const Document *pMessage = boxParser.getDocument();
+-	unsigned int docNum = 0;
+ 
+ 	// Get a list of documents labeled with this source label
+ 	m_index.listDocumentsWithLabel(sourceLabel, docIdList); 
+ 
+ 	// This is the labels we'll apply to new documents
++	snprintf(sourceStr, 64, &quot;SOURCE%u&quot;, m_sourceId);
++	labels.insert(sourceStr);
+ 	labels.insert(sourceLabel);
+ 
+ 	// Parse the mbox file
+@@ -179,8 +181,6 @@
+ 			{
+ 				time_t messageDate = boxParser.getDate();
+ 
+-				m_index.setDocumentLabels(docId, labels);
+-
+ 				IndexedDocument docInfo(pMessage-&gt;getTitle(),
+ 					XapianDatabase::buildUrl(PinotSettings::getInstance().m_daemonIndexLocation, docId),
+ 					pMessage-&gt;getLocation(), pMessage-&gt;getType(), pMessage-&gt;getLanguage());
+@@ -268,7 +268,7 @@
+ 	}
+ 
+ 	// Unindex messages that belong to mailboxes that no longer exist
+-	if (m_history.getSourceItems(m_sourceId, CrawlHistory::CRAWLED, 0, mailboxes) &gt; 0)
++	if (m_history.getSourceItems(m_sourceId, CrawlHistory::CRAWLED, mailboxes) &gt; 0)
+ 	{
+ 		for(set&lt;string&gt;::const_iterator mailIter = mailboxes.begin();
+ 			mailIter != mailboxes.end(); ++mailIter)
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-09-07 11:38:20 UTC (rev 465)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-09-07 11:41:21 UTC (rev 466)
+@@ -16,6 +16,7 @@
+ 
+ #include &lt;fcntl.h&gt;
+ #include &lt;unistd.h&gt;
++#include &lt;set&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ 
+@@ -39,11 +40,13 @@
+ 	m_history(PinotSettings::getInstance().m_historyDatabase),
+ 	m_index(PinotSettings::getInstance().m_daemonIndexLocation)
+ {
++	pthread_mutex_init(&amp;m_mutex, NULL);
+ 	m_index.setStemmingMode(IndexInterface::STORE_BOTH);
+ }
+ 
+ OnDiskHandler::~OnDiskHandler()
+ {
++	pthread_mutex_destroy(&amp;m_mutex);
+ }
+ 
+ bool OnDiskHandler::indexFile(const string &amp;fileName, bool alwaysUpdate)
+@@ -68,6 +71,29 @@
+ 		return true;
+ 	}
+ 
++	// What source does it belong to ?
++	for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = m_fileSources.begin();
++		sourceIter != m_fileSources.end(); ++sourceIter)
++	{
++		unsigned int sourceId = sourceIter-&gt;first;
++
++		if (sourceIter-&gt;second.length() &lt; location.length())
++		{
++			// Skip
++			continue;
++		}
++
++		if (sourceIter-&gt;second.substr(0, location.length()) == location)
++		{
++			char sourceStr[64];
++
++			// That's the one
++			snprintf(sourceStr, 64, &quot;SOURCE%u&quot;, sourceIter-&gt;first);
++			labels.insert(sourceStr);
++			break;
++		}
++	}
++
+ 	DocumentInfo docInfo(urlObj.getFile(), location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+ 
+ 	FileCollector fileCollector;
+@@ -138,7 +164,6 @@
+ 
+ void OnDiskHandler::initialize(void)
+ {
+-	map&lt;unsigned int, string&gt; sources;
+ 	set&lt;string&gt; directories;
+ 
+ 	// Get the map of indexable locations
+@@ -150,19 +175,20 @@
+ 	}
+ 
+ 	// Unindex documents that belong to sources that no longer exist
+-	if (m_history.getSources(sources) &gt; 0)
++	if (m_history.getSources(m_fileSources) &gt; 0)
+ 	{
+-		for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = sources.begin();
+-			sourceIter != sources.end(); ++sourceIter)
++		for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = m_fileSources.begin();
++			sourceIter != m_fileSources.end(); ++sourceIter)
+ 		{
+ 			unsigned int sourceId = sourceIter-&gt;first;
+ 
+-			// Is this a file and does it still exist ?
+ 			if (sourceIter-&gt;second.substr(0, 7) != &quot;<A HREF="file://">file://</A>&quot;)
+ 			{
++				// Skip
+ 				continue;
+ 			}
+ 
++			// Is this an indexable location ?
+ 			if (directories.find(sourceIter-&gt;second.substr(7)) == directories.end())
+ 			{
+ 				char sourceStr[64];
+@@ -190,7 +216,9 @@
+ 
+ void OnDiskHandler::flushIndex(void)
+ {
++	pthread_mutex_lock(&amp;m_mutex);
+ 	m_index.flush();
++	pthread_mutex_unlock(&amp;m_mutex);
+ }
+ 
+ bool OnDiskHandler::fileExists(const string &amp;fileName)
+@@ -201,27 +229,42 @@
+ 
+ bool OnDiskHandler::fileCreated(const string &amp;fileName)
+ {
++	bool handledEvent = false;
++
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileCreated: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	pthread_mutex_lock(&amp;m_mutex);
+ 	// The file shouldn't exist in the index, but if it does for some reason, don't update it
+-	return indexFile(fileName, false);
++	handledEvent = indexFile(fileName, false);
++	pthread_mutex_unlock(&amp;m_mutex);
++
++	return handledEvent;
+ }
+ 
+ bool OnDiskHandler::fileModified(const string &amp;fileName)
+ {
++	bool handledEvent = false;
++
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileModified: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	pthread_mutex_lock(&amp;m_mutex);
+ 	// Update the file, or index if necessary
+-	return indexFile(fileName, true);
++	handledEvent = indexFile(fileName, true);
++	pthread_mutex_unlock(&amp;m_mutex);
++
++	return handledEvent;
+ }
+ 
+ bool OnDiskHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName)
+ {
++	bool handledEvent = false;
++
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileMoved: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	pthread_mutex_lock(&amp;m_mutex);
+ 	unsigned int oldDocId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName);
+ 	if (oldDocId &gt; 0)
+ 	{
+@@ -232,21 +275,24 @@
+ 			// Change the location
+ 			docInfo.setLocation(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+ 
+-			return replaceFile(oldDocId, docInfo);
++			handledEvent = replaceFile(oldDocId, docInfo);
+ 		}
+ 	}
++	pthread_mutex_unlock(&amp;m_mutex);
+ 
+-	return false; 
++	return handledEvent;
+ }
+ 
+ bool OnDiskHandler::directoryMoved(const string &amp;dirName,
+ 	const string &amp;previousDirName)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
++	bool handledEvent = false;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::directoryMoved: &quot; &lt;&lt; dirName &lt;&lt; endl;
+ #endif
++	pthread_mutex_lock(&amp;m_mutex);
+ 	if (m_index.listDocumentsInDirectory(previousDirName, docIdList) == true)
+ 	{
+ 		for (set&lt;unsigned int&gt;::const_iterator iter = docIdList.begin();
+@@ -271,37 +317,44 @@
+ 			}
+ 		}
+ 
+-		return true;
++		handledEvent = true;
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::directoryMoved: no documents in &quot; &lt;&lt; previousDirName &lt;&lt; endl;
++	else cout &lt;&lt; &quot;OnDiskHandler::directoryMoved: no documents in &quot; &lt;&lt; previousDirName &lt;&lt; endl;
+ #endif
++	pthread_mutex_unlock(&amp;m_mutex);
+ 
+-	return false;
++	return handledEvent;
+ }
+ 
+ bool OnDiskHandler::fileDeleted(const string &amp;fileName)
+ {
++	bool handledEvent = false;
++
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileDeleted: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	pthread_mutex_lock(&amp;m_mutex);
+ 	unsigned int docId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+ 	if (docId &gt; 0)
+ 	{
+ 		// Unindex the file
+-		return m_index.unindexDocument(docId);
++		handledEvent = m_index.unindexDocument(docId);
+ 	}
++	pthread_mutex_unlock(&amp;m_mutex);
+ 
+-	return false;
++	return handledEvent;
+ }
+ 
+ bool OnDiskHandler::directoryDeleted(const string &amp;dirName)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
++	bool handledEvent = false;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: &quot; &lt;&lt; dirName &lt;&lt; endl;
+ #endif
++	pthread_mutex_lock(&amp;m_mutex);
+ 	if (m_index.listDocumentsInDirectory(dirName, docIdList) == true)
+ 	{
+ 		for (set&lt;unsigned int&gt;::const_iterator iter = docIdList.begin();
+@@ -310,12 +363,13 @@
+ 			m_index.unindexDocument(*iter);
+ 		}
+ 
+-		return true;
++		handledEvent = true;
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: no documents in &quot; &lt;&lt; dirName &lt;&lt; endl;
++	else cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: no documents in &quot; &lt;&lt; dirName &lt;&lt; endl;
+ #endif
++	pthread_mutex_unlock(&amp;m_mutex);
+ 
+-	return false;
++	return handledEvent;
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2006-09-07 11:38:20 UTC (rev 465)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2006-09-07 11:41:21 UTC (rev 466)
+@@ -18,8 +18,9 @@
+ #define _ONDISKHANDLER_HH
+ 
+ #include &lt;time.h&gt;
++#include &lt;pthread.h&gt;
+ #include &lt;string&gt;
+-#include &lt;set&gt;
++#include &lt;map&gt;
+ #include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;CrawlHistory.h&quot;
+@@ -64,6 +65,8 @@
+ 		virtual bool directoryDeleted(const std::string &amp;dirName);
+ 
+ 	protected:
++		pthread_mutex_t m_mutex;
++		std::map&lt;unsigned int, std::string&gt; m_fileSources;
+ 		CrawlHistory m_history;
+ 		XapianIndex m_index;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000458.html">[Pinot-svn] r465 - trunk/Monitor
+</A></li>
+	<LI>Next message: <A HREF="000460.html">[Pinot-svn] r467 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#459">[ date ]</a>
+              <a href="thread.html#459">[ thread ]</a>
+              <a href="subject.html#459">[ subject ]</a>
+              <a href="author.html#459">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

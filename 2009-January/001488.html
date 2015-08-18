@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1498 - trunk/IndexSearch
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1498%20-%20trunk/IndexSearch&In-Reply-To=%3C200901191324.n0JDOFwt018748%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001487.html">
+   <LINK REL="Next"  HREF="001489.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1498 - trunk/IndexSearch</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1498%20-%20trunk/IndexSearch&In-Reply-To=%3C200901191324.n0JDOFwt018748%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1498 - trunk/IndexSearch">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 19 14:24:15 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001487.html">[Pinot-svn] r1497 - trunk/IndexSearch/Plugins
+</A></li>
+        <LI>Next message: <A HREF="001489.html">[Pinot-svn] r1499 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1488">[ date ]</a>
+              <a href="thread.html#1488">[ thread ]</a>
+              <a href="subject.html#1488">[ subject ]</a>
+              <a href="author.html#1488">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-19 14:24:09 +0100 (Mon, 19 Jan 2009)
+New Revision: 1498
+
+Modified:
+   trunk/IndexSearch/OpenSearchParser.cpp
+   trunk/IndexSearch/PluginWebEngine.cpp
+Log:
+PluginWebEngine::runQuery() checks whether scrolling is possible with the
+plugin, stops at the first page if it isn't.
+OpenSearchParser sets m_nextIncrement to 0 to disable scrolling if none of
+count, startIndex, startPage is found.
+
+
+Modified: trunk/IndexSearch/OpenSearchParser.cpp
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.cpp	2009-01-19 13:20:06 UTC (rev 1497)
++++ trunk/IndexSearch/OpenSearchParser.cpp	2009-01-19 13:24:09 UTC (rev 1498)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -29,6 +29,8 @@
+ #include &lt;libxml++/nodes/cdatanode.h&gt;
+ 
+ #include &quot;StringManip.h&quot;
++#include &quot;HtmlFilter.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;OpenSearchParser.h&quot;
+ 
+ using namespace std;
+@@ -257,6 +259,18 @@
+ 				}
+ 			}
+ 
++			// The extract may contain HTML
++			if ((extract.find(&quot;&lt;&quot;) != string::npos) &amp;&amp;
++				(extract.find(&quot;&gt;&quot;) != string::npos))
++			{
++				// Wrap the extract
++				ustring dummyHtml(&quot;&lt;html&gt;&lt;head&gt;&lt;meta HTTP-EQUIV=\&quot;content-type\&quot; CONTENT=\&quot;text/html\&quot;&gt;&lt;/head&gt;&lt;body&gt;&quot;);
++				dummyHtml += extract;
++				dummyHtml += &quot;&lt;/body&gt;&lt;/html&gt;&quot;;
++
++				extract = FilterUtils::stripMarkup(dummyHtml);
++			}
++
+ 			DocumentInfo result(title, url, &quot;&quot;, &quot;&quot;);
+ 			result.setExtract(extract);
+ 			result.setScore(pseudoScore);
+@@ -549,10 +563,17 @@
+ 	{
+ 		properties.m_scrolling = SearchPluginProperties::PER_PAGE;
+ 	}
+-	else
++	else if ((properties.m_variableParameters.find(SearchPluginProperties::COUNT_PARAM) != properties.m_variableParameters.end()) ||
++		(properties.m_variableParameters.find(SearchPluginProperties::START_INDEX_PARAM) != properties.m_variableParameters.end()))
+ 	{
+ 		properties.m_scrolling = SearchPluginProperties::PER_INDEX;
+ 	}
++	else
++	{
++		// No scrolling
++		properties.m_nextIncrement = 0;
++		properties.m_nextBase = 0;
++	}
+ 
+ 	return new OpenSearchResponseParser(rssResponse);
+ }
+
+Modified: trunk/IndexSearch/PluginWebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.cpp	2009-01-19 13:20:06 UTC (rev 1497)
++++ trunk/IndexSearch/PluginWebEngine.cpp	2009-01-19 13:24:09 UTC (rev 1498)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -223,6 +223,7 @@
+ 	char countStr[64];
+ 	unsigned int maxResultsCount(queryProps.getMaximumResultsCount());
+ 	unsigned int currentIncrement = 0, count = 0;
++	bool firstPage = true;
+ 
+ 	m_resultsList.clear();
+ 	m_resultsCountEstimate = 0;
+@@ -301,11 +302,12 @@
+ 	setQuery(queryProps);
+ 
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot; &lt;&lt; m_properties.m_name &lt;&lt; endl;
++	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot; &lt;&lt; m_properties.m_longName &lt;&lt; endl;
+ #endif
+ 	while (count &lt; maxResultsCount)
+ 	{
+ 		string pageQuery(formattedQuery);
++		bool canScroll = false;
+ 
+ 		// How do we scroll ?
+ 		if (m_properties.m_scrolling == SearchPluginProperties::PER_INDEX)
+@@ -320,6 +322,7 @@
+ 				pageQuery += &quot;=&quot;;
+ 				snprintf(countStr, 64, &quot;%u&quot;, maxResultsCount);
+ 				pageQuery += countStr;
++				canScroll = true;
+ 			}
+ 
+ 			paramIter = m_properties.m_variableParameters.find(SearchPluginProperties::START_INDEX_PARAM);
+@@ -332,6 +335,7 @@
+ 				pageQuery += &quot;=&quot;;
+ 				snprintf(countStr, 64, &quot;%u&quot;, count + m_properties.m_nextBase);
+ 				pageQuery += countStr;
++				canScroll = true;
+ 			}
+ 		}
+ 		else
+@@ -346,9 +350,20 @@
+ 				pageQuery += &quot;=&quot;;
+ 				snprintf(countStr, 64, &quot;%u&quot;, currentIncrement + m_properties.m_nextBase);
+ 				pageQuery += countStr;
++				canScroll = true;
+ 			}
+ 		}
+ 
++		if ((firstPage == false) &amp;&amp;
++			(canScroll == false))
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;PluginWebEngine::runQuery: can't scroll to the next page of results&quot; &lt;&lt; endl;
++#endif
++			break;
++		}
++
++		firstPage = false;
+ 		if (getPage(pageQuery, queryProps.getMaximumResultsCount()) == false)
+ 		{
+ 			break;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001487.html">[Pinot-svn] r1497 - trunk/IndexSearch/Plugins
+</A></li>
+	<LI>Next message: <A HREF="001489.html">[Pinot-svn] r1499 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1488">[ date ]</a>
+              <a href="thread.html#1488">[ thread ]</a>
+              <a href="subject.html#1488">[ subject ]</a>
+              <a href="author.html#1488">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

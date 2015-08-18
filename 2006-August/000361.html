@@ -1,0 +1,363 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r368 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r368%20-%20trunk/Index&In-Reply-To=%3C200608041159.k74BxeN5022720%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000362.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r368 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r368%20-%20trunk/Index&In-Reply-To=%3C200608041159.k74BxeN5022720%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r368 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug  4 13:59:40 CEST 2006</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000362.html">[Pinot-svn] r369 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#361">[ date ]</a>
+              <a href="thread.html#361">[ thread ]</a>
+              <a href="subject.html#361">[ subject ]</a>
+              <a href="author.html#361">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-04 13:59:37 +0200 (Fri, 04 Aug 2006)
+New Revision: 368
+
+Modified:
+   trunk/Index/WritableXapianIndex.cpp
+   trunk/Index/WritableXapianIndex.h
+Log:
+In updateDocumentInfo(), refresh the document's common terms (prefixed with U
+etc...) and terms generated from the title.
+
+
+Modified: trunk/Index/WritableXapianIndex.cpp
+===================================================================
+--- trunk/Index/WritableXapianIndex.cpp	2006-07-21 14:43:46 UTC (rev 367)
++++ trunk/Index/WritableXapianIndex.cpp	2006-08-04 11:59:37 UTC (rev 368)
+@@ -83,7 +83,7 @@
+ 	return isBadField;
+ }
+ 
+-void WritableXapianIndex::addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++void WritableXapianIndex::addPostingsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+ 	const string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const
+ {
+ 	Xapian::Stem *pStemmer = NULL;
+@@ -134,7 +134,7 @@
+ 		}
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;WritableXapianIndex::addTermsToDocument: added &quot; &lt;&lt; termPos &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;WritableXapianIndex::addPostingsToDocument: added &quot; &lt;&lt; termPos &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	if (pStemmer != NULL)
+@@ -143,7 +143,84 @@
+ 	}
+ }
+ 
+-bool WritableXapianIndex::prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
++void WritableXapianIndex::removeFirstPostingsFromDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++	const string &amp;prefix, const string &amp;language, StemmingMode mode) const
++{
++	Xapian::TermIterator termListIter = doc.termlist_begin();
++	Xapian::Stem *pStemmer = NULL;
++	string term;
++
++	// Do we know what language to use for stemming ?
++	if (language.empty() == false)
++	{
++		pStemmer = new Xapian::Stem(StringManip::toLowerCase(language));
++	}
++
++	// Get the terms and remove the first posting for each
++	while (tokens.nextToken(term) == true)
++	{
++		if (term.empty() == true)
++		{
++			continue;
++		}
++		// Does it start with a capital letter ?
++		if (isupper((int)term[0]) != 0)
++		{
++			// R-prefix the raw term
++			termListIter.skip_to(string(&quot;R&quot;) + term);
++			Xapian::PositionIterator firstPosIter = termListIter.positionlist_begin();
++			if (firstPosIter != termListIter.positionlist_end())
++			{
++				doc.remove_posting(string(&quot;R&quot;) + term, *firstPosIter);
++			}
++		}
++		// Lower case the term
++		term = StringManip::toLowerCase(term);
++
++		// Stem the term ?
++		if ((mode == STORE_UNSTEM) ||
++			(pStemmer == NULL))
++		{
++			termListIter.skip_to(limitTermLength(prefix + term));
++			Xapian::PositionIterator firstPosIter = termListIter.positionlist_begin();
++			if (firstPosIter != termListIter.positionlist_end())
++			{
++				doc.remove_posting(limitTermLength(prefix + term), *firstPosIter);
++			}
++		}
++		else if (mode == STORE_STEM)
++		{
++			string stemmedTerm = pStemmer-&gt;stem_word(term);
++
++			termListIter.skip_to(limitTermLength(prefix + stemmedTerm));
++			Xapian::PositionIterator firstPosIter = termListIter.positionlist_begin();
++			if (firstPosIter != termListIter.positionlist_end())
++			{
++				doc.remove_posting(limitTermLength(prefix + stemmedTerm), *firstPosIter);
++			}
++		}
++		else if (mode == STORE_BOTH)
++		{
++			string stemmedTerm = pStemmer-&gt;stem_word(term);
++
++			// Both unstemmed and stemmed should be at the same position
++			termListIter.skip_to(limitTermLength(prefix + term));
++			Xapian::PositionIterator firstPosIter = termListIter.positionlist_begin();
++			if (firstPosIter != termListIter.positionlist_end())
++			{
++				doc.remove_posting(limitTermLength(prefix + term), *firstPosIter);
++				doc.remove_posting(limitTermLength(prefix + stemmedTerm), *firstPosIter);
++			}
++		}
++	}
++
++	if (pStemmer != NULL)
++	{
++		delete pStemmer;
++	}
++}
++
++bool WritableXapianIndex::addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 	Xapian::termcount &amp;termPos) const
+ {
+ 	string title(info.getTitle());
+@@ -159,9 +236,9 @@
+ 		Document titleDoc;
+ 		titleDoc.setData(title.c_str(), title.length());
+ 		Tokenizer titleTokens(&amp;titleDoc);
+-		addTermsToDocument(titleTokens, doc, &quot;S&quot;, termPos, STORE_UNSTEM);
++		addPostingsToDocument(titleTokens, doc, &quot;S&quot;, termPos, STORE_UNSTEM);
+ 		titleTokens.rewind();
+-		addTermsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
++		addPostingsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 	}
+ 
+ 	// Index the full URL with prefix U
+@@ -189,11 +266,69 @@
+ 	// Finally, add the language code with prefix L
+ 	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
+ 
+-	setDocumentData(doc, info, m_stemLanguage);
+-
+ 	return true;
+ }
+ 
++void WritableXapianIndex::removeCommonTerms(Xapian::Document &amp;doc)
++{
++	DocumentInfo docInfo;
++	string record(doc.get_data());
++
++	// First, remove the magic term
++	doc.remove_term(MAGIC_TERM);
++
++	if (record.empty() == true)
++        {
++		// Nothing else we can do
++		return;
++	}
++
++	string language(Languages::toLocale(StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;)));
++	docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
++		StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
++		StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
++		language);
++	docInfo.setTimestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
++	Url urlObj(docInfo.getLocation());
++
++	// FIXME: remove terms extracted from the title if they don't have more than one posting
++	string title(docInfo.getTitle());
++	if (title.empty() == false)
++	{
++		Document titleDoc;
++		titleDoc.setData(title.c_str(), title.length());
++		Tokenizer titleTokens(&amp;titleDoc);
++		removeFirstPostingsFromDocument(titleTokens, doc, &quot;S&quot;, language, STORE_UNSTEM);
++		titleTokens.rewind();
++		removeFirstPostingsFromDocument(titleTokens, doc, &quot;&quot;, language, m_stemMode);
++	}
++
++	// Title
++	doc.remove_term(limitTermLength(string(&quot;U&quot;) + docInfo.getLocation(), true));
++	// Host name
++	string hostName(StringManip::toLowerCase(urlObj.getHost()));
++	if (hostName.empty() == false)
++	{
++		doc.remove_term(limitTermLength(string(&quot;H&quot;) + hostName, true));
++		string::size_type dotPos = hostName.find('.');
++		while (dotPos != string::npos)
++		{
++			doc.remove_term(limitTermLength(string(&quot;H&quot;) + hostName.substr(dotPos + 1), true));
++
++			// Next
++			dotPos = hostName.find('.', dotPos + 1);
++		}
++	}
++	// ...and file name
++	string fileName(urlObj.getFile());
++	if (fileName.empty() == false)
++	{
++		doc.remove_term(limitTermLength(string(&quot;P&quot;) + StringManip::toLowerCase(fileName), true));
++	}
++	// Language code
++	doc.remove_term(string(&quot;L&quot;) + Languages::toCode(language));
++}
++
+ string WritableXapianIndex::scanDocument(const char *pData, unsigned int dataLength,
+ 	DocumentInfo &amp;info)
+ {
+@@ -235,7 +370,7 @@
+ 	return language;
+ }
+ 
+-void WritableXapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
++void WritableXapianIndex::setDocumentData(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 	const string &amp;language) const
+ {
+ 	string title(info.getTitle());
+@@ -445,15 +580,17 @@
+ 		cout &lt;&lt; &quot;WritableXapianIndex::indexDocument: adding terms&quot; &lt;&lt; endl;
+ #endif
+ 		// Add the tokenizer's terms to the Xapian document
+-		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
++		addPostingsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 		// Add labels
+ 		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 			++labelIter)
+ 		{
+ 			doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 		}
+-		if (prepareDocument(docInfo, doc, termPos) == true)
++		if (addCommonTerms(docInfo, doc, termPos) == true)
+ 		{
++			setDocumentData(docInfo, doc, m_stemLanguage);
++
+ 			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 			if (pIndex != NULL)
+ 			{
+@@ -521,7 +658,7 @@
+ 		Xapian::termcount termPos = 0;
+ 
+ 		// Add the tokenizer's terms to the document
+-		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
++		addPostingsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 		// Get the document's labels
+ 		if (getDocumentLabels(docId, labels) == true)
+ 		{
+@@ -532,8 +669,10 @@
+ 				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 			}
+ 		}
+-		if (prepareDocument(docInfo, doc, termPos) == true)
++		if (addCommonTerms(docInfo, doc, termPos) == true)
+ 		{
++			setDocumentData(docInfo, doc, m_stemLanguage);
++
+ 			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 			if (pIndex != NULL)
+ 			{
+@@ -579,12 +718,17 @@
+ 		if (pIndex != NULL)
+ 		{
+ 			Xapian::Document doc = pIndex-&gt;get_document(docId);
++			Xapian::termcount termPos = 0;
+ 
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;WritableXapianIndex::updateDocumentInfo: language is &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
+ #endif
++
+ 			// Update the document data with the current language
+-			setDocumentData(doc, docInfo, docInfo.getLanguage());
++			removeCommonTerms(doc);
++			setDocumentData(docInfo, doc, docInfo.getLanguage());
++			addCommonTerms(docInfo, doc, termPos);
++
+ 			pIndex-&gt;replace_document(docId, doc);
+ 			updated = true;
+ 		}
+
+Modified: trunk/Index/WritableXapianIndex.h
+===================================================================
+--- trunk/Index/WritableXapianIndex.h	2006-07-21 14:43:46 UTC (rev 367)
++++ trunk/Index/WritableXapianIndex.h	2006-08-04 11:59:37 UTC (rev 368)
+@@ -97,16 +97,21 @@
+ 
+ 		static bool badField(const std::string &amp;field);
+ 
+-		void addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++		void addPostingsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+ 			const std::string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const;
+ 
+-		bool prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
++		void removeFirstPostingsFromDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++			const std::string &amp;prefix, const std::string &amp;language, StemmingMode mode) const;
++
++		bool addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 			Xapian::termcount &amp;termPos) const;
+ 
++		void removeCommonTerms(Xapian::Document &amp;doc);
++
+ 		std::string scanDocument(const char *pData, unsigned int dataLength,
+ 			DocumentInfo &amp;info);
+ 
+-		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
++		void setDocumentData(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 			const std::string &amp;language) const;
+ 
+ 		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000362.html">[Pinot-svn] r369 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#361">[ date ]</a>
+              <a href="thread.html#361">[ thread ]</a>
+              <a href="subject.html#361">[ subject ]</a>
+              <a href="author.html#361">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

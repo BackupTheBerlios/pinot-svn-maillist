@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1540 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1540%20-%20trunk/Core&In-Reply-To=%3C200902031325.n13DPFHO004380%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001529.html">
+   <LINK REL="Next"  HREF="001531.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1540 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1540%20-%20trunk/Core&In-Reply-To=%3C200902031325.n13DPFHO004380%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1540 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb  3 14:25:15 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001529.html">[Pinot-svn] r1539 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="001531.html">[Pinot-svn] r1541 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1530">[ date ]</a>
+              <a href="thread.html#1530">[ thread ]</a>
+              <a href="subject.html#1530">[ subject ]</a>
+              <a href="author.html#1530">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-03 14:25:11 +0100 (Tue, 03 Feb 2009)
+New Revision: 1540
+
+Modified:
+   trunk/Core/pinot-index.cpp
+Log:
+Urls passed as parameters may exclude &quot;<A HREF="file://">file://</A>&quot;, be relative paths.
+Support for gettext().
+
+
+Modified: trunk/Core/pinot-index.cpp
+===================================================================
+--- trunk/Core/pinot-index.cpp	2009-02-03 13:14:49 UTC (rev 1539)
++++ trunk/Core/pinot-index.cpp	2009-02-03 13:25:11 UTC (rev 1540)
+@@ -22,6 +22,7 @@
+ #include &lt;iostream&gt;
+ #include &lt;string&gt;
+ #include &lt;fstream&gt;
++#include &lt;glibmm/miscutils.h&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -75,7 +76,7 @@
+ 	}
+ 	ModuleFactory::unloadModules();
+ 	cout &lt;&lt; &quot;\n\nExamples:\n&quot;
+-		&lt;&lt; &quot;pinot-index --check --showinfo --backend xapian --db ~/.pinot/daemon <A HREF="file:///home/fabrice/Documents/Bozo.txt\n\n">file:///home/fabrice/Documents/Bozo.txt\n\n</A>&quot;
++		&lt;&lt; &quot;pinot-index --check --showinfo --backend xapian --db ~/.pinot/daemon ../Bozo.txt\n\n&quot;
+ 		&lt;&lt; &quot;pinot-index --index --db \&quot;My Web Pages\&quot; <A HREF="http://pinot.berlios.de/\n\n">http://pinot.berlios.de/\n\n</A>&quot;
+ 		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ }
+@@ -144,6 +145,12 @@
+ 		optionChar = getopt_long(argc, argv, &quot;b:cd:hisv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
++#if defined(ENABLE_NLS)
++	bindtextdomain(GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
++	bind_textdomain_codeset(GETTEXT_PACKAGE, &quot;UTF-8&quot;);
++	textdomain(GETTEXT_PACKAGE);
++#endif //ENABLE_NLS
++
+ 	if (argc == 1)
+ 	{
+ 		printHelp();
+@@ -238,6 +245,45 @@
+ 	{
+ 		string urlParam(argv[optind]);
+ 
++		// Is this a relative path ?
++		if (Glib::path_is_absolute(urlParam) == false)
++		{
++			char *pCurrentDir = (char *)malloc(sizeof(char) * PATH_MAX);
++
++			if (pCurrentDir != NULL)
++			{
++				if (getcwd(pCurrentDir, PATH_MAX) != NULL)
++				{
++					urlParam = Url::resolvePath(pCurrentDir, argv[optind]);
++#ifdef DEBUG
++					cout &lt;&lt; &quot;URL resolved to &quot; &lt;&lt; urlParam &lt;&lt; endl;
++#endif
++				}
++
++				free(pCurrentDir);
++			}
++		}
++
++		Url thisUrl(urlParam);
++
++		// Rewrite the URL, dropping user name and password which we don't support
++		urlParam = thisUrl.getProtocol();
++		urlParam += &quot;://&quot;;
++		if (thisUrl.isLocal() == false)
++		{
++			urlParam += thisUrl.getHost();
++			urlParam += &quot;/&quot;;
++		}
++		urlParam += thisUrl.getLocation();
++		if (thisUrl.getFile().empty() == false)
++		{
++			urlParam += &quot;/&quot;;
++			urlParam += thisUrl.getFile();
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;URL rewritten to &quot; &lt;&lt; urlParam &lt;&lt; endl;
++#endif
++
+ 		if (checkDocument == true)
+ 		{
+ 			if (pIndex-&gt;isGood() == true)
+@@ -252,8 +298,6 @@
+ 		}
+ 		if (indexDocument == true)
+ 		{
+-			Url thisUrl(urlParam);
+-
+ 			// Which Downloader ?
+ 			DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+ 			if (pDownloader == NULL)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001529.html">[Pinot-svn] r1539 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="001531.html">[Pinot-svn] r1541 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1530">[ date ]</a>
+              <a href="thread.html#1530">[ thread ]</a>
+              <a href="subject.html#1530">[ subject ]</a>
+              <a href="author.html#1530">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

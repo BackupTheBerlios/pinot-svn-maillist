@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r926 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r926%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708151344.l7FDie04022287%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000919.html">
+   <LINK REL="Next"  HREF="000921.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r926 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r926%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708151344.l7FDie04022287%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r926 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug 15 15:44:40 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000919.html">[Pinot-svn] r925 - in trunk: Index Search UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000921.html">[Pinot-svn] r927 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#920">[ date ]</a>
+              <a href="thread.html#920">[ thread ]</a>
+              <a href="subject.html#920">[ subject ]</a>
+              <a href="author.html#920">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-15 15:44:40 +0200 (Wed, 15 Aug 2007)
+New Revision: 926
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Support for spelling correction.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-08-15 13:43:18 UTC (rev 925)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-08-15 13:44:40 UTC (rev 926)
+@@ -22,7 +22,6 @@
+ #include &lt;fcntl.h&gt;
+ #include &lt;string.h&gt;
+ #include &lt;signal.h&gt;
+-#include &lt;errno.h&gt;
+ #include &lt;exception&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+@@ -760,7 +759,8 @@
+ 	m_engineDisplayableName(engineDisplayableName),
+ 	m_engineOption(engineOption),
+ 	m_queryProps(queryProps),
+-	m_listingIndex(listingIndex)
++	m_listingIndex(listingIndex),
++	m_correctedSpelling(false)
+ {
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;QueryingThread::QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; engineOption
+@@ -787,8 +787,9 @@
+ 	return m_engineDisplayableName;
+ }
+ 
+-QueryProperties QueryingThread::getQuery(void) const
++QueryProperties QueryingThread::getQuery(bool &amp;wasCorrected) const
+ {
++	wasCorrected = m_correctedSpelling;
+ 	return m_queryProps;
+ }
+ 
+@@ -962,6 +963,7 @@
+ 	}
+ 
+ 	// Run the query
++	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+ 	if (pEngine-&gt;runQuery(m_queryProps, m_startDoc) == false)
+ 	{
+ 		m_status = _(&quot;Couldn't run query on search engine&quot;);
+@@ -990,6 +992,14 @@
+ 			processResults(resultsList,
+ 				PinotSettings::getInstance().getIndexId(m_engineDisplayableName));
+ 		}
++
++		// Any spelling correction ?
++		string correctedFreeQuery(pEngine-&gt;getSpellingCorrection());
++		if (correctedFreeQuery.empty() == false)
++		{
++			m_correctedSpelling = true;
++			m_queryProps.setFreeQuery(correctedFreeQuery);
++		}
+ 	}
+ 
+ 	delete pEngine;
+@@ -1068,6 +1078,7 @@
+ 	pEngine-&gt;setQueryExpansion(relevantDocIds);
+ 
+ 	// Run the query
++	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+ 	if (pEngine-&gt;runQuery(m_queryProps) == false)
+ 	{
+ 		m_status = _(&quot;Couldn't run query on search engine&quot;);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-08-15 13:43:18 UTC (rev 925)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-08-15 13:44:40 UTC (rev 926)
+@@ -215,10 +215,8 @@
+ 
+ 		std::string getEngineName(void) const;
+ 
+-		bool isListingIndex(void) const;
++		QueryProperties getQuery(bool &amp;wasCorrected) const;
+ 
+-		QueryProperties getQuery(void) const;
+-
+ 		std::string getCharset(void) const;
+ 
+ 		virtual bool stop(void);
+@@ -230,6 +228,7 @@
+ 		QueryProperties m_queryProps;
+ 		std::string m_resultsCharset;
+ 		bool m_listingIndex;
++		bool m_correctedSpelling;
+ 
+ 		virtual void processResults(const std::vector&lt;DocumentInfo&gt; &amp;resultsList);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000919.html">[Pinot-svn] r925 - in trunk: Index Search UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000921.html">[Pinot-svn] r927 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#920">[ date ]</a>
+              <a href="thread.html#920">[ thread ]</a>
+              <a href="subject.html#920">[ subject ]</a>
+              <a href="author.html#920">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

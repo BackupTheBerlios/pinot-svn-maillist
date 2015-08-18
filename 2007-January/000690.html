@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r696 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r696%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200701200441.l0K4f3lX008335%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000689.html">
+   <LINK REL="Next"  HREF="000691.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r696 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r696%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200701200441.l0K4f3lX008335%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r696 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jan 20 05:41:03 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000689.html">[Pinot-svn] r695 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000691.html">[Pinot-svn] r697 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#690">[ date ]</a>
+              <a href="thread.html#690">[ thread ]</a>
+              <a href="subject.html#690">[ subject ]</a>
+              <a href="author.html#690">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-01-20 05:41:02 +0100 (Sat, 20 Jan 2007)
+New Revision: 696
+
+Modified:
+   trunk/SQL/ViewHistory.cpp
+   trunk/SQL/ViewHistory.h
+   trunk/UI/GTK2/src/statisticsDialog.cc
+Log:
+Show how many results were viewed.
+
+
+Modified: trunk/SQL/ViewHistory.cpp
+===================================================================
+--- trunk/SQL/ViewHistory.cpp	2007-01-13 15:36:08 UTC (rev 695)
++++ trunk/SQL/ViewHistory.cpp	2007-01-20 04:41:02 UTC (rev 696)
+@@ -126,6 +126,28 @@
+ 	return success;
+ }
+ 
++/// Returns the number of items.
++unsigned int ViewHistory::getItemsCount(void) const
++{
++	unsigned int count = 0;
++
++	SQLiteResults *results = executeStatement(&quot;SELECT COUNT(*) FROM ViewHistory;&quot;);
++	if (results != NULL)
++	{
++		SQLiteRow *row = results-&gt;nextRow();
++		if (row != NULL)
++		{
++			count = atoi(row-&gt;getColumn(0).c_str());
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	return count;
++}
++
+ /// Deletes an URL.
+ bool ViewHistory::deleteItem(const string &amp;url)
+ {
+
+Modified: trunk/SQL/ViewHistory.h
+===================================================================
+--- trunk/SQL/ViewHistory.h	2007-01-13 15:36:08 UTC (rev 695)
++++ trunk/SQL/ViewHistory.h	2007-01-20 04:41:02 UTC (rev 696)
+@@ -42,6 +42,9 @@
+ 		/// Checks if an URL is in the history.
+ 		bool hasItem(const string &amp;url) const;
+ 
++		/// Returns the number of items.
++		unsigned int getItemsCount(void) const;
++
+ 		/// Deletes an URL.
+ 		bool deleteItem(const string &amp;url);
+ 
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2007-01-13 15:36:08 UTC (rev 695)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2007-01-20 04:41:02 UTC (rev 696)
+@@ -26,6 +26,7 @@
+ #include &quot;NLS.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;CrawlHistory.h&quot;
++#include &quot;ViewHistory.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;statisticsDialog.hh&quot;
+@@ -56,7 +57,8 @@
+ 
+ void statisticsDialog::populate(void)
+ {
+-	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++	CrawlHistory crawlerHistory(PinotSettings::getInstance().m_historyDatabase);
++	ViewHistory viewHistory(PinotSettings::getInstance().m_historyDatabase);
+ 	std::map&lt;unsigned int, string&gt; sources;
+ 	char countStr[64];
+ 	bool hasErrors = false;
+@@ -95,15 +97,26 @@
+ 
+ 	folderIter = m_refStore-&gt;append();
+ 	row = *folderIter;
++	row[m_statsColumns.m_name] = _(&quot;History&quot;);
++
++	// Show view statistics
++	unsigned int viewCount = viewHistory.getItemsCount();
++	snprintf(countStr, 64, &quot;%u&quot;, viewCount);
++	statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;results were viewed&quot;);
++
++	folderIter = m_refStore-&gt;append();
++	row = *folderIter;
+ 	row[m_statsColumns.m_name] = _(&quot;Crawler&quot;);
+ 
+-	// Show statistics
+-	unsigned int crawledFilesCount = history.getItemsCount(CrawlHistory::CRAWLED);
++	// Show crawler statistics
++	unsigned int crawledFilesCount = crawlerHistory.getItemsCount(CrawlHistory::CRAWLED);
+ 	snprintf(countStr, 64, &quot;%u&quot;, crawledFilesCount);
+ 	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+ 	row = *statIter;
+ 	row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;files were crawled&quot;);
+-	unsigned int crawlingFilesCount = history.getItemsCount(CrawlHistory::CRAWLING);
++	unsigned int crawlingFilesCount = crawlerHistory.getItemsCount(CrawlHistory::CRAWLING);
+ 	snprintf(countStr, 64, &quot;%u&quot;, crawlingFilesCount);
+ 	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+ 	row = *statIter;
+@@ -113,14 +126,14 @@
+ 	row = *errIter;
+ 	row[m_statsColumns.m_name] = _(&quot;Errors&quot;);
+ 
+-	history.getSources(sources);
++	crawlerHistory.getSources(sources);
+ 	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+ 		sourceIter != sources.end(); ++sourceIter)
+ 	{
+ 		set&lt;string&gt; errors;
+ 
+ 		// Did any error occur on this source ?
+-		unsigned int errorCount = history.getSourceItems(sourceIter-&gt;first, CrawlHistory::ERROR, errors);
++		unsigned int errorCount = crawlerHistory.getSourceItems(sourceIter-&gt;first, CrawlHistory::ERROR, errors);
+ 		if (errorCount &gt; 0)
+ 		{
+ 			Url urlObj(sourceIter-&gt;second);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000689.html">[Pinot-svn] r695 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000691.html">[Pinot-svn] r697 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#690">[ date ]</a>
+              <a href="thread.html#690">[ thread ]</a>
+              <a href="subject.html#690">[ subject ]</a>
+              <a href="author.html#690">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

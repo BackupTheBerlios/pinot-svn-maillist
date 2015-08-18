@@ -1,0 +1,313 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r833 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r833%20-%20trunk/Index&In-Reply-To=%3C200705120346.l4C3kpVc013447%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000826.html">
+   <LINK REL="Next"  HREF="000828.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r833 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r833%20-%20trunk/Index&In-Reply-To=%3C200705120346.l4C3kpVc013447%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r833 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat May 12 05:46:51 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000826.html">[Pinot-svn] r832 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000828.html">[Pinot-svn] r834 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#827">[ date ]</a>
+              <a href="thread.html#827">[ thread ]</a>
+              <a href="subject.html#827">[ subject ]</a>
+              <a href="author.html#827">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-12 05:46:50 +0200 (Sat, 12 May 2007)
+New Revision: 833
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+Log:
+Preparing for Xapian 1.0 : get_errno() is deprecated and stem_word() is gone.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-05-07 13:54:45 UTC (rev 832)
++++ trunk/Index/XapianIndex.cpp	2007-05-12 03:46:50 UTC (rev 833)
+@@ -68,7 +68,7 @@
+ 		{
+ 			// This posting may have been removed already
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::removeFirstPosting: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			cout &lt;&lt; &quot;XapianIndex::removeFirstPosting: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ #endif
+ 		}
+ 	}
+@@ -153,7 +153,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get document list: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get document list: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -206,13 +206,21 @@
+ 		}
+ 		else if (mode == STORE_STEM)
+ 		{
+-			string stemmedTerm = pStemmer-&gt;stem_word(term);
++#if XAPIAN_MAJOR_VERSION==0
++			string stemmedTerm(pStemmer-&gt;stem_word(term));
++#else
++			string stemmedTerm((*pStemmer)(term));
++#endif
+ 
+ 			doc.add_posting(prefix + XapianDatabase::limitTermLength(stemmedTerm), termPos);
+ 		}
+ 		else if (mode == STORE_BOTH)
+ 		{
+-			string stemmedTerm = pStemmer-&gt;stem_word(term);
++#if XAPIAN_MAJOR_VERSION==0
++			string stemmedTerm(pStemmer-&gt;stem_word(term));
++#else
++			string stemmedTerm((*pStemmer)(term));
++#endif
+ 
+ 			// Add both at the same position
+ 			doc.add_posting(prefix + XapianDatabase::limitTermLength(term), termPos);
+@@ -278,11 +286,21 @@
+ 		}
+ 		else if (mode == STORE_STEM)
+ 		{
+-			removeFirstPosting(doc, termListIter, prefix + XapianDatabase::limitTermLength(pStemmer-&gt;stem_word(term)));
++#if XAPIAN_MAJOR_VERSION==0
++			string stemmedTerm(pStemmer-&gt;stem_word(term));
++#else
++			string stemmedTerm((*pStemmer)(term));
++#endif
++
++			removeFirstPosting(doc, termListIter, prefix + XapianDatabase::limitTermLength(stemmedTerm));
+ 		}
+ 		else if (mode == STORE_BOTH)
+ 		{
+-			string stemmedTerm = pStemmer-&gt;stem_word(term);
++#if XAPIAN_MAJOR_VERSION==0
++			string stemmedTerm(pStemmer-&gt;stem_word(term));
++#else
++			string stemmedTerm((*pStemmer)(term));
++#endif
+ 
+ 			removeFirstPosting(doc, termListIter, prefix + XapianDatabase::limitTermLength(term));
+ 			if (stemmedTerm != term)
+@@ -513,7 +531,7 @@
+ 		catch (const Xapian::Error &amp;error)
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::removeCommonTerms: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			cout &lt;&lt; &quot;XapianIndex::removeCommonTerms: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ #endif
+ 		}
+ 	}
+@@ -543,7 +561,7 @@
+ 		}
+ 		catch (const Xapian::Error &amp;error)
+ 		{
+-			cerr &lt;&lt; &quot;XapianIndex::scanDocument: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			cerr &lt;&lt; &quot;XapianIndex::scanDocument: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 			continue;
+ 		}
+ 
+@@ -606,7 +624,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't unindex documents: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't unindex documents: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -728,7 +746,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get document properties: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get document properties: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -766,7 +784,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get document terms count: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get document terms count: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -814,7 +832,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't check document labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't check document labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -866,7 +884,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -912,7 +930,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't look for document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't look for document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -993,7 +1011,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get terms: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get terms: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1026,7 +1044,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get last document ID: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get last document ID: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1071,7 +1089,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't count documents: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't count documents: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1174,7 +1192,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't index document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't index document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1255,7 +1273,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't update document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't update document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1303,7 +1321,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't update document properties: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't update document properties: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1384,7 +1402,7 @@
+ 		}
+ 		catch (const Xapian::Error &amp;error)
+ 		{
+-			cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 		}
+ 		catch (...)
+ 		{
+@@ -1426,7 +1444,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't unindex document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't unindex document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1510,7 +1528,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1559,7 +1577,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+@@ -1593,7 +1611,7 @@
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't flush database: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't flush database: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000826.html">[Pinot-svn] r832 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000828.html">[Pinot-svn] r834 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#827">[ date ]</a>
+              <a href="thread.html#827">[ thread ]</a>
+              <a href="subject.html#827">[ subject ]</a>
+              <a href="author.html#827">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,833 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r329 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r329%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606221101.k5MB1QFj019165%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000322.html">
+   <LINK REL="Next"  HREF="000324.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r329 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r329%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606221101.k5MB1QFj019165%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r329 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Jun 22 13:01:26 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000322.html">[Pinot-svn] r328 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000324.html">[Pinot-svn] r330 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#323">[ date ]</a>
+              <a href="thread.html#323">[ thread ]</a>
+              <a href="subject.html#323">[ subject ]</a>
+              <a href="author.html#323">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-22 13:01:23 +0200 (Thu, 22 Jun 2006)
+New Revision: 329
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+More Like This is activated if at least one indexed result is selected. It runs
+the query against My Documents, gets expand terms and adds those to a copy
+of the query object (&quot;More Like query_name&quot;) that can be edited, stored and
+run again.
+Several other small changes and fixes.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-06-22 10:56:55 UTC (rev 328)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-06-22 11:01:23 UTC (rev 329)
+@@ -507,6 +507,19 @@
+ {
+ }
+ 
++QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
++	const string &amp;engineOption, const QueryProperties &amp;queryProps,
++	const set&lt;unsigned int&gt; &amp;relevantDocs) :
++	WorkerThread(),
++	m_engineName(engineName),
++	m_engineDisplayableName(engineDisplayableName),
++	m_engineOption(engineOption),
++	m_queryProps(queryProps)
++{
++	copy(relevantDocs.begin(), relevantDocs.end(),
++		inserter(m_relevantDocs, m_relevantDocs.begin()));
++}
++
+ QueryingThread::~QueryingThread()
+ {
+ }
+@@ -536,6 +549,11 @@
+ 	return m_resultsList;
+ }
+ 
++const set&lt;string&gt; &amp;QueryingThread::getExpandTerms(void) const
++{
++	return m_expandTerms;
++}
++
+ bool QueryingThread::stop(void)
+ {
+ 	m_done = true;
+@@ -548,19 +566,25 @@
+ void QueryingThread::doWork(void)
+ {
+ 	// Get the SearchEngine
+-	SearchEngineInterface *engine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
+-	if (engine == NULL)
++	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
++	if (pEngine == NULL)
+ 	{
+ 		m_status = _(&quot;Couldn't create search engine&quot;);
+ 		m_status += &quot; &quot;;
+ 		m_status += m_engineDisplayableName;
+ 		return;
+ 	}
++
+ 	// Set the maximum number of results
+-	engine-&gt;setMaxResultsCount(m_queryProps.getMaximumResultsCount());
++	pEngine-&gt;setMaxResultsCount(m_queryProps.getMaximumResultsCount());
++	if (m_relevantDocs.empty() == false)
++	{
++		// Set whether to expand the query
++		pEngine-&gt;setQueryExpansion(m_relevantDocs);
++	}
+ 
+ 	// Run the query
+-	if (engine-&gt;runQuery(m_queryProps) == false)
++	if (pEngine-&gt;runQuery(m_queryProps) == false)
+ 	{
+ 		m_status = _(&quot;Couldn't run query on search engine&quot;);
+ 		m_status += &quot; &quot;;
+@@ -568,11 +592,11 @@
+ 	}
+ 	else
+ 	{
+-		const vector&lt;Result&gt; &amp;resultsList = engine-&gt;getResults();
++		const vector&lt;Result&gt; &amp;resultsList = pEngine-&gt;getResults();
+ 
+ 		m_resultsList.clear();
+ 		m_resultsList.reserve(resultsList.size());
+-		m_resultsCharset = engine-&gt;getResultsCharset();
++		m_resultsCharset = pEngine-&gt;getResultsCharset();
+ 
+ 		// Copy the results list
+ 		for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+@@ -603,8 +627,14 @@
+ 				language,
+ 				resultIter-&gt;getScore()));
+ 		}
++
++		// Copy the expand terms
++		const set&lt;string&gt; &amp;expandTerms = pEngine-&gt;getExpandTerms();
++		copy(expandTerms.begin(), expandTerms.end(),
++			inserter(m_expandTerms, m_expandTerms.begin()));
+ 	}
+-	delete engine;
++
++	delete pEngine;
+ }
+ 
+ LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToDelete,
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-06-22 10:56:55 UTC (rev 328)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-06-22 11:01:23 UTC (rev 329)
+@@ -168,6 +168,9 @@
+ 	public:
+ 		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+ 			const std::string &amp;engineOption, const QueryProperties &amp;queryProps);
++		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
++			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
++			const std::set&lt;unsigned int&gt; &amp;relevantDocs);
+ 		virtual ~QueryingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -178,6 +181,8 @@
+ 
+ 		const std::vector&lt;Result&gt; &amp;getResults(std::string &amp;charset) const;
+ 
++		const std::set&lt;std::string&gt; &amp;getExpandTerms(void) const;
++
+ 		virtual bool stop(void);
+ 
+ 	protected:
+@@ -185,8 +190,10 @@
+ 		std::string m_engineDisplayableName;
+ 		std::string m_engineOption;
+ 		QueryProperties m_queryProps;
++		std::set&lt;unsigned int&gt; m_relevantDocs;
+ 		std::vector&lt;Result&gt; m_resultsList;
+ 		std::string m_resultsCharset;
++		std::set&lt;std::string&gt; m_expandTerms;
+ 
+ 		virtual void doWork(void);
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-06-22 10:56:55 UTC (rev 328)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-06-22 11:01:23 UTC (rev 329)
+@@ -255,8 +255,8 @@
+ 	m_refQueryTree-&gt;clear();
+ 
+ 	// Add all user-defined queries
+-	std::map&lt;string, QueryProperties&gt;::const_iterator queryIter = queries.begin();
+-	for (; queryIter != queries.end(); ++queryIter)
++	for (std::map&lt;string, QueryProperties&gt;::const_iterator queryIter = queries.begin();
++		queryIter != queries.end(); ++queryIter)
+ 	{
+ 		TreeModel::iterator iter = m_refQueryTree-&gt;append();
+ 		TreeModel::Row row = *iter;
+@@ -471,17 +471,16 @@
+ 			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+ 			if (pResultsTree != NULL)
+ 			{
+-				if (pResultsTree-&gt;checkSelection() == true)
+-				{
+-					hasSelection = pResultsTree-&gt;getSelection(resultsList);
+-				}
++				hasSelection = pResultsTree-&gt;getSelection(resultsList);
+ 			}
+ 		}
+ 	}
+ 
+-	if (hasSelection == true)
++	if ((hasSelection == true) &amp;&amp;
++		(resultsList.empty() == false))
+ 	{
+-		bool firstResult = true, isViewable = true, isIndexable = true, isCached = false;
++		XapianIndex docsIndex(m_settings.m_indexLocation);
++		bool firstResult = true, isViewable = true, isCached = false, isIndexed = false, isIndexable = false;
+ 
+ 		for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+@@ -490,6 +489,9 @@
+ 			Url urlObj(url);
+ 			string protocol(urlObj.getProtocol());
+ 
++#ifdef DEBUG
++			cout &lt;&lt; &quot;mainWindow::on_resultsTreeviewSelection_changed: &quot; &lt;&lt; url &lt;&lt; endl;
++#endif
+ 			if (firstResult == true)
+ 			{
+ 				// Show the URL of the first result in the status bar
+@@ -503,22 +505,31 @@
+ 			// FIXME: there should be a way to know which protocols can be viewed/indexed
+ 			if (protocol == &quot;xapian&quot;)
+ 			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;mainWindow::on_resultsTreeviewSelection_changed: internal URL&quot; &lt;&lt; endl;
+-#endif
+-				isViewable = isIndexable = isCached = false;
++				isViewable = isCached = isIndexed = isIndexable = false;
+ 				break;
+ 			}
+-			else if (m_settings.m_cacheProtocols.find(protocol) != m_settings.m_cacheProtocols.end())
++			else
+ 			{
+-				// One document with a supported protocol is good enough
+-				isCached = true;
++				if (m_settings.m_cacheProtocols.find(protocol) != m_settings.m_cacheProtocols.end())
++				{
++					// One document with a supported protocol is good enough
++					isCached = true;
++				}
++
++				if (docsIndex.isGood() == true)
++				{
++					if (docsIndex.hasDocument(url) &gt; 0)
++					{
++						isIndexed = true;
++					}
++				}
+ 			}
+ 		}
+ 
+ 		// Enable these menu items
+ 		viewresults1-&gt;set_sensitive(isViewable);
+ 		viewcache1-&gt;set_sensitive(isCached);
++		morelikethis1-&gt;set_sensitive(isIndexed);
+ 		indexresults1-&gt;set_sensitive(isIndexable);
+ 	}
+ 	else
+@@ -526,6 +537,7 @@
+ 		// Disable these menu items
+ 		viewresults1-&gt;set_sensitive(false);
+ 		viewcache1-&gt;set_sensitive(false);
++		morelikethis1-&gt;set_sensitive(false);
+ 		indexresults1-&gt;set_sensitive(false);
+ 
+ 		// Reset
+@@ -720,12 +732,11 @@
+ #endif
+ 					}
+ 
++					view_documents(resultsList);
++
++					// Update the rows right now
++					pResultsTree-&gt;setSelectionState(true, false);
+ 				}
+-
+-				view_documents(resultsList);
+-
+-				// Update the rows right now
+-				pResultsTree-&gt;setSelectionViewedState(true);
+ 			}
+ 		}
+ 	}
+@@ -965,6 +976,9 @@
+ 			// Connect to the &quot;changed&quot; signal
+ 			pResultsTree-&gt;getSelectionChangedSignal().connect(
+ 				SigC::slot(*this, &amp;mainWindow::on_resultsTreeviewSelection_changed));
++			// Connect to the view results signal
++			pResultsTree-&gt;getViewResultsSignal().connect(
++				SigC::slot(*this, &amp;mainWindow::on_viewresults_activate));
+ 
+ 			// Append the page
+ 			if (m_state.write_lock_lists(3) == true)
+@@ -982,6 +996,7 @@
+ 			(pResultsTree != NULL))
+ 		{
+ 			// Add the results to the tree
++			pResultsTree-&gt;deleteResults(queryProps, engineName);
+ 			pResultsTree-&gt;addResults(queryProps, engineName,
+ 				resultsList, resultsCharset,
+ 				searchenginegroup1-&gt;get_active());
+@@ -1005,6 +1020,59 @@
+ 					labelName);
+ 			}
+ 		}
++
++		// Any expand terms ?
++		const set&lt;string&gt; &amp;expandTerms = pQueryThread-&gt;getExpandTerms();
++		if (expandTerms.empty() == false)
++		{
++			string queryName(_(&quot;More Like&quot;));
++			string moreLike;
++			bool newQuery = true;
++
++			if (queryProps.getName().empty() == true)
++			{
++				queryName += &quot;...&quot;;
++			}
++			else
++			{
++				queryName += &quot; &quot;;
++				queryName += queryProps.getName();
++			}
++			queryProps.setName(queryName);
++
++			moreLike.clear();
++			if (queryProps.getAnyWords().empty() == false)
++			{
++				moreLike = &quot; &quot;;
++			}
++			for (set&lt;string&gt;::const_iterator termIter = expandTerms.begin();
++				termIter != expandTerms.end(); ++termIter)
++			{
++				if (moreLike.empty() == false)
++				{
++					moreLike += &quot; &quot;;
++				}
++				moreLike += *termIter;
++			}
++
++			// Does such a query already exist ?
++			TreeModel::Children children = m_refQueryTree-&gt;children();
++			for (TreeModel::Children::iterator iter = children.begin();
++				iter != children.end(); ++iter)
++			{
++				TreeModel::Row row = *iter;
++
++				if (queryName == from_utf8(row[m_queryColumns.m_name]))
++				{
++					newQuery = false;
++					break;
++				}
++			}
++
++			// Add these terms and edit the new query
++			queryProps.setAnyWords(queryProps.getAnyWords() + moreLike);
++			edit_query(queryProps, newQuery);
++		}
+ 	}
+ 	else if (type == &quot;LabelUpdateThread&quot;)
+ 	{
+@@ -1639,7 +1707,7 @@
+ 					view_documents(resultsList);
+ 
+ 					// We can update the rows right now
+-					pResultsTree-&gt;setSelectionViewedState(true);
++					pResultsTree-&gt;setSelectionState(true, false);
+ 				}
+ 			}
+ 		}
+@@ -1647,6 +1715,86 @@
+ }
+ 
+ //
++// Results &gt; More Like This menu selected
++//
++void mainWindow::on_morelikethis_activate()
++{
++	QueryProperties queryProps;
++	vector&lt;DocumentInfo&gt; resultsList;
++	string queryName;
++
++	NotebookPageBox *pNotebookPage = get_current_page();
++	if (pNotebookPage != NULL)
++	{
++		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
++		if (pResultsPage != NULL)
++		{
++			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
++			if (pResultsTree != NULL)
++			{
++				pResultsTree-&gt;getSelection(resultsList);
++			}
++
++			queryName = from_utf8(pResultsPage-&gt;getTitle());
++		}
++	}
++
++	// Find this query
++	if (queryName == _(&quot;Live query&quot;))
++	{
++		queryProps.setAndWords(from_utf8(liveQueryEntry-&gt;get_text()));
++	}
++	else
++	{
++		bool foundQuery = false;
++
++		TreeModel::Children children = m_refQueryTree-&gt;children();
++		for (TreeModel::Children::iterator iter = children.begin();
++			iter != children.end(); ++iter)
++		{
++			TreeModel::Row row = *iter;
++
++			if (queryName == from_utf8(row[m_queryColumns.m_name]))
++			{
++				queryProps = row[m_queryColumns.m_properties];
++				foundQuery = true;
++				break;
++			}
++		}
++
++		// Maybe the query was deleted
++		if (foundQuery == false)
++		{
++			ustring status(_(&quot;Couldn't find query&quot;));
++			status += &quot; &quot;;
++			status += queryName;
++			set_status(status);
++			return;
++		}
++	}
++
++        XapianIndex docsIndex(m_settings.m_indexLocation);
++        set&lt;unsigned int&gt; docIdList;
++
++        if (docsIndex.isGood() == true)
++        {
++                for (vector&lt;DocumentInfo&gt;::const_iterator docIter = resultsList.begin();
++                        docIter != resultsList.end(); ++docIter)
++                {
++                        unsigned int docId = docsIndex.hasDocument(docIter-&gt;getLocation());
++                        if (docId &gt; 0)
++                        {
++                                docIdList.insert(docId);
++                        }
++                }
++
++		// Spawn a new thread
++		start_thread(new QueryingThread(&quot;xapian&quot;, _(&quot;My Documents&quot;),
++			m_settings.m_indexLocation, queryProps, docIdList));
++        }
++}
++
++//
+ // Results &gt; Index menu selected
+ //
+ void mainWindow::on_indexresults_activate()
+@@ -1670,18 +1818,21 @@
+ 			if (pResultsTree != NULL)
+ 			{
+ 				pResultsTree-&gt;getSelection(resultsList);
+-			}
+-		}
+-	}
+ 
+-	// Go through selected results
+-	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+-		resultIter != resultsList.end(); ++resultIter)
+-	{
++				// Go through selected results
++				for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
++					resultIter != resultsList.end(); ++resultIter)
++				{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_indexresults_activate: URL is &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
++					cout &lt;&lt; &quot;mainWindow::on_indexresults_activate: URL is &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
+ #endif
+-		queue_index(*resultIter, &quot;&quot;);
++					queue_index(*resultIter, &quot;&quot;);
++				}
++
++				// We can update the rows right now
++				pResultsTree-&gt;setSelectionState(false, true);
++			}
++		}
+ 	}
+ }
+ 
+@@ -1785,7 +1936,7 @@
+ 		DocumentInfo docInfo(docIter-&gt;getTitle(), url,
+ 			docIter-&gt;getType(), docIter-&gt;getLanguage());
+ 		docInfo.setTimestamp(docIter-&gt;getTimestamp());
+-		queue_index(docInfo, &quot;&quot;, docId);
++		queue_index(docInfo, &quot;&quot;);
+ 	}
+ }
+ 
+@@ -2428,15 +2579,16 @@
+ void mainWindow::show_selectionbased_menuitems(bool showItems)
+ {
+ 	// Results menuitems that depend on selection
+-	viewresults1-&gt;set_sensitive(false);
+-	viewcache1-&gt;set_sensitive(false);
+-	indexresults1-&gt;set_sensitive(false);
++	viewresults1-&gt;set_sensitive(showItems);
++	viewcache1-&gt;set_sensitive(showItems);
++	morelikethis1-&gt;set_sensitive(showItems);
++	indexresults1-&gt;set_sensitive(showItems);
+ 
+ 	// Index menuitems that depend on selection
+-	viewfromindex1-&gt;set_sensitive(false);
+-	refreshindex1-&gt;set_sensitive(false);
+-	unindex1-&gt;set_sensitive(false);
+-	showfromindex1-&gt;set_sensitive(false);
++	viewfromindex1-&gt;set_sensitive(showItems);
++	refreshindex1-&gt;set_sensitive(showItems);
++	unindex1-&gt;set_sensitive(showItems);
++	showfromindex1-&gt;set_sensitive(showItems);
+ }
+ 
+ //
+@@ -2538,7 +2690,7 @@
+ // Queues additions to the index.
+ //
+ bool mainWindow::queue_index(const DocumentInfo &amp;docInfo,
+-	const string &amp;labelName, unsigned int docId)
++	const string &amp;labelName)
+ {
+ 	if (m_state.get_threads_count() &gt;= m_maxThreads)
+ 	{
+@@ -2552,14 +2704,16 @@
+ 		return true;
+ 	}
+ 
++	// Is it an update ?
++	XapianIndex docsIndex(m_settings.m_indexLocation);
++	unsigned int docId = docsIndex.hasDocument(docInfo.getLocation());
+ 	if (docId &gt; 0)
+ 	{
+-		// Update the document
++		// Yes, it is
+ 		index_document(docInfo, labelName, docId);
+ 	}
+ 	else
+ 	{
+-		// Index the document
+ 		index_document(docInfo, labelName);
+ 	}
+ 
+@@ -2814,37 +2968,54 @@
+ void mainWindow::index_document(const DocumentInfo &amp;docInfo,
+ 	const string &amp;labelName, unsigned int docId)
+ {
+-	Url urlObj(docInfo.getLocation());
+-	string indexLocation = m_settings.m_indexLocation;
++	string location(docInfo.getLocation());
+ 
+-	// If the document is mail, we need to check My Email
++	if (location.empty() == true)
++	{
++		// Nothing to do
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::index_document: empty queue&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++
++	Url urlObj(location);
++	string indexLocation(m_settings.m_indexLocation);
++
++	// If the document is mail, we need the My Email index
+ 	if (urlObj.getProtocol() == &quot;mailbox&quot;)
+ 	{
+ 		indexLocation = m_settings.m_mailIndexLocation;
+ 	}
+ 
+-	XapianIndex index(indexLocation);
+-
+ 	// Is it an update ?
+ 	if (docId &gt; 0)
+ 	{
+ 		// Yes, it is
+ 		start_thread(new IndexingThread(docInfo, labelName, docId));
++
++		// We may have to update its labels
++		if (labelName.empty() == false)
++		{
++			XapianIndex index(indexLocation);
++			set&lt;string&gt; docLabels;
++
++			// Add this new label
++	#ifdef DEBUG
++			cout &lt;&lt; &quot;mainWindow::index_document: applying label &quot; &lt;&lt; labelName &lt;&lt; &quot; to document &quot; &lt;&lt; docId &lt;&lt; endl;
++	#endif
++			docLabels.insert(labelName);
++			index.setDocumentLabels(docId, docLabels, false);
++		}
+ 	}
+ 	else
+ 	{
+ 		string url(docInfo.getLocation());
+ 		bool isNewDocument = false;
+ 
+-		// No : see if the document is already indexed
+-		// or is being indexed
+-		if (index.isGood() == true)
++		// Is the document being indexed ?
++		if (m_state.write_lock_lists(10) == true)
+ 		{
+-			docId = index.hasDocument(url);
+-		}
+-		if ((docId == 0) &amp;&amp;
+-			(m_state.write_lock_lists(10) == true))
+-		{
+ 			if (m_state.m_beingIndexed.find(url) == m_state.m_beingIndexed.end())
+ 			{
+ 				m_state.m_beingIndexed.insert(url);
+@@ -2868,20 +3039,6 @@
+ 			set_status(status);
+ 		}
+ 	}
+-
+-	// If the document is indexed, we may have to update its labels
+-	if ((docId &gt; 0) &amp;&amp;
+-		(labelName.empty() == false))
+-	{
+-		set&lt;string&gt; docLabels;
+-
+-		// Add this new label
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::index_document: applying label &quot; &lt;&lt; labelName &lt;&lt; &quot; to document &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-		docLabels.insert(labelName);
+-		index.setDocumentLabels(docId, docLabels, false);
+-	}
+ }
+ 
+ //
+@@ -2889,6 +3046,7 @@
+ //
+ void mainWindow::view_documents(vector&lt;DocumentInfo&gt; &amp;documentsList)
+ {
++	ViewHistory viewHistory(m_settings.m_historyDatabase);
+ 	multimap&lt;string, string&gt; locationsByType;
+ 	vector&lt;DocumentInfo&gt;::iterator docIter = documentsList.begin();
+ 
+@@ -2903,6 +3061,24 @@
+ 			continue;
+ 		}
+ 
++		Url urlObj(url);
++
++		// FIXME: there should be a way to know which protocols can be viewed/indexed
++		if (urlObj.getProtocol() == &quot;mailbox&quot;)
++		{
++			DocumentInfo docInfo(&quot;&quot;, url, &quot;&quot;, &quot;&quot;);
++
++			// Get that message
++			start_thread(new DownloadingThread(docInfo, false));
++
++			// Record this into the history now, even though it may fail
++			if (viewHistory.hasItem(url) == false)
++			{
++				viewHistory.insertItem(url);
++			}
++			continue;
++		}
++
+ 		// What's the MIME type ?
+ 		if (mimeType.empty() == true)
+ 		{
+@@ -2934,14 +3110,12 @@
+ 	for (multimap&lt;string, string&gt;::iterator locationIter = locationsByType.begin();
+ 		locationIter != locationsByType.end(); ++locationIter)
+ 	{
++		string url(locationIter-&gt;second);
++
+ 		if (locationIter-&gt;first != currentType)
+ 		{
+ 			if (arguments.empty() == false)
+ 			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;mainWindow::view_documents: &quot; &lt;&lt; arguments.size()
+-					&lt;&lt; &quot; arguments for type &quot; &lt;&lt; currentType &lt;&lt; endl;
+-#endif
+ 				// Run the default program for this type
+ 				if (CommandLine::runAsync(action, arguments) == false)
+ 				{
+@@ -2967,24 +3141,9 @@
+ 		}
+ 		currentType = locationIter-&gt;first;
+ 
+-		string url(locationIter-&gt;second);
+-		Url urlObj(url);
+-
+-		// FIXME: there should be a way to know which protocols can be viewed/indexed
+-		if (urlObj.getProtocol() == &quot;mailbox&quot;)
+-		{
+-			DocumentInfo docInfo(&quot;&quot;, url, &quot;&quot;, &quot;&quot;);
+-
+-			// Get that message
+-			start_thread(new DownloadingThread(docInfo, false));
+-			// FIXME: at this time, only one mail message can be viewed at any one time
+-			break;
+-		}
+-
+ 		arguments.push_back(url);
+ 
+ 		// Record this into the history now, even though it may fail
+-		ViewHistory viewHistory(m_settings.m_historyDatabase);
+ 		if (viewHistory.hasItem(url) == false)
+ 		{
+ 			viewHistory.insertItem(url);
+@@ -2993,10 +3152,6 @@
+ 
+ 	if (arguments.empty() == false)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::view_documents: &quot; &lt;&lt; arguments.size()
+-			&lt;&lt; &quot; arguments for type &quot; &lt;&lt; currentType &lt;&lt; endl;
+-#endif
+ 		// Run the default program for this type
+ 		if (CommandLine::runAsync(action, arguments) == false)
+ 		{
+@@ -3097,6 +3252,7 @@
+ 
+ 	DocumentInfo docInfo;
+ 	string labelName;
++	bool foundItem = false;
+ 
+ 	if (m_state.write_lock_lists(12) == true)
+ 	{
+@@ -3108,6 +3264,7 @@
+ 			{
+ 				docInfo = queueIter-&gt;first;
+ 				labelName = queueIter-&gt;second;
++				foundItem = true;
+ 
+ 				m_state.m_indexQueue.erase(queueIter);
+ 			}
+@@ -3116,19 +3273,15 @@
+ 		m_state.unlock_lists();
+ 	}
+ 
+-	string location = docInfo.getLocation();
+-	if (location.empty() == true)
++	if (foundItem == false)
+ 	{
+ 		// Nothing to do
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::check_queue: empty queue&quot; &lt;&lt; endl;
+-#endif
+ 		return false;
+ 	}
+ 
+ 	// Is it an update ?
+ 	XapianIndex docsIndex(m_settings.m_indexLocation);
+-	unsigned int docId = docsIndex.hasDocument(location);
++	unsigned int docId = docsIndex.hasDocument(docInfo.getLocation());
+ 	if (docId &gt; 0)
+ 	{
+ 		// Yes, it is
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-06-22 10:56:55 UTC (rev 328)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-06-22 11:01:23 UTC (rev 329)
+@@ -89,13 +89,14 @@
+ 	virtual void on_showextract_activate();
+ 	virtual void on_groupresults_activate();
+ 	virtual void on_viewresults_activate();
++	virtual void on_morelikethis_activate();
+ 	virtual void on_indexresults_activate();
+ 
+ 	virtual void on_import_activate();
+ 	virtual void on_viewfromindex_activate();
+ 	virtual void on_refreshindex_activate();
++	virtual void on_unindex_activate();
+ 	virtual void on_showfromindex_activate();
+-	virtual void on_unindex_activate();
+ 
+ 	virtual void on_about_activate();
+ 
+@@ -124,8 +125,7 @@
+ 		NotebookPageBox::PageType type);
+ 	int get_page_number(const Glib::ustring &amp;title,
+ 		NotebookPageBox::PageType type);
+-	bool queue_index(const DocumentInfo &amp;docInfo, const std::string &amp;labelName,
+-		unsigned int docId = 0);
++	bool queue_index(const DocumentInfo &amp;docInfo, const std::string &amp;labelName);
+ 	void edit_query(QueryProperties &amp;queryProps, bool newQuery);
+ 	void run_search(const QueryProperties &amp;queryProps);
+ 	void browse_index(const Glib::ustring &amp;indexName,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000322.html">[Pinot-svn] r328 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000324.html">[Pinot-svn] r330 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#323">[ date ]</a>
+              <a href="thread.html#323">[ thread ]</a>
+              <a href="subject.html#323">[ subject ]</a>
+              <a href="author.html#323">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

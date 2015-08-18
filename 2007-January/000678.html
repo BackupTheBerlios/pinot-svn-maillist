@@ -1,0 +1,460 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r684 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r684%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200701091233.l09CXYhD011877%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000677.html">
+   <LINK REL="Next"  HREF="000679.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r684 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r684%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200701091233.l09CXYhD011877%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r684 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jan  9 13:33:34 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000677.html">[Pinot-svn] r683 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="000679.html">[Pinot-svn] r685 - in trunk: UI/GTK2/src po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#678">[ date ]</a>
+              <a href="thread.html#678">[ thread ]</a>
+              <a href="subject.html#678">[ subject ]</a>
+              <a href="author.html#678">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-01-09 13:33:34 +0100 (Tue, 09 Jan 2007)
+New Revision: 684
+
+Added:
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+   trunk/UI/GTK2/src/statisticsDialog_glade.cc
+   trunk/UI/GTK2/src/statisticsDialog_glade.hh
+Log:
+Statistics window.
+
+
+Added: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2007-01-09 12:31:48 UTC (rev 683)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2007-01-09 12:33:34 UTC (rev 684)
+@@ -0,0 +1,168 @@
++/*
++ *  Copyright 2005,2006 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;iostream&gt;
++#include &lt;string&gt;
++#include &lt;map&gt;
++#include &lt;set&gt;
++#include &lt;sigc++/slot.h&gt;
++
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
++#include &quot;Url.h&quot;
++#include &quot;CrawlHistory.h&quot;
++#include &quot;PinotSettings.h&quot;
++#include &quot;PinotUtils.h&quot;
++#include &quot;statisticsDialog.hh&quot;
++
++using namespace std;
++using namespace Glib;
++using namespace Gtk;
++
++statisticsDialog::statisticsDialog()
++{
++	// Associate the columns model to the engines tree
++	m_refStore = TreeStore::create(m_statsColumns);
++	statisticsTreeview-&gt;set_model(m_refStore);
++
++	TreeViewColumn *pColumn = create_column(_(&quot;Statistics&quot;), m_statsColumns.m_name, true, true, m_statsColumns.m_name);
++	if (pColumn != NULL)
++	{
++		statisticsTreeview-&gt;append_column(*manage(pColumn));
++	}
++
++	populate();
++}
++
++statisticsDialog::~statisticsDialog()
++{
++}
++
++void statisticsDialog::populate(void)
++{
++	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++	std::map&lt;unsigned int, string&gt; sources;
++	char countStr[64];
++	bool hasErrors = false;
++
++	TreeModel::iterator folderIter = m_refStore-&gt;append();
++	TreeModel::Row row = *folderIter;
++	row[m_statsColumns.m_name] = _(&quot;Indexes&quot;);
++
++	TreeModel::iterator statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	row[m_statsColumns.m_name] = _(&quot;My Documents&quot;);
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
++	if ((pIndex != NULL) &amp;&amp;
++		(pIndex-&gt;isGood() == true))
++	{
++		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
++		snprintf(countStr, 64, &quot;%u&quot;, docsCount);
++		TreeModel::iterator docsIter = m_refStore-&gt;append(statIter-&gt;children());
++		row = *docsIter;
++		row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;documents&quot;);
++	}
++
++	statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	row[m_statsColumns.m_name] = _(&quot;My Web Pages&quot;);
++	pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++	if ((pIndex != NULL) &amp;&amp;
++		(pIndex-&gt;isGood() == true))
++	{
++		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
++		snprintf(countStr, 64, &quot;%u&quot;, docsCount);
++		TreeModel::iterator docsIter = m_refStore-&gt;append(statIter-&gt;children());
++		row = *docsIter;
++		row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;documents&quot;);
++	}
++
++	folderIter = m_refStore-&gt;append();
++	row = *folderIter;
++	row[m_statsColumns.m_name] = _(&quot;Crawler&quot;);
++
++	// Show statistics
++	unsigned int crawledFilesCount = history.getItemsCount(CrawlHistory::CRAWLED);
++	snprintf(countStr, 64, &quot;%u&quot;, crawledFilesCount);
++	statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;crawled files&quot;);
++	unsigned int crawlingFilesCount = history.getItemsCount(CrawlHistory::CRAWLING);
++	snprintf(countStr, 64, &quot;%u&quot;, crawlingFilesCount);
++	statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;files being crawled&quot;);
++
++	TreeModel::iterator errIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *errIter;
++	row[m_statsColumns.m_name] = _(&quot;Errors&quot;);
++
++	history.getSources(sources);
++	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
++		sourceIter != sources.end(); ++sourceIter)
++	{
++		set&lt;string&gt; errors;
++
++		// Did any error occur on this source ?
++		unsigned int errorCount = history.getSourceItems(sourceIter-&gt;first, CrawlHistory::ERROR, errors);
++		if (errorCount &gt; 0)
++		{
++			Url urlObj(sourceIter-&gt;second);
++			ustring sourceName(urlObj.getLocation());
++
++			// Add the source
++			TreeModel::iterator srcIter = m_refStore-&gt;append(errIter-&gt;children());
++			row = *srcIter;
++			if (urlObj.getFile().empty() == false)
++			{
++				sourceName += &quot;/&quot;;
++				sourceName += urlObj.getFile();
++			}
++			row[m_statsColumns.m_name] = sourceName;
++
++			// List them
++			for (set&lt;string&gt;::const_iterator errorIter = errors.begin();
++				errorIter != errors.end(); ++errorIter)
++			{
++				statIter = m_refStore-&gt;append(srcIter-&gt;children());
++				row = *statIter;
++				row[m_statsColumns.m_name] = (*errorIter);
++			}
++
++			hasErrors = true;
++		}
++	}
++
++	if (hasErrors == false)
++	{
++		statIter = m_refStore-&gt;append(errIter-&gt;children());
++		row = *statIter;
++		row[m_statsColumns.m_name] = _(&quot;None&quot;);
++	}
++
++	statisticsTreeview-&gt;expand_all();
++
++	Adjustment *pAdjustement = statisticsScrolledwindow-&gt;get_hadjustment();
++#ifdef DEBUG
++	cout &lt;&lt; &quot;statisticsDialog: &quot; &lt;&lt; pAdjustement-&gt;get_value() &lt;&lt; &quot; &quot;
++		&lt;&lt; pAdjustement-&gt;get_lower() &lt;&lt; &quot; &quot; &lt;&lt; pAdjustement-&gt;get_upper() &lt;&lt; endl;
++#endif
++	pAdjustement-&gt;set_value(pAdjustement-&gt;get_upper());
++	statisticsScrolledwindow-&gt;set_hadjustment(pAdjustement);
++	resize((int )pAdjustement-&gt;get_upper() * 2, get_height());
++}
+
+Added: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2007-01-09 12:31:48 UTC (rev 683)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2007-01-09 12:33:34 UTC (rev 684)
+@@ -0,0 +1,41 @@
++/*
++ *  Copyright 2005,2006 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _STATISTICSDIALOG_HH
++#define _STATISTICSDIALOG_HH
++
++#include &lt;glibmm/refptr.h&gt;
++#include &lt;gtkmm/treestore.h&gt;
++
++#include &quot;ModelColumns.h&quot;
++#include &quot;statisticsDialog_glade.hh&quot;
++
++class statisticsDialog : public statisticsDialog_glade
++{
++public:
++	statisticsDialog();
++	virtual ~statisticsDialog();
++
++protected:
++	Glib::RefPtr&lt;Gtk::TreeStore&gt; m_refStore;
++	ComboModelColumns m_statsColumns;
++
++	void populate(void);
++
++};
++#endif
+
+Added: trunk/UI/GTK2/src/statisticsDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog_glade.cc	2007-01-09 12:31:48 UTC (rev 683)
++++ trunk/UI/GTK2/src/statisticsDialog_glade.cc	2007-01-09 12:33:34 UTC (rev 684)
+@@ -0,0 +1,103 @@
++// generated 2007/1/9 20:01:15 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// using glademm V2.12.1
++//
++// DO NOT EDIT THIS FILE ! It was created using
++// glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
++// for gtk 2.10.4 and gtkmm 2.10.5
++//
++// Please modify the corresponding derived classes in ./src/statisticsDialog.cc
++
++
++#if defined __GNUC__ &amp;&amp; __GNUC__ &lt; 3
++#error This program will crash if compiled with g++ 2.x
++// see the dynamic_cast bug in the gtkmm FAQ
++#endif //
++#include &quot;config.h&quot;
++/*
++ * Standard gettext macros.
++ */
++#ifdef ENABLE_NLS
++#  include &lt;libintl.h&gt;
++#  undef _
++#  define _(String) dgettext (GETTEXT_PACKAGE, String)
++#  ifdef gettext_noop
++#    define N_(String) gettext_noop (String)
++#  else
++#    define N_(String) (String)
++#  endif
++#endif
++#include &lt;gtkmmconfig.h&gt;
++#if GTKMM_MAJOR_VERSION==2 &amp;&amp; GTKMM_MINOR_VERSION&gt;2
++#include &lt;sigc++/compatibility.h&gt;
++#include &lt;sigc++/bind.h&gt;
++#define GMM_GTKMM_22_24(a,b) b
++#else //gtkmm 2.2
++#define GMM_GTKMM_22_24(a,b) a
++#endif //
++#include &quot;statisticsDialog_glade.hh&quot;
++#include &lt;gdk/gdkkeysyms.h&gt;
++#include &lt;gtkmm/accelgroup.h&gt;
++#include &lt;gtkmm/button.h&gt;
++#include &lt;gtkmm/buttonbox.h&gt;
++#include &lt;gtkmm/box.h&gt;
++#ifndef ENABLE_NLS
++#  define textdomain(String) (String)
++#  define gettext(String) (String)
++#  define dgettext(Domain,Message) (Message)
++#  define dcgettext(Domain,Message,Type) (Message)
++#  define bindtextdomain(Domain,Directory) (Domain)
++#  define _(String) (String)
++#  define N_(String) (String)
++#endif
++
++
++statisticsDialog_glade::statisticsDialog_glade(
++)
++{  
++   
++   Gtk::Dialog *statisticsDialog = this;
++   gmm_data = new GlademmData(get_accel_group());
++   
++   Gtk::Button *closebutton1 = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-close&quot;)));
++   statisticsTreeview = Gtk::manage(new class Gtk::TreeView());
++   statisticsScrolledwindow = Gtk::manage(new class Gtk::ScrolledWindow());
++   closebutton1-&gt;set_flags(Gtk::CAN_FOCUS);
++   closebutton1-&gt;set_flags(Gtk::CAN_DEFAULT);
++   closebutton1-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   statisticsDialog-&gt;get_action_area()-&gt;property_layout_style().set_value(Gtk::BUTTONBOX_END);
++   statisticsTreeview-&gt;set_flags(Gtk::CAN_FOCUS);
++   statisticsTreeview-&gt;set_headers_visible(false);
++   statisticsTreeview-&gt;set_rules_hint(false);
++   statisticsTreeview-&gt;set_reorderable(false);
++   statisticsTreeview-&gt;set_enable_search(true);
++#if GTKMM_MAJOR_VERSION==2 &amp;&amp; GTKMM_MINOR_VERSION&gt;=5
++   statisticsTreeview-&gt;set_fixed_height_mode(false);
++   statisticsTreeview-&gt;set_hover_selection(false);
++   statisticsTreeview-&gt;set_hover_expand(false);
++#endif //
++   statisticsScrolledwindow-&gt;set_flags(Gtk::CAN_FOCUS);
++   statisticsScrolledwindow-&gt;set_border_width(4);
++   statisticsScrolledwindow-&gt;set_shadow_type(Gtk::SHADOW_NONE);
++   statisticsScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
++   statisticsScrolledwindow-&gt;property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
++   statisticsScrolledwindow-&gt;add(*statisticsTreeview);
++   statisticsDialog-&gt;get_vbox()-&gt;set_homogeneous(false);
++   statisticsDialog-&gt;get_vbox()-&gt;set_spacing(0);
++   statisticsDialog-&gt;get_vbox()-&gt;pack_start(*statisticsScrolledwindow);
++   statisticsDialog-&gt;set_title(_(&quot;Statistics&quot;));
++   statisticsDialog-&gt;set_default_size(150,350);
++   statisticsDialog-&gt;set_modal(false);
++   statisticsDialog-&gt;property_window_position().set_value(Gtk::WIN_POS_NONE);
++   statisticsDialog-&gt;set_resizable(true);
++   statisticsDialog-&gt;property_destroy_with_parent().set_value(false);
++   statisticsDialog-&gt;set_has_separator(true);
++   statisticsDialog-&gt;add_action_widget(*closebutton1, -7);
++   closebutton1-&gt;show();
++   statisticsTreeview-&gt;show();
++   statisticsScrolledwindow-&gt;show();
++   statisticsDialog-&gt;show();
++}
++
++statisticsDialog_glade::~statisticsDialog_glade()
++{  delete gmm_data;
++}
+
+Added: trunk/UI/GTK2/src/statisticsDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog_glade.hh	2007-01-09 12:31:48 UTC (rev 683)
++++ trunk/UI/GTK2/src/statisticsDialog_glade.hh	2007-01-09 12:33:34 UTC (rev 684)
+@@ -0,0 +1,50 @@
++// generated 2007/1/9 20:01:15 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// using glademm V2.12.1
++//
++// DO NOT EDIT THIS FILE ! It was created using
++// glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
++// for gtk 2.10.4 and gtkmm 2.10.5
++//
++// Please modify the corresponding derived classes in ./src/statisticsDialog.hh and./src/statisticsDialog.cc
++
++#ifndef _STATISTICSDIALOG_GLADE_HH
++#  define _STATISTICSDIALOG_GLADE_HH
++
++
++#if !defined(GLADEMM_DATA)
++#define GLADEMM_DATA 
++#include &lt;gtkmm/accelgroup.h&gt;
++
++class GlademmData
++{  
++        
++        Glib::RefPtr&lt;Gtk::AccelGroup&gt; accgrp;
++public:
++        
++        GlademmData(Glib::RefPtr&lt;Gtk::AccelGroup&gt; ag) : accgrp(ag)
++        {  
++        }
++        
++        Glib::RefPtr&lt;Gtk::AccelGroup&gt;  getAccelGroup()
++        {  return accgrp;
++        }
++};
++#endif //GLADEMM_DATA
++
++#include &lt;gtkmm/dialog.h&gt;
++#include &lt;gtkmm/treeview.h&gt;
++#include &lt;gtkmm/scrolledwindow.h&gt;
++
++class statisticsDialog_glade : public Gtk::Dialog
++{  
++        
++        GlademmData *gmm_data;
++protected:
++        class Gtk::TreeView * statisticsTreeview;
++        class Gtk::ScrolledWindow * statisticsScrolledwindow;
++        
++        statisticsDialog_glade();
++        
++        ~statisticsDialog_glade();
++};
++#endif
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000677.html">[Pinot-svn] r683 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="000679.html">[Pinot-svn] r685 - in trunk: UI/GTK2/src po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#678">[ date ]</a>
+              <a href="thread.html#678">[ thread ]</a>
+              <a href="subject.html#678">[ subject ]</a>
+              <a href="author.html#678">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

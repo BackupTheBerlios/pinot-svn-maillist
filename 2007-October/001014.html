@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1020 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1020%20-%20trunk/Index&In-Reply-To=%3C200710091326.l99DQBAB031985%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001013.html">
+   <LINK REL="Next"  HREF="001015.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1020 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1020%20-%20trunk/Index&In-Reply-To=%3C200710091326.l99DQBAB031985%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1020 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct  9 15:26:11 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001013.html">[Pinot-svn] r1019 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="001015.html">[Pinot-svn] r1021 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1014">[ date ]</a>
+              <a href="thread.html#1014">[ thread ]</a>
+              <a href="subject.html#1014">[ subject ]</a>
+              <a href="author.html#1014">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-09 15:26:10 +0200 (Tue, 09 Oct 2007)
+New Revision: 1020
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+Log:
+Xapian::Database::get_metadata() doesn't throw an exception when the backend
+doesn't support metadata, so check the version file if get_metadata(&quot;version&quot;)
+returns an empty string.
+Extended getDocumentTerms() to return (some but not all) prefixed terms, and
+terms that don't have positional information.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-10-09 13:12:13 UTC (rev 1019)
++++ trunk/Index/XapianIndex.cpp	2007-10-09 13:26:10 UTC (rev 1020)
+@@ -732,18 +732,20 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
++			// If this index type doesn't support metadata, no exception will be thrown
++			// We will just get an empty string
+ 			version = pIndex-&gt;get_metadata(&quot;version&quot;);
+ 			if (version.empty() == true)
+ 			{
+-				version = &quot;0.00&quot;;
++				// Is there a pre-0.80 version file ?
++				version = getVersionFromFile(m_databaseName);
++				if (version.empty() == true)
++				{
++					version = &quot;0.00&quot;;
++				}
+ 			}
+ 		}
+ 	}
+-	catch (const Xapian::UnimplementedError &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get database version, no support for metadata: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-		version = getVersionFromFile(m_databaseName);
+-	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't get database version: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+@@ -785,6 +787,7 @@
+ 	catch (const Xapian::UnimplementedError &amp;error)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't set database version, no support for metadata: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		// Revert to a version file
+ 		setVer = setVersionFile(m_databaseName, version);
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+@@ -933,6 +936,7 @@
+ /// Returns a document's terms.
+ bool XapianIndex::getDocumentTerms(unsigned int docId, map&lt;unsigned int, string&gt; &amp;wordsBuffer) const
+ {
++	vector&lt;string&gt; noPosTerms;
+ 	bool gotTerms = false;
+ 
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+@@ -947,26 +951,58 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
++			unsigned int lastPos = 0;
++
+ 			// Go through the position list of each term
+ 			for (Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
+ 				termIter != pIndex-&gt;termlist_end(docId); ++termIter)
+ 			{
+ 				string termName(*termIter);
++				char firstChar = termName[0];
++				bool hasPositions = false;
+ 
+-				// Skip prefixed terms
+-				if (isupper((int)termName[0]) != 0)
++				// Is it prefixed ?
++				if (isupper((int)firstChar) != 0)
+ 				{
+-					continue;
++					// Skip X-prefixed terms
++					if (firstChar == 'X')
++					{
++#ifdef DEBUG
++						cout &lt;&lt; &quot;XapianIndex::getDocumentTerms: skipping &quot; &lt;&lt; termName &lt;&lt; endl;
++#endif
++						continue;
++					}
++
++					// Keep other prefixed terms (S, U, H, P, L, T...)
++					termName.erase(0, 1);
+ 				}
+ 
+-				for (Xapian::PositionIterator positionIter = pIndex-&gt;positionlist_begin(docId, termName);
+-					positionIter != pIndex-&gt;positionlist_end(docId, termName); ++positionIter)
++				for (Xapian::PositionIterator positionIter = pIndex-&gt;positionlist_begin(docId, *termIter);
++					positionIter != pIndex-&gt;positionlist_end(docId, *termIter); ++positionIter)
+ 				{
+ 					wordsBuffer[*positionIter] = termName;
++					if (*positionIter &gt; lastPos)
++					{
++						lastPos = *positionIter;
++					}
++					hasPositions = true;
+ 				}
+ 
++				if (hasPositions == false)
++				{
++					noPosTerms.push_back(termName);
++				}
++
+ 				gotTerms = true;
+ 			}
++
++			// Append terms without positional information as if they were at the end of the document
++			for (vector&lt;string&gt;::const_iterator noPosIter = noPosTerms.begin();
++				noPosIter != noPosTerms.end(); ++noPosIter)
++			{
++				wordsBuffer[lastPos] = *noPosIter;
++				++lastPos;
++			}
+ 		}
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001013.html">[Pinot-svn] r1019 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="001015.html">[Pinot-svn] r1021 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1014">[ date ]</a>
+              <a href="thread.html#1014">[ thread ]</a>
+              <a href="subject.html#1014">[ subject ]</a>
+              <a href="author.html#1014">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

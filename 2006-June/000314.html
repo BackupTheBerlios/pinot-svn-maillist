@@ -1,0 +1,401 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r320 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r320%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606161321.k5GDLo2b013726%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000313.html">
+   <LINK REL="Next"  HREF="000315.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r320 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r320%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606161321.k5GDLo2b013726%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r320 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jun 16 15:21:50 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000313.html">[Pinot-svn] r319 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000315.html">[Pinot-svn] r321 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#314">[ date ]</a>
+              <a href="thread.html#314">[ thread ]</a>
+              <a href="subject.html#314">[ subject ]</a>
+              <a href="author.html#314">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-16 15:21:48 +0200 (Fri, 16 Jun 2006)
+New Revision: 320
+
+Modified:
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+Log:
+Stopped using temporary labels to make lists of messages.
+
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-06-16 11:14:55 UTC (rev 319)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-06-16 13:21:48 UTC (rev 320)
+@@ -47,7 +47,7 @@
+ }
+ 
+ bool MboxHandler::checkMailAccount(const string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
+-		off_t &amp;previousSize)
++	off_t &amp;previousSize)
+ {
+ 	struct stat fileStat;
+ 
+@@ -96,10 +96,47 @@
+ 	return true;
+ }
+ 
++bool MboxHandler::indexMessages(const string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
++	off_t mboxOffset)
++{
++	string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
++
++	// Come up with a label for this mbox file's messages
++	sourceLabel += fileName;
++
++	// Get the mail index
++	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
++	if (index.isGood() == false)
++	{
++		cerr &lt;&lt; &quot;MboxHandler::indexMessages: couldn't get mail index&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	// Get a parser
++	MboxParser boxParser(fileName, mboxOffset);
++
++	bool indexedFile = parseMailAccount(boxParser, &amp;index,
++		mailAccount.m_lastMessageTime, sourceLabel);
++
++	// Flush the index
++	index.flush();
++
++	// Update this mail account in the list
++	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
++	if (mailIter != mailAccounts.end())
++	{
++		mailAccounts.erase(mailIter);
++	}
++	mailAccounts.insert(mailAccount);
++
++	return indexedFile;
++}
++
+ bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, IndexInterface *pIndex,
+-	time_t &amp;lastMessageTime,
+-	const string &amp;tempSourceLabel, const string &amp;sourceLabel)
++	time_t &amp;lastMessageTime, const string &amp;sourceLabel)
+ {
++	set&lt;unsigned int&gt; docIdList;
+ 	bool indexedFile = false;
+ 
+ 	if (pIndex == NULL)
+@@ -107,14 +144,21 @@
+ 		return false;
+ 	}
+ 
+-	// Parse the mbox file
+ #ifdef DEBUG
+ 	Timer timer;
+ 	timer.start();
+ #endif
++	set&lt;string&gt; labels;
+ 	const Document *pMessage = boxParser.getDocument();
+ 	unsigned int docNum = 0;
+ 
++	// Get a list of documents labeled with this source label
++	pIndex-&gt;listDocumentsWithLabel(sourceLabel, docIdList); 
++
++	// This is the labels we'll apply to new documents
++	labels.insert(sourceLabel);
++
++	// Parse the mbox file
+ 	while (pMessage != NULL)
+ 	{
+ 		// Has this message already been indexed ?
+@@ -133,9 +177,6 @@
+ 				break;	
+ 			}
+ 
+-			set&lt;string&gt; labels;
+-			labels.insert(tempSourceLabel);
+-
+ 			unsigned int docId = 0;
+ 			indexedFile = pIndex-&gt;indexDocument(*pTokenizer, labels, docId);
+ 			if (indexedFile == true)
+@@ -170,22 +211,11 @@
+ 			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: already indexed message &quot;
+ 				&lt;&lt; docNum &lt;&lt; &quot;, document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+-			if (sourceLabel.empty() == false)
++			set&lt;unsigned int&gt;::iterator docIter = docIdList.find(docId);
++			if (docIter != docIdList.end())
+ 			{
+-				set&lt;string&gt; labels;
+-
+-				// Get the message's labels
+-				pIndex-&gt;getDocumentLabels(docId, labels);
+-				// The source label must have been applied to the message when originally indexed
+-				set&lt;string&gt;::iterator labelIter = labels.find(sourceLabel.c_str());
+-				if (labelIter != labels.end())
+-				{
+-					// Erase it
+-					labels.erase(labelIter);
+-					// Add the temporary label
+-					labels.insert(tempSourceLabel);
+-					pIndex-&gt;setDocumentLabels(docId, labels);
+-				}
++				// Remove this document from the list
++				docIdList.erase(docIter);
+ 			}
+ 		}
+ 
+@@ -206,12 +236,15 @@
+ 		&lt;&lt; microsecs/1000000 &lt;&lt; &quot; seconds (&quot; &lt;&lt; microsecs &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+ #endif
+ 
++	// Any document still in the list wasn't found this time around
++	// and should be unindexed
++	deleteMessages(pIndex, docIdList);
++
+ 	return indexedFile;
+ }
+ 
+-bool MboxHandler::deleteMessages(IndexInterface *pIndex, const string &amp;sourceLabel)
++bool MboxHandler::deleteMessages(IndexInterface *pIndex, set&lt;unsigned int&gt; &amp;docIdList)
+ {
+-	set&lt;unsigned int&gt; docIdList;
+ 	bool unindexedMsgs = false;
+ 
+ 	if (pIndex == NULL)
+@@ -219,23 +252,18 @@
+ 		return false;
+ 	}
+ 
+-	// Unindex all documents labeled with this source label
+-	if ((pIndex-&gt;listDocumentsWithLabel(sourceLabel, docIdList) == true) &amp;&amp;
+-		(docIdList.empty() == false))
+-	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::deleteMessages: &quot; &lt;&lt; docIdList.size() &lt;&lt; &quot; message(s) to unindex&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;MboxHandler::deleteMessages: &quot; &lt;&lt; docIdList.size() &lt;&lt; &quot; message(s) to unindex&quot; &lt;&lt; endl;
+ #endif
+-		for (set&lt;unsigned int&gt;::iterator docIter = docIdList.begin();
+-			docIter != docIdList.end(); ++docIter)
+-		{
++	for (set&lt;unsigned int&gt;::iterator docIter = docIdList.begin();
++		docIter != docIdList.end(); ++docIter)
++	{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::deleteMessages: unindexing document ID &quot; &lt;&lt; *docIter &lt;&lt; endl;
++		cout &lt;&lt; &quot;MboxHandler::deleteMessages: unindexing document ID &quot; &lt;&lt; *docIter &lt;&lt; endl;
+ #endif
+-			if (pIndex-&gt;unindexDocument(*docIter) == true)
+-			{
+-				unindexedMsgs = true;
+-			}
++		if (pIndex-&gt;unindexDocument(*docIter) == true)
++		{
++			unindexedMsgs = true;
+ 		}
+ 	}
+ 
+@@ -313,50 +341,7 @@
+ 		return false;
+ 	}
+ 
+-	// Come up with a label for this mbox file's messages
+-	string sourceLabel = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
+-	sourceLabel += fileName;
+-	string tempSourceLabel = &quot;Temp&quot;;
+-	tempSourceLabel += sourceLabel;
+-
+-	// Get the mail index
+-	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::fileExists: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Get a parser
+-	MboxParser boxParser(fileName);
+-
+-	bool indexedFile = parseMailAccount(boxParser, &amp;index, 
+-		mailAccount.m_lastMessageTime, tempSourceLabel, sourceLabel);
+-
+-	// Any document still labeled with this source label wasn't found
+-	// this time around and should be unindexed
+-	if (deleteMessages(&amp;index, sourceLabel) == true)
+-	{
+-		indexedFile = true;
+-	}
+-
+-	// Rename the temporary label for next time the mbox is parsed
+-	index.deleteLabel(sourceLabel);
+-	index.renameLabel(tempSourceLabel, sourceLabel);
+-
+-	// Flush the index
+-	index.flush();
+-
+-	// Update this mail account in the list
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter != mailAccounts.end())
+-	{
+-		mailAccounts.erase(mailIter);
+-	}
+-	mailAccounts.insert(mailAccount);
+-
+-	return indexedFile;
++	return indexMessages(fileName, mailAccount, 0);
+ }
+ 
+ bool MboxHandler::fileCreated(const string &amp;fileName)
+@@ -393,44 +378,7 @@
+ 	// Chances are new messages were added but none removed
+ 	mboxOffset = previousSize;
+ 
+-	// Come up with a label for this mbox file's messages
+-	string sourceLabel = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
+-	sourceLabel += fileName;
+-
+-	// Get the mail index
+-	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::fileModified: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Get a parser
+-	MboxParser boxParser(fileName, mboxOffset);
+-
+-	bool indexedFile = parseMailAccount(boxParser, &amp;index,
+-		mailAccount.m_lastMessageTime, sourceLabel, &quot;&quot;);
+-	if (indexedFile == true)
+-	{
+-		// Do not attempt to find out if some of the messages were removed
+-		// Some messages may also be indexed twice now, eg if another message
+-		// was inserted and changed offsets
+-		// Let the next fileExists() deal with it and clean up the whole thing
+-
+-		// Flush the index
+-		index.flush();
+-	}
+-
+-	// Update this mail account in the list
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter != mailAccounts.end())
+-	{
+-		mailAccounts.erase(mailIter);
+-	}
+-	mailAccounts.insert(mailAccount);
+-
+-	return indexedFile;
++	return indexMessages(fileName, mailAccount, mboxOffset);
+ }
+ 
+ bool MboxHandler::fileMoved(const string &amp;fileName)
+@@ -441,8 +389,11 @@
+ 
+ bool MboxHandler::fileDeleted(const string &amp;fileName)
+ {
+-	string sourceLabel = string(&quot;<A HREF="mailbox://">mailbox://</A>&quot;) + fileName;
++	set&lt;unsigned int&gt; docIdList;
++	string sourceLabel(string(&quot;<A HREF="mailbox://">mailbox://</A>&quot;));
+ 
++	sourceLabel += fileName;
++
+ 	// Get the mail index
+ 	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+ 	if (index.isGood() == false)
+@@ -451,9 +402,11 @@
+ 		return false;
+ 	}
+ 
+-	// Unindex all documents labeled with this source label
+-	if (deleteMessages(&amp;index, sourceLabel) == true)
++	// Get a list of documents labeled with this source label
++	if (index.listDocumentsWithLabel(sourceLabel, docIdList) == true)
+ 	{
++		// Unindex all documents labeled with this source label
++		deleteMessages(&amp;index, docIdList); 
+ 		// Delete the label
+ 		index.deleteLabel(sourceLabel);
+ 
+
+Modified: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2006-06-16 11:14:55 UTC (rev 319)
++++ trunk/UI/GTK2/src/MboxHandler.h	2006-06-16 13:21:48 UTC (rev 320)
+@@ -20,7 +20,6 @@
+ #include &lt;time.h&gt;
+ #include &lt;string&gt;
+ #include &lt;set&gt;
+-#include &lt;map&gt;
+ #include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;IndexedDocument.h&quot;
+@@ -61,11 +60,13 @@
+ 		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
+ 			off_t &amp;previousSize);
+ 
++		bool indexMessages(const std::string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
++			off_t mboxOffset);
++
+ 		bool parseMailAccount(MboxParser &amp;boxParser, IndexInterface *pIndex,
+-			time_t &amp;lastMessageTime, const std::string &amp;tempSourceLabel,
+-			const std::string &amp;sourceLabel);
++			time_t &amp;lastMessageTime, const std::string &amp;sourceLabel);
+ 
+-		bool deleteMessages(IndexInterface *pIndex, const std::string &amp;sourceLabel);
++		bool deleteMessages(IndexInterface *pIndex, std::set&lt;unsigned int&gt; &amp;docIdList);
+ 
+ 	private:
+ 		MboxHandler(const MboxHandler &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000313.html">[Pinot-svn] r319 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000315.html">[Pinot-svn] r321 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#314">[ date ]</a>
+              <a href="thread.html#314">[ thread ]</a>
+              <a href="subject.html#314">[ subject ]</a>
+              <a href="author.html#314">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

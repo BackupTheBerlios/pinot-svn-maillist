@@ -1,0 +1,444 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r872 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r872%20-%20trunk/Index&In-Reply-To=%3C200707210406.l6L46Ibu023518%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000865.html">
+   <LINK REL="Next"  HREF="000867.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r872 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r872%20-%20trunk/Index&In-Reply-To=%3C200707210406.l6L46Ibu023518%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r872 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 21 06:06:18 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000865.html">[Pinot-svn] r871 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000867.html">[Pinot-svn] r873 - in trunk/Search: . Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#866">[ date ]</a>
+              <a href="thread.html#866">[ thread ]</a>
+              <a href="subject.html#866">[ subject ]</a>
+              <a href="author.html#866">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-07-21 06:06:17 +0200 (Sat, 21 Jul 2007)
+New Revision: 872
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/FilterWrapper.cpp
+   trunk/Index/FilterWrapper.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/LanguageDetector.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/Index/pinot-index.cpp
+Log:
+A XFILE-prefixed term is added to local documents that are sub-documents of
+another. FilterWrapper unindexes them whenever the top document is updated or
+unindexed. IndexInterface's unindexDocuments() was extended accordingly.
+Some other minor changes.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/DBusXapianIndex.cpp	2007-07-21 04:06:17 UTC (rev 872)
+@@ -689,8 +689,8 @@
+ 	return false;
+ }
+ 
+-/// Unindexes documents with the given label or under the given directory.
+-bool DBusXapianIndex::unindexDocuments(const string &amp;name, bool isDirectory)
++/// Unindexes documents.
++bool DBusXapianIndex::unindexDocuments(const string &amp;name, NameType type)
+ {
+ 	cerr &lt;&lt; &quot;DBusXapianIndex::unindexDocuments: not allowed&quot; &lt;&lt; endl;
+ 	return false;
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/DBusXapianIndex.h	2007-07-21 04:06:17 UTC (rev 872)
+@@ -109,8 +109,8 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
+-		/// Unindexes documents with the given label or under the given directory.
+-		virtual bool unindexDocuments(const std::string &amp;name, bool isDirectory);
++		/// Unindexes documents.
++		virtual bool unindexDocuments(const std::string &amp;name, NameType type);
+ 
+ 		/// Unindexes all documents.
+ 		virtual bool unindexAllDocuments(void);
+
+Modified: trunk/Index/FilterWrapper.cpp
+===================================================================
+--- trunk/Index/FilterWrapper.cpp	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/FilterWrapper.cpp	2007-07-21 04:06:17 UTC (rev 872)
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;time.h&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;Url.h&quot;
+@@ -30,7 +31,8 @@
+ using std::set;
+ using namespace Dijon;
+ 
+-FilterWrapper::FilterWrapper()
++FilterWrapper::FilterWrapper(IndexInterface *pIndex) :
++	m_pIndex(pIndex)
+ {
+ }
+ 
+@@ -38,26 +40,50 @@
+ {
+ }
+ 
+-bool FilterWrapper::indexDocument(IndexInterface &amp;index, const Document &amp;doc,
+-	const set&lt;string&gt; &amp;labels, unsigned int &amp;docId)
++bool FilterWrapper::indexDocument(const Document &amp;doc, const set&lt;string&gt; &amp;labels, unsigned int &amp;docId)
+ {
+ 	string originalType(doc.getType());
+ 
+-	return filterDocument(index, doc, originalType, labels, docId, false);
++	if (m_pIndex == NULL)
++	{
++		return false;
++	}
++
++	unindexNestedDocuments(doc.getLocation());
++
++	return filterDocument(doc, originalType, labels, docId, false);
+ }
+ 
+-bool FilterWrapper::updateDocument(unsigned int docId, IndexInterface &amp;index, const Document &amp;doc)
++bool FilterWrapper::updateDocument(const Document &amp;doc, unsigned int docId)
+ {
+ 	set&lt;string&gt; labels;
+ 	string originalType(doc.getType());
+ 
+-	return filterDocument(index, doc, originalType, labels, docId, true);
++	if (m_pIndex == NULL)
++	{
++		return false;
++	}
++
++	unindexNestedDocuments(doc.getLocation());
++
++	return filterDocument(doc, originalType, labels, docId, true);
+ }
+ 
+-bool FilterWrapper::filterDocument(IndexInterface &amp;index, const Document &amp;doc,
+-	const string &amp;originalType, const set&lt;string&gt; &amp;labels,
+-	unsigned int &amp;docId, bool doUpdate)
++bool FilterWrapper::unindexDocument(const string &amp;location)
+ {
++	if (m_pIndex == NULL)
++	{
++		return false;
++	}
++
++	unindexNestedDocuments(location);
++
++	return m_pIndex-&gt;unindexDocument(location);
++}
++
++bool FilterWrapper::filterDocument(const Document &amp;doc, const string &amp;originalType,
++	const set&lt;string&gt; &amp;labels, unsigned int &amp;docId, bool doUpdate)
++{
+ 	Filter *pFilter = FilterFactory::getFilter(doc.getType());
+ 	bool fedFilter = false, success = false;
+ 
+@@ -92,6 +118,7 @@
+ 	while (pFilter-&gt;has_documents() == true)
+ 	{
+ 		string actualType(originalType);
++		bool isNested = false;
+ 
+ 		if (pFilter-&gt;next_document() == false)
+ 		{
+@@ -115,6 +142,7 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;FilterWrapper::filterDocument: nested document of type &quot; &lt;&lt; actualType &lt;&lt; endl;
+ #endif
++			isNested = true;
+ 		}
+ 
+ 		// Pass it down to another filter ?
+@@ -125,18 +153,29 @@
+ 			filteredDoc.setType(actualType);
+ 
+ 			Tokenizer tokens(&amp;filteredDoc);
+-			if (doUpdate == false)
++
++			// Nested documents can't be updated because they are unindexed
++			// and the ID is that of the base document anyway
++			if ((doUpdate == true) &amp;&amp;
++				(isNested == false))
+ 			{
+-				success = index.indexDocument(tokens, labels, docId);
++				success = m_pIndex-&gt;updateDocument(docId, tokens);
+ 			}
+ 			else
+ 			{
+-				success = index.updateDocument(docId, tokens);
++				unsigned int newDocId = docId;
++
++				success = m_pIndex-&gt;indexDocument(tokens, labels, newDocId);
++				// Make sure we return the base document's ID, not the last nested document's ID
++				if (isNested == false)
++				{
++					docId = newDocId;
++				}
+ 			}
+ 		}
+ 		else
+ 		{
+-			success = filterDocument(index, filteredDoc, originalType, labels, docId, doUpdate);
++			success = filterDocument(filteredDoc, originalType, labels, docId, doUpdate);
+ 			delete pFilter;
+ 
+ 			return success;
+@@ -154,3 +193,9 @@
+ 
+ 	return success;
+ }
++
++bool FilterWrapper::unindexNestedDocuments(const string &amp;url)
++{
++	// Unindex all documents that stem from this file
++	return m_pIndex-&gt;unindexDocuments(url, IndexInterface::BY_FILE);
++}
+
+Modified: trunk/Index/FilterWrapper.h
+===================================================================
+--- trunk/Index/FilterWrapper.h	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/FilterWrapper.h	2007-07-21 04:06:17 UTC (rev 872)
+@@ -30,23 +30,29 @@
+ class FilterWrapper
+ {
+ 	public:
++		/// Builds a FilterWrapper object.
++		FilterWrapper(IndexInterface *pIndex);
+ 		virtual ~FilterWrapper();
+ 
+ 		/// Indexes the given data.
+-		static bool indexDocument(IndexInterface &amp;index, const Document &amp;doc,
+-			const std::set&lt;std::string&gt; &amp;labels, unsigned int &amp;docId);
++		bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId);
+ 
+ 		/// Updates the given document.
+-		static bool updateDocument(unsigned int docId, IndexInterface &amp;index,
+-			const Document &amp;doc);
++		bool updateDocument(const Document &amp;doc, unsigned int docId);
+ 
++		/// Unindexes document(s) at the given location.
++		bool unindexDocument(const std::string &amp;location);
++
+ 	protected:
+-		FilterWrapper();
++		IndexInterface *m_pIndex;
+ 
+-		static bool filterDocument(IndexInterface &amp;index, const Document &amp;doc,
+-			const std::string &amp;originalType, const std::set&lt;std::string&gt; &amp;labels,
+-			unsigned int &amp;docId, bool doUpdate);
++		bool filterDocument(const Document &amp;doc, const std::string &amp;originalType,
++			const std::set&lt;std::string&gt; &amp;labels, unsigned int &amp;docId,
++			bool doUpdate);
+ 
++		bool unindexNestedDocuments(const std::string &amp;url);
++
+ 	private:
+ 		FilterWrapper(const FilterWrapper &amp;other);
+ 		FilterWrapper &amp;operator=(const FilterWrapper &amp;other);
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/IndexInterface.h	2007-07-21 04:06:17 UTC (rev 872)
+@@ -116,9 +116,11 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(const std::string &amp;location) = 0;
+ 
+-		/// Unindexes documents with the given label or under the given directory.
+-		virtual bool unindexDocuments(const std::string &amp;name, bool isDirectory) = 0;
++		typedef enum { BY_LABEL = 0, BY_DIRECTORY, BY_FILE } NameType;
+ 
++		/// Unindexes documents.
++		virtual bool unindexDocuments(const std::string &amp;name, NameType type) = 0;
++
+ 		/// Unindexes all documents.
+ 		virtual bool unindexAllDocuments(void) = 0;
+ 
+
+Modified: trunk/Index/LanguageDetector.cpp
+===================================================================
+--- trunk/Index/LanguageDetector.cpp	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/LanguageDetector.cpp	2007-07-21 04:06:17 UTC (rev 872)
+@@ -165,7 +165,7 @@
+ #endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;LanguageDetector::guessLanguage: language guessing took &quot;
+-		&lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++		&lt;&lt; timer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	// Close the descriptor
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/XapianIndex.cpp	2007-07-21 04:06:17 UTC (rev 872)
+@@ -347,6 +347,13 @@
+ 
+ 	// Index the full URL with prefix U
+ 	doc.add_term(string(&quot;U&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(location), true));
++	// ...the base file with XFILE:
++	string::size_type qmPos = location.find(&quot;?&quot;);
++	if ((urlObj.isLocal() == true) &amp;&amp;
++		(qmPos != string::npos))
++	{
++		doc.add_term(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(location.substr(0, qmPos)), true));
++	}
+ 	// ...the host name and included domains with prefix H
+ 	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+ 	if (hostName.empty() == false)
+@@ -465,7 +472,15 @@
+ 	}
+ 
+ 	// Location 
+-	commonTerms.insert(string(&quot;U&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(docInfo.getLocation()), true));
++	string location(docInfo.getLocation());
++	commonTerms.insert(string(&quot;U&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(location), true));
++	// Base file
++	string::size_type qmPos = location.find(&quot;?&quot;);
++	if ((urlObj.isLocal() == true) &amp;&amp;
++		(qmPos != string::npos))
++	{
++		commonTerms.insert(string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(location.substr(0, qmPos)), true));
++	}
+ 	// Host name
+ 	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+ 	if (hostName.empty() == false)
+@@ -1444,18 +1459,22 @@
+ 	return deleteDocuments(term);
+ }
+ 
+-/// Unindexes documents with the given label or under the given directory.
+-bool XapianIndex::unindexDocuments(const string &amp;name, bool isDirectory)
++/// Unindexes documents.
++bool XapianIndex::unindexDocuments(const string &amp;name, NameType type)
+ {
+-	string term(&quot;XLABEL:&quot;);
++	string term;
+ 
+-	if (isDirectory == true)
++	if (type == BY_LABEL)
+ 	{
++		term = string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(name));
++	}
++	else if (type == BY_DIRECTORY)
++	{
+ 		term = string(&quot;XDIR:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(name), true);
+ 	}
+-	else
++	else if (type == BY_FILE)
+ 	{
+-		term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
++		term = string(&quot;XFILE:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(name), true);
+ 	}
+ 
+ 	return deleteDocuments(term);
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/XapianIndex.h	2007-07-21 04:06:17 UTC (rev 872)
+@@ -107,8 +107,8 @@
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(const std::string &amp;location);
+ 
+-		/// Unindexes documents with the given label or under the given directory.
+-		virtual bool unindexDocuments(const std::string &amp;name, bool isDirectory);
++		/// Unindexes documents.
++		virtual bool unindexDocuments(const std::string &amp;name, NameType type);
+ 
+ 		/// Unindexes all documents.
+ 		virtual bool unindexAllDocuments(void);
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2007-07-20 16:55:50 UTC (rev 871)
++++ trunk/Index/pinot-index.cpp	2007-07-21 04:06:17 UTC (rev 872)
+@@ -241,6 +241,7 @@
+ 		}
+ 		else
+ 		{
++			FilterWrapper wrapFilter(pIndex);
+ 			set&lt;string&gt; labels;
+ 
+ 			pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
+@@ -250,7 +251,7 @@
+ 			if (docId &gt; 0)
+ 			{
+ 				// Update the document
+-				if (FilterWrapper::updateDocument(docId, *pIndex, *pDoc) == true)
++				if (wrapFilter.updateDocument(*pDoc, docId) == true)
+ 				{
+ 					success = true;
+ 				}
+@@ -258,7 +259,7 @@
+ 			else
+ 			{
+ 				// Index the document
+-				success = FilterWrapper::indexDocument(*pIndex, *pDoc, labels, docId);
++				success = wrapFilter.indexDocument(*pDoc, labels, docId);
+ 			}
+ 
+ 			if (success == true)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000865.html">[Pinot-svn] r871 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000867.html">[Pinot-svn] r873 - in trunk/Search: . Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#866">[ date ]</a>
+              <a href="thread.html#866">[ thread ]</a>
+              <a href="subject.html#866">[ subject ]</a>
+              <a href="author.html#866">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

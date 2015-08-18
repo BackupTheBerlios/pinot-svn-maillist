@@ -1,0 +1,196 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r374 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r374%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608050439.k754dOdC002592%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000366.html">
+   <LINK REL="Next"  HREF="000368.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r374 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r374%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608050439.k754dOdC002592%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r374 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug  5 06:39:24 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000366.html">[Pinot-svn] r373 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000368.html">[Pinot-svn] r375 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#367">[ date ]</a>
+              <a href="thread.html#367">[ thread ]</a>
+              <a href="subject.html#367">[ subject ]</a>
+              <a href="author.html#367">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-05 06:39:20 +0200 (Sat, 05 Aug 2006)
+New Revision: 374
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+WorkerThread::immediateFlush() controls whether threads that modify indexes
+should flush before returning. This is turned off for the daemon.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2006-08-04 13:23:59 UTC (rev 373)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2006-08-05 04:39:20 UTC (rev 374)
+@@ -21,6 +21,7 @@
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+ 
++#include &quot;WritableXapianIndex.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -45,6 +46,9 @@
+ {
+ 	string locationToCrawl;
+ 
++	// Disable implicit flushing after a change
++	WorkerThread::immediateFlush(false);
++
+ 	for (set&lt;PinotSettings::TimestampedItem&gt;::const_iterator locationIter = PinotSettings::getInstance().m_indexableLocations.begin();
+ 		locationIter != PinotSettings::getInstance().m_indexableLocations.end(); ++locationIter)
+ 	{
+@@ -169,6 +173,10 @@
+ 			unlock_lists();
+ 		}
+ 
++		// Explicitely flush the index once a directory has been crawled
++		WritableXapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
++		index.flush();
++
+ 		// Start a new scanner thread ?
+ 		if (pNewScannerThread != NULL)
+ 		{
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-04 13:23:59 UTC (rev 373)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-05 04:39:20 UTC (rev 374)
+@@ -70,12 +70,18 @@
+ };
+ 
+ Dispatcher WorkerThread::m_dispatcher;
++bool WorkerThread::m_immediateFlush = true;
+ 
+ Dispatcher &amp;WorkerThread::getDispatcher(void)
+ {
+ 	return m_dispatcher;
+ }
+ 
++void WorkerThread::immediateFlush(bool doFlush)
++{
++	m_immediateFlush = doFlush;
++}
++
+ WorkerThread::WorkerThread() :
+ 	m_joinable(true),
+ 	m_id(0),
+@@ -1138,8 +1144,11 @@
+ 			}
+ 			else
+ 			{
+-				// Flush the index
+-				index.flush();
++				// Flush the index ?
++				if (m_immediateFlush == true)
++				{
++					index.flush();
++				}
+ 
+ 				// The document properties may have changed
+ 				index.getDocumentInfo(m_docId, m_docInfo);
+@@ -1251,8 +1260,11 @@
+ 
+ 		if (m_docsCount &gt; 0)
+ 		{
+-			// Flush the index
+-			index.flush();
++			// Flush the index ?
++			if (m_immediateFlush == true)
++			{
++				index.flush();
++			}
+ 
+ 			// Nothing to report
+ 			m_status = &quot;&quot;;
+@@ -1330,8 +1342,11 @@
+ 		}
+ 		else
+ 		{
+-			// Flush the index
+-			index.flush();
++			// Flush the index ?
++			if (m_immediateFlush == true)
++			{
++				index.flush();
++			}
+ 
+ 			// The document properties may have changed
+ 			index.getDocumentInfo(m_docId, m_docInfo);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-04 13:23:59 UTC (rev 373)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-05 04:39:20 UTC (rev 374)
+@@ -45,6 +45,8 @@
+ 
+ 		static Glib::Dispatcher &amp;getDispatcher(void);
+ 
++		static void immediateFlush(bool doFlush);
++
+ 		void setId(unsigned int id);
+ 
+ 		unsigned int getId(void);
+@@ -70,6 +72,7 @@
+ 	protected:
+ 		/// Use a Dispatcher for thread safety
+ 		static Glib::Dispatcher m_dispatcher;
++		static bool m_immediateFlush;
+ 		bool m_joinable;
+ 		unsigned int m_id;
+ 		bool m_background;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000366.html">[Pinot-svn] r373 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000368.html">[Pinot-svn] r375 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#367">[ date ]</a>
+              <a href="thread.html#367">[ thread ]</a>
+              <a href="subject.html#367">[ subject ]</a>
+              <a href="author.html#367">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

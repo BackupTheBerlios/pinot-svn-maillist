@@ -1,0 +1,412 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1094 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1094%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200711080246.lA82kZbT016823%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001087.html">
+   <LINK REL="Next"  HREF="001089.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1094 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1094%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200711080246.lA82kZbT016823%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1094 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov  8 03:46:35 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001087.html">[Pinot-svn] r1093 - in trunk: . po
+</A></li>
+        <LI>Next message: <A HREF="001089.html">[Pinot-svn] r1095 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1088">[ date ]</a>
+              <a href="thread.html#1088">[ thread ]</a>
+              <a href="subject.html#1088">[ subject ]</a>
+              <a href="author.html#1088">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-11-08 03:46:33 +0100 (Thu, 08 Nov 2007)
+New Revision: 1094
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Stop indexing if the disk on which the daemon index resides is running out of
+space. This is not directly configurable but the default value (10 Mb) can be
+overriden by setting the environment variable PINOT_MINIMUM_DISK_SPACE.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-11-06 14:13:25 UTC (rev 1093)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-11-08 02:46:33 UTC (rev 1094)
+@@ -16,16 +16,24 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &quot;config.h&quot;
+ #include &lt;stdlib.h&gt;
++#ifdef HAVE_STATFS
++#include &lt;sys/vfs.h&gt;
++#define CHECK_DISK_SPACE 1
++#else
++#ifdef HAVE_STATVFS
++#include &lt;sys/statvfs.h&gt;
++#define CHECK_DISK_SPACE 1
++#endif
++#endif
+ #include &lt;iostream&gt;
+-#include &lt;sigc++/sigc++.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;glibmm/stringutils.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/thread.h&gt;
+ #include &lt;glibmm/random.h&gt;
+ 
+-#include &quot;config.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+@@ -39,6 +47,62 @@
+ using namespace std;
+ using namespace Glib;
+ 
++static double getFSFreeSpace(const string &amp;path)
++{
++	double availableBlocks = 0.0;
++	double blockSize = 0.0;
++	int statSuccess = -1;
++#ifdef HAVE_STATFS
++	struct statfs fsStats;
++
++	statSuccess = statfs(PinotSettings::getInstance().m_daemonIndexLocation.c_str(), &amp;fsStats);
++	availableBlocks = (uintmax_t)fsStats.f_bavail;
++	blockSize = fsStats.f_bsize;
++#else
++#ifdef HAVE_STATVFS
++	struct statvfs vfsStats;
++
++	statSuccess = statvfs(path.c_str(), &amp;vfsStats);
++	availableBlocks = (uintmax_t)vfsStats.f_bavail;
++	// f_frsize isn't supported by all implementations
++	blockSize = (vfsStats.f_frsize ? vfsStats.f_frsize : vfsStats.f_bsize);
++#endif
++#endif
++	// Did it fail ?
++	if ((statSuccess == -1) ||
++		(blockSize == 0.0))
++	{
++		return -1.0;
++	}
++
++	double mbRatio = blockSize / (1024 * 1024);
++	double availableMbSize = availableBlocks * mbRatio;
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DaemonState::getFSFreeSpace: &quot; &lt;&lt; availableBlocks &lt;&lt; &quot; blocks of &quot; &lt;&lt; blockSize
++		&lt;&lt; &quot; bytes (&quot; &lt;&lt; mbRatio &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++
++	return availableMbSize;
++}
++
++// A function object to stop DirectoryScanner threads with for_each()
++struct StopScannerThreadFunc
++{
++public:
++	void operator()(map&lt;WorkerThread *, Thread *&gt;::value_type &amp;p)
++	{
++		string type(p.first-&gt;getType());
++
++		if (type == &quot;DirectoryScannerThread&quot;)
++		{
++			p.first-&gt;stop();
++#ifdef DEBUG
++			cout &lt;&lt; &quot;StopScannerThreadFunc: stopped thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
++#endif
++		}
++	}
++};
++
+ DaemonState::DaemonState() :
+ 	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 20),
+ 	m_fullScan(false),
+@@ -46,6 +110,13 @@
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+ 	m_pDiskHandler(NULL)
+ {
++#ifdef CHECK_DISK_SPACE
++	// Check every minute
++	m_timeoutConnection = Glib::signal_timeout().connect(sigc::mem_fun(*this,
++		&amp;DaemonState::on_activity_timeout), 60000);
++	// Check right now before doing anything else
++	DaemonState::on_activity_timeout();
++#endif
+ 	m_onThreadEndSignal.connect(sigc::mem_fun(*this, &amp;DaemonState::on_thread_end));
+ }
+ 
+@@ -59,10 +130,61 @@
+ 	// Since DaemonState is destroyed when the program exits, it's okay
+ }
+ 
+-bool DaemonState::crawlLocation(const string &amp;locationToCrawl, bool isSource, bool doMonitoring)
++bool DaemonState::on_activity_timeout(void)
+ {
++	if (m_timeoutConnection.blocked() == false)
++	{
++		double availableMbSize = getFSFreeSpace(PinotSettings::getInstance().m_daemonIndexLocation);
++		if (availableMbSize &gt;= 0)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DaemonState::on_activity_timeout: &quot; &lt;&lt; availableMbSize &lt;&lt; &quot; Mb free for &quot;
++				&lt;&lt; PinotSettings::getInstance().m_daemonIndexLocation &lt;&lt; endl;
++#endif
++			if (availableMbSize &lt; PinotSettings::getInstance().m_minimumDiskSpace)
++			{
++				// Stop indexing
++				m_stopIndexing = true;
++
++				if (m_threads.empty() == false)
++				{
++					if (write_lock_threads() == true)
++					{
++						// Stop threads
++						for_each(m_threads.begin(), m_threads.end(), StopScannerThreadFunc());
++						m_threads.clear();
++
++						unlock_threads();
++					}
++				}
++
++				cerr &lt;&lt; &quot;Stopped indexing because of low disk space&quot; &lt;&lt; endl;
++			}
++			else if (m_stopIndexing == true)
++			{
++				// Go ahead
++				m_stopIndexing = false;
++
++				cerr &lt;&lt; &quot;Resumed indexing following low disk space condition&quot; &lt;&lt; endl;
++			}
++		}
++	}
++
++	return true;
++}
++
++bool DaemonState::crawl_location(const string &amp;locationToCrawl, bool isSource, bool doMonitoring)
++{
+ 	DirectoryScannerThread *pScannerThread = NULL;
+ 
++	if (m_stopIndexing == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DaemonState::crawl_location: stopped indexing&quot; &lt;&lt; endl;
++#endif
++		return true;
++	}
++
+ 	if (locationToCrawl.empty() == true)
+ 	{
+ 		return false;
+@@ -124,7 +246,7 @@
+ 	if (locationIter != PinotSettings::getInstance().m_indexableLocations.end())
+ 	{
+ 		// Crawl this now
+-		crawlLocation(locationIter-&gt;m_name, true, locationIter-&gt;m_monitor);
++		crawl_location(locationIter-&gt;m_name, true, locationIter-&gt;m_monitor);
+ 	}
+ }
+ 
+@@ -179,7 +301,7 @@
+ 				++locationIter;
+ 				if (locationIter != PinotSettings::getInstance().m_indexableLocations.end())
+ 				{
+-					crawlLocation(locationIter-&gt;m_name, true, locationIter-&gt;m_monitor);
++					crawl_location(locationIter-&gt;m_name, true, locationIter-&gt;m_monitor);
+ 				}
+ 			}
+ #ifdef DEBUG
+@@ -223,6 +345,12 @@
+ 
+ 		if (pDBusThread-&gt;mustQuit() == true)
+ 		{
++			// Disconnect the timeout signal
++			if (m_timeoutConnection.connected() == true)
++			{
++				m_timeoutConnection.block();
++				m_timeoutConnection.disconnect();
++			}
+ 			m_signalQuit(0);
+ 		}
+ 	}
+@@ -293,7 +421,7 @@
+ 	{
+ 		string location(docInfo.getLocation());
+ 
+-		crawlLocation(location.substr(7), false, true);
++		crawl_location(location.substr(7), false, true);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DaemonState::on_message_filefound: new directory &quot; &lt;&lt; location.substr(7) &lt;&lt; endl;
+ #endif
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2007-11-06 14:13:25 UTC (rev 1093)
++++ trunk/UI/GTK2/src/DaemonState.h	2007-11-08 02:46:33 UTC (rev 1094)
+@@ -22,6 +22,7 @@
+ #include &lt;string&gt;
+ #include &lt;queue&gt;
+ #include &lt;set&gt;
++#include &lt;sigc++/sigc++.h&gt;
+ 
+ #include &quot;MonitorInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+@@ -49,10 +50,13 @@
+ 		bool m_reload;
+ 		MonitorInterface *m_pDiskMonitor;
+ 		MonitorHandler *m_pDiskHandler;
++		sigc::connection m_timeoutConnection;
+ 		sigc::signal1&lt;void, int&gt; m_signalQuit;
+ 
+-		bool crawlLocation(const std::string &amp;locationToCrawl, bool isSource, bool doMonitoring);
++		bool on_activity_timeout(void);
+ 
++		bool crawl_location(const std::string &amp;locationToCrawl, bool isSource, bool doMonitoring);
++
+ };
+ 
+ #endif
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-11-06 14:13:25 UTC (rev 1093)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-11-08 02:46:33 UTC (rev 1094)
+@@ -90,6 +90,7 @@
+ bool PinotSettings::m_clientMode = false;
+ 
+ PinotSettings::PinotSettings() :
++	m_minimumDiskSpace(10),
+ 	m_xPos(0),
+ 	m_yPos(0),
+ 	m_width(0),
+@@ -130,6 +131,14 @@
+ 	m_docsIndexLocation += &quot;/index&quot;;
+ 	m_daemonIndexLocation = directoryName;
+ 	m_daemonIndexLocation += &quot;/daemon&quot;;
++
++	// This is not set in the configuration file
++	char *minDiskSpace = getenv(&quot;PINOT_MINIMUM_DISK_SPACE&quot;);
++	if ((minDiskSpace != NULL) &amp;&amp;
++		(strlen(minDiskSpace) &gt; 0))
++	{
++		m_minimumDiskSpace = atof(minDiskSpace);
++	}
+ }
+ 
+ PinotSettings::~PinotSettings()
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2007-11-06 14:13:25 UTC (rev 1093)
++++ trunk/UI/GTK2/src/PinotSettings.h	2007-11-08 02:46:33 UTC (rev 1094)
+@@ -187,6 +187,7 @@
+ 		Glib::ustring m_googleAPIKey;
+ 		Glib::ustring m_docsIndexLocation;
+ 		Glib::ustring m_daemonIndexLocation;
++		double m_minimumDiskSpace;
+ 		int m_xPos;
+ 		int m_yPos;
+ 		int m_width;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-11-06 14:13:25 UTC (rev 1093)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-11-08 02:46:33 UTC (rev 1094)
+@@ -262,7 +262,8 @@
+ 	m_maxIndexThreads(maxIndexThreads),
+ 	m_nextThreadId(1),
+ 	m_backgroundThreadsCount(0),
+-	m_numCPUs(1)
++	m_numCPUs(1),
++	m_stopIndexing(false)
+ {
+ 	pthread_rwlock_init(&amp;m_threadsLock, NULL);
+ 	pthread_rwlock_init(&amp;m_listsLock, NULL);
+@@ -376,6 +377,14 @@
+ {
+ 	string location(docInfo.getLocation());
+ 
++	if (m_stopIndexing == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::index_document: stopped indexing&quot; &lt;&lt; endl;
++#endif
++		return _(&quot;Indexing was stopped&quot;);
++	}
++
+ 	if (location.empty() == true)
+ 	{
+ 		// Nothing to do
+@@ -576,9 +585,6 @@
+ 	double averageLoad[3];
+ 	bool addToQueue = false;
+ 
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;ThreadsManager::queue_index: called&quot; &lt;&lt; endl;
+-#endif
+ 	if (get_threads_count() &gt;= m_maxIndexThreads)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-11-06 14:13:25 UTC (rev 1093)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-11-08 02:46:33 UTC (rev 1094)
+@@ -144,6 +144,7 @@
+ 		long m_numCPUs;
+ 		sigc::signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+ 		std::set&lt;std::string&gt; m_beingIndexed;
++		bool m_stopIndexing;
+ 
+ 		bool read_lock_threads(void);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001087.html">[Pinot-svn] r1093 - in trunk: . po
+</A></li>
+	<LI>Next message: <A HREF="001089.html">[Pinot-svn] r1095 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1088">[ date ]</a>
+              <a href="thread.html#1088">[ thread ]</a>
+              <a href="subject.html#1088">[ subject ]</a>
+              <a href="author.html#1088">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

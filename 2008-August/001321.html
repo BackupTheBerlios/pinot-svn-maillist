@@ -1,0 +1,612 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1330 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1330%20-%20trunk/Utils&In-Reply-To=%3C200808141329.m7EDTAYe005438%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001320.html">
+   <LINK REL="Next"  HREF="001322.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1330 - trunk/Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1330%20-%20trunk/Utils&In-Reply-To=%3C200808141329.m7EDTAYe005438%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1330 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug 14 15:29:10 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001320.html">[Pinot-svn] r1326 - trunk/IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001322.html">[Pinot-svn] r1331 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1321">[ date ]</a>
+              <a href="thread.html#1321">[ thread ]</a>
+              <a href="subject.html#1321">[ subject ]</a>
+              <a href="author.html#1321">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-08-14 15:29:02 +0200 (Thu, 14 Aug 2008)
+New Revision: 1330
+
+Modified:
+   trunk/Utils/CommandLine.cpp
+   trunk/Utils/MIMEScanner.cpp
+   trunk/Utils/MIMEScanner.h
+   trunk/Utils/Makefile.am
+Log:
+Use GAppInfo at the same time as GContentType, instead of the MIMECache code.
+This extends to CommandLine::runAsync().
+Switched to USE_GIO for consistency with the HTTP stuff.
+
+
+Modified: trunk/Utils/CommandLine.cpp
+===================================================================
+--- trunk/Utils/CommandLine.cpp	2008-08-11 07:43:11 UTC (rev 1329)
++++ trunk/Utils/CommandLine.cpp	2008-08-14 13:29:02 UTC (rev 1330)
+@@ -70,6 +70,56 @@
+ /// Runs a command asynchronously.
+ bool CommandLine::runAsync(const MIMEAction &amp;action, const vector&lt;string&gt; &amp;arguments)
+ {
++#ifdef USE_GIO
++	if (action.m_pAppInfo == NULL)
++	{
++		return false;
++	}
++
++	GList *pFilesList = NULL;
++
++	vector&lt;string&gt;::const_iterator firstArg = arguments.begin();
++	while (firstArg != arguments.end())
++	{
++		Url firstUrl(*firstArg);
++		string protocol(firstUrl.getProtocol());
++
++		if (action.m_localOnly == false)
++		{
++			pFilesList = g_list_prepend(pFilesList, g_strdup((*firstArg).c_str()));
++		}
++		else if (protocol == &quot;file&quot;)
++		{
++			pFilesList = g_list_prepend(pFilesList, g_file_new_for_uri((*firstArg).c_str()));
++		}
++#ifdef DEBUG
++		else cout &lt;&lt; &quot;CommandLine::runAsync: can't open URL &quot; &lt;&lt; *firstArg &lt;&lt; endl;
++#endif
++
++		// Next
++		++firstArg;
++	}
++
++	GError *pError = NULL;
++	gboolean launched = FALSE;
++
++	if (action.m_localOnly == false)
++	{
++		launched = g_app_info_launch_uris(action.m_pAppInfo, pFilesList, NULL, &amp;pError);
++	}
++	else
++	{
++		launched = g_app_info_launch(action.m_pAppInfo, pFilesList, NULL, &amp;pError);
++	}
++
++	g_list_foreach(pFilesList, (GFunc)g_object_unref, NULL);
++	g_list_free(pFilesList);
++
++	if (launched == FALSE)
++	{
++		return false;
++	}
++#else
+ 	string commandLine(action.m_exec);
+ 
+ 	if (action.m_exec.empty() == true)
+@@ -270,6 +320,7 @@
+ 		}
+ 
+ 	}
++#endif
+ 
+ 	return true;
+ }
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2008-08-11 07:43:11 UTC (rev 1329)
++++ trunk/Utils/MIMEScanner.cpp	2008-08-14 13:29:02 UTC (rev 1330)
+@@ -21,9 +21,7 @@
+ #include &lt;glib.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;cstring&gt;
+-#ifdef HAVE_GIO_MIME
+-#include &lt;gio/gio.h&gt;
+-#else
++#ifndef USE_GIO
+ #include &quot;xdgmime/xdgmime.h&quot;
+ #endif
+ 
+@@ -81,7 +79,13 @@
+ 
+ MIMEAction::MIMEAction() :
+ 	m_multipleArgs(false),
+-	m_localOnly(true)
++	m_localOnly(true),
++#ifdef USE_GIO
++	m_pAppInfo(NULL)
++#else
++	m_icon(&quot;&quot;),
++	m_device(&quot;&quot;)
++#endif
+ {
+ }
+ 
+@@ -89,11 +93,54 @@
+ 	m_multipleArgs(false),
+ 	m_localOnly(true),
+ 	m_name(name),
+-	m_exec(cmdLine)
++	m_exec(cmdLine),
++#ifdef USE_GIO
++	m_pAppInfo(NULL)
++#else
++	m_icon(&quot;&quot;),
++	m_device(&quot;&quot;)
++#endif
+ {
++#ifdef USE_GIO
++	GError *pError = NULL;
++	m_pAppInfo = g_app_info_create_from_commandline(cmdLine.c_str(),
++		name.c_str(), G_APP_INFO_CREATE_SUPPORTS_URIS, &amp;pError);
++	if (pError != NULL)
++	{
++		g_error_free(pError);
++	}
++#else
+ 	parseExec();
++#endif
+ }
+ 
++#ifdef USE_GIO
++MIMEAction::MIMEAction(GAppInfo *pAppInfo) :
++	m_multipleArgs(false),
++	m_localOnly(true),
++	m_pAppInfo(NULL)
++{
++	if (pAppInfo != NULL)
++	{
++		const char *pInfo = g_app_info_get_name(pAppInfo);
++		if (pInfo != NULL)
++		{
++			m_name = pInfo;
++		}
++		pInfo = g_app_info_get_executable(pAppInfo);
++		if (pInfo != NULL)
++		{
++			m_exec = pInfo;
++		}
++		if (g_app_info_supports_uris(pAppInfo) == TRUE)
++		{
++			m_localOnly = false;
++		}
++
++		m_pAppInfo = g_app_info_dup(pAppInfo);
++	}
++}
++#else
+ MIMEAction::MIMEAction(const string &amp;desktopFile) :
+ 	m_multipleArgs(false),
+ 	m_localOnly(true),
+@@ -102,19 +149,37 @@
+ 	load();
+ }
+ 
++#endif
++
+ MIMEAction::MIMEAction(const MIMEAction &amp;other) :
+ 	m_multipleArgs(other.m_multipleArgs),
+ 	m_localOnly(other.m_localOnly),
+ 	m_name(other.m_name),
+ 	m_location(other.m_location),
+ 	m_exec(other.m_exec),
++#ifdef USE_GIO
++	m_pAppInfo(NULL)
++#else
+ 	m_icon(other.m_icon),
+ 	m_device(other.m_device)
++#endif
+ {
++#ifdef USE_GIO
++	if (other.m_pAppInfo != NULL)
++	{
++		m_pAppInfo = g_app_info_dup(other.m_pAppInfo);
++	}
++#endif
+ }
+ 
+ MIMEAction::~MIMEAction()
+ {
++#ifdef USE_GIO
++	if (m_pAppInfo != NULL)
++	{
++		g_object_unref(m_pAppInfo);
++	}
++#endif
+ }
+ 
+ bool MIMEAction::operator&lt;(const MIMEAction &amp;other) const
+@@ -136,13 +201,26 @@
+ 		m_name = other.m_name;
+ 		m_location = other.m_location;
+ 		m_exec = other.m_exec;
++#ifdef USE_GIO
++		if (m_pAppInfo != NULL)
++		{
++			g_object_unref(m_pAppInfo);
++			m_pAppInfo = NULL;
++		}
++		if (other.m_pAppInfo != NULL)
++		{
++			m_pAppInfo = g_app_info_dup(other.m_pAppInfo);
++		}
++#else
+ 		m_icon = other.m_icon;
+ 		m_device = other.m_device;
++#endif
+ 	}
+ 
+ 	return *this;
+ }
+ 
++#ifndef USE_GIO
+ void MIMEAction::load(void)
+ {
+ 	GKeyFile *pDesktopFile = g_key_file_new();
+@@ -359,11 +437,10 @@
+ 	return foundActions;
+ }
+ 
+-#ifndef HAVE_GIO_MIME
+ pthread_mutex_t MIMEScanner::m_xdgMutex = PTHREAD_MUTEX_INITIALIZER;
+-#endif
+ pthread_rwlock_t MIMEScanner::m_cachesLock = PTHREAD_RWLOCK_INITIALIZER;
+ list&lt;MIMECache&gt; MIMEScanner::m_caches;
++#endif
+ 
+ MIMEScanner::MIMEScanner()
+ {
+@@ -375,16 +452,17 @@
+ 
+ bool MIMEScanner::initialize(const string &amp;userPrefix, const string &amp;systemPrefix)
+ {
++#ifdef USE_GIO
++	// Initialize the GType system
++	g_type_init();
++
++	return true;
++#else
+ 	list&lt;string&gt; desktopFilesPaths;
+ 	string userDirectory(userPrefix + APPLICATIONS_DIRECTORY);
+ 	string systemDirectory(systemPrefix + APPLICATIONS_DIRECTORY);
+ 	bool foundActions = false;
+ 
+-#ifdef HAVE_GIO_MIME
+-	// Initialize the GType system
+-	g_type_init();
+-#endif
+-
+ 	// This may be a re-initialize
+ 	if (pthread_rwlock_wrlock(&amp;m_cachesLock) == 0)
+ 	{
+@@ -434,6 +512,7 @@
+ 	}
+ 
+ 	return foundActions;
++#endif
+ }
+ 
+ bool MIMEScanner::addCache(const string &amp;file, const string &amp;section,
+@@ -441,6 +520,7 @@
+ {
+ 	bool addedCache = false;
+ 
++#ifndef USE_GIO
+ 	if (pthread_rwlock_wrlock(&amp;m_cachesLock) == 0)
+ 	{
+ 		m_caches.push_back(MIMECache(file, section));
+@@ -449,13 +529,14 @@
+ 
+ 		pthread_rwlock_unlock(&amp;m_cachesLock);
+ 	}
++#endif
+ 
+ 	return addedCache;
+ }
+ 
+ void MIMEScanner::shutdown(void)
+ {
+-#ifndef HAVE_GIO_MIME
++#ifndef USE_GIO
+ 	xdg_mime_shutdown();
+ #endif
+ }
+@@ -477,7 +558,7 @@
+ 	}
+ 
+ 	// Does it have an obvious extension ?
+-#ifdef HAVE_GIO_MIME
++#ifdef USE_GIO
+ 	char *pType = g_content_type_guess(fileName.c_str(), NULL, 0, NULL);
+ #else
+ 	const char *pType = NULL;
+@@ -495,7 +576,7 @@
+ 		return &quot;&quot;;
+ 	}
+ 
+-#ifdef HAVE_GIO_MIME
++#ifdef USE_GIO
+ 	if (g_content_type_is_unknown(pType) == TRUE)
+ 	{
+ 		g_free(pType);
+@@ -528,7 +609,7 @@
+ 	{
+ 		mimeType = &quot;text/html&quot;;
+ 	}
+-#ifdef HAVE_GIO_MIME
++#ifdef USE_GIO
+ 	g_free(pType);
+ #endif
+ #ifdef DEBUG
+@@ -553,7 +634,7 @@
+ 		return mimeType;
+ 	}
+ 
+-#ifdef HAVE_GIO_MIME
++#ifdef USE_GIO
+ 	string uri(&quot;<A HREF="file://">file://</A>&quot;);
+ 	uri += fileName;
+ 
+@@ -649,7 +730,7 @@
+ 	{
+ 		mimeType = &quot;text/html&quot;;
+ 	}
+-#ifdef HAVE_GIO_MIME
++#ifdef USE_GIO
+ 	else
+ 	{
+ 		mimeType = UNKNOWN_MIME_TYPE;
+@@ -675,7 +756,9 @@
+ 		return false;
+ 	}
+ 
+-#ifdef HAVE_GIO_MIME
++#ifdef USE_GIO
++	// FIXME: GContentType doesn't have any function to get a MIME type's parents
++	// Similarly, one can't get a GAppInfo's list of supported MIME types
+ #else
+ 	char **pParentTypes = xdg_mime_list_mime_parents(mimeType.c_str());
+ 	if ((pParentTypes != NULL) &amp;&amp;
+@@ -698,6 +781,19 @@
+ /// Adds a user-defined action for the given type.
+ void MIMEScanner::addDefaultAction(const string &amp;mimeType, const MIMEAction &amp;typeAction)
+ {
++#ifdef USE_GIO
++	if (typeAction.m_pAppInfo == NULL)
++	{
++		return;
++	}
++
++	GError *pError = NULL;
++	g_app_info_set_as_default_for_type(typeAction.m_pAppInfo, mimeType.c_str(), &amp;pError);
++	if (pError != NULL)
++	{
++		g_error_free(pError);
++	}
++#else
+ 	// Custom actions get stored in a cache object which is not connected to a file
+ 	// We need to create this object the first time a custom action gets added
+ 	if (pthread_rwlock_wrlock(&amp;m_cachesLock) == 0)
+@@ -712,11 +808,46 @@
+ 
+ 		pthread_rwlock_unlock(&amp;m_cachesLock);
+ 	}
++#endif
+ }
+ 
+ bool MIMEScanner::getDefaultActionsForType(const string &amp;mimeType, set&lt;string&gt; &amp;actionNames,
+ 	vector&lt;MIMEAction&gt; &amp;typeActions)
+ {
++#ifdef USE_GIO
++	GList *pAppInfoList = g_app_info_get_all_for_type(mimeType.c_str());
++	if (pAppInfoList == NULL)
++	{
++		return false;
++	}
++
++	typeActions.reserve(g_list_length(pAppInfoList));
++	for (GList *pList = pAppInfoList; pList != NULL; pList = pList-&gt;next)
++	{
++		if (pList-&gt;data == NULL)
++		{
++			continue;
++		}
++
++		GAppInfo *pAppInfo = G_APP_INFO(pList-&gt;data);
++		if (pAppInfo == NULL)
++		{
++			continue;
++		}
++
++		MIMEAction action(pAppInfo);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; action.m_name &lt;&lt; endl;
++#endif
++
++		actionNames.insert(action.m_name);
++		typeActions.push_back(action);
++	}
++	g_list_foreach(pAppInfoList, (GFunc)g_object_unref, NULL);
++	g_list_free(pAppInfoList);
++
++	return true;
++#else
+ 	bool foundAction = false;
+ 
+ 	if (pthread_rwlock_rdlock(&amp;m_cachesLock) != 0)
+@@ -752,6 +883,7 @@
+ 	pthread_rwlock_unlock(&amp;m_cachesLock);
+ 
+ 	return foundAction;
++#endif
+ }
+ 
+ /// Determines the default action(s) for the given type.
+@@ -765,11 +897,10 @@
+ 	cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: searching for &quot; &lt;&lt; mimeType &lt;&lt; endl;
+ #endif
+ 	bool foundAction = getDefaultActionsForType(mimeType, actionNames, typeActions);
++#ifndef USE_GIO
+ 	if (foundAction == false)
+ 	{
+ 		// Is there an action for any of this type's parents ?
+-#ifdef HAVE_GIO_MIME
+-#else
+ 		char **pParentTypes = xdg_mime_list_mime_parents(mimeType.c_str());
+ 		if ((pParentTypes != NULL) &amp;&amp;
+ 			(pParentTypes[0] != NULL))
+@@ -793,8 +924,8 @@
+ #ifdef DEBUG
+ 		else cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: &quot; &lt;&lt; mimeType &lt;&lt; &quot; has no parent types&quot; &lt;&lt; endl;
+ #endif
++	}
+ #endif
+-	}
+ 
+ 	return foundAction;
+ }
+
+Modified: trunk/Utils/MIMEScanner.h
+===================================================================
+--- trunk/Utils/MIMEScanner.h	2008-08-11 07:43:11 UTC (rev 1329)
++++ trunk/Utils/MIMEScanner.h	2008-08-14 13:29:02 UTC (rev 1330)
+@@ -25,6 +25,9 @@
+ #include &lt;map&gt;
+ #include &lt;set&gt;
+ #include &lt;vector&gt;
++#ifdef USE_GIO
++#include &lt;gio/gio.h&gt;
++#endif
+ 
+ #include &quot;Url.h&quot;
+ #include &quot;Visibility.h&quot;
+@@ -38,7 +41,11 @@
+ 	public:
+ 		MIMEAction();
+ 		MIMEAction(const std::string &amp;name, const std::string &amp;cmdLine);
++#ifdef USE_GIO
++		MIMEAction(GAppInfo *pAppInfo);
++#else
+ 		MIMEAction(const std::string &amp;desktopFile);
++#endif
+ 		MIMEAction(const MIMEAction &amp;other);
+ 		virtual ~MIMEAction();
+ 
+@@ -46,19 +53,26 @@
+ 
+ 		MIMEAction &amp;operator=(const MIMEAction &amp;other);
+ 
++#ifndef USE_GIO
+ 		void load(void);
+ 		void parseExec(void);
++#endif
+ 
+ 		bool m_multipleArgs;
+ 		bool m_localOnly;
+ 		std::string m_name;
+ 		std::string m_location;
+ 		std::string m_exec;
++#ifdef USE_GIO
++		GAppInfo *m_pAppInfo;
++#else
+ 		std::string m_icon;
+ 		std::string m_device;
++#endif
+ 
+ };
+ 
++#ifndef USE_GIO 
+ /** Caching of MIME type information.
+   * A cache can be reloaded as required.
+   */
+@@ -86,6 +100,7 @@
+ 			std::map&lt;std::string, MIMEAction&gt; &amp;loadedActions);
+ 
+ };
++#endif
+ 
+ /**
+   * Utility class to get a file's MIME type and the default application associated with it.
+@@ -120,14 +135,14 @@
+ 		static bool getDefaultActions(const std::string &amp;mimeType, std::vector&lt;MIMEAction&gt; &amp;typeActions);
+ 
+ 	protected:
+-#ifndef HAVE_GIO_MIME
++#ifndef USE_GIO
+ 		/// Mutex to protect access to xdgmime.
+ 		static pthread_mutex_t m_xdgMutex;
+-#endif
+ 		/// Lock to protect access to caches.
+ 		static pthread_rwlock_t m_cachesLock;
+ 		/// MIME type caches, ordered by decreasing priority.
+ 		static std::list&lt;MIMECache&gt; m_caches;
++#endif
+ 
+ 		MIMEScanner();
+ 
+
+Modified: trunk/Utils/Makefile.am
+===================================================================
+--- trunk/Utils/Makefile.am	2008-08-11 07:43:11 UTC (rev 1329)
++++ trunk/Utils/Makefile.am	2008-08-14 13:29:02 UTC (rev 1330)
+@@ -64,7 +64,3 @@
+ 	@VISIB_CFLAGS@ \
+ 	@HTTP_CFLAGS@ @INDEX_CFLAGS@ @GLIBMM_CFLAGS@ -DXDG_PREFIX=pinot_xdg
+ 
+-if HAVE_GIO_MIME
+-AM_CXXFLAGS += -DHAVE_GIO_MIME
+-endif
+-
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001320.html">[Pinot-svn] r1326 - trunk/IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001322.html">[Pinot-svn] r1331 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1321">[ date ]</a>
+              <a href="thread.html#1321">[ thread ]</a>
+              <a href="subject.html#1321">[ subject ]</a>
+              <a href="author.html#1321">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r117 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r117%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200602171229.k1HCTVbV013321%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000115.html">
+   <LINK REL="Next"  HREF="000117.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r117 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r117%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200602171229.k1HCTVbV013321%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r117 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Feb 17 13:29:31 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000115.html">[Pinot-svn] r116 - in trunk: . Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000117.html">[Pinot-svn] r118 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#116">[ date ]</a>
+              <a href="thread.html#116">[ thread ]</a>
+              <a href="subject.html#116">[ subject ]</a>
+              <a href="author.html#116">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-02-17 13:29:29 +0100 (Fri, 17 Feb 2006)
+New Revision: 117
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+If an index couldn't be opened, or the history database not created, show
+an error message in the main window's status bar.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-02-16 15:08:03 UTC (rev 116)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-02-17 12:29:29 UTC (rev 117)
+@@ -52,6 +52,8 @@
+ 	mainWindow();
+ 	virtual ~mainWindow();
+ 
++	void set_status(const Glib::ustring &amp;text, bool canBeSkipped = false);
++
+ protected:
+ 	// Utility methods
+ 	void populate_queryTreeview();
+@@ -132,7 +134,6 @@
+ 
+ 	// Status methods
+ 	bool on_activity_timeout(void);
+-	void set_status(const Glib::ustring &amp;text, bool canBeSkipped = false);
+ 
+ private:
+ 	// Global settings
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-02-16 15:08:03 UTC (rev 116)
++++ trunk/UI/GTK2/src/pinot.cc	2006-02-17 12:29:29 UTC (rev 117)
+@@ -87,6 +87,7 @@
+ int main(int argc, char **argv)
+ {
+ 	string prefixDir(PREFIX);
++	Glib::ustring errorMsg;
+ 	struct sigaction newAction;
+ 
+ #if defined(ENABLE_NLS)
+@@ -145,15 +146,21 @@
+ 	sigaction(SIGQUIT, &amp;newAction, NULL);
+ 
+ 	// Ensure Xapian will be able to deal with internal indices
+-	if (XapianDatabaseFactory::getDatabase(settings.m_indexLocation, false) == NULL)
++	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(settings.m_indexLocation, false);
++	if ((pDb == NULL) ||
++		(pDb-&gt;isOpen() == false))
+ 	{
+-		cerr &lt;&lt; _(&quot;Index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_indexLocation &lt;&lt; &quot; &quot;
+-			&lt;&lt; _(&quot;is not valid, please check&quot;) &lt;&lt; endl;
++		errorMsg = _(&quot;Couldn't open index&quot;);
++		errorMsg += &quot; &quot;;
++		errorMsg += settings.m_indexLocation;
+ 	}
+-	if (XapianDatabaseFactory::getDatabase(settings.m_mailIndexLocation, false) == NULL)
++	pDb = XapianDatabaseFactory::getDatabase(settings.m_mailIndexLocation, false);
++	if ((pDb == NULL) ||
++		(pDb-&gt;isOpen() == false))
+ 	{
+-		cerr &lt;&lt; _(&quot;Index&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_mailIndexLocation &lt;&lt; &quot; &quot;
+-			&lt;&lt; _(&quot;is not valid, please check&quot;) &lt;&lt; endl;
++		errorMsg = _(&quot;Couldn't open index&quot;);
++		errorMsg += &quot; &quot;;
++		errorMsg += settings.m_mailIndexLocation;
+ 	}
+ 
+ 	// Do the same for the history database
+@@ -161,8 +168,9 @@
+ 		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+ 		(ViewHistory::create(settings.m_historyDatabase) == false))
+ 	{
+-		cerr &lt;&lt; _(&quot;History database&quot;) &lt;&lt; &quot; &quot; &lt;&lt; settings.m_historyDatabase &lt;&lt; &quot; &quot;
+-			&lt;&lt; _(&quot;couldn't be created&quot;) &lt;&lt; endl;
++		errorMsg = _(&quot;Couldn't create history database&quot;);
++		errorMsg += &quot; &quot;;
++		errorMsg += settings.m_historyDatabase;
+ 	}
+ 
+ 	atexit(closeAll);
+@@ -174,6 +182,10 @@
+ 
+ 		// Create and open the main dialog box
+ 		mainWindow mainBox;
++		if (errorMsg.empty() == false)
++		{
++			mainBox.set_status(errorMsg);
++		}
+ 		m.run(mainBox);
+ 	}
+ 	catch (const Glib::Exception &amp;e)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000115.html">[Pinot-svn] r116 - in trunk: . Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000117.html">[Pinot-svn] r118 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#116">[ date ]</a>
+              <a href="thread.html#116">[ thread ]</a>
+              <a href="subject.html#116">[ subject ]</a>
+              <a href="author.html#116">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

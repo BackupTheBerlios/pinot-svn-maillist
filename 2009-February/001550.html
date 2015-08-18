@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1560 - in trunk: Core SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1560%20-%20in%20trunk%3A%20Core%20SQL&In-Reply-To=%3C200902151431.n1FEVOK7023777%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001549.html">
+   <LINK REL="Next"  HREF="001551.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1560 - in trunk: Core SQL</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1560%20-%20in%20trunk%3A%20Core%20SQL&In-Reply-To=%3C200902151431.n1FEVOK7023777%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1560 - in trunk: Core SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Feb 15 15:31:24 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001549.html">[Pinot-svn] r1559 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001551.html">[Pinot-svn] r1561 - in trunk: . Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1550">[ date ]</a>
+              <a href="thread.html#1550">[ thread ]</a>
+              <a href="subject.html#1550">[ subject ]</a>
+              <a href="author.html#1550">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-15 15:31:13 +0100 (Sun, 15 Feb 2009)
+New Revision: 1560
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/ServerThreads.cpp
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+Log:
+Be selective when changing the status of crawled items on full scan. The status
+of links shouldn't be changed or they would be skipped during the crawl and
+what they point to would get unindexed.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-02-15 12:19:43 UTC (rev 1559)
++++ trunk/Core/DaemonState.cpp	2009-02-15 14:31:13 UTC (rev 1560)
+@@ -514,7 +514,9 @@
+ 		CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 
+ 		// Update all items status so that we can get rid of files from deleted sources
+-		crawlHistory.updateItemsStatus(CrawlHistory::TO_CRAWL, 0, true);
++		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLING, CrawlHistory::TO_CRAWL, 0, true);
++		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, 0, true);
++		crawlHistory.updateItemsStatus(CrawlHistory::CRAWL_ERROR, CrawlHistory::TO_CRAWL, 0, true);
+ 	}
+ 
+ 	// Initiate crawling
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-02-15 12:19:43 UTC (rev 1559)
++++ trunk/Core/ServerThreads.cpp	2009-02-15 14:31:13 UTC (rev 1560)
+@@ -305,7 +305,7 @@
+ 		cout &lt;&lt; &quot;Doing a full scan on &quot; &lt;&lt; m_dirName &lt;&lt; endl;
+ 
+ 		// Update this source's items status so that we can detect files that have been deleted
+-		m_crawlHistory.updateItemsStatus(CrawlHistory::TO_CRAWL, m_sourceId);
++		m_crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, m_sourceId);
+ 	}
+ 
+ 	if (scanEntry(m_dirName) == false)
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2009-02-15 12:19:43 UTC (rev 1559)
++++ trunk/SQL/CrawlHistory.cpp	2009-02-15 14:31:13 UTC (rev 1560)
+@@ -340,8 +340,8 @@
+ }
+ 
+ /// Updates the status of items en masse.
+-bool CrawlHistory::updateItemsStatus(CrawlStatus newStatus, unsigned int sourceId,
+-	bool allSources)
++bool CrawlHistory::updateItemsStatus(CrawlStatus oldStatus, CrawlStatus newStatus,
++	unsigned int sourceId, bool allSources)
+ {
+ 	SQLResults *results = NULL;
+ 	bool success = false;
+@@ -349,15 +349,15 @@
+ 	if (allSources == false)
+ 	{
+ 		results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q' WHERE SourceId='%u';&quot;,
+-			statusToText(newStatus).c_str(), sourceId);
++			SET Status='%q' WHERE SourceId='%u' AND Status='%q';&quot;,
++			statusToText(newStatus).c_str(), sourceId, statusToText(oldStatus).c_str());
+ 	}
+ 	else
+ 	{
+ 		// Ignore the source
+ 		results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q';&quot;,
+-			statusToText(newStatus).c_str());
++			SET Status='%q' AND Status='%q';&quot;,
++			statusToText(newStatus).c_str(), statusToText(oldStatus).c_str());
+ 	}
+ 
+ 	if (results != NULL)
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2009-02-15 12:19:43 UTC (rev 1559)
++++ trunk/SQL/CrawlHistory.h	2009-02-15 14:31:13 UTC (rev 1560)
+@@ -64,8 +64,8 @@
+ 		bool updateItems(const std::map&lt;std::string, time_t&gt; urls, CrawlStatus status);
+ 
+ 		/// Updates the status of items en masse.
+-		bool updateItemsStatus(CrawlStatus newStatus, unsigned int sourceId,
+-			bool allSources = false);
++		bool updateItemsStatus(CrawlStatus oldStatus, CrawlStatus newStatus,
++			unsigned int sourceId, bool allSources = false);
+ 
+ 		/// Gets the error number and date for a URL.
+ 		int getErrorDetails(const std::string &amp;url, time_t &amp;date);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001549.html">[Pinot-svn] r1559 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001551.html">[Pinot-svn] r1561 - in trunk: . Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1550">[ date ]</a>
+              <a href="thread.html#1550">[ thread ]</a>
+              <a href="subject.html#1550">[ subject ]</a>
+              <a href="author.html#1550">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

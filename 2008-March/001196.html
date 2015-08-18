@@ -1,0 +1,211 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1202 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1202%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200803080918.m289IF2P012619%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001195.html">
+   <LINK REL="Next"  HREF="001197.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1202 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1202%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200803080918.m289IF2P012619%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1202 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar  8 10:18:15 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001195.html">[Pinot-svn] r1201 - trunk/IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001197.html">[Pinot-svn] r1203 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1196">[ date ]</a>
+              <a href="thread.html#1196">[ thread ]</a>
+              <a href="subject.html#1196">[ subject ]</a>
+              <a href="author.html#1196">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-03-08 10:18:12 +0100 (Sat, 08 Mar 2008)
+New Revision: 1202
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Be careful when applying source labels.
+IndexingThread redefined m_docInfo needlessly.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-03-04 11:55:08 UTC (rev 1201)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-03-08 09:18:12 UTC (rev 1202)
+@@ -521,9 +521,18 @@
+ 		DocumentInfo docCopy(docInfo);
+ 		set&lt;string&gt; labels;
+ 
+-		// Insert a label that identifies the source
+-		labels.insert(sourceLabel);
+-		docCopy.setLabels(labels);
++		if (sourceLabel.empty() == false)
++		{
++			// Insert a label that identifies the source
++			labels.insert(sourceLabel);
++			docCopy.setLabels(labels);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DaemonState::on_message_filefound: source label for &quot; &lt;&lt; docCopy.getLocation() &lt;&lt; &quot; is &quot; &lt;&lt; sourceLabel &lt;&lt; endl;
++#endif
++		}
++#ifdef DEBUG
++		else cout &lt;&lt; &quot;DaemonState::on_message_filefound: no source label for &quot; &lt;&lt; docCopy.getLocation() &lt;&lt; endl;
++#endif
+ 
+ 		queue_index(docCopy);
+ 	}
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-03-04 11:55:08 UTC (rev 1201)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-03-08 09:18:12 UTC (rev 1202)
+@@ -187,7 +187,6 @@
+ {
+ 	string location(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+ 	Url urlObj(location);
+-	char labelStr[64];
+ 
+ 	if (fileName.empty() == true)
+ 	{
+@@ -200,6 +199,8 @@
+ 		return false;
+ 	}
+ 
++	DocumentInfo docInfo(&quot;&quot;, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
++
+ 	// What source does it belong to ?
+ 	for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = m_fileSources.begin();
+ 		sourceIter != m_fileSources.end(); ++sourceIter)
+@@ -214,17 +215,23 @@
+ 
+ 		if (sourceIter-&gt;second.substr(0, location.length()) == location)
+ 		{
++			char labelStr[64];
+ 
+ 			// That's the one
+ 			snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, sourceIter-&gt;first);
+-			break;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;OnDiskHandler::indexFile: source label for &quot; &lt;&lt; location &lt;&lt; &quot; is &quot; &lt;&lt; labelStr &lt;&lt; endl;
++#endif
++			m_signalFileFound(docInfo, labelStr, isDirectory);
++			return true;
+ 		}
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;OnDiskHandler::indexFile: no source label for &quot; &lt;&lt; location &lt;&lt; endl;
++#endif
+ 
+-	DocumentInfo docInfo(&quot;&quot;, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
++	m_signalFileFound(docInfo, &quot;&quot;, isDirectory);
+ 
+-	m_signalFileFound(docInfo, labelStr, isDirectory);
+-
+ 	return true;
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-03-04 11:55:08 UTC (rev 1201)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-03-08 09:18:12 UTC (rev 1202)
+@@ -222,6 +222,9 @@
+ 
+ 	// This identifies the source
+ 	snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, m_sourceId);
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DirectoryScannerThread::foundFile: source label for &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; is &quot; &lt;&lt; labelStr &lt;&lt; endl;
++#endif
+ 	m_signalFileFound(docInfo, labelStr, false);
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-03-04 11:55:08 UTC (rev 1201)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-03-08 09:18:12 UTC (rev 1202)
+@@ -1415,7 +1415,6 @@
+ IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, const string &amp;indexLocation,
+ 	bool allowAllMIMETypes) :
+ 	DownloadingThread(docInfo),
+-	m_docInfo(docInfo),
+ 	m_docId(0),
+ 	m_indexLocation(indexLocation),
+ 	m_allowAllMIMETypes(allowAllMIMETypes),
+@@ -1635,11 +1634,14 @@
+ 			}
+ 			else
+ 			{
+-				const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+ 				unsigned int docId = 0;
++#ifdef DEBUG
++				cout &lt;&lt; &quot;IndexingThread::doWork: &quot; &lt;&lt; m_docInfo.getLabels().size()
++					&lt;&lt; &quot; labels for URL &quot; &lt;&lt; m_pDoc-&gt;getLocation() &lt;&lt; endl;
++#endif
+ 
+ 				// Index the document
+-				success = wrapFilter.indexDocument(*m_pDoc, labels, docId);
++				success = wrapFilter.indexDocument(*m_pDoc, m_docInfo.getLabels(), docId);
+ 				if (success == true)
+ 				{
+ 					m_docId = docId;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-03-04 11:55:08 UTC (rev 1201)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-03-08 09:18:12 UTC (rev 1202)
+@@ -397,7 +397,6 @@
+ 		bool isNewDocument(void) const;
+ 
+ 	protected:
+-		DocumentInfo m_docInfo;
+ 		unsigned int m_docId;
+ 		std::string m_indexLocation;
+ 		bool m_allowAllMIMETypes;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001195.html">[Pinot-svn] r1201 - trunk/IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001197.html">[Pinot-svn] r1203 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1196">[ date ]</a>
+              <a href="thread.html#1196">[ thread ]</a>
+              <a href="subject.html#1196">[ subject ]</a>
+              <a href="author.html#1196">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

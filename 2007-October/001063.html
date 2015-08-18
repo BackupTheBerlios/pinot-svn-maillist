@@ -1,0 +1,567 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1069 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1069%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710231452.l9NEq7YE015466%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001062.html">
+   <LINK REL="Next"  HREF="001064.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1069 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1069%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710231452.l9NEq7YE015466%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1069 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 23 16:52:07 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001062.html">[Pinot-svn] r1068 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="001064.html">[Pinot-svn] r1070 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1063">[ date ]</a>
+              <a href="thread.html#1063">[ thread ]</a>
+              <a href="subject.html#1063">[ subject ]</a>
+              <a href="author.html#1063">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-23 16:52:05 +0200 (Tue, 23 Oct 2007)
+New Revision: 1069
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/propertiesDialog.cc
+   trunk/UI/GTK2/src/propertiesDialog.hh
+Log:
+propertiesDialog should be able to tell when the user made modifications.
+Modified LabelUpdateThread to set several labels on N documents at once. That's
+used after labels are edited on several documents.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-23 14:43:39 UTC (rev 1068)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-23 14:52:05 UTC (rev 1069)
+@@ -1194,7 +1194,8 @@
+ 
+ LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToAdd,
+ 	const set&lt;string&gt; &amp;labelsToDelete, const map&lt;string, string&gt; &amp;labelsToRename) :
+-	WorkerThread()
++	WorkerThread(),
++	m_resetLabels(false)
+ {
+ 	copy(labelsToAdd.begin(), labelsToAdd.end(),
+ 		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
+@@ -1204,13 +1205,18 @@
+ 		inserter(m_labelsToRename, m_labelsToRename.begin()));
+ }
+ 
+-LabelUpdateThread::LabelUpdateThread(const string &amp;labelName,
+-	const set&lt;unsigned int&gt; &amp;docsIds, const set&lt;unsigned int&gt; &amp;daemonIds) :
++LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToAdd,
++	const set&lt;unsigned int&gt; &amp;docsIds, const set&lt;unsigned int&gt; &amp;daemonIds,
++	bool resetLabels) :
+ 	WorkerThread(),
+-	m_labelName(labelName)
++	m_resetLabels(resetLabels)
+ {
+-	copy(docsIds.begin(), docsIds.end(), inserter(m_docsIds, m_docsIds.begin()));
+-	copy(daemonIds.begin(), daemonIds.end(), inserter(m_daemonIds, m_daemonIds.begin()));
++	copy(labelsToAdd.begin(), labelsToAdd.end(),
++		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
++	copy(docsIds.begin(), docsIds.end(),
++		inserter(m_docsIds, m_docsIds.begin()));
++	copy(daemonIds.begin(), daemonIds.end(),
++		inserter(m_daemonIds, m_daemonIds.begin()));
+ }
+ 
+ LabelUpdateThread::~LabelUpdateThread()
+@@ -1224,6 +1230,8 @@
+ 
+ void LabelUpdateThread::doWork(void)
+ {
++	bool actOnDocuments = false;
++
+ 	IndexInterface *pDocsIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
+ 	if (pDocsIndex == NULL)
+ 	{
+@@ -1241,39 +1249,39 @@
+ 		return;
+ 	}
+ 
+-	// Apply the new label to existing documents
+-	if (m_labelName.empty() == false)
++	// Apply the labels to existing documents
++	if (m_docsIds.empty() == false)
+ 	{
+-		set&lt;string&gt; labels;
++		pDocsIndex-&gt;setDocumentsLabels(m_docsIds, m_labelsToAdd, m_resetLabels);
++		actOnDocuments = true;
++	}
++	if (m_daemonIds.empty() == false)
++	{
++		pDaemonIndex-&gt;setDocumentsLabels(m_daemonIds, m_labelsToAdd, m_resetLabels);
++		actOnDocuments = true;
++	}
+ 
+-		labels.insert(m_labelName);
+-		if (m_docsIds.empty() == false)
++	if (actOnDocuments == false)
++	{
++		// Add labels
++		for (set&lt;string&gt;::iterator iter = m_labelsToAdd.begin(); iter != m_labelsToAdd.end(); ++iter)
+ 		{
+-			pDocsIndex-&gt;setDocumentsLabels(m_docsIds, labels, false);
++			pDocsIndex-&gt;addLabel(*iter);
++			pDaemonIndex-&gt;addLabel(*iter);
+ 		}
+-		if (m_daemonIds.empty() == false)
++		// Delete labels
++		for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
+ 		{
+-			pDaemonIndex-&gt;setDocumentsLabels(m_daemonIds, labels, false);
++			pDocsIndex-&gt;deleteLabel(*iter);
++			pDaemonIndex-&gt;deleteLabel(*iter);
+ 		}
++		// Rename labels
++		for (map&lt;string, string&gt;::iterator iter = m_labelsToRename.begin(); iter != m_labelsToRename.end(); ++iter)
++		{
++			pDocsIndex-&gt;renameLabel(iter-&gt;first, iter-&gt;second);
++			pDaemonIndex-&gt;renameLabel(iter-&gt;first, iter-&gt;second);
++		}
+ 	}
+-	// Add labels
+-	for (set&lt;string&gt;::iterator iter = m_labelsToAdd.begin(); iter != m_labelsToAdd.end(); ++iter)
+-	{
+-		pDocsIndex-&gt;addLabel(*iter);
+-		pDaemonIndex-&gt;addLabel(*iter);
+-	}
+-	// Delete labels
+-	for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
+-	{
+-		pDocsIndex-&gt;deleteLabel(*iter);
+-		pDaemonIndex-&gt;deleteLabel(*iter);
+-	}
+-	// Rename labels
+-	for (map&lt;string, string&gt;::iterator iter = m_labelsToRename.begin(); iter != m_labelsToRename.end(); ++iter)
+-	{
+-		pDocsIndex-&gt;renameLabel(iter-&gt;first, iter-&gt;second);
+-		pDaemonIndex-&gt;renameLabel(iter-&gt;first, iter-&gt;second);
+-	}
+ 
+ 	delete pDaemonIndex;
+ 	delete pDocsIndex;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-10-23 14:43:39 UTC (rev 1068)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-10-23 14:52:05 UTC (rev 1069)
+@@ -324,9 +324,10 @@
+ 		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToAdd,
+ 			const std::set&lt;std::string&gt; &amp;labelsToDelete,
+ 			const std::map&lt;std::string, std::string&gt; &amp;labelsToRename);
+-		LabelUpdateThread(const std::string &amp;labelName,
++		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToAdd,
+ 			const std::set&lt;unsigned int&gt; &amp;docsIds,
+-			const std::set&lt;unsigned int&gt; &amp;daemonIds);
++			const std::set&lt;unsigned int&gt; &amp;daemonIds,
++			bool resetLabels);
+ 
+ 		virtual ~LabelUpdateThread();
+ 
+@@ -336,9 +337,9 @@
+ 		std::set&lt;std::string&gt; m_labelsToAdd;
+ 		std::set&lt;std::string&gt; m_labelsToDelete;
+ 		std::map&lt;std::string, std::string&gt; m_labelsToRename;
+-		std::string m_labelName;
+ 		std::set&lt;unsigned int&gt; m_docsIds;
+ 		std::set&lt;unsigned int&gt; m_daemonIds;
++		bool m_resetLabels;
+ 
+ 		virtual void doWork(void);
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-10-23 14:43:39 UTC (rev 1068)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-10-23 14:52:05 UTC (rev 1069)
+@@ -1370,8 +1370,11 @@
+ 				((docsIds.empty() == false) ||
+ 				(daemonIds.empty() == false)))
+ 			{
++				set&lt;string&gt; labels;
++
+ 				// Apply the new label to existing documents
+-				start_thread(new LabelUpdateThread(labelName, docsIds, daemonIds));
++				labels.insert(labelName);
++				start_thread(new LabelUpdateThread(labels, docsIds, daemonIds, false));
+ 			}
+ 		}
+ 	}
+@@ -1607,6 +1610,7 @@
+ 				char docIdStr[64];
+ 
+ 				status = _(&quot;Updated document&quot;);
++				status += &quot; &quot;;
+ 				snprintf(docIdStr, 64, &quot;%u&quot;, pUpdateThread-&gt;getDocumentID());
+ 				status += docIdStr;
+ 				set_status(status);
+@@ -2261,9 +2265,10 @@
+ void mainWindow::on_showfromindex_activate()
+ {
+ 	vector&lt;DocumentInfo&gt; documentsList;
++	set&lt;unsigned int&gt; docIds;
+ 	string indexName, queryName;
+ 	int width, height;
+-	bool updateLabels = false;
++	bool docsIndex = false, daemonIndex = false;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: called&quot; &lt;&lt; endl;
+@@ -2278,9 +2283,16 @@
+ 	}
+ 
+ 	// Allow this only for internal indexes
+-	if ((indexName != _(&quot;My Web Pages&quot;)) &amp;&amp;
+-		(indexName != _(&quot;My Documents&quot;)))
++	if (indexName == _(&quot;My Web Pages&quot;))
+ 	{
++		docsIndex = true;
++	}
++	else if (indexName == _(&quot;My Documents&quot;))
++	{
++		daemonIndex = true;
++	}
++	else
++	{
+ 		return;
+ 	}
+ 
+@@ -2313,31 +2325,49 @@
+ 	propertiesBox.show();
+ 	// What labels will this show ?
+ 	const set&lt;string&gt; &amp;labels = propertiesBox.getLabels();
+-	bool hadNoLabels = labels.empty();
+ 	if (propertiesBox.run() != RESPONSE_OK)
+ 	{
+ 		return;
+ 	}
+ 
+-	// Now apply these labels to all the documents
+-	// FIXME: do that only if something was modified
+-	if ((hadNoLabels == false) ||
+-		(labels.empty() == false))
+-	{
+-		updateLabels = true;
+-	}
+-
+ 	// Update all documents
+-	// FIXME: do that only if something was modified
+ 	for (vector&lt;DocumentInfo&gt;::iterator docIter = documentsList.begin();
+ 		docIter != documentsList.end(); ++docIter)
+ 	{
+ 		unsigned int indexId = 0;
+ 		unsigned int docId = docIter-&gt;getIsIndexed(indexId);
+ 
+-		start_thread(new UpdateDocumentThread(indexName, docId, *docIter, updateLabels));
++		// ... only if something was modified
++		if (propertiesBox.changedInfo() == true)
++		{
++			start_thread(new UpdateDocumentThread(indexName, docId, *docIter, false));
++		}
++
++		docIds.insert(docId);
+ 	}
+ 
++	// Now apply these labels to all the documents
++	if (propertiesBox.changedLabels() == true)
++	{
++		LabelUpdateThread *pThread = NULL;
++		set&lt;unsigned int&gt; empty;
++
++		// Apply the labels en masse
++		if (docsIndex == true)
++		{
++			pThread = new LabelUpdateThread(labels, docIds, empty, true);
++		}
++		else if (daemonIndex == true)
++		{
++			pThread = new LabelUpdateThread(labels, empty, docIds, true);
++		}
++
++		if (pThread != NULL)
++		{
++			start_thread(pThread);
++		}
++	}
++
+ 	// Is the index list filtered with a query ?
+ 	if (queryName.empty() == false)
+ 	{
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-23 14:43:39 UTC (rev 1068)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-23 14:52:05 UTC (rev 1069)
+@@ -23,6 +23,7 @@
+ 
+ #include &quot;config.h&quot;
+ #include &quot;Languages.h&quot;
++#include &quot;StringManip.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;XapianIndex.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -40,10 +41,12 @@
+ 	m_documentsList(documentsList),
+ 	m_docId(0),
+ 	m_notALanguageName(false),
+-	m_editDocument(false)
++	m_editDocument(false),
++	m_changedInfo(false),
++	m_changedLabels(false)
+ {
+ 	set&lt;string&gt; docLabels;
+-	string language;
++	string title, language;
+ 	char numStr[128];
+ 
+ 	// Associate the columns model to the labels tree
+@@ -78,12 +81,13 @@
+ 
+ 				delete pIndex;
+ 			}
++			title = docInfo.getTitle();
+ 			language = docInfo.getLanguage();
+ 
+ 			snprintf(numStr, 128, &quot;%u&quot;, m_docId);
+ 			set_title(get_title() + &quot; (ID &quot; + numStr + &quot;)&quot;);
+ 
+-			titleEntry-&gt;set_text(to_utf8(docInfo.getTitle()));
++			titleEntry-&gt;set_text(to_utf8(title));
+ 			typeEntry-&gt;set_text(to_utf8(docInfo.getType()));
+ 			unsigned int size = docInfo.getSize();
+ 			snprintf(numStr, 128, &quot;%u&quot;, size);
+@@ -144,6 +148,7 @@
+ 	}
+ 
+ 	populate_languageCombobox(language);
++	m_infoHash = StringManip::hashString(title + language);
+ 	populate_labelsTreeview(docLabels);
+ }
+ 
+@@ -153,14 +158,14 @@
+ 
+ void propertiesDialog::populate_languageCombobox(const string &amp;language)
+ {
+-	unsigned int languageStart = 0;
++	int unknownLanguagePos = 0;
+ 	bool foundLanguage = false;
+ 
+ 	if (m_notALanguageName == true)
+ 	{
+ 		languageCombobox-&gt;append_text(to_utf8(language));
+ 		languageCombobox-&gt;set_active(0);
+-		languageStart = 1;
++		unknownLanguagePos = 1;
+ 	}
+ 
+ 	// Add all supported languages
+@@ -169,10 +174,12 @@
+ 		string languageName(Languages::getIntlName(languageNum));
+ 
+ 		languageCombobox-&gt;append_text(to_utf8(languageName));
++		// Is this the language we are looking for ?
+ 		if ((m_notALanguageName == false) &amp;&amp;
+-			(languageName == language))
++			(strncasecmp(languageName.c_str(), language.c_str(),
++			min(languageName.length(), language.length())) == 0))
+ 		{
+-			languageCombobox-&gt;set_active(languageNum + languageStart);
++			languageCombobox-&gt;set_active(languageNum + unknownLanguagePos);
+ 			foundLanguage = true;
+ 		}
+ 	}
+@@ -181,8 +188,8 @@
+ 	if ((m_notALanguageName == false) &amp;&amp;
+ 		(foundLanguage == false))
+ 	{
+-		// Select the first language in the list
+-		languageCombobox-&gt;set_active(languageStart);
++		// The first language in the list should be unknown
++		languageCombobox-&gt;set_active(unknownLanguagePos);
+ 	}
+ }
+ 
+@@ -190,6 +197,7 @@
+ {
+ 	TreeModel::iterator iter;
+ 	TreeModel::Row row;
++	string labelsString;
+ 
+ 	// Populate the tree
+ 	set&lt;string&gt; &amp;sysLabels = PinotSettings::getInstance().m_labels;
+@@ -208,6 +216,7 @@
+ 		{
+ 			// Yup
+ 			row[m_labelsColumns.m_enabled] = true;
++			labelsString += labelName;
+ 			m_labels.insert(labelName);
+ 		}
+ 		else
+@@ -219,6 +228,9 @@
+ 	cout &lt;&lt; &quot;propertiesDialog::populate_labelsTreeview: showing &quot; &lt;&lt; docLabels.size()
+ 		&lt;&lt; &quot;/&quot; &lt;&lt; sysLabels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+ #endif
++
++	// This will help determining if changes were made
++	m_labelsHash = StringManip::hashString(labelsString);
+ }
+ 
+ void propertiesDialog::setHeight(int maxHeight)
+@@ -245,9 +257,19 @@
+ 	return m_labels;
+ }
+ 
++bool propertiesDialog::changedInfo(void) const
++{
++	return m_changedInfo;
++}
++
++bool propertiesDialog::changedLabels(void) const
++{
++	return m_changedLabels;
++}
++
+ void propertiesDialog::on_labelOkButton_clicked()
+ {
+-	string languageName(from_utf8(languageCombobox-&gt;get_active_text()));
++	string title, languageName(from_utf8(languageCombobox-&gt;get_active_text())), labelsString;
+ 	int unknownLanguagePos = 0;
+ 
+ 	// If only one document was edited, set its title
+@@ -255,15 +277,20 @@
+ 	{
+ 		vector&lt;DocumentInfo&gt;::iterator docIter = m_documentsList.begin();
+ 
+-		docIter-&gt;setTitle(from_utf8(titleEntry-&gt;get_text()));
++		title = from_utf8(titleEntry-&gt;get_text());
++		docIter-&gt;setTitle(title);
++		// FIXME: find out if changes were actually made 
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen title &quot; &lt;&lt; title &lt;&lt; endl;
++#endif
+ 
+ 	// Did we add an extra string to the languages list ?
++	int chosenLanguagePos = languageCombobox-&gt;get_active_row_number();
+ 	if (m_notALanguageName == true)
+ 	{
+ 		unknownLanguagePos = 1;
+ 	}
+-	int chosenLanguagePos = languageCombobox-&gt;get_active_row_number();
+ 	if (chosenLanguagePos == unknownLanguagePos)
+ 	{
+ 		languageName.clear();
+@@ -271,6 +298,14 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen language &quot; &lt;&lt; languageName &lt;&lt; endl;
+ #endif
++	string newInfoHash(StringManip::hashString(title + languageName));
++	if (newInfoHash != m_infoHash)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: properties changed&quot; &lt;&lt; endl;
++#endif
++		m_changedInfo = true;
++	}
+ 
+ 	// Go through the labels tree
+ 	m_labels.clear();
+@@ -285,6 +320,7 @@
+ 			if (enabled == true)
+ 			{
+ 				ustring labelName = row[m_labelsColumns.m_name];
++				labelsString += labelName;
+ 				m_labels.insert(from_utf8(labelName));
+ 			}
+ 		}
+@@ -292,6 +328,14 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen &quot; &lt;&lt; m_labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+ #endif
++	string newLabelsHash(StringManip::hashString(labelsString));
++	if (newLabelsHash != m_labelsHash)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: labels changed&quot; &lt;&lt; endl;
++#endif
++		m_changedLabels = true;
++	}
+ 
+ 	for (vector&lt;DocumentInfo&gt;::iterator docIter = m_documentsList.begin();
+ 		docIter != m_documentsList.end(); ++docIter)
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.hh	2007-10-23 14:43:39 UTC (rev 1068)
++++ trunk/UI/GTK2/src/propertiesDialog.hh	2007-10-23 14:52:05 UTC (rev 1069)
+@@ -40,6 +40,10 @@
+ 
+ 	const std::set&lt;std::string&gt; &amp;getLabels(void) const;
+ 
++	bool changedInfo(void) const;
++
++	bool changedLabels(void) const;
++
+ protected:
+ 	LabelModelColumns m_labelsColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelsTree;
+@@ -49,6 +53,10 @@
+ 	unsigned int m_docId;
+ 	bool m_notALanguageName;
+ 	bool m_editDocument;
++	std::string m_infoHash;
++	std::string m_labelsHash;
++	bool m_changedInfo;
++	bool m_changedLabels;
+ 
+ 	void populate_languageCombobox(const std::string &amp;language);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001062.html">[Pinot-svn] r1068 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="001064.html">[Pinot-svn] r1070 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1063">[ date ]</a>
+              <a href="thread.html#1063">[ thread ]</a>
+              <a href="subject.html#1063">[ subject ]</a>
+              <a href="author.html#1063">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,324 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r21 - in trunk: Index UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r21%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200512171155.jBHBtnH3021096%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000019.html">
+   <LINK REL="Next"  HREF="000021.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r21 - in trunk: Index UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r21%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200512171155.jBHBtnH3021096%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r21 - in trunk: Index UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Dec 17 12:55:49 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000019.html">[Pinot-svn] r20 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000021.html">[Pinot-svn] r22 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20">[ date ]</a>
+              <a href="thread.html#20">[ thread ]</a>
+              <a href="subject.html#20">[ subject ]</a>
+              <a href="author.html#20">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-17 12:55:43 +0100 (Sat, 17 Dec 2005)
+New Revision: 21
+
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Changed IndexInterface a bit, reintroduced hasLabel() so that whether documents
+match the current label can be shown in the index list.
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2005-12-17 11:02:30 UTC (rev 20)
++++ trunk/Index/IndexInterface.h	2005-12-17 11:55:43 UTC (rev 21)
+@@ -47,6 +47,9 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const = 0;
+ 
++		/// Determines whether a document has a label.
++		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const = 0;
++
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const = 0;
+ 
+@@ -84,10 +87,9 @@
+ 		/// Returns the number of documents.
+ 		virtual unsigned int getDocumentsCount(void) const = 0;
+ 
+-		/// Returns a list of document IDs.
+-		virtual unsigned int getDocumentIDs(std::set&lt;unsigned int&gt; &amp;docIDList,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0,
+-			bool sortByDate = false) const = 0;
++		/// Lists document IDs.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+ 
+ 	protected:
+ 		StemmingMode m_stemMode;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2005-12-17 11:02:30 UTC (rev 20)
++++ trunk/Index/XapianIndex.cpp	2005-12-17 11:55:43 UTC (rev 21)
+@@ -392,6 +392,54 @@
+ 	return foundDocument;
+ }
+ 
++/// Determines whether a document has a label.
++bool XapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
++{
++	bool foundLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;C&quot;);
++
++			// Get documents that have this label
++			// FIXME: would it be faster to get the document's terms ?
++			term += name;
++			Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++			if (postingIter != pIndex-&gt;postlist_end(term))
++			{
++				// Is this document in the list ?
++				postingIter.skip_to(docId);
++				if ((postingIter != pIndex-&gt;postlist_end(term)) &amp;&amp;
++					(docId == (*postingIter)))
++				{
++					foundLabel = true;
++				}
++			}
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't check document labels: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't check document labels, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return foundLabel;
++}
++
+ /// Returns a document's labels.
+ bool XapianIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
+ {
+@@ -959,9 +1007,9 @@
+ 	return docCount;
+ }
+ 
+-/// Returns a list of document IDs.
+-unsigned int XapianIndex::getDocumentIDs(set&lt;unsigned int&gt; &amp;docIds,
+-	unsigned int maxDocsCount, unsigned int startDoc, bool sortByDate) const
++/// Lists document IDs.
++unsigned int XapianIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
+ 	unsigned int docCount = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2005-12-17 11:02:30 UTC (rev 20)
++++ trunk/Index/XapianIndex.h	2005-12-17 11:55:43 UTC (rev 21)
+@@ -41,6 +41,9 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+ 
++		/// Determines whether a document has a label.
++		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
++
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+ 
+@@ -78,10 +81,9 @@
+ 		/// Returns the number of documents.
+ 		virtual unsigned int getDocumentsCount(void) const;
+ 
+-		/// Returns a list of document IDs.
+-		virtual unsigned int getDocumentIDs(std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0,
+-			bool sortByDate = false) const;
++		/// Lists document IDs.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+ 	protected:
+ 		static const unsigned int m_maxTermLength;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2005-12-17 11:02:30 UTC (rev 20)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2005-12-17 11:55:43 UTC (rev 21)
+@@ -214,7 +214,7 @@
+ 	cout &lt;&lt; &quot;IndexBrowserThread::do_browsing: &quot; &lt;&lt; m_maxDocsCount &lt;&lt; &quot; off &quot; &lt;&lt; m_indexDocsCount
+ 		&lt;&lt; &quot; documents to browse, starting at &quot; &lt;&lt; m_startDoc &lt;&lt; endl;
+ #endif
+-	index.getDocumentIDs(docIDList, m_maxDocsCount, m_startDoc);
++	index.listDocuments(docIDList, m_maxDocsCount, m_startDoc);
+ 	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+ 	{
+ 		if (m_done == true)
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2005-12-17 11:02:30 UTC (rev 20)
++++ trunk/UI/GTK2/src/mainWindow.cc	2005-12-17 11:55:43 UTC (rev 21)
+@@ -1226,6 +1226,8 @@
+ //
+ void mainWindow::on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, string indexName)
+ {
++	bool hasLabel = false;
++
+ 	if (indexName != locale_from_utf8(m_state.getCurrentIndex()))
+ 	{
+ 		// Ignore
+@@ -1246,15 +1248,25 @@
+ 		return;
+ 	}
+ 
+-	const std::map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
+-	std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
+-	if (mapIter == indexesMap.end())
++	// Does that document have the current label ?
++	string currentLabelName;
++	if (m_state.getCurrentLabel(currentLabelName) &gt; 0)
+ 	{
+-		return;
++		const std::map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
++		std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
++		if (mapIter != indexesMap.end())
++		{
++			XapianIndex index(mapIter-&gt;second);
++
++			if (index.isGood() == true)
++			{
++				hasLabel = index.hasLabel(docId, currentLabelName);
++			}
++		}
+ 	}
+ 
+ 	// Add a row
+-	if (m_pIndexTree-&gt;appendDocument(docInfo, true) == true)
++	if (m_pIndexTree-&gt;appendDocument(docInfo, hasLabel) == true)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;mainWindow::on_message_indexupdate: added document to index list&quot; &lt;&lt; endl;
+@@ -1681,10 +1693,11 @@
+ {
+ 	vector&lt;IndexedDocument&gt; documentsList;
+ 	set&lt;string&gt; docLabels;
++	string currentLabelName;
+ 	DocumentInfo docInfo;
+ 	unsigned int docId = 0;
+ 	int width, height;
+-	bool editTitle = false;
++	bool matchedLabel = false, editTitle = false;
+ 
+ 	const std::map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
+ 	std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(m_state.getCurrentIndex());	
+@@ -1721,6 +1734,13 @@
+ 		if (index.isGood() == true)
+ 		{
+ 			index.getDocumentLabels(docId, docLabels);
++
++			// Does it match the current label ?
++			if ((m_state.getCurrentLabel(currentLabelName) &gt; 0) &amp;&amp;
++				(find(docLabels.begin(), docLabels.end(), currentLabelName) != docLabels.end()))
++			{
++				matchedLabel = true;
++			}
+ 		}
+ 
+ 		docInfo = DocumentInfo(docIter-&gt;getTitle(), docIter-&gt;getOriginalLocation(),
+@@ -1755,12 +1775,29 @@
+ 	if ((documentsList.size() == 1) &amp;&amp;
+ 		(docId &gt; 0))
+ 	{
++		bool matchesLabel = false;
++
++		// Does the sole selected document match the current label now ?
++		if ((currentLabelName.empty() == false) &amp;&amp;
++			(find(labels.begin(), labels.end(), currentLabelName) != labels.end()))
++		{
++				matchesLabel = true;
++		}
++
++		// Was there any change ?
++		if (matchesLabel != matchedLabel)
++		{
++				// Update this document to the index tree
++				m_pIndexTree-&gt;setDocumentLabeledState(docId, matchesLabel);
++		}
++
++		// Did the title change ?
+ 		string newTitle = propertiesBox.getDocumentInfo().getTitle();
+ 		if (newTitle != docInfo.getTitle())
+ 		{
+ 			docInfo.setTitle(newTitle);
+ 			
+-			// Update the document's title
++			// Update the document
+ 			start_thread(new UpdateDocumentThread(m_state.getCurrentIndex(), docId, docInfo));
+ 		}
+ 	}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000019.html">[Pinot-svn] r20 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000021.html">[Pinot-svn] r22 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20">[ date ]</a>
+              <a href="thread.html#20">[ thread ]</a>
+              <a href="subject.html#20">[ subject ]</a>
+              <a href="author.html#20">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

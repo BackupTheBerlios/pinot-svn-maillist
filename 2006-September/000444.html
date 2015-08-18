@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r451 - trunk/Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r451%20-%20trunk/Tokenize&In-Reply-To=%3C200609020751.k827phbH019746%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000443.html">
+   <LINK REL="Next"  HREF="000445.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r451 - trunk/Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r451%20-%20trunk/Tokenize&In-Reply-To=%3C200609020751.k827phbH019746%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r451 - trunk/Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep  2 09:51:43 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000443.html">[Pinot-svn] r450 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000445.html">[Pinot-svn] r452 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#444">[ date ]</a>
+              <a href="thread.html#444">[ thread ]</a>
+              <a href="subject.html#444">[ subject ]</a>
+              <a href="author.html#444">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-02 09:51:42 +0200 (Sat, 02 Sep 2006)
+New Revision: 451
+
+Modified:
+   trunk/Tokenize/HtmlTokenizer.cpp
+   trunk/Tokenize/HtmlTokenizer.h
+Log:
+This wasn't thread-safe. xmlInitParser() shouldn't be called by each thread.
+Moreover the parsed document wasn't freed.
+
+
+Modified: trunk/Tokenize/HtmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.cpp	2006-09-02 03:42:09 UTC (rev 450)
++++ trunk/Tokenize/HtmlTokenizer.cpp	2006-09-02 07:51:42 UTC (rev 451)
+@@ -22,6 +22,7 @@
+ #include &lt;iostream&gt;
+ 
+ #include &quot;StringManip.h&quot;
++#include &quot;Url.h&quot;
+ #include &quot;XmlTokenizer.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+ 
+@@ -525,6 +526,16 @@
+ 	}
+ }
+ 
++void HtmlTokenizer::initialize(void)
++{
++	xmlInitParser();
++}
++
++void HtmlTokenizer::shutdown(void)
++{
++	xmlCleanupParser();
++}
++
+ bool HtmlTokenizer::parseHTML(const Document *pDocument)
+ {
+ 	if (pDocument == NULL)
+@@ -546,8 +557,6 @@
+ 	string htmlChunk(pData, dataLength);
+ 	htmlSAXHandler saxHandler;
+ 
+-	xmlInitParser();
+-
+ 	// Setup the SAX handler
+ 	memset((void*)&amp;saxHandler, 0, sizeof(htmlSAXHandler));
+ 	saxHandler.startElement = (startElementSAXFunc)&startHandler;
+@@ -575,17 +584,31 @@
+ #endif
+ 	}
+ 
+-#ifndef _DONT_USE_PUSH_INTERFACE
++#if 1
++#ifdef DEBUG
++	cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: &quot; &lt;&lt; pDocument-&gt;getLocation() &lt;&lt; endl;
++#endif
+ 	htmlParserCtxtPtr pContext = htmlCreatePushParserCtxt(&amp;saxHandler, (void*)&amp;m_state,
+ 		htmlChunk.c_str(), (int)htmlChunk.length(), &quot;&quot;, XML_CHAR_ENCODING_NONE);
+ 	if (pContext != NULL)
+ 	{
++		xmlCtxtUseOptions(pContext, 0);
++
+ 		// Parse
+ 		htmlParseChunk(pContext, htmlChunk.c_str(), (int)htmlChunk.length(), 0);
+ 
+ 		// Free
+-		htmlParseChunk(pContext, NULL, 0, 1);
+-		htmlFreeParserCtxt(pContext);
++		htmlParseChunk(pContext, htmlChunk.c_str(), 0, 1);
++		xmlDocPtr pDoc = pContext-&gt;myDoc;
++		int ret = pContext-&gt;wellFormed;
++		xmlFreeParserCtxt(pContext);
++		if (!ret)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: freeing document&quot; &lt;&lt; endl;
++#endif
++			xmlFreeDoc(pDoc);
++		}
+ 	}
+ #else
+ 	htmlDocPtr pDoc = htmlSAXParseDoc((xmlChar *)htmlChunk.c_str(), &quot;&quot;, &amp;saxHandler, (void*)&amp;m_state);
+@@ -598,7 +621,6 @@
+ 	{
+ 		cerr &lt;&lt; &quot;HtmlTokenizer::parseHTML: couldn't create parser context&quot; &lt;&lt; endl;
+ 	}
+-	xmlCleanupParser();
+ 
+ 	// The text after the last link might make a good abstract
+ 	if (m_state.m_findAbstract == true)
+
+Modified: trunk/Tokenize/HtmlTokenizer.h
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.h	2006-09-02 03:42:09 UTC (rev 450)
++++ trunk/Tokenize/HtmlTokenizer.h	2006-09-02 07:51:42 UTC (rev 451)
+@@ -51,6 +51,12 @@
+ 			bool validateOnly, bool findAbstract = false);
+ 		virtual ~HtmlTokenizer();
+ 
++		/// Initializes the HTML tokenizer.
++		static void initialize(void);
++
++		/// Shutdowns the HTML tokenizer.
++		static void shutdown(void);
++
+ 		/// Determines whether the document is properly formed.
+ 		bool isDocumentValid(void) const;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000443.html">[Pinot-svn] r450 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000445.html">[Pinot-svn] r452 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#444">[ date ]</a>
+              <a href="thread.html#444">[ thread ]</a>
+              <a href="subject.html#444">[ subject ]</a>
+              <a href="author.html#444">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

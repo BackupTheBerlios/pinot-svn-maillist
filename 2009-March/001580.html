@@ -1,0 +1,320 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1590 - in trunk: Core UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1590%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C200903211100.n2LB0kvO011463%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001579.html">
+   <LINK REL="Next"  HREF="001581.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1590 - in trunk: Core UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1590%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C200903211100.n2LB0kvO011463%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1590 - in trunk: Core UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 21 12:00:46 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001579.html">[Pinot-svn] r1589 - in trunk: . Utils
+</A></li>
+        <LI>Next message: <A HREF="001581.html">[Pinot-svn] r1591 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1580">[ date ]</a>
+              <a href="thread.html#1580">[ thread ]</a>
+              <a href="subject.html#1580">[ subject ]</a>
+              <a href="author.html#1580">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-21 12:00:39 +0100 (Sat, 21 Mar 2009)
+New Revision: 1590
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+Set the number of daemon's indexing threads to 2, unless overriden with the
+environment variable PINOT_MAXIMUM_INDEX_THREADS.
+Changed flushing again, this time to happen when the queue is empty. This means
+that the index will be flushed when everything has been indexed.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-03-21 05:03:11 UTC (rev 1589)
++++ trunk/Core/DaemonState.cpp	2009-03-21 11:00:39 UTC (rev 1590)
+@@ -17,7 +17,9 @@
+  */
+ 
+ #include &quot;config.h&quot;
++#include &lt;string.h&gt;
+ #include &lt;strings.h&gt;
++#include &lt;stdlib.h&gt;
+ #include &lt;sys/types.h&gt;
+ #include &lt;dirent.h&gt;
+ #include &lt;sys/stat.h&gt;
+@@ -308,7 +310,7 @@
+ #endif
+ 
+ DaemonState::DaemonState() :
+-	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 10),
++	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 2),
+ 	m_fullScan(false),
+ 	m_isReindex(false),
+ 	m_reload(false),
+@@ -319,6 +321,19 @@
+ {
+ 	FD_ZERO(&amp;m_flagsSet);
+ 
++	// Override the number of indexing threads ?
++	char *pEnvVar = getenv(&quot;PINOT_MAXIMUM_INDEX_THREADS&quot;);
++	if ((pEnvVar != NULL) &amp;&amp;
++		(strlen(pEnvVar) &gt; 0))
++	{
++		int threadsNum = atoi(pEnvVar);
++
++		if (threadsNum &gt; 0)
++		{
++			m_maxIndexThreads = (unsigned int)threadsNum;
++		}
++	}
++
+ 	// Check disk usage every minute
+ 	m_timeoutConnection = Glib::signal_timeout().connect(sigc::mem_fun(*this,
+ 		&amp;DaemonState::on_activity_timeout), 60000);
+@@ -599,6 +614,7 @@
+ void DaemonState::on_thread_end(WorkerThread *pThread)
+ {
+ 	string indexedUrl;
++	bool emptyQueue = false;
+ 
+ 	if (pThread == NULL)
+ 	{
+@@ -749,48 +765,53 @@
+ 	delete pThread;
+ 
+ 	// Wait until there are no threads running (except background ones)
+-	// to flush the index or reload the configuration
+-	if (get_threads_count() == 0)
++	// to reload the configuration
++	if ((m_reload == true) &amp;&amp;
++		(get_threads_count() == 0))
+ 	{
+-		if (m_flush == true)
+-		{
+-			m_flush = false;
+-
+-			IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+-			if (pIndex != NULL)
+-			{
+-				pIndex-&gt;flush();
+-
+-				delete pIndex;
+-			}
+-		}
+-
+-		if (m_reload == true)
+-		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;DaemonState::on_thread_end: stopping all threads&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;DaemonState::on_thread_end: stopping all threads&quot; &lt;&lt; endl;
+ #endif
+-			// Stop background threads
+-			stop_threads();
+-			// ...clear the queues
+-			clear_queues();
++		// Stop background threads
++		stop_threads();
++		// ...clear the queues
++		clear_queues();
+ 
+-			// Reload
+-			PinotSettings &amp;settings = PinotSettings::getInstance();
+-			settings.clear();
+-			settings.load(PinotSettings::LOAD_ALL);
+-			m_reload = false;
++		// Reload
++		PinotSettings &amp;settings = PinotSettings::getInstance();
++		settings.clear();
++		settings.load(PinotSettings::LOAD_ALL);
++		m_reload = false;
+ 
+-			// ...and restart everything 
+-			start(true, false);
+-		}
++		// ...and restart everything 
++		start(true, false);
+ 	}
+ 
+ 	// Try to run a queued action unless threads were stopped
+ 	if (isStopped == false)
+ 	{
+-		pop_queue(indexedUrl);
++		emptyQueue = pop_queue(indexedUrl);
+ 	}
++
++	// Wait until there are no threads running (except background ones)
++	// and the queue is empty to flush the index
++	if ((m_flush == true) &amp;&amp;
++		(emptyQueue == true) &amp;&amp;
++		(get_threads_count() == 0))
++	{
++		m_flush = false;
++
++		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++		if (pIndex != NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DaemonState::on_thread_end: flushing&quot; &lt;&lt; endl;
++#endif
++			pIndex-&gt;flush();
++
++			delete pIndex;
++		}
++	}
+ }
+ 
+ void DaemonState::on_message_filefound(DocumentInfo docInfo, bool isDirectory)
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2009-03-21 05:03:11 UTC (rev 1589)
++++ trunk/Core/WorkerThreads.cpp	2009-03-21 11:00:39 UTC (rev 1590)
+@@ -688,7 +688,7 @@
+ bool ThreadsManager::pop_queue(const string &amp;urlWasIndexed)
+ {
+ 	bool getItem = true;
+-	bool foundItem = false;
++	bool emptyQueue = false;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ThreadsManager::pop_queue: called&quot; &lt;&lt; endl;
+@@ -723,6 +723,9 @@
+ 			DocumentInfo docInfo;
+ 			string previousLocation;
+ 
++			// Assume the queue is empty
++			emptyQueue = true;
++
+ 			while (actionQueue.popItem(type, docInfo) == true)
+ 			{
+ 				ustring status;
+@@ -732,6 +735,9 @@
+ 					continue;
+ 				}
+ 
++				// The queue isn't actually empty
++				emptyQueue = false;
++
+ 				if (docInfo.getLocation() == previousLocation)
+ 				{
+ 					// Something dodgy is going on, we got the same item twice !
+@@ -746,7 +752,6 @@
+ 
+ 				if (status.empty() == true)
+ 				{
+-					foundItem = true;
+ 					break;
+ 				}
+ 
+@@ -755,7 +760,7 @@
+ 		}
+ 	}
+ 
+-	return foundItem;
++	return emptyQueue;
+ }
+ 
+ ListerThread::ListerThread(const PinotSettings::IndexProperties &amp;indexProps,
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2009-03-21 05:03:11 UTC (rev 1589)
++++ trunk/UI/GTK2/src/mainWindow.cc	2009-03-21 11:00:39 UTC (rev 1590)
+@@ -91,7 +91,6 @@
+ 
+ // FIXME: this ought to be configurable
+ unsigned int mainWindow::m_maxDocsCount = 100;
+-unsigned int mainWindow::m_maxIndexThreads = 2;
+ 
+ mainWindow::ExpandSet::ExpandSet()
+ {
+@@ -101,8 +100,8 @@
+ {
+ }
+ 
+-mainWindow::InternalState::InternalState(unsigned int maxIndexThreads, mainWindow *pWindow) :
+-	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads, 60, true),
++mainWindow::InternalState::InternalState(mainWindow *pWindow) :
++	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, 2, 60, true),
+ 	m_liveQueryLength(0),
+ 	m_currentPage(0),
+ 	m_browsingIndex(false)
+@@ -127,7 +126,7 @@
+ 	m_pFindMenu(NULL),
+ 	m_pSettingsMonitor(MonitorFactory::getMonitor()),
+ 	m_pSettingsHandler(NULL),
+-	m_state(m_maxIndexThreads, this)
++	m_state(this)
+ {
+ 	// Reposition and resize the window
+ 	// Make sure the coordinates and sizes make sense
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2009-03-21 05:03:11 UTC (rev 1589)
++++ trunk/UI/GTK2/src/mainWindow.hh	2009-03-21 11:00:39 UTC (rev 1590)
+@@ -187,7 +187,7 @@
+ 	class InternalState : public ThreadsManager
+ 	{
+ 		public:
+-			InternalState(unsigned int maxIndexThreads, mainWindow *pWindow);
++			InternalState(mainWindow *pWindow);
+ 			virtual ~InternalState();
+ 
+ 			// Query
+@@ -199,7 +199,6 @@
+ 
+ 	} m_state;
+ 	static unsigned int m_maxDocsCount;
+-	static unsigned int m_maxIndexThreads;
+ 
+ };
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001579.html">[Pinot-svn] r1589 - in trunk: . Utils
+</A></li>
+	<LI>Next message: <A HREF="001581.html">[Pinot-svn] r1591 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1580">[ date ]</a>
+              <a href="thread.html#1580">[ thread ]</a>
+              <a href="subject.html#1580">[ subject ]</a>
+              <a href="author.html#1580">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

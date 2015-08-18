@@ -1,0 +1,1304 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1502 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1502%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901221322.n0MDMOB9014953%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001491.html">
+   <LINK REL="Next"  HREF="001493.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1502 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1502%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901221322.n0MDMOB9014953%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1502 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan 22 14:22:24 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001491.html">[Pinot-svn] r1501 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001493.html">[Pinot-svn] r1503 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1492">[ date ]</a>
+              <a href="thread.html#1492">[ thread ]</a>
+              <a href="subject.html#1492">[ subject ]</a>
+              <a href="author.html#1492">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-22 14:22:13 +0100 (Thu, 22 Jan 2009)
+New Revision: 1502
+
+Modified:
+   trunk/UI/GTK2/src/EnginesTree.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/indexDialog.cc
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+The PinotSettings::IndexProperties encapsulates an index properties and
+side-steps issues experienced with manipulating and looking up index names in
+non-Latin locales.
+
+
+Modified: trunk/UI/GTK2/src/EnginesTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/EnginesTree.cpp	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/EnginesTree.cpp	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -303,8 +303,8 @@
+ 		std::set&lt;ModuleProperties&gt;::const_iterator engineIter = engines.begin();
+ 		for (; engineIter != engines.end(); ++engineIter)
+ 		{
+-			string engineType(engineIter-&gt;m_name);
+-			string engineName(engineIter-&gt;m_longName);
++			ustring engineType(to_utf8(engineIter-&gt;m_name));
++			ustring engineName(to_utf8(engineIter-&gt;m_longName));
+ 
+ 			if (ModuleFactory::isSupported(engineType, true) == true)
+ 			{
+@@ -315,8 +315,8 @@
+ 			TreeModel::iterator iter = m_refStore-&gt;append(folderIter-&gt;children());
+ 			row = *iter;
+ 
+-			row[m_enginesColumns.m_name] = to_utf8(engineName);
+-			row[m_enginesColumns.m_engineName] = to_utf8(engineType);
++			row[m_enginesColumns.m_name] = engineName;
++			row[m_enginesColumns.m_engineName] = engineType;
+ 			row[m_enginesColumns.m_option] = engineIter-&gt;m_option;
+ 			row[m_enginesColumns.m_type] = EnginesModelColumns::WEB_ENGINE;
+ #ifdef DEBUG
+@@ -348,23 +348,21 @@
+ 	}
+ 
+ 	// Local engines
+-	std::map&lt;std::string, std::string&gt;::const_iterator indexIter = m_settings.getIndexes().begin();
+-	for (; indexIter != m_settings.getIndexes().end(); ++indexIter)
++	for (set&lt;PinotSettings::IndexProperties&gt;::const_iterator indexIter = m_settings.getIndexes().begin();
++		indexIter != m_settings.getIndexes().end(); ++indexIter)
+ 	{
+-		ustring indexName(indexIter-&gt;first);
+ 		EnginesModelColumns::EngineType indexType = EnginesModelColumns::INDEX_ENGINE;
+ 
+-		if ((indexName == _(&quot;My Web Pages&quot;)) ||
+-			(indexName == _(&quot;My Documents&quot;)))
++		if (indexIter-&gt;m_internal == true)
+ 		{
+ 			indexType = EnginesModelColumns::INTERNAL_INDEX_ENGINE;
+ 		}
+ 
+ 		TreeModel::iterator iter = m_refStore-&gt;append(localIter-&gt;children());
+ 		TreeModel::Row childRow = *iter;
+-		childRow[m_enginesColumns.m_name] = indexName;
++		childRow[m_enginesColumns.m_name] = indexIter-&gt;m_name;
+ 		childRow[m_enginesColumns.m_engineName] = m_settings.m_defaultBackend;
+-		childRow[m_enginesColumns.m_option] = indexIter-&gt;second;
++		childRow[m_enginesColumns.m_option] = indexIter-&gt;m_location;
+ 		childRow[m_enginesColumns.m_type] = indexType;
+ 	}
+ 
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -318,8 +318,7 @@
+ 	m_cacheProtocols.clear();
+ 
+ 	m_firstRun = false;
+-	m_indexNames.clear();
+-	m_indexIds.clear();
++	m_indexes.clear();
+ 	m_indexCount = 0;
+ 	m_engines.clear();
+ 	m_engineIds.clear();
+@@ -421,8 +420,8 @@
+ 	}
+ 
+ 	// Internal indices
+-	addIndex(_(&quot;My Web Pages&quot;), m_docsIndexLocation);
+-	addIndex(_(&quot;My Documents&quot;), m_daemonIndexLocation);
++	addIndex(_(&quot;My Web Pages&quot;), m_docsIndexLocation, true);
++	addIndex(_(&quot;My Documents&quot;), m_daemonIndexLocation, true);
+ 
+ 	if (m_firstRun == true)
+ 	{
+@@ -547,7 +546,7 @@
+ 	return true;
+ }
+ 
+-bool PinotSettings::loadConfiguration(const std::string &amp;fileName, bool isGlobal)
++bool PinotSettings::loadConfiguration(const string &amp;fileName, bool isGlobal)
+ {
+ 	struct stat fileStat;
+ 	bool success = true;
+@@ -821,7 +820,7 @@
+ 	if ((indexName.empty() == false) &amp;&amp;
+ 		(indexLocation.empty() == false))
+ 	{
+-		addIndex(indexName, indexLocation);
++		addIndex(indexName, indexLocation, false);
+ 	}
+ 
+ 	return true;
+@@ -1496,11 +1495,9 @@
+ 			addChildElement(pElem, &quot;expandqueries&quot;, (m_expandQueries ? &quot;YES&quot; : &quot;NO&quot;));
+ 			addChildElement(pElem, &quot;showengines&quot;, (m_showEngines ? &quot;YES&quot; : &quot;NO&quot;));
+ 			// User-defined indexes
+-			for (map&lt;string, string&gt;::iterator indexIter = m_indexNames.begin(); indexIter != m_indexNames.end(); ++indexIter)
++			for (set&lt;IndexProperties&gt;::iterator indexIter = m_indexes.begin(); indexIter != m_indexes.end(); ++indexIter)
+ 			{
+-				string indexName = indexIter-&gt;first;
+-
+-				if (isInternalIndex(indexName) == true)
++				if (indexIter-&gt;m_internal == true)
+ 				{
+ 					continue;
+ 				}
+@@ -1510,8 +1507,8 @@
+ 				{
+ 					return false;
+ 				}
+-				addChildElement(pElem, &quot;name&quot;, indexIter-&gt;first);
+-				addChildElement(pElem, &quot;location&quot;, indexIter-&gt;second);
++				addChildElement(pElem, &quot;name&quot;, indexIter-&gt;m_name);
++				addChildElement(pElem, &quot;location&quot;, indexIter-&gt;m_location);
+ 			}
+ 			// Engine channels
+ 			for (map&lt;string, bool&gt;::iterator channelIter = m_engineChannels.begin();
+@@ -1656,63 +1653,34 @@
+ 	return true;
+ }
+ 
+-/// Returns the indexes map, keyed by name.
+-const map&lt;string, string&gt; &amp;PinotSettings::getIndexes(void) const
++/// Returns the indexes set.
++const set&lt;PinotSettings::IndexProperties&gt; &amp;PinotSettings::getIndexes(void) const
+ {
+-	return m_indexNames;
++	return m_indexes;
+ }
+ 
+-/// Returns true if the given index is internal.
+-bool PinotSettings::isInternalIndex(const string &amp;name) const
+-{
+-	if ((name == _(&quot;My Web Pages&quot;)) ||
+-		(name == _(&quot;My Documents&quot;)))
+-	{
+-		return true;
+-	}
+-
+-	return false;		
+-}
+-
+ /// Adds a new index.
+-bool PinotSettings::addIndex(const string &amp;name, const string &amp;location)
++bool PinotSettings::addIndex(const ustring &amp;name, const string &amp;location, bool isInternal)
+ {
+-	map&lt;string, string&gt;::iterator namesMapIter = m_indexNames.find(name);
+-	if (namesMapIter == m_indexNames.end())
+-	{
+-		// Okay, no such index exists
+-		m_indexIds[1 &lt;&lt; m_indexCount] = name;
+-		m_indexNames[name] = location;
++	unsigned int indexId(1 &lt;&lt; m_indexCount);
++	m_indexes.insert(IndexProperties(name, location, indexId, isInternal));
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;PinotSettings::addIndex: index &quot; &lt;&lt; m_indexCount &lt;&lt; &quot; is &quot; &lt;&lt; name &lt;&lt; endl;
++	cout &lt;&lt; &quot;PinotSettings::addIndex: index &quot; &lt;&lt; m_indexCount &lt;&lt; &quot; is &quot; &lt;&lt; name &lt;&lt; &quot; with ID &quot; &lt;&lt; indexId &lt;&lt; endl;
+ #endif
+-		++m_indexCount;
++	++m_indexCount;
+ 
+-		return true;
+-	}
+-
+-	return false;
++	return true;
+ }
+ 
+ /// Removes an index.
+-bool PinotSettings::removeIndex(const string &amp;name)
++bool PinotSettings::removeIndex(const IndexProperties &amp;indexProps)
+ {
+ 	// Remove from the names map
+-	map&lt;string, string&gt;::iterator namesMapIter = m_indexNames.find(name);
+-	if (namesMapIter != m_indexNames.end())
++	set&lt;IndexProperties&gt;::iterator namesMapIter = m_indexes.find(indexProps);
++	if (namesMapIter != m_indexes.end())
+ 	{
+-		m_indexNames.erase(namesMapIter);
++		m_indexes.erase(namesMapIter);
+ 
+-		// Remove from the IDs map
+-		for (map&lt;unsigned int, string&gt;::iterator idsMapIter = m_indexIds.begin();
+-			idsMapIter != m_indexIds.end(); ++idsMapIter)
+-		{
+-			if (idsMapIter-&gt;second == name)
+-			{
+-				m_indexIds.erase(idsMapIter);
+-			}
+-		}
+-
+ 		return true;
+ 	}
+ 
+@@ -1722,49 +1690,47 @@
+ /// Clears the indexes map.
+ void PinotSettings::clearIndexes(void)
+ {
+-	// Clear both maps, reinsert the internal index
+-	m_indexNames.clear();
+-	m_indexIds.clear();
++	// Clear and reinsert the internal indexes
++	m_indexes.clear();
+ 	m_indexCount = 0;
+-	addIndex(_(&quot;My Web Pages&quot;), m_docsIndexLocation);
+-	addIndex(_(&quot;My Documents&quot;), m_daemonIndexLocation);
++	addIndex(_(&quot;My Web Pages&quot;), m_docsIndexLocation, true);
++	addIndex(_(&quot;My Documents&quot;), m_daemonIndexLocation, true);
+ }
+ 
+-/// Returns an ID that identifies the given index.
+-unsigned int PinotSettings::getIndexIdByName(const std::string &amp;name)
++/// Returns properties of the given index.
++PinotSettings::IndexProperties PinotSettings::getIndexPropertiesByName(const string &amp;name) const
+ {
+ 	unsigned int indexId = 0;
+ 
+-	for (map&lt;unsigned int, string&gt;::iterator mapIter = m_indexIds.begin();
+-		mapIter != m_indexIds.end(); ++mapIter)
++	for (set&lt;IndexProperties&gt;::const_iterator propsIter = m_indexes.begin();
++		propsIter != m_indexes.end(); ++propsIter)
+ 	{
+-		if (mapIter-&gt;second == name)
++		if (propsIter-&gt;m_name == name)
+ 		{
+-			indexId = mapIter-&gt;first;
+-			break;
++			return *propsIter;
+ 		}
+ 	}
+ 
+-	return indexId;
++	return IndexProperties();
+ }
+ 
+-/// Returns an ID that identifies the given index.
+-unsigned int PinotSettings::getIndexIdByLocation(const std::string &amp;location)
++/// Returns properties of the given index.
++PinotSettings::IndexProperties PinotSettings::getIndexPropertiesByLocation(const string &amp;location) const
+ {
+-	for (map&lt;string, string&gt;::iterator mapIter = m_indexNames.begin();
+-		mapIter != m_indexNames.end(); ++mapIter)
++	for (set&lt;IndexProperties&gt;::const_iterator propsIter = m_indexes.begin();
++		propsIter != m_indexes.end(); ++propsIter)
+ 	{
+-		if (mapIter-&gt;second == location)
++		if (propsIter-&gt;m_location == location)
+ 		{
+-			return getIndexIdByName(mapIter-&gt;first);
++			return *propsIter;
+ 		}
+ 	}
+ 
+-	return 0;
++	return IndexProperties();
+ }
+ 
+ /// Returns the name(s) for the given ID.
+-void PinotSettings::getIndexNames(unsigned int id, std::set&lt;std::string&gt; &amp;names)
++void PinotSettings::getIndexNames(unsigned int id, set&lt;string&gt; &amp;names)
+ {
+ 	names.clear();
+ 
+@@ -1779,14 +1745,17 @@
+ 	{
+ 		if (id &amp; indexId)
+ 		{
+-			map&lt;unsigned int, string&gt;::iterator mapIter = m_indexIds.find(indexId);
+-			if (mapIter != m_indexIds.end())
++			for (set&lt;IndexProperties&gt;::const_iterator propsIter = m_indexes.begin();
++				propsIter != m_indexes.end(); ++propsIter)
+ 			{
++				if (propsIter-&gt;m_id == indexId)
++				{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;PinotSettings::getIndexNames: index &quot; &lt;&lt; indexId &lt;&lt; &quot; is &quot; &lt;&lt; mapIter-&gt;second &lt;&lt; endl;
++					cout &lt;&lt; &quot;PinotSettings::getIndexNames: index &quot; &lt;&lt; indexId &lt;&lt; &quot; is &quot; &lt;&lt; propsIter-&gt;m_name &lt;&lt; endl;
+ #endif
+-				// Get the associated name
+-				names.insert(mapIter-&gt;second);
++					// Get the associated name
++					names.insert(propsIter-&gt;m_name);
++				}
+ 			}
+ 		}
+ 		// Shift to the right
+@@ -2123,3 +2092,78 @@
+ 
+ 	return false;
+ }
++
++PinotSettings::IndexProperties::IndexProperties() :
++	m_id(0),
++	m_internal(false)
++{
++}
++
++PinotSettings::IndexProperties::IndexProperties(const ustring &amp;name,
++	const string &amp;location, unsigned int id, bool isInternal) :
++	m_name(name),
++	m_location(location),
++	m_id(id),
++	m_internal(isInternal)
++{
++}
++
++PinotSettings::IndexProperties::IndexProperties(const IndexProperties &amp;other) :
++	m_name(other.m_name),
++	m_location(other.m_location),
++	m_id(other.m_id),
++	m_internal(other.m_internal)
++{
++}
++
++PinotSettings::IndexProperties::~IndexProperties()
++{
++}
++
++PinotSettings::IndexProperties&amp; PinotSettings::IndexProperties::operator=(const IndexProperties &amp;other)
++{
++	if (this != &amp;other)
++	{
++		m_name = other.m_name;
++		m_location = other.m_location;
++		m_id = other.m_id;
++		m_internal = other.m_internal;
++	}
++
++	return *this;
++}
++
++bool PinotSettings::IndexProperties::operator&lt;(const IndexProperties &amp;other) const
++{
++	if (m_id &lt; other.m_id)
++	{
++		return true;
++	}
++	else if (m_id == other.m_id)
++	{
++		if (m_name &lt; other.m_name)
++		{
++			return true;
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;PinotSettings::IndexProperties::operator&lt;: &quot; &lt;&lt; m_id &lt;&lt; &quot;/&quot; &lt;&lt; m_name
++		&lt;&lt; &quot; more than &quot; &lt;&lt; other.m_id &lt;&lt; &quot;/&quot; &lt;&lt; other.m_name &lt;&lt; endl;
++#endif
++
++	return false;
++}
++
++bool PinotSettings::IndexProperties::operator==(const IndexProperties &amp;other) const
++{
++	if (m_id == other.m_id)
++	{
++		return true;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;PinotSettings::IndexProperties::operator==: &quot; &lt;&lt; m_id &lt;&lt; &quot;/&quot; &lt;&lt; m_name
++		&lt;&lt; &quot; not equal to &quot; &lt;&lt; other.m_id &lt;&lt; &quot;/&quot; &lt;&lt; other.m_name &lt;&lt; endl;
++#endif
++
++	return false;
++}
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/PinotSettings.h	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -41,6 +41,27 @@
+ 
+ 		typedef enum { SAVE_PREFS = 0, SAVE_CONFIG } SaveWhat;
+ 
++		class IndexProperties
++		{
++			public:
++				IndexProperties();
++				IndexProperties(const Glib::ustring &amp;name,
++		                        const std::string &amp;location,
++					unsigned int id, bool isInternal);
++				IndexProperties(const IndexProperties &amp;other);
++				virtual ~IndexProperties();
++
++				IndexProperties&amp; operator=(const IndexProperties &amp;other);
++				bool operator&lt;(const IndexProperties &amp;other) const;
++				bool operator==(const IndexProperties &amp;other) const;
++
++				Glib::ustring m_name;
++				std::string m_location;
++				unsigned int m_id;
++				bool m_internal;
++
++		};
++
+ 		static PinotSettings &amp;getInstance(void);
+ 
+ 		static bool enableClientMode(bool enable);
+@@ -65,26 +86,24 @@
+ 
+ 		bool save(SaveWhat what);
+ 
+-		/// Returns the indexes map, keyed by name.
+-		const std::map&lt;std::string, std::string&gt; &amp;getIndexes(void) const;
++		/// Returns the indexes set.
++		const std::set&lt;IndexProperties&gt; &amp;getIndexes(void) const;
+ 
+-		/// Returns true if the given index is internal.
+-		bool isInternalIndex(const string &amp;name) const;
+-
+ 		/// Adds a new index.
+-		bool addIndex(const std::string &amp;name, const std::string &amp;location);
++		bool addIndex(const Glib::ustring &amp;name, const std::string &amp;location,
++			bool isInternal = false);
+ 
+ 		/// Removes an index.
+-		bool removeIndex(const std::string &amp;name);
++		bool removeIndex(const IndexProperties &amp;indexProps);
+ 
+ 		/// Clears the indexes map.
+ 		void clearIndexes(void);
+ 
+-		/// Returns an ID that identifies the given index.
+-		unsigned int getIndexIdByName(const std::string &amp;name);
++		/// Returns properties of the given index.
++		IndexProperties getIndexPropertiesByName(const std::string &amp;name) const;
+ 
+-		/// Returns an ID that identifies the given index.
+-		unsigned int getIndexIdByLocation(const std::string &amp;location);
++		/// Returns properties of the given index.
++		IndexProperties getIndexPropertiesByLocation(const std::string &amp;location) const;
+ 
+ 		/// Returns the name(s) for the given ID.
+ 		void getIndexNames(unsigned int id, std::set&lt;std::string&gt; &amp;names);
+@@ -190,8 +209,7 @@
+ 		static PinotSettings m_instance;
+ 		static bool m_clientMode;
+ 		bool m_firstRun;
+-		std::map&lt;std::string, std::string&gt; m_indexNames;
+-		std::map&lt;unsigned int, std::string&gt; m_indexIds;
++		std::set&lt;IndexProperties&gt; m_indexes;
+ 		unsigned int m_indexCount;
+ 		std::set&lt;ModuleProperties&gt; m_engines;
+ 		std::map&lt;unsigned int, std::string&gt; m_engineIds;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -491,11 +491,11 @@
+ 		if (engineId == 0)
+ 		{
+ 			// Chances are this engine is an index
+-			std::map&lt;string, string&gt;::const_iterator mapIter = m_settings.getIndexes().find(engineName);
+-			if (mapIter != m_settings.getIndexes().end())
++			PinotSettings::IndexProperties indexProps = m_settings.getIndexPropertiesByName(engineName);
++			if (indexProps.m_location.empty() == false)
+ 			{
+ 				// Yes, it is
+-				indexId = m_settings.getIndexIdByName(engineName);
++				indexId = indexProps.m_id;
+ 				engineId = m_settings.getEngineId(m_settings.m_defaultBackend);
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;ResultsTree::addResults: engine is index &quot; &lt;&lt; engineName &lt;&lt; &quot; &quot; &lt;&lt; indexId &lt;&lt; &quot; &quot; &lt;&lt; engineId &lt;&lt; endl;
+@@ -600,7 +600,7 @@
+ 
+ 		++count;
+ 
+-		// We already got indexId from PinotSettings::getIndexIdByName()
++		// We already got indexId from PinotSettings
+ 		unsigned int docIndexId = 0;
+ 		unsigned int docId = resultIter-&gt;getIsIndexed(docIndexId);
+ 		bool isIndexed = false;
+@@ -806,7 +806,7 @@
+ 						// Erase this
+ 						engineNames.erase(backendIter);
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;ResultsTree::setGroupMode: row is for index(es)&quot; &lt;&lt; indexIds &lt;&lt; endl;
++						cout &lt;&lt; &quot;ResultsTree::setGroupMode: row is for index(es) &quot; &lt;&lt; indexIds &lt;&lt; endl;
+ #endif
+ 
+ 						// Add entries for each index name so that we can loop once on engine names
+@@ -833,8 +833,8 @@
+ 						if (engineId == 0)
+ 						{
+ 							// This is actually an index, not an engine...
+-							indexId = m_settings.getIndexIdByName(engineName);
+-							if (indexId &gt; 0)
++							PinotSettings::IndexProperties indexProps = m_settings.getIndexPropertiesByName(engineName);
++							if (indexProps.m_location.empty() == false)
+ 							{
+ 								engineId = m_settings.getEngineId(m_settings.m_defaultBackend);
+ 							}
+@@ -962,12 +962,13 @@
+ 				// Any internal index in there ?
+ 				for (set&lt;string&gt;::iterator indexIter = indexNames.begin(); indexIter != indexNames.end(); ++indexIter)
+ 				{
+-					if  (m_settings.isInternalIndex(*indexIter) == true)
++					PinotSettings::IndexProperties indexProps = m_settings.getIndexPropertiesByName(*indexIter);
++					if (indexProps.m_internal == true)
+ 					{
+ #ifdef DEBUG
+ 						cout &lt;&lt; &quot;ResultsTree::getSelection: result in internal index &quot; &lt;&lt; *indexIter &lt;&lt; endl;
+ #endif
+-						current.setIsIndexed(m_settings.getIndexIdByName(*indexIter), row[m_resultsColumns.m_docId]);
++						current.setIsIndexed(indexProps.m_id, row[m_resultsColumns.m_docId]);
+ 						break;
+ 					}
+ 				}
+@@ -1124,11 +1125,11 @@
+ 	if (engineId == 0)
+ 	{
+ 		// Chances are this engine is an index
+-		std::map&lt;string, string&gt;::const_iterator mapIter = m_settings.getIndexes().find(engineName);
+-		if (mapIter != m_settings.getIndexes().end())
++		PinotSettings::IndexProperties indexProps = m_settings.getIndexPropertiesByName(engineName);
++		if (indexProps.m_location.empty() == false)
+ 		{
+ 			// Yes, it is
+-			indexId = m_settings.getIndexIdByName(engineName);
++			indexId = indexProps.m_id;
+ 			engineId = m_settings.getEngineId(m_settings.m_defaultBackend);
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -747,9 +747,10 @@
+ 	return foundItem;
+ }
+ 
+-ListerThread::ListerThread(const string &amp;indexName, unsigned int startDoc) :
++ListerThread::ListerThread(const PinotSettings::IndexProperties &amp;indexProps,
++	unsigned int startDoc) :
+ 	WorkerThread(),
+-	m_indexName(indexName),
++	m_indexProps(indexProps),
+ 	m_startDoc(startDoc),
+ 	m_documentsCount(0)
+ {
+@@ -764,9 +765,9 @@
+ 	return &quot;ListerThread&quot;;
+ }
+ 
+-string ListerThread::getIndexName(void) const
++PinotSettings::IndexProperties ListerThread::getIndexProperties(void) const
+ {
+-	return m_indexName;
++	return m_indexProps;
+ }
+ 
+ unsigned int ListerThread::getStartDoc(void) const
+@@ -784,9 +785,9 @@
+ 	return m_documentsCount;
+ }
+ 
+-IndexBrowserThread::IndexBrowserThread(const string &amp;indexName,
++IndexBrowserThread::IndexBrowserThread(const PinotSettings::IndexProperties &amp;indexProps,
+ 	unsigned int maxDocsCount, unsigned int startDoc) :
+-	ListerThread(indexName, startDoc),
++	ListerThread(indexProps, startDoc),
+ 	m_maxDocsCount(maxDocsCount)
+ {
+ }
+@@ -801,22 +802,20 @@
+ 	set&lt;string&gt; docLabels;
+ 	unsigned int numDocs = 0;
+ 
+-	const map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
+-	map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(m_indexName);
+-	if (mapIter == indexesMap.end())
++	if (m_indexProps.m_location.empty() == true)
+ 	{
+ 		m_errorNum = UNKNOWN_INDEX;
+-		m_errorParam = m_indexName;
++		m_errorParam = m_indexProps.m_name.c_str();
+ 		return;
+ 	}
+ 
+ 	// Get the index at that location
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(mapIter-&gt;second);
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexProps.m_location);
+ 	if ((pIndex == NULL) ||
+ 		(pIndex-&gt;isGood() == false))
+ 	{
+ 		m_errorNum = INDEX_ERROR;
+-		m_errorParam = mapIter-&gt;second;
++		m_errorParam = m_indexProps.m_location;
+ 		if (pIndex != NULL)
+ 		{
+ 			delete pIndex;
+@@ -842,7 +841,6 @@
+ 	m_documentsList.clear();
+ 	m_documentsList.reserve(m_maxDocsCount);
+ 
+-	unsigned int indexId = PinotSettings::getInstance().getIndexIdByName(m_indexName);
+ 	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+ 	{
+ 		unsigned int docId = (*iter);
+@@ -861,7 +859,7 @@
+ 			{
+ 				docInfo.setType(&quot;text/html&quot;);
+ 			}
+-			docInfo.setIsIndexed(indexId, docId);
++			docInfo.setIsIndexed(m_indexProps.m_id, docId);
+ 
+ 			// Insert that document
+ 			m_documentsList.push_back(docInfo);
+@@ -874,21 +872,38 @@
+ 	delete pIndex;
+ }
+ 
++QueryingThread::QueryingThread(const PinotSettings::IndexProperties &amp;indexProps,
++	const QueryProperties &amp;queryProps, unsigned int startDoc, bool listingIndex) :
++	ListerThread(indexProps, startDoc),
++	m_engineName(PinotSettings::getInstance().m_defaultBackend),
++	m_engineDisplayableName(indexProps.m_name),
++	m_engineOption(indexProps.m_location),
++	m_queryProps(queryProps),
++	m_listingIndex(listingIndex),
++	m_correctedSpelling(false),
++	m_isLive(true)
++{
++#ifdef DEBUG
++	cout &lt;&lt; &quot;QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
++		&lt;&lt; &quot;, mode &quot; &lt;&lt; m_listingIndex &lt;&lt; endl;
++#endif
++}
++
+ QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+ 	const string &amp;engineOption, const QueryProperties &amp;queryProps,
+-	unsigned int startDoc, bool listingIndex) :
+-	ListerThread(engineDisplayableName, startDoc),
++	unsigned int startDoc) :
++	ListerThread(PinotSettings::IndexProperties(engineDisplayableName, engineOption, 0, false), startDoc),
+ 	m_engineName(engineName),
+ 	m_engineDisplayableName(engineDisplayableName),
+ 	m_engineOption(engineOption),
+ 	m_queryProps(queryProps),
+-	m_listingIndex(listingIndex),
++	m_listingIndex(false),
+ 	m_correctedSpelling(false),
+ 	m_isLive(true)
+ {
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
+-		&lt;&lt; &quot;, mode &quot; &lt;&lt; m_listingIndex &lt;&lt; endl;
++		&lt;&lt; &quot;, mode 0&quot; &lt;&lt; endl;
+ #endif
+ }
+ 
+@@ -977,22 +992,27 @@
+ 	return false;
+ }
+ 
+-EngineQueryThread::EngineQueryThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+-	const string &amp;engineOption, const QueryProperties &amp;queryProps,
+-	unsigned int startDoc, bool listingIndex) :
+-	QueryingThread(engineName, engineDisplayableName, engineOption, queryProps, startDoc, listingIndex)
++EngineQueryThread::EngineQueryThread(const PinotSettings::IndexProperties &amp;indexProps,
++	const QueryProperties &amp;queryProps, unsigned int startDoc, bool listingIndex) :
++	QueryingThread(indexProps, queryProps, startDoc, listingIndex)
+ {
+ }
+ 
+-EngineQueryThread::EngineQueryThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+-	const string &amp;engineOption, const QueryProperties &amp;queryProps,
+-	const set&lt;string&gt; &amp;limitToDocsSet, unsigned int startDoc) :
+-	QueryingThread(engineName, engineDisplayableName, engineOption, queryProps, startDoc, false)
++EngineQueryThread::EngineQueryThread(const PinotSettings::IndexProperties &amp;indexProps,
++	const QueryProperties &amp;queryProps, const set&lt;string&gt; &amp;limitToDocsSet,
++	unsigned int startDoc) :
++	QueryingThread(indexProps, queryProps, startDoc, false)
+ {
+ 	copy(limitToDocsSet.begin(), limitToDocsSet.end(),
+ 		inserter(m_limitToDocsSet, m_limitToDocsSet.begin()));
+ }
+ 
++EngineQueryThread::EngineQueryThread(const string &amp;engineName, const string &amp;engineDisplayableName,
++	const string &amp;engineOption, const QueryProperties &amp;queryProps, unsigned int startDoc) :
++	QueryingThread(engineName, engineDisplayableName, engineOption, queryProps, startDoc)
++{
++}
++
+ EngineQueryThread::~EngineQueryThread()
+ {
+ }
+@@ -1012,7 +1032,7 @@
+ 		if ((m_engineOption == settings.m_docsIndexLocation) ||
+ 			(m_engineOption == settings.m_daemonIndexLocation))
+ 		{
+-			indexId = settings.getIndexIdByLocation(m_engineOption);
++			indexId = settings.getIndexPropertiesByLocation(m_engineOption).m_id;
+ 			isIndexQuery = true;
+ 		}
+ 	}
+@@ -1066,7 +1086,7 @@
+ 			docId = pDocsIndex-&gt;hasDocument(location);
+ 			if (docId &gt; 0)
+ 			{
+-				indexId = settings.getIndexIdByName(_(&quot;My Web Pages&quot;));
++				indexId = settings.getIndexPropertiesByName(_(&quot;My Web Pages&quot;)).m_id;
+ 			}
+ 		}
+ 		if ((pDaemonIndex != NULL) &amp;&amp;
+@@ -1076,7 +1096,7 @@
+ 			docId = pDaemonIndex-&gt;hasDocument(location);
+ 			if (docId &gt; 0)
+ 			{
+-				indexId = settings.getIndexIdByName(_(&quot;My Documents&quot;));
++				indexId = settings.getIndexPropertiesByName(_(&quot;My Documents&quot;)).m_id;
+ 			}
+ 		}
+ 
+@@ -1197,7 +1217,7 @@
+ 		else
+ 		{
+ 			processResults(resultsList,
+-				PinotSettings::getInstance().getIndexIdByName(m_engineDisplayableName));
++				PinotSettings::getInstance().getIndexPropertiesByName(m_engineDisplayableName).m_id);
+ 		}
+ 
+ 		// Don't spellcheck if the query was modified in any way
+@@ -1219,7 +1239,7 @@
+ 
+ EngineHistoryThread::EngineHistoryThread(const string &amp;engineDisplayableName,
+ 	const QueryProperties &amp;queryProps, unsigned int maxDocsCount) :
+-	QueryingThread(&quot;&quot;, engineDisplayableName, &quot;&quot;, queryProps, 0, false),
++	QueryingThread(&quot;&quot;, engineDisplayableName, &quot;&quot;, queryProps, 0),
+ 	m_maxDocsCount(maxDocsCount)
+ {
+ 	// Results are converted to UTF-8 prior to insertion in the history database
+@@ -1780,7 +1800,9 @@
+ 
+ 				// The document properties may have changed
+ 				pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
+-				m_docInfo.setIsIndexed(PinotSettings::getInstance().getIndexIdByLocation(m_indexLocation), m_docId);
++				m_docInfo.setIsIndexed(
++					PinotSettings::getInstance().getIndexPropertiesByLocation(m_indexLocation).m_id,
++					m_docId);
+ 			}
+ 		}
+ 	}
+@@ -1908,10 +1930,10 @@
+ 	delete pIndex;
+ }
+ 
+-UpdateDocumentThread::UpdateDocumentThread(const string &amp;indexName, unsigned int docId,
++UpdateDocumentThread::UpdateDocumentThread(const PinotSettings::IndexProperties &amp;indexProps, unsigned int docId,
+ 	const DocumentInfo &amp;docInfo, bool updateLabels) :
+ 	WorkerThread(),
+-	m_indexName(indexName),
++	m_indexProps(indexProps),
+ 	m_docId(docId),
+ 	m_docInfo(docInfo),
+ 	m_updateLabels(updateLabels)
+@@ -1927,9 +1949,9 @@
+ 	return &quot;UpdateDocumentThread&quot;;
+ }
+ 
+-string UpdateDocumentThread::getIndexName(void) const
++PinotSettings::IndexProperties UpdateDocumentThread::getIndexProperties(void) const
+ {
+-	return m_indexName;
++	return m_indexProps;
+ }
+ 
+ unsigned int UpdateDocumentThread::getDocumentID(void) const
+@@ -1946,22 +1968,20 @@
+ {
+ 	if (m_done == false)
+ 	{
+-		const map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
+-		map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(m_indexName);
+-		if (mapIter == indexesMap.end())
++		if (m_indexProps.m_location.empty() == true)
+ 		{
+ 			m_errorNum = UNKNOWN_INDEX;
+-			m_errorParam = m_indexName;
++			m_errorParam = m_indexProps.m_name.c_str();
+ 			return;
+ 		}
+ 
+ 		// Get the index at that location
+-		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(mapIter-&gt;second);
++		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexProps.m_location);
+ 		if ((pIndex == NULL) ||
+ 			(pIndex-&gt;isGood() == false))
+ 		{
+ 			m_errorNum = INDEX_ERROR;
+-			m_errorParam = mapIter-&gt;second;
++			m_errorParam = m_indexProps.m_location;
+ 			if (pIndex != NULL)
+ 			{
+ 				delete pIndex;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -173,12 +173,13 @@
+ class ListerThread : public WorkerThread
+ {
+ 	public:
+-		ListerThread(const std::string &amp;indexName, unsigned int startDoc);
++		ListerThread(const PinotSettings::IndexProperties &amp;indexProps,
++			unsigned int startDoc);
+ 		~ListerThread();
+ 
+ 		std::string getType(void) const;
+ 
+-		std::string getIndexName(void) const;
++		PinotSettings::IndexProperties getIndexProperties(void) const;
+ 
+ 		unsigned int getStartDoc(void) const;
+ 
+@@ -187,7 +188,7 @@
+ 		unsigned int getDocumentsCount(void) const;
+ 
+ 	protected:
+-		std::string m_indexName;
++		PinotSettings::IndexProperties m_indexProps;
+ 		unsigned int m_startDoc;
+ 		std::vector&lt;DocumentInfo&gt; m_documentsList;
+ 		unsigned int m_documentsCount;
+@@ -201,8 +202,8 @@
+ class IndexBrowserThread : public ListerThread
+ {
+ 	public:
+-		IndexBrowserThread(const std::string &amp;indexName, unsigned int maxDocsCount,
+-			unsigned int startDoc = 0);
++		IndexBrowserThread(const PinotSettings::IndexProperties &amp;indexProps,
++			unsigned int maxDocsCount, unsigned int startDoc = 0);
+ 		~IndexBrowserThread();
+ 
+ 		std::string getLabelName(void) const;
+@@ -221,9 +222,12 @@
+ class QueryingThread : public ListerThread
+ {
+ 	public:
++		QueryingThread(const PinotSettings::IndexProperties &amp;indexProps,
++			const QueryProperties &amp;queryProps, unsigned int startDoc = 0,
++			bool listingIndex = false);
+ 		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+ 			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
+-			unsigned int startDoc = 0, bool listingIndex = false);
++			unsigned int startDoc = 0);
+ 		virtual ~QueryingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -257,12 +261,15 @@
+ class EngineQueryThread : public QueryingThread
+ {
+ 	public:
++		EngineQueryThread(const PinotSettings::IndexProperties &amp;indexProps,
++			const QueryProperties &amp;queryProps, unsigned int startDoc = 0,
++			bool listingIndex = false);
++		EngineQueryThread(const PinotSettings::IndexProperties &amp;indexProps,
++			const QueryProperties &amp;queryProps,
++			const std::set&lt;std::string&gt; &amp;limitToDocsSet, unsigned int startDoc = 0);
+ 		EngineQueryThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+ 			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
+-			unsigned int startDoc = 0, bool listingIndex = false);
+-		EngineQueryThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+-			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
+-			const std::set&lt;std::string&gt; &amp;limitToDocsSet, unsigned int startDoc = 0);
++			unsigned int startDoc = 0);
+ 		virtual ~EngineQueryThread();
+ 
+ 	protected:
+@@ -449,20 +456,21 @@
+ {
+ 	public:
+ 		// Update a document's properties
+-		UpdateDocumentThread(const std::string &amp;indexName, unsigned int docId,
+-			const DocumentInfo &amp;docInfo, bool updateLabels);
++		UpdateDocumentThread(const PinotSettings::IndexProperties &amp;indexProps,
++			unsigned int docId, const DocumentInfo &amp;docInfo,
++			bool updateLabels);
+ 		virtual ~UpdateDocumentThread();
+ 
+ 		virtual std::string getType(void) const;
+ 
+-		std::string getIndexName(void) const;
++		PinotSettings::IndexProperties getIndexProperties(void) const;
+ 
+ 		unsigned int getDocumentID(void) const;
+ 
+ 		const DocumentInfo &amp;getDocumentInfo(void) const;
+ 
+ 	protected:
+-		std::string m_indexName;
++		PinotSettings::IndexProperties m_indexProps;
+ 		unsigned int m_docId;
+ 		DocumentInfo m_docInfo;
+ 		bool m_updateLabels;
+
+Modified: trunk/UI/GTK2/src/indexDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/indexDialog.cc	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/indexDialog.cc	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -250,15 +250,19 @@
+ #endif
+ 
+ 	// Look up that index name in the map
+-	const std::map&lt;string, string&gt; &amp;indexesMap = settings.getIndexes();
+-	std::map&lt;string, string&gt;::const_iterator indexIter = indexesMap.find(from_utf8(name));
+-	if (indexIter != indexesMap.end())
++	const set&lt;PinotSettings::IndexProperties&gt; &amp;indexes = settings.getIndexes();
++	for (set&lt;PinotSettings::IndexProperties&gt;::const_iterator indexIter = indexes.begin();
++		indexIter != indexes.end(); ++indexIter)
+ 	{
+-		// This name is in use
+-		m_badName = true;
++		if (indexIter-&gt;m_name == name)
++		{
++			// This name is in use
++			m_badName = true;
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;indexDialog::on_indexOkbutton_clicked: name in use&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;indexDialog::on_indexOkbutton_clicked: name in use&quot; &lt;&lt; endl;
+ #endif
++			break;
++		}
+ 	}
+ 
+ 	if ((m_editIndex == true) &amp;&amp;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2009-01-22 13:19:16 UTC (rev 1501)
++++ trunk/UI/GTK2/src/mainWindow.cc	2009-01-22 13:22:13 UTC (rev 1502)
+@@ -332,7 +332,7 @@
+ 		TreeModel::Row row = *iter;
+ 		set&lt;time_t&gt; latestRuns;
+ 		string queryName(queryIter-&gt;first);
+-		string lastRun;
++		ustring lastRun;
+ 		time_t lastRunTime = 0;
+ 
+ 		if ((queryHistory.getLatestRuns(queryName, &quot;&quot;, 1, latestRuns) == false) ||
+@@ -343,15 +343,11 @@
+ 		else
+ 		{
+ 			lastRunTime = *(latestRuns.begin());
+-			lastRun = TimeConverter::toTimestamp(lastRunTime);
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::populate_queryTreeview: latest run of &quot;
+-				&lt;&lt; queryName &lt;&lt; &quot; is &quot; &lt;&lt; lastRun &lt;&lt; &quot;/&quot; &lt;&lt; lastRunTime &lt;&lt; endl;
+-#endif
++			lastRun = to_utf8(TimeConverter::toTimestamp(lastRunTime));
+ 		}
+ 
+ 		row[m_queryColumns.m_name] = to_utf8(queryName);
+-		row[m_queryColumns.m_lastRun] = to_utf8(lastRun);
++		row[m_queryColumns.m_lastRun] = lastRun;
+ 		row[m_queryColumns.m_lastRunTime] = lastRunTime;
+ 		ustring summary(queryIter-&gt;second.getFreeQuery());
+ 		if (summary.empty() == false)
+@@ -460,11 +456,11 @@
+ 
+ 	sigc::slot1&lt;void, ustring&gt; indexSlot = sigc::mem_fun(*this, &amp;mainWindow::on_index_changed);
+ 
+-	std::map&lt;std::string, std::string&gt; indexes = m_settings.getIndexes();
+-	for (std::map&lt;std::string, std::string&gt;::const_iterator indexIter = indexes.begin();
++	set&lt;PinotSettings::IndexProperties&gt; indexes = m_settings.getIndexes();
++	for (set&lt;PinotSettings::IndexProperties&gt;::const_iterator indexIter = indexes.begin();
+ 		indexIter != indexes.end(); ++indexIter)
+ 	{
+-		ustring indexName(indexIter-&gt;first);
++		ustring indexName(indexIter-&gt;m_name);
+ 
+ 		m_pIndexMenu-&gt;items().push_back(Menu_Helpers::MenuElem(indexName));
+ 		MenuItem &amp;menuItem = m_pIndexMenu-&gt;items().back();
+@@ -1104,24 +1100,21 @@
+ 
+ 	if (locations.empty() == false)
+ 	{
+-		std::map&lt;std::string, std::string&gt; indexes = m_settings.getIndexes();
+ 		ustring queryName(queryProps.getName());
+ 
+ 		queryProps.setName(queryName + &quot; &quot; + _(&quot;In Results&quot;));
+ 		queryProps.setModified(true);
+ 
+ 		// Spawn new threads
+-		std::map&lt;std::string, std::string&gt;::const_iterator indexIter = indexes.find(_(&quot;My Documents&quot;));
+-		if (indexIter != indexes.end())
++		PinotSettings::IndexProperties indexProps(m_settings.getIndexPropertiesByName(_(&quot;My Documents&quot;)));
++		if (indexProps.m_location.empty() == false)
+ 		{
+-			start_thread(new EngineQueryThread(m_settings.m_defaultBackend, indexIter-&gt;first,
+-				indexIter-&gt;second, queryProps, locations));
++			start_thread(new EngineQueryThread(indexProps, queryProps, locations));
+ 		}
+-		indexIter = indexes.find(_(&quot;My Web Pages&quot;));
+-		if (indexIter != indexes.end())
++		indexProps = m_settings.getIndexPropertiesByName(_(&quot;My Web Pages&quot;));
++		if (indexProps.m_location.empty() == false)
+ 		{
+-			start_thread(new EngineQueryThread(m_settings.m_defaultBackend, indexIter-&gt;first,
+-				indexIter-&gt;second, queryProps, locations));
++			start_thread(new EngineQueryThread(indexProps, queryProps, locations));
+ 		}
+ 	}
+ }
+@@ -1265,11 +1258,10 @@
+ 			return;
+ 		}
+ 
+-		ustring indexName(pListThread-&gt;getIndexName());
+-
+ 		// Find the page for this index
+ 		// It may have been closed by the user
+-		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
++		PinotSettings::IndexProperties indexProps(pListThread-&gt;getIndexProperties());
++		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexProps.m_name, NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+ 			ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+@@ -1372,7 +1364,7 @@
+ 				if ((indexResults == QueryProperties::ALL_RESULTS) || (isNewResult == true))
+ 				{
+ 					if ((docId == 0) ||
+-						(indexId != m_settings.getIndexIdByName(_(&quot;My Documents&quot;))))
++						(indexId != m_settings.getIndexPropertiesByName(_(&quot;My Documents&quot;)).m_id))
+ 					{
+ 						// This document will be indexed or updated
+ 						docsToIndex.insert(*resultIter);
+@@ -1382,11 +1374,11 @@
+ 					(labels.empty() == false))
+ 				{
+ 					// Apply this label
+-					if (indexId == m_settings.getIndexIdByName(_(&quot;My Web Pages&quot;)))
++					if (indexId == m_settings.getIndexPropertiesByName(_(&quot;My Web Pages&quot;)).m_id)
+ 					{
+ 						docsIds.insert(docId);
+ 					}
+-					else if (indexId == m_settings.getIndexIdByName(_(&quot;My Documents&quot;)))
++					else if (indexId == m_settings.getIndexPropertiesByName(_(&quot;My Documents&quot;)).m_id)
+ 					{
+ 						daemonIds.insert(docId);
+ 					}
+@@ -1735,7 +1727,8 @@
+ 			return;
+ 		}
+ 
+-		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(pUpdateThread-&gt;getIndexName(), NotebookPageBox::INDEX_PAGE));
++		PinotSettings::IndexProperties indexProps(pUpdateThread-&gt;getIndexProperties());
++		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexProps.m_name, NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+ 			ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+@@ -1793,8 +1786,8 @@
+ 	if ((indexName != indexBox.getName()) ||
+ 		(location != indexBox.getLocation()))
+ 	{
+-		ustring newName = indexBox.getName();
+-		ustring newLocation = indexBox.getLocation();
++		ustring newName(indexBox.getName());
++		ustring newLocation(indexBox.getLocation());
+ 
+ 		// Is the name okay ?
+ 		if (indexBox.badName() == true)
+@@ -1812,9 +1805,8 @@
+ 
+ 		// The only way to edit an index right now is to remove it
+ 		// first, then add it again
+-		if ((m_settings.removeIndex(from_utf8(indexName)) == false) ||
+-			(m_settings.addIndex(from_utf8(newName),
+-				from_utf8(newLocation)) == false))
++		if ((m_settings.removeIndex(m_settings.getIndexPropertiesByName(indexName)) == false) ||
++			(m_settings.addIndex(newName, from_utf8(newLocation)) == false))
+ 		{
+ 			ustring statusText = _(&quot;Couldn't rename index&quot;);
+ 			statusText += &quot; &quot;;
+@@ -2424,9 +2416,8 @@
+ 		return;
+ 	}
+ 
+-	const std::map&lt;string, string&gt; &amp;indexesMap = m_settings.getIndexes();
+-	std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
+-	if (mapIter == indexesMap.end())
++	PinotSettings::IndexProperties indexProps(m_settings.getIndexPropertiesByName(indexName));
++	if (indexProps.m_location.empty() == true)
+ 	{
+ 		ustring statusText = _(&quot;Index&quot;);
+ 		statusText += &quot; &quot;;
+@@ -2448,7 +2439,7 @@
+ 
+ 	// Let the user set the labels
+ 	get_size(width, height);
+-	propertiesDialog propertiesBox(mapIter-&gt;second, documentsList);
++	propertiesDialog propertiesBox(indexProps.m_location, documentsList);
+ 	propertiesBox.setHeight(height / 2);
+ 	propertiesBox.show();
+ 	// What labels will this show ?
+@@ -2468,7 +2459,7 @@
+ 		// ... only if something was modified
+ 		if (propertiesBox.changedInfo() == true)
+ 		{
+-			start_thread(new UpdateDocumentThread(indexName, docId, *docIter, false));
++			start_thread(new UpdateDocumentThread(indexProps, docId, *docIter, false));
+ 		}
+ 
+ 		docIds.insert(docId);
+@@ -2621,8 +2612,7 @@
+ 	}
+ 
+ 	// Add the new index
+-	if (m_settings.addIndex(from_utf8(name),
+-			from_utf8(location)) == false)
++	if (m_settings.addIndex(name, from_utf8(location)) == false)
+ 	{
+ 		ustring statusText = _(&quot;Couldn't add index&quot;);
+ 		statusText += &quot; &quot;;
+@@ -2669,15 +2659,15 @@
+ 	EnginesModelColumns::EngineType engineType = engineRow[engineColumns.m_type];
+ 	if (engineType == EnginesModelColumns::INDEX_ENGINE)
+ 	{
+-		ustring name = engineRow[engineColumns.m_name];
++		ustring indexName(engineRow[engineColumns.m_name]);
+ 
+ 		// Remove it
+ 		// FIXME: ask for confirmation ?
+-		if (m_settings.removeIndex(from_utf8(name)) == false)
++		if (m_settings.removeIndex(m_settings.getIndexPropertiesByName(indexName)) == false)
+ 		{
+ 			ustring statusText = _(&quot;Couldn't remove index&quot;);
+ 			statusText += &quot; &quot;;
+-			statusText += name;
++			statusText += indexName;
+ 
+ 			// An error occured
+ 			set_status(statusText);
+@@ -3037,6 +3027,9 @@
+ {
+ 	NotebookPageBox *pNotebookPage = NULL;
+ 
++#ifdef DEBUG
++	cout &lt;&lt; &quot;mainWindow::get_page: looking for &quot; &lt;&lt; title &lt;&lt; &quot; &quot; &lt;&lt; type &lt;&lt; endl;
++#endif
+ 	if (m_state.read_lock_lists() == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+@@ -3048,7 +3041,8 @@
+ 				if (pNotebookPage != NULL)
+ 				{
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;mainWindow::get_page: &quot; &lt;&lt; pNotebookPage-&gt;getTitle() &lt;&lt; endl;
++					cout &lt;&lt; &quot;mainWindow::get_page: &quot; &lt;&lt; pNotebookPage-&gt;getTitle()
++						&lt;&lt; &quot; &quot; &lt;&lt; pNotebookPage-&gt;getType() &lt;&lt; endl;
+ #endif
+ 					if ((title == pNotebookPage-&gt;getTitle()) &amp;&amp;
+ 						(type == pNotebookPage-&gt;getType()))
+@@ -3372,10 +3366,19 @@
+ 		}
+ 	}
+ 
++	PinotSettings::IndexProperties indexProps(m_settings.getIndexPropertiesByName(indexName));
++	if (indexProps.m_location.empty() == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::browse_index: couldn't find index &quot; &lt;&lt; indexName &lt;&lt; endl;
++#endif
++		return;
++	}
++
+ 	// Spawn a new thread to browse the index
+ 	if (queryName.empty() == true)
+ 	{
+-		start_thread(new IndexBrowserThread(indexName, m_maxDocsCount, startDoc));
++		start_thread(new IndexBrowserThread(indexProps, m_maxDocsCount, startDoc));
+ 	}
+ 	else
+ 	{
+@@ -3390,16 +3393,7 @@
+ 			queryProps.setMaximumResultsCount(m_maxDocsCount);
+ 
+ 			// ... and the index
+-			const std::map&lt;string, string&gt; &amp;indexesMap = m_settings.getIndexes();
+-			std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
+-			if (mapIter != indexesMap.end())
+-			{
+-				start_thread(new EngineQueryThread(m_settings.m_defaultBackend, from_utf8(indexName),
+-					mapIter-&gt;second, queryProps, startDoc, true));
+-			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;mainWindow::browse_index: couldn't find index &quot; &lt;&lt; indexName &lt;&lt; endl;
+-#endif
++			start_thread(new EngineQueryThread(indexProps, queryProps, startDoc, true));
+ 		}
+ #ifdef DEBUG
+ 		else cout &lt;&lt; &quot;mainWindow::browse_index: couldn't find query &quot; &lt;&lt; queryName &lt;&lt; endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001491.html">[Pinot-svn] r1501 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001493.html">[Pinot-svn] r1503 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1492">[ date ]</a>
+              <a href="thread.html#1492">[ thread ]</a>
+              <a href="subject.html#1492">[ subject ]</a>
+              <a href="author.html#1492">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

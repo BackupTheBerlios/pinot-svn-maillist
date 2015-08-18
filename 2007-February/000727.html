@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r733 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r733%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200702211439.l1LEd56L000063%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000726.html">
+   <LINK REL="Next"  HREF="000728.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r733 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r733%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200702211439.l1LEd56L000063%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r733 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 21 15:39:05 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000726.html">[Pinot-svn] r732 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000728.html">[Pinot-svn] r734 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#727">[ date ]</a>
+              <a href="thread.html#727">[ thread ]</a>
+              <a href="subject.html#727">[ subject ]</a>
+              <a href="author.html#727">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-21 15:39:05 +0100 (Wed, 21 Feb 2007)
+New Revision: 733
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Look for the robots directive.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-21 14:37:48 UTC (rev 732)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-21 14:39:05 UTC (rev 733)
+@@ -1340,40 +1340,44 @@
+ 				m_status += m_docInfo.getLocation();
+ 				return;
+ 			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;IndexingThread::doWork: can't index document content&quot; &lt;&lt; endl;
+-#endif
+ 
+-			// Create an empty document so that the file's details are indexed but not its content
+-			delete m_pDoc;
+-			m_pDoc = new Document(m_docInfo);
+-			m_pDoc-&gt;setType(&quot;text/plain&quot;);
++			// Let FilterWrapper handle unspported documents
+ 		}
+-#if 0
+-		else
++		else if ((PinotSettings::getInstance().m_ignoreRobotsDirectives == false) &amp;&amp;
++			(m_docInfo.getType().length() &gt;= 9) &amp;&amp;
++			(m_docInfo.getType().substr(9) == &quot;text/html&quot;))
+ 		{
+-			// Is indexing allowed ?
+-			HtmlFilter *pHtmlFilter = dynamic_cast&lt;HtmlFilter*&gt;(pFilter);
+-			if ((m_update == false) &amp;&amp;
+-				(pHtmlTokens != NULL))
++			Dijon::HtmlFilter htmlFilter(m_docInfo.getType());
++
++			if ((FilterUtils::feedFilter(*m_pDoc, &amp;htmlFilter) == true) &amp;&amp;
++				(htmlFilter.next_document() == true))
+ 			{
+-		// See if the document has a ROBOTS META tag
+-		string robotsDirectives = pHtmlTokens-&gt;getMetaTag(&quot;robots&quot;);
+-		string::size_type pos1 = robotsDirectives.find(&quot;none&quot;);
+-		string::size_type pos2 = robotsDirectives.find(&quot;noindex&quot;);
+-		if ((pos1 != string::npos) ||
+-			(pos2 != string::npos))
+-		{
+-			// No, it's not
+-			delete pTokens;
+-			m_status = _(&quot;Robots META tag forbids indexing&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_docInfo.getLocation();
+-			return;
+-		}
++				const map&lt;string, string&gt; &amp;metaData = htmlFilter.get_meta_data();
++
++				// See if the document has a ROBOTS META tag
++				map&lt;string, string&gt;::const_iterator robotsIter = metaData.find(&quot;robots&quot;);
++				if (robotsIter != metaData.end())
++				{
++					string robotsDirectives(robotsIter-&gt;second);
++	
++					// Is indexing allowed ?
++					string::size_type pos1 = robotsDirectives.find(&quot;none&quot;);
++					string::size_type pos2 = robotsDirectives.find(&quot;noindex&quot;);
++					if ((pos1 != string::npos) ||
++						(pos2 != string::npos))
++					{
++						// No, it isn't
++						m_status = _(&quot;Robots META tag forbids indexing&quot;);
++						m_status += &quot; &quot;;
++						m_status += m_docInfo.getLocation();
++						return;
++					}
++				}
+ 			}
++#ifdef DEBUG
++			else cout &lt;&lt; &quot;IndexingThread::doWork: couldn't check document for ROBOTS directive&quot; &lt;&lt; endl;
++#endif
+ 		}
+-#endif
+ 
+ 		if (m_done == false)
+ 		{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000726.html">[Pinot-svn] r732 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000728.html">[Pinot-svn] r734 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#727">[ date ]</a>
+              <a href="thread.html#727">[ thread ]</a>
+              <a href="subject.html#727">[ subject ]</a>
+              <a href="author.html#727">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

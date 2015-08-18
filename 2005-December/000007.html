@@ -1,0 +1,1226 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r8 - in trunk: Index SQL Search Search/Google Search/ObjectsSearch
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r8%20-%20in%20trunk%3A%20Index%20SQL%20Search%20Search/Google%20Search/ObjectsSearch&In-Reply-To=%3C200512151444.jBFEiUkt032368%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000006.html">
+   <LINK REL="Next"  HREF="000008.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r8 - in trunk: Index SQL Search Search/Google Search/ObjectsSearch</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r8%20-%20in%20trunk%3A%20Index%20SQL%20Search%20Search/Google%20Search/ObjectsSearch&In-Reply-To=%3C200512151444.jBFEiUkt032368%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r8 - in trunk: Index SQL Search Search/Google Search/ObjectsSearch">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Dec 15 15:44:30 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000006.html">[Pinot-svn] r7 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000008.html">[Pinot-svn] r9 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7">[ date ]</a>
+              <a href="thread.html#7">[ thread ]</a>
+              <a href="subject.html#7">[ subject ]</a>
+              <a href="author.html#7">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-15 15:44:29 +0100 (Thu, 15 Dec 2005)
+New Revision: 8
+
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/Index/indextest.cpp
+   trunk/SQL/Makefile
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/XapianEngine.cpp
+Log:
+First step towards rationalizing the index back-end : pushed labels into the
+index so that they can be used as filters by queries.
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Index/IndexInterface.h	2005-12-15 14:44:29 UTC (rev 8)
+@@ -41,17 +41,43 @@
+ 		virtual std::string getLocation(void) const = 0;
+ 
+ 		/// Indexes the given data.
+-		virtual bool indexDocument(Tokenizer &amp;tokens, unsigned int &amp;docId) = 0;
++		virtual bool indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId) = 0;
+ 
+-		/// Updates the given document; true if success.
++		/// Returns a document's properties.
++		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const = 0;
++
++		/// Returns a document's labels.
++		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const = 0;
++
++		/// Returns documents that have a label.
++		virtual bool getDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds) const = 0;
++
++		/// Updates the given document.
+ 		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens) = 0;
+ 
+-		/// Returns the ID of the given document.
+-		virtual unsigned int hasDocument(const DocumentInfo &amp;docInfo) const = 0;
++		/// Updates a document's properties.
++		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo) = 0;
+ 
+-		/// Unindexes the given document; true if success.
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true) = 0;
++
++		/// Checks whether the given URL is in the index.
++		virtual unsigned int hasDocument(const std::string &amp;url) const = 0;
++
++		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId) = 0;
+ 
++		/// Unindexes documents with the given label.
++		virtual bool unindexDocuments(const std::string &amp;labelName) = 0;
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name) = 0;
++
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void) = 0;
+ 
+@@ -63,12 +89,6 @@
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0,
+ 			bool sortByDate = false) const = 0;
+ 
+-		/// Returns a document's properties.
+-		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const = 0;
+-
+-		/// Updates a document's properties.
+-		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo) = 0;
+-
+ 	protected:
+ 		StemmingMode m_stemMode;
+ 		bool m_goodIndex;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Index/XapianIndex.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -67,8 +67,8 @@
+ 	}
+ }
+ 
+-bool XapianIndex::addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+-	Xapian::termcount &amp;termPos, const string &amp;prefix, StemmingMode mode) const
++void XapianIndex::addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++	const string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const
+ {
+ 	Xapian::Stem *pStemmer = NULL;
+ 	string term;
+@@ -86,34 +86,30 @@
+ 		{
+ 			continue;
+ 		}
+-
+ 		// Lower case the term
+ 		term = StringManip::toLowerCase(term);
++
+ 		// Stem the term ?
+ 		if ((mode == STORE_UNSTEM) ||
+ 			(pStemmer == NULL))
+ 		{
+-			// Add the term to the document
+-			doc.add_posting(prefix + term, termPos);
++			doc.add_posting(prefix + term,  termPos++);
+ 		}
+ 		else if (mode == STORE_STEM)
+ 		{
+ 			string stemmedTerm = pStemmer-&gt;stem_word(term);
+ 
+-			// Add the stemmed term to the document
+-			doc.add_posting(prefix + stemmedTerm, termPos);
++			doc.add_posting(prefix + stemmedTerm,  termPos++);
+ 		}
+ 		else if (mode == STORE_BOTH)
+ 		{
+ 			string stemmedTerm = pStemmer-&gt;stem_word(term);
+ 
+ 			// Add both
+-			doc.add_posting(prefix + term, termPos);
+-			doc.add_posting(prefix + stemmedTerm, termPos);
++			doc.add_posting(prefix + term,  termPos);
++			// ...at the same position
++			doc.add_posting(prefix + stemmedTerm,  termPos++);
+ 		}
+-
+-		// Next
+-		termPos++;
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;XapianIndex::addTermsToDocument: added &quot; &lt;&lt; termPos &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
+@@ -123,16 +119,13 @@
+ 	{
+ 		delete pStemmer;
+ 	}
+-
+-	return true;
+ }
+ 
+ bool XapianIndex::prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 	Xapian::termcount &amp;termPos, const std::string &amp;summary) const
+ {
+ 	// Add a magic term :-)
+-	doc.add_posting(MAGIC_TERM, termPos);
+-	termPos++;
++	doc.add_posting(MAGIC_TERM, termPos++);
+ 
+ 	// Index the title with and without prefix T
+ 	string title = info.getTitle();
+@@ -141,9 +134,9 @@
+ 		Document titleDoc;
+ 		titleDoc.setData(title.c_str(), title.length());
+ 		Tokenizer titleTokens(&amp;titleDoc);
+-		termPos = addTermsToDocument(titleTokens, doc, termPos, &quot;T&quot;, STORE_UNSTEM);
++		addTermsToDocument(titleTokens, doc, &quot;T&quot;, termPos, STORE_UNSTEM);
+ 		titleTokens.rewind();
+-		termPos = addTermsToDocument(titleTokens, doc, termPos, &quot;&quot;, m_stemMode);
++		addTermsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 	}
+ 
+ 	// Index the full URL with prefix U
+@@ -158,12 +151,12 @@
+ 
+ 	// ...the host name with prefix H
+ 	string hostName = urlObj.getHost();
+-	doc.add_posting(string(&quot;H&quot;) + StringManip::toLowerCase(hostName), termPos++);
++	doc.add_term(string(&quot;H&quot;) + StringManip::toLowerCase(hostName));
+ 	// ...and the file name with prefix F
+ 	string fileName = urlObj.getFile();
+-	doc.add_posting(string(&quot;F&quot;) + StringManip::toLowerCase(fileName), termPos++);
++	doc.add_term(string(&quot;F&quot;) + StringManip::toLowerCase(fileName));
+ 	// Finally, add the language with prefix L
+-	doc.add_posting(string(&quot;L&quot;) + StringManip::toLowerCase(m_stemLanguage), termPos++);
++	doc.add_term(string(&quot;L&quot;) + StringManip::toLowerCase(m_stemLanguage));
+ 
+ 	setDocumentData(doc, info, summary, m_stemLanguage);
+ 
+@@ -278,7 +271,8 @@
+ }
+ 
+ /// Indexes the given data.
+-bool XapianIndex::indexDocument(Tokenizer &amp;tokens, unsigned int &amp;docId)
++bool XapianIndex::indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId)
+ {
+ 	unsigned int dataLength = 0;
+ 	bool indexed = false;
+@@ -326,7 +320,13 @@
+ 		Xapian::termcount termPos = 0;
+ 
+ 		// Add the tokenizer's terms to the Xapian document
+-		termPos = addTermsToDocument(tokens, doc, termPos, &quot;&quot;, m_stemMode);
++		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
++		// Add labels
++		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++			++labelIter)
++		{
++			doc.add_term(string(&quot;C&quot;) + *labelIter);
++		}
+ 		if (prepareDocument(docInfo, doc, termPos, summary) == true)
+ 		{
+ 			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+@@ -353,6 +353,105 @@
+ 	return indexed;
+ }
+ 
++/// Returns a document's properties.
++bool XapianIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
++{
++	if (m_pHistory == NULL)
++	{
++		return false;
++	}
++
++	return m_pHistory-&gt;getItem(docId, docInfo);
++}
++
++/// Returns a document's labels.
++bool XapianIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
++{
++	bool gotLabels = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	labels.clear();
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			for (Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
++				termIter != pIndex-&gt;termlist_end(docId); ++termIter)
++			{
++				// Is this a label ?
++				if ((*termIter)[0] == 'C')
++				{
++					labels.insert((*termIter).substr(1));
++				}
++			}
++			gotLabels = true;
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document's labels: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document's labels, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return gotLabels;
++}
++
++/// Returns documents that have a label.
++bool XapianIndex::getDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds) const
++{
++	bool lookedForLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	docIds.clear();
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;C&quot;);
++
++			// Get documents that have this label
++			term += name;
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				docIds.insert(docId);
++			}
++			lookedForLabel = true;
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get documents: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get documents, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return lookedForLabel;
++}
++
+ /// Updates the given document; true if success.
+ bool XapianIndex::updateDocument(unsigned int docId, Tokenizer &amp;tokens)
+ {
+@@ -388,11 +487,22 @@
+ 
+ 	try
+ 	{
++		set&lt;string&gt; labels;
+ 		Xapian::Document doc;
+ 		Xapian::termcount termPos = 0;
+ 
+ 		// Add the tokenizer's terms to the document
+-		termPos = addTermsToDocument(tokens, doc, termPos, &quot;&quot;, m_stemMode);
++		 addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
++		// Get the document's labels
++		if (getDocumentLabels(docId, labels) == true)
++		{
++			// Add labels
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++				++labelIter)
++			{
++				doc.add_term(string(&quot;C&quot;) + *labelIter);
++			}
++		}
+ 		if (prepareDocument(docInfo, doc, termPos, summary) == true)
+ 		{
+ 			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+@@ -418,16 +528,126 @@
+ 	return updated;
+ }
+ 
+-/// Returns the ID of the given document.
+-unsigned int XapianIndex::hasDocument(const DocumentInfo &amp;docInfo) const
++/// Updates a document's properties.
++bool XapianIndex::updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo)
+ {
++	bool updated = false;
++
++	if (docId == 0)
++	{
++		return false;
++	}
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			Xapian::Document doc = pIndex-&gt;get_document(docId);
++
++			// Get the current document data
++			string record = doc.get_data();
++			string extract = StringManip::extractField(record, &quot;sample=&quot;, &quot;\n&quot;);
++			string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
++
++			// Update the document data with the new extract
++			setDocumentData(doc, docInfo, extract, language);
++			// Update the document
++			if (m_pHistory-&gt;updateItem(docId, docInfo) == true)
++			{
++				pIndex-&gt;replace_document(docId, doc);
++				updated = true;
++			}
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return updated;
++}
++
++/// Sets a document's labels.
++bool XapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
++	bool resetLabels)
++{
++	bool updatedLabels = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			Xapian::Document doc = pIndex-&gt;get_document(docId);
++
++			// Reset existing labels ?
++			if (resetLabels == true)
++			{
++				for (Xapian::TermIterator termIter = doc.termlist_begin();
++					termIter != doc.termlist_end(); ++termIter)
++				{
++					// Is this a label ?
++					if ((*termIter)[0] == 'C')
++					{
++						doc.remove_term(*termIter);
++					}
++				}
++			}
++
++			// Set new labels
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++				++labelIter)
++			{
++				doc.add_term(string(&quot;C&quot;) + *labelIter);
++			}
++
++			pIndex-&gt;replace_document(docId, doc);
++			updatedLabels = true;
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return updatedLabels;
++}
++
++/// Checks whether the given URL is in the index.
++unsigned int XapianIndex::hasDocument(const string &amp;url) const
++{
+ 	if (m_pHistory == NULL)
+ 	{
+ 		return 0;
+ 	}
+ 
+ 	// Is this URL in the history file ?
+-	return m_pHistory-&gt;hasURL(docInfo.getLocation());
++	return m_pHistory-&gt;hasURL(url);
+ }
+ 
+ /// Unindexes the given document; true if success.
+@@ -473,13 +693,19 @@
+ 	return unindexed;
+ }
+ 
+-/// Flushes recent changes to the disk.
+-bool XapianIndex::flush(void)
++/// Unindexes documents with the given label.
++bool XapianIndex::unindexDocuments(const string &amp;labelName)
+ {
+-	bool flushed = false;
++	bool unindexed = false;
+ 
++	if (labelName.empty() == true)
++	{
++		return false;
++	}
++
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
++	if ((pDatabase == NULL) ||
++		(m_pHistory == NULL))
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+ 		return false;
+@@ -487,135 +713,213 @@
+ 
+ 	try
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianIndex::flush: called&quot; &lt;&lt; endl;
+-#endif
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			pIndex-&gt;flush();
+-			flushed = true;
++			string term(&quot;C&quot;);
++
++			// Delete documents from the index
++			term += labelName;
++			pIndex-&gt;delete_document(term);
++			// FIXME: remove entries from the history file
++			//m_pHistory-&gt;deleteItem(docId);
++			unindexed = true;
+ 		}
+ 		pDatabase-&gt;unlock();
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't flush database: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't unindex documents: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't flush database, unknown exception occured&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't unindex documents, unknown exception occured&quot; &lt;&lt; endl;
+ 	}
+ 
+-	return flushed;
++	return unindexed;
+ }
+ 
+-/// Returns the number of documents.
+-unsigned int XapianIndex::getDocumentsCount(void) const
++/// Renames a label.
++bool XapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+ {
+-	unsigned int docCount = 0;
++	bool renamedLabel = false;
+ 
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return 0;
++		return false;
+ 	}
+ 
+ 	try
+ 	{
+-		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			docCount = pIndex-&gt;get_doccount();
++			string term(&quot;C&quot;);
++
++			// Get documents that have this label
++			term += name;
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// Get the document
++				Xapian::Document doc = pIndex-&gt;get_document(docId);
++				// Remove the term
++				doc.remove_term(term);
++				// ...add the new one
++				doc.add_term(string(&quot;C&quot;) + newName);
++				// ...and update the document
++				pIndex-&gt;replace_document(docId, doc);
++			}
++
++			renamedLabel = true;
+ 		}
+ 		pDatabase-&gt;unlock();
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't count documents: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't count documents, unknown exception occured&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
+ 	}
+ 
+-	return docCount;
++	return renamedLabel;
+ }
+ 
+-/// Returns a list of document IDs.
+-unsigned int XapianIndex::getDocumentIDs(set&lt;unsigned int&gt; &amp;docIDList,
+-	unsigned int maxDocsCount, unsigned int startDoc, bool sortByDate) const
++/// Deletes all references to a label.
++bool XapianIndex::deleteLabel(const string &amp;name)
+ {
+-	if (m_pHistory == NULL)
++	bool deletedLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
+ 	{
+-		return 0;
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
+ 	}
+ 
+-	docIDList.clear();
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;C&quot;);
+ 
+-	return m_pHistory-&gt;listItems(docIDList, maxDocsCount, startDoc, sortByDate);
+-}
++			// Get documents that have this label
++			term += name;
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
+ 
+-/// Returns a document's properties.
+-bool XapianIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
+-{
+-	if (m_pHistory == NULL)
++				// Get the document
++				Xapian::Document doc = pIndex-&gt;get_document(docId);
++				// Remove the term
++				doc.remove_term(term);
++				// ...and update the document
++				pIndex-&gt;replace_document(docId, doc);
++			}
++			deletedLabel = true;
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
+ 	{
+-		return false;
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
++	}
+ 
+-	return m_pHistory-&gt;getItem(docId, docInfo);
++	return deletedLabel;
+ }
+ 
+-/// Updates a document's properties.
+-bool XapianIndex::updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo)
++/// Flushes recent changes to the disk.
++bool XapianIndex::flush(void)
+ {
+-	bool updated = false;
++	bool flushed = false;
+ 
+-	if (docId == 0)
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
+ 	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
++	try
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianIndex::flush: called&quot; &lt;&lt; endl;
++#endif
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			pIndex-&gt;flush();
++			flushed = true;
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't flush database: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't flush database, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return flushed;
++}
++
++/// Returns the number of documents.
++unsigned int XapianIndex::getDocumentsCount(void) const
++{
++	unsigned int docCount = 0;
++
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
++		return 0;
+ 	}
+ 
+ 	try
+ 	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
+-			Xapian::Document doc = pIndex-&gt;get_document(docId);
+-
+-			// Get the current document data
+-			string record = doc.get_data();
+-			string extract = StringManip::extractField(record, &quot;sample=&quot;, &quot;\n&quot;);
+-			string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
+-
+-			// Update the document data with the new extract
+-			setDocumentData(doc, docInfo, extract, language);
+-			// Update the document
+-			if (m_pHistory-&gt;updateItem(docId, docInfo) == true)
+-			{
+-				pIndex-&gt;replace_document(docId, doc);
+-				updated = true;
+-			}
++			docCount = pIndex-&gt;get_doccount();
+ 		}
+ 		pDatabase-&gt;unlock();
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't update document: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't count documents: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't update document, unknown exception occured&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't count documents, unknown exception occured&quot; &lt;&lt; endl;
+ 	}
+ 
+-	return updated;
++	return docCount;
+ }
++
++/// Returns a list of document IDs.
++unsigned int XapianIndex::getDocumentIDs(set&lt;unsigned int&gt; &amp;docIDList,
++	unsigned int maxDocsCount, unsigned int startDoc, bool sortByDate) const
++{
++	if (m_pHistory == NULL)
++	{
++		return 0;
++	}
++
++	docIDList.clear();
++
++	return m_pHistory-&gt;listItems(docIDList, maxDocsCount, startDoc, sortByDate);
++}
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Index/XapianIndex.h	2005-12-15 14:44:29 UTC (rev 8)
+@@ -36,17 +36,43 @@
+ 		virtual std::string getLocation(void) const;
+ 
+ 		/// Indexes the given data.
+-		virtual bool indexDocument(Tokenizer &amp;tokens, unsigned int &amp;docId);
++		virtual bool indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId);
+ 
+-		/// Updates the given document; true if success.
++		/// Returns a document's properties.
++		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
++
++		/// Returns a document's labels.
++		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
++
++		/// Returns documents that have a label.
++		virtual bool getDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds) const;
++
++		/// Updates the given document.
+ 		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens);
+ 
+-		/// Returns the ID of the given document.
+-		virtual unsigned int hasDocument(const DocumentInfo &amp;docInfo) const;
++		/// Updates a document's properties.
++		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+ 
+-		/// Unindexes the given document; true if success.
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true);
++
++		/// Checks whether the given URL is in the index.
++		virtual unsigned int hasDocument(const std::string &amp;url) const;
++
++		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
++		/// Unindexes documents with the given label.
++		virtual bool unindexDocuments(const std::string &amp;labelName);
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name);
++
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void);
+ 
+@@ -58,12 +84,6 @@
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0,
+ 			bool sortByDate = false) const;
+ 
+-		/// Returns a document's properties.
+-		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+-
+-		/// Updates a document's properties.
+-		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+-
+ 	protected:
+ 		static const unsigned int m_maxTermLength;
+ 		static const std::string MAGIC_TERM;
+@@ -71,8 +91,8 @@
+ 		IndexHistory *m_pHistory;
+ 		std::string m_stemLanguage;
+ 
+-		bool addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+-			Xapian::termcount &amp;termPos, const std::string &amp;prefix, StemmingMode mode) const;
++		void addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++			const std::string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const;
+ 
+ 		bool prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 			Xapian::termcount &amp;termPos, const std::string &amp;summary) const;
+@@ -80,8 +100,8 @@
+ 		std::string scanDocument(const char *pData, unsigned int dataLength,
+ 			DocumentInfo &amp;info);
+ 
+-		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info, const string &amp;extract,
+-			const string &amp;language) const;
++		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
++			const std::string &amp;extract, const std::string &amp;language) const;
+ 
+ 	private:
+ 		XapianIndex(const XapianIndex &amp;other);
+
+Modified: trunk/Index/indextest.cpp
+===================================================================
+--- trunk/Index/indextest.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Index/indextest.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -20,6 +20,8 @@
+ #include &lt;unistd.h&gt;
+ #include &lt;stdlib.h&gt;
+ #include &lt;string.h&gt;
++#include &lt;string&gt;
++#include &lt;set&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;Document.h&quot;
+@@ -84,6 +86,7 @@
+ 		}
+ 		else
+ 		{
++			set&lt;string&gt; labels;
+ 			unsigned int docId = 0;
+ 
+ 			Tokenizer *pTokens = TokenizerFactory::getTokenizer(argv[3], &amp;doc);
+@@ -96,7 +99,7 @@
+ 			// Ignore index type, use a XapianIndex
+ 			XapianIndex index(argv[2]);
+ 			index.setStemmingMode(IndexInterface::STORE_BOTH);
+-			if (index.indexDocument(*pTokens, docId) == false)
++			if (index.indexDocument(*pTokens, labels, docId) == false)
+ 			{
+ 				cerr &lt;&lt; &quot;Couldn't index &quot; &lt;&lt; argv[3] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+ 			}
+
+Modified: trunk/SQL/Makefile
+===================================================================
+--- trunk/SQL/Makefile	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/SQL/Makefile	2005-12-15 14:44:29 UTC (rev 8)
+@@ -3,7 +3,7 @@
+ include ${ROOT_DIR}/variables.mk
+ 
+ SQL_SRCS = SQLiteBase.cpp ActionHistory.cpp IndexHistory.cpp \
+-	QueryHistory.cpp ViewHistory.cpp LabelManager.cpp
++	QueryHistory.cpp ViewHistory.cpp
+ SQL_OBJS := $(patsubst %.cpp,${OBJ_DIR}/%.o,${SQL_SRCS})
+ SQL_TEST = ${BIN_DIR}/historytest
+ 
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -85,8 +85,8 @@
+ 	string andTerms = queryProps.getAndWords();
+ 	string phrase = queryProps.getPhrase();
+ 
+-	setHostNameFilter(queryProps.getHostNameFilter());
+-	setFileNameFilter(queryProps.getFileNameFilter());
++	setHostNameFilter(queryProps.getHostFilter());
++	setFileNameFilter(queryProps.getFileFilter());
+ 
+ 	if (m_key.empty() == true)
+ 	{
+
+Modified: trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp
+===================================================================
+--- trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -104,8 +104,8 @@
+ /// Runs a query; true if success.
+ bool ObjectsSearchAPIEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+-	setHostNameFilter(queryProps.getHostNameFilter());
+-	setFileNameFilter(queryProps.getFileNameFilter());
++	setHostNameFilter(queryProps.getHostFilter());
++	setFileNameFilter(queryProps.getFileFilter());
+ 
+ 	// See <A HREF="http://www.objectssearch.com/en/help.html">http://www.objectssearch.com/en/help.html</A> for a description of queries
+ 	string query = queryProps.getAndWords();
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Search/PluginWebEngine.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -505,8 +505,8 @@
+ 		formattedQuery += tagIter-&gt;second;
+ 	}
+ 
+-	setHostNameFilter(queryProps.getHostNameFilter());
+-	setFileNameFilter(queryProps.getFileNameFilter());
++	setHostNameFilter(queryProps.getHostFilter());
++	setFileNameFilter(queryProps.getFileFilter());
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot; &lt;&lt; m_name &lt;&lt; endl;
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Search/QueryProperties.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -43,8 +43,9 @@
+ 	m_anyWords(other.m_anyWords),
+ 	m_notWords(other.m_notWords),
+ 	m_language(other.m_language),
+-	m_hostName(other.m_hostName),
+-	m_fileName(other.m_fileName),
++	m_hostFilter(other.m_hostFilter),
++	m_fileFilter(other.m_fileFilter),
++	m_labelFilter(other.m_labelFilter),
+ 	m_resultsCount(other.m_resultsCount),
+ 	m_indexResults(other.m_indexResults),
+ 	m_labelName(other.m_labelName)
+@@ -63,8 +64,9 @@
+ 	m_anyWords = other.m_anyWords;
+ 	m_notWords = other.m_notWords;
+ 	m_language = other.m_language;
+-	m_hostName = other.m_hostName;
+-	m_fileName = other.m_fileName;
++	m_hostFilter = other.m_hostFilter;
++	m_fileFilter = other.m_fileFilter;
++	m_labelFilter = other.m_labelFilter;
+ 	m_resultsCount = other.m_resultsCount;
+ 	m_indexResults = other.m_indexResults;
+ 	m_labelName = other.m_labelName;
+@@ -164,30 +166,42 @@
+ 	return m_language;
+ }
+ 
+-/// Sets host name filter.
+-void QueryProperties::setHostNameFilter(const string &amp;filter)
++/// Sets host filter.
++void QueryProperties::setHostFilter(const string &amp;filter)
+ {
+-	m_hostName = filter;
++	m_hostFilter = filter;
+ }
+ 
+-/// Gets host name filter.
+-string QueryProperties::getHostNameFilter(void) const
++/// Gets host filter.
++string QueryProperties::getHostFilter(void) const
+ {
+-	return 	m_hostName;
++	return 	m_hostFilter;
+ }
+ 
+-/// Sets file name filter.
+-void QueryProperties::setFileNameFilter(const string &amp;filter)
++/// Sets file filter.
++void QueryProperties::setFileFilter(const string &amp;filter)
+ {
+-	m_fileName = filter;
++	m_fileFilter = filter;
+ }
+ 
+-/// Gets file name filter.
+-string QueryProperties::getFileNameFilter(void) const
++/// Gets file filter.
++string QueryProperties::getFileFilter(void) const
+ {
+-	return m_fileName;
++	return m_fileFilter;
+ }
+ 
++/// Sets label filter.
++void QueryProperties::setLabelFilter(const string &amp;filter)
++{
++	m_labelFilter = filter;
++}
++
++/// Gets label filter.
++string QueryProperties::getLabelFilter(void) const
++{
++	return m_labelFilter;
++}
++
+ /// Sets the maximum number of results.
+ void QueryProperties::setMaximumResultsCount(unsigned int count)
+ {
+@@ -286,16 +300,21 @@
+ 			queryString += &quot; +L&quot;;
+ 			queryString += m_language;
+ 		}
+-		if (m_hostName.empty() == false)
++		if (m_hostFilter.empty() == false)
+ 		{
+ 			queryString += &quot; +H&quot;;
+-			queryString += m_hostName;
++			queryString += m_hostFilter;
+ 		}
+-		if (m_fileName.empty() == false)
++		if (m_fileFilter.empty() == false)
+ 		{
+ 			queryString += &quot; +F&quot;;
+-			queryString += m_fileName;
++			queryString += m_fileFilter;
+ 		}
++		if (m_labelFilter.empty() == false)
++		{
++			queryString += &quot; +C&quot;;
++			queryString += m_labelFilter;
++		}
+ 	}
+ 
+ 	return queryString;
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Search/QueryProperties.h	2005-12-15 14:44:29 UTC (rev 8)
+@@ -65,16 +65,21 @@
+ 		/// Gets the query's language.
+ 		string getLanguage(void) const;
+ 
+-		/// Sets host name filter.
+-		void setHostNameFilter(const string &amp;filter);
+-		/// Gets host name filter.
+-		string getHostNameFilter(void) const;
++		/// Sets host filter.
++		void setHostFilter(const string &amp;filter);
++		/// Gets host filter.
++		string getHostFilter(void) const;
+ 
+-		/// Sets file name filter.
+-		void setFileNameFilter(const string &amp;filter);
+-		/// Gets file name filter.
+-		string getFileNameFilter(void) const;
++		/// Sets file filter.
++		void setFileFilter(const string &amp;filter);
++		/// Gets file filter.
++		string getFileFilter(void) const;
+ 
++		/// Sets label filter.
++		void setLabelFilter(const string &amp;filter);
++		/// Gets label filter.
++		string getLabelFilter(void) const;
++
+ 		/// Sets the maximum number of results.
+ 		void setMaximumResultsCount(unsigned int count);
+ 		/// Gets the maximum number of results.
+@@ -100,8 +105,9 @@
+ 		string m_anyWords;
+ 		string m_notWords;
+ 		string m_language;
+-		string m_hostName;
+-		string m_fileName;
++		string m_hostFilter;
++		string m_fileFilter;
++		string m_labelFilter;
+ 		unsigned int m_resultsCount;
+ 		bool m_indexResults;
+ 		string m_labelName;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2005-12-13 12:34:52 UTC (rev 7)
++++ trunk/Search/XapianEngine.cpp	2005-12-15 14:44:29 UTC (rev 8)
+@@ -274,12 +274,12 @@
+ 	}
+ 
+ 	// Get the host name filter
+-	if (queryProps.getHostNameFilter().empty() == false)
++	if (queryProps.getHostFilter().empty() == false)
+ 	{
+ 		vector&lt;string&gt; hostTerms;
+ 
+ 		term = &quot;H&quot;;
+-		term += StringManip::toLowerCase(queryProps.getHostNameFilter());
++		term += StringManip::toLowerCase(queryProps.getHostFilter());
+ 		hostTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+@@ -289,12 +289,12 @@
+ 	}
+ 
+ 	// Get the file name filter
+-	if (queryProps.getFileNameFilter().empty() == false)
++	if (queryProps.getFileFilter().empty() == false)
+ 	{
+ 		vector&lt;string&gt; fileTerms;
+ 
+ 		term = &quot;F&quot;;
+-		term += StringManip::toLowerCase(queryProps.getFileNameFilter());
++		term += StringManip::toLowerCase(queryProps.getFileFilter());
+ 		fileTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+@@ -303,6 +303,21 @@
+ 		queryStack.push(Xapian::Query(queryOp, fileTerms.begin(), fileTerms.end()));
+ 	}
+ 
++	// Get the label name filter
++	if (queryProps.getLabelFilter().empty() == false)
++	{
++		vector&lt;string&gt; labelTerms;
++
++		term = &quot;C&quot;;
++		term += queryProps.getLabelFilter();
++		labelTerms.push_back(term);
++		if (followOperators == true)
++		{
++			queryOp = Xapian::Query::OP_AND;
++		}
++		queryStack.push(Xapian::Query(queryOp, labelTerms.begin(), labelTerms.end()));
++	}
++
+ 	// Get the language filter
+ 	if (queryProps.getLanguage().empty() == false)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000006.html">[Pinot-svn] r7 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000008.html">[Pinot-svn] r9 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7">[ date ]</a>
+              <a href="thread.html#7">[ thread ]</a>
+              <a href="subject.html#7">[ subject ]</a>
+              <a href="author.html#7">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

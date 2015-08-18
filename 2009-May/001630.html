@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1640 - trunk/Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1640%20-%20trunk/Tokenize&In-Reply-To=%3C200905310607.n4V67HFD032249%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001629.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1640 - trunk/Tokenize</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1640%20-%20trunk/Tokenize&In-Reply-To=%3C200905310607.n4V67HFD032249%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1640 - trunk/Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun May 31 08:07:17 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001629.html">[Pinot-svn] r1639 - trunk/UI/GTK2/src
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1630">[ date ]</a>
+              <a href="thread.html#1630">[ thread ]</a>
+              <a href="subject.html#1630">[ subject ]</a>
+              <a href="author.html#1630">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-05-31 08:07:05 +0200 (Sun, 31 May 2009)
+New Revision: 1640
+
+Modified:
+   trunk/Tokenize/FilterUtils.cpp
+Log:
+Filters that return file names as titles (eg those that deal with archives) may
+set mimetype to SCANTITLE. The content type is then checked with
+MIMEScanner::scanFile(), with scanData() as fall-back.
+Odddly enough, this gives more accurate results for types like tar.gz : instead
+of being identified as application/x-gzip, they are identified as
+application/x-compressed-tar just like they would if they were regular files.
+
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2009-05-30 04:39:25 UTC (rev 1639)
++++ trunk/Tokenize/FilterUtils.cpp	2009-05-31 06:07:05 UTC (rev 1640)
+@@ -304,7 +304,7 @@
+ {
+ 	string charset, uri, ipath;
+ 	off_t size = 0;
+-	bool checkType = false;
++	bool checkDataType = false, checkFileType = false;
+ 
+ 	if (pFilter == NULL)
+ 	{
+@@ -338,8 +338,12 @@
+ 
+ 			if (mimeType == &quot;scan&quot;)
+ 			{
+-				checkType = true;
++				checkDataType = true;
+ 			}
++			else if (mimeType == &quot;scantitle&quot;)
++			{
++				checkFileType = true;
++			}
+ 			else
+ 			{
+ 				doc.setType(mimeType);
+@@ -389,14 +393,42 @@
+ #endif
+ 	}
+ 
++	// Content and title may have to be converted
+ 	TextConverter converter(20);
+ 
+-	// Content and title may have to be converted
++	map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;title&quot;);
++	if ((contentIter != metaData.end()) &amp;&amp;
++		(contentIter-&gt;second.empty() == false))
++	{
++		dstring nonUTF8Title(contentIter-&gt;second.c_str(), contentIter-&gt;second.length());
++
++		dstring utf8Data(converter.toUTF8(nonUTF8Title, charset));
++
++		doc.setTitle(string(utf8Data.c_str(), utf8Data.length()));
++	}
++
+ 	const dstring &amp;content = pFilter-&gt;get_content();
+ 	if (content.empty() == false)
+ 	{
+-		if (checkType == true)
++		// Scan for the MIME type ?
++		if (checkFileType == true)
+ 		{
++			// Assume the title is actually a file name
++			string mimeType(MIMEScanner::scanFile(doc.getTitle()));
++
++			if ((mimeType.empty() == true) ||
++				(mimeType == &quot;application/octet-stream&quot;))
++			{
++				// Revert to scanning the content 
++				checkDataType = true;
++			}
++			else
++			{
++				doc.setType(mimeType);
++			}
++		}
++		if (checkDataType == true)
++		{
+ 			doc.setType(MIMEScanner::scanData(content.c_str(), content.length()));
+ 		}
+ 
+@@ -415,17 +447,7 @@
+ 			doc.setData(content.c_str(), content.length());
+ 		}
+ 	}
+-	map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;title&quot;);
+-	if ((contentIter != metaData.end()) &amp;&amp;
+-		(contentIter-&gt;second.empty() == false))
+-	{
+-		dstring title(contentIter-&gt;second.c_str(), contentIter-&gt;second.length());
+ 
+-		dstring utf8Data(converter.toUTF8(title, charset));
+-
+-		doc.setTitle(string(utf8Data.c_str(), utf8Data.length()));
+-	}
+-
+ 	// If the document is big'ish, try and reclaim memory
+ 	int inUse = Memory::getUsage();
+ 	if ((size &gt; SIZE_THRESHOLD) ||
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001629.html">[Pinot-svn] r1639 - trunk/UI/GTK2/src
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1630">[ date ]</a>
+              <a href="thread.html#1630">[ thread ]</a>
+              <a href="subject.html#1630">[ subject ]</a>
+              <a href="author.html#1630">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

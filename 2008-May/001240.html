@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1246 - in trunk/IndexSearch: . Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1246%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200805081636.m48Ga5TR009049%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001239.html">
+   <LINK REL="Next"  HREF="001241.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1246 - in trunk/IndexSearch: . Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1246%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200805081636.m48Ga5TR009049%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1246 - in trunk/IndexSearch: . Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu May  8 18:36:05 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001239.html">[Pinot-svn] r1245 - in trunk/IndexSearch: . Xapian
+</A></li>
+        <LI>Next message: <A HREF="001241.html">[Pinot-svn] r1247 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1240">[ date ]</a>
+              <a href="thread.html#1240">[ thread ]</a>
+              <a href="subject.html#1240">[ subject ]</a>
+              <a href="author.html#1240">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-08 18:36:04 +0200 (Thu, 08 May 2008)
+New Revision: 1246
+
+Modified:
+   trunk/IndexSearch/WebEngine.cpp
+   trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+Log:
+A fix for QueryModifier when the query is one CJKV character only.
+AbstractGenerator needs to skip long n-grams early on when populating the
+chosen window.
+Cosmetic changes here and there.
+
+
+Modified: trunk/IndexSearch/WebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/WebEngine.cpp	2008-05-08 12:20:55 UTC (rev 1245)
++++ trunk/IndexSearch/WebEngine.cpp	2008-05-08 16:36:04 UTC (rev 1246)
+@@ -75,9 +75,9 @@
+ 				++m_nGramCount;
+ 				if (tok.length() &gt; 4)
+ 				{
+-					// Ignore multi-character tokens
++					// Skip multi-character tokens
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;WebEngine::processResult: ignoring &quot; &lt;&lt; tok &lt;&lt; endl;
++					cout &lt;&lt; &quot;WebEngine::processResult: skipping &quot; &lt;&lt; tok &lt;&lt; endl;
+ #endif
+ 					return true;
+ 				}
+
+Modified: trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-05-08 12:20:55 UTC (rev 1245)
++++ trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-05-08 16:36:04 UTC (rev 1246)
+@@ -66,12 +66,14 @@
+ string AbstractGenerator::generateAbstract(Xapian::docid docId,
+ 	const vector&lt;string&gt; &amp;seedTerms)
+ {
++	CJKVTokenizer tokenizer;
+ 	map&lt;Xapian::termpos, PositionWindow&gt; abstractWindows;
+ 	map&lt;Xapian::termpos, string&gt; wordsBuffer;
+ 	string summary;
+ 	Xapian::termpos bestPosition = 0, startPosition = 0;
+ 	unsigned int seedTermsCount = 0, bestWeight = 0;
+ 	bool topTerm = true;
++	bool wasCJKV = false;
+ 
+ 	if (m_pIndex == NULL)
+ 	{
+@@ -190,6 +192,12 @@
+ 			{
+ 				continue;
+ 			}
++			// Skip multi-character CJKV terms
++			if ((tokenizer.has_cjkv(termName) == true) &amp;&amp;
++				(termName.length() &gt; 4))
++			{
++				continue;
++			}
+ 
+ 			for (Xapian::PositionIterator positionIter = m_pIndex-&gt;positionlist_begin(docId, termName);
+ 				positionIter != m_pIndex-&gt;positionlist_end(docId, termName); ++positionIter)
+@@ -214,30 +222,13 @@
+ 	}
+ 
+ 	// Generate the abstract
+-	CJKVTokenizer tokenizer;
+-	bool wasCJKV = false;
+ 	for (map&lt;Xapian::termpos, string&gt;::iterator wordIter = wordsBuffer.begin();
+ 		wordIter != wordsBuffer.end(); ++wordIter)
+ 	{
+ 		gchar *pEscToken = NULL;
+ 		gchar *pUTF8Token = NULL;
+ 		gsize bytesWritten = 0;
+-		bool isCJKV = false;
+ 
+-		// Skip multi-character CJKV terms
+-		if (tokenizer.has_cjkv(wordIter-&gt;second) == true)
+-		{
+-			isCJKV = true;
+-
+-			if (wordIter-&gt;second.length() &gt; 4)
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: skipping &quot; &lt;&lt; wordIter-&gt;second &lt;&lt; endl;
+-#endif
+-				continue;
+-			}
+-		}
+-
+ 		pUTF8Token = g_locale_to_utf8(wordIter-&gt;second.c_str(), wordIter-&gt;second.length(),
+ 			NULL, &amp;bytesWritten, NULL);
+ 		if (pUTF8Token != NULL)
+@@ -250,11 +241,13 @@
+ 			continue;
+ 		}
+ 
++		bool isCJKV = tokenizer.has_cjkv(wordIter-&gt;second);
+ 		if ((summary.empty() == false) &amp;&amp;
+ 			(wasCJKV != isCJKV))
+ 		{
+ 			summary += &quot; &quot;;
+ 		}
++
+ 		// Is this a seed term ?
+ 		if (find(seedTerms.begin(), seedTerms.end(), wordIter-&gt;second) != seedTerms.end())
+ 		{
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-05-08 12:20:55 UTC (rev 1245)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-05-08 16:36:04 UTC (rev 1246)
+@@ -232,7 +232,7 @@
+ 
+ 			// First n-gram ?
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;QueryModifier::handle_token: &quot; &lt;&lt; m_nGramCount &lt;&lt; &quot; n-gram&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;QueryModifier::handle_token: n-gram &quot; &lt;&lt; m_nGramCount &lt;&lt; endl;
+ #endif
+ 			if (m_nGramCount == 0)
+ 			{
+@@ -247,6 +247,7 @@
+ 				{
+ 					m_modifiedQuery += &quot; &quot; + m_query.substr(m_pos, tokPos - m_pos);
+ 				}
++				m_pos += tok.length();
+ 				switch (m_wrap)
+ 				{
+ 					case BRACKETS:
+@@ -282,9 +283,12 @@
+ 
+ 		string get_modified_query(void)
+ 		{
+-			if (m_pos &lt; m_query.length())
++#ifdef DEBUG
++			cout &lt;&lt; &quot;QueryModifier::get_modified_query: &quot; &lt;&lt; m_pos &lt;&lt; &quot;/&quot; &lt;&lt; m_query.length() &lt;&lt; endl;
++#endif
++			if (m_pos + 1 &lt; m_query.length())
+ 			{
+-				m_modifiedQuery += &quot; &quot; + m_query.substr(m_pos);
++				m_modifiedQuery += &quot; &quot; + m_query.substr(m_pos + 1);
+ 			}
+ 			wrapClose();
+ #ifdef DEBUG
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001239.html">[Pinot-svn] r1245 - in trunk/IndexSearch: . Xapian
+</A></li>
+	<LI>Next message: <A HREF="001241.html">[Pinot-svn] r1247 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1240">[ date ]</a>
+              <a href="thread.html#1240">[ thread ]</a>
+              <a href="subject.html#1240">[ subject ]</a>
+              <a href="author.html#1240">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

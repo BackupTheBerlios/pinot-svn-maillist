@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1040 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1040%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710150357.l9F3vqr3002685%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001033.html">
+   <LINK REL="Next"  HREF="001035.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1040 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1040%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710150357.l9F3vqr3002685%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1040 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 15 05:57:52 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001033.html">[Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001035.html">[Pinot-svn] r1041 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1034">[ date ]</a>
+              <a href="thread.html#1034">[ thread ]</a>
+              <a href="subject.html#1034">[ subject ]</a>
+              <a href="author.html#1034">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-15 05:57:50 +0200 (Mon, 15 Oct 2007)
+New Revision: 1040
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+UpdateDocumentThread exports the index name and doesn't call getDocumentInfo()
+after performing the update. It's not necessary, and may retrieve old data if
+the update was done over D-Bus and the daemon has not flushed to the index.
+IndexingThread restores the document and index IDs following the call to
+getDocumentInfo(). We could probably do without this call, I'll have to look
+into it later on...
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-15 02:54:27 UTC (rev 1039)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-10-15 03:57:50 UTC (rev 1040)
+@@ -1396,8 +1396,21 @@
+ {
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexLocation);
+ 	Url thisUrl(m_docInfo.getLocation());
++	string indexName;
+ 	bool doDownload = true;
+ 
++	// What's the name of this index ?
++	const map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
++	for (map&lt;string, string&gt;::const_iterator mapIter = indexesMap.begin();
++		mapIter != indexesMap.end(); ++mapIter)
++	{
++		if (m_indexLocation == mapIter-&gt;second)
++		{
++			indexName = mapIter-&gt;first;
++			break;
++		}
++	}
++
+ 	// First things first, get the index
+ 	if ((pIndex == NULL) ||
+ 		(pIndex-&gt;isGood() == false))
+@@ -1608,6 +1621,7 @@
+ 
+ 				// The document properties may have changed
+ 				pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
++				m_docInfo.setIsIndexed(PinotSettings::getInstance().getIndexId(indexName), m_docId);
+ 			}
+ 		}
+ 	}
+@@ -1754,6 +1768,11 @@
+ 	return &quot;UpdateDocumentThread&quot;;
+ }
+ 
++string UpdateDocumentThread::getIndexName(void) const
++{
++	return m_indexName;
++}
++
+ unsigned int UpdateDocumentThread::getDocumentID(void) const
+ {
+ 	return m_docId;
+@@ -1795,16 +1814,10 @@
+ 		{
+ 			m_errorNum = UPDATE_FAILED;
+ 		}
+-		else
++		// Flush the index ?
++		else if (m_immediateFlush == true)
+ 		{
+-			// Flush the index ?
+-			if (m_immediateFlush == true)
+-			{
+-				pIndex-&gt;flush();
+-			}
+-
+-			// The document properties may have changed
+-			pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
++			pIndex-&gt;flush();
+ 		}
+ 
+ 		delete pIndex;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-10-15 02:54:27 UTC (rev 1039)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-10-15 03:57:50 UTC (rev 1040)
+@@ -442,6 +442,8 @@
+ 
+ 		virtual std::string getType(void) const;
+ 
++		std::string getIndexName(void) const;
++
+ 		unsigned int getDocumentID(void) const;
+ 
+ 		const DocumentInfo &amp;getDocumentInfo(void) const;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001033.html">[Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001035.html">[Pinot-svn] r1041 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1034">[ date ]</a>
+              <a href="thread.html#1034">[ thread ]</a>
+              <a href="subject.html#1034">[ subject ]</a>
+              <a href="author.html#1034">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

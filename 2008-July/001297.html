@@ -1,0 +1,225 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1303 - trunk/IndexSearch/XesamGLib
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1303%20-%20trunk/IndexSearch/XesamGLib&In-Reply-To=%3C200807190929.m6J9TlEH025984%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001296.html">
+   <LINK REL="Next"  HREF="001298.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1303 - trunk/IndexSearch/XesamGLib</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1303%20-%20trunk/IndexSearch/XesamGLib&In-Reply-To=%3C200807190929.m6J9TlEH025984%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1303 - trunk/IndexSearch/XesamGLib">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 19 11:29:47 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001296.html">[Pinot-svn] r1302 - trunk/IndexSearch/XesamGLib
+</A></li>
+        <LI>Next message: <A HREF="001298.html">[Pinot-svn] r1304 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1297">[ date ]</a>
+              <a href="thread.html#1297">[ thread ]</a>
+              <a href="subject.html#1297">[ subject ]</a>
+              <a href="author.html#1297">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-19 11:29:42 +0200 (Sat, 19 Jul 2008)
+New Revision: 1303
+
+Modified:
+   trunk/IndexSearch/XesamGLib/XesamEngine.cpp
+Log:
+Fixed UL/QL mixup.
+
+
+Modified: trunk/IndexSearch/XesamGLib/XesamEngine.cpp
+===================================================================
+--- trunk/IndexSearch/XesamGLib/XesamEngine.cpp	2008-07-19 06:44:20 UTC (rev 1302)
++++ trunk/IndexSearch/XesamGLib/XesamEngine.cpp	2008-07-19 09:29:42 UTC (rev 1303)
+@@ -36,10 +36,10 @@
+ 	public:
+ 		CallbackData(GMainLoop *pMainLoop,
+ 			vector&lt;DocumentInfo&gt; &amp;resultsList,
+-			unsigned int &amp;resultsCountEstimate) :
++			unsigned int requiredHitsCount) :
+ 			m_pMainLoop(pMainLoop),
+ 			m_resultsList(resultsList),
+-			m_resultsCountEstimate(resultsCountEstimate),
++			m_requiredHitsCount(requiredHitsCount),
+ 			m_gettingHits(0)
+ 		{
+ 		}
+@@ -49,13 +49,23 @@
+ 
+ 		GMainLoop *m_pMainLoop;
+ 		vector&lt;DocumentInfo&gt; &amp;m_resultsList;
+-		unsigned int &amp;m_resultsCountEstimate;
++		unsigned int m_requiredHitsCount;
+ 		unsigned int m_gettingHits;
+ 
+ };
+ 
+-static void pushHit(XesamGHit *pHit, vector&lt;DocumentInfo&gt; &amp;resultsList, int resultNum)
++static void stopSearch(GMainLoop *pMainLoop)
+ {
++	if (pMainLoop = NULL)
++	{
++		return;
++	}
++
++	g_main_loop_quit(pMainLoop);
++}
++
++static void pushHit(XesamGHit *pHit, vector&lt;DocumentInfo&gt; &amp;resultsList, int hitNum)
++{
+ 	if (pHit == NULL)
+ 	{
+ 		return;
+@@ -103,7 +113,7 @@
+ 		docInfo.setExtract(pExtract);
+ 	}
+ 	// FIXME: no score field ?
+-	docInfo.setScore((float )(100 - resultNum));
++	docInfo.setScore((float )(100 - hitNum));
+ 
+ 	// Push into the results list
+ 	resultsList.push_back(docInfo);
+@@ -116,17 +126,19 @@
+ 	{
+ 		return;
+ 	}
++
++	CallbackData *pData = (CallbackData *)pUserData;
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XesamEngine::hitsReady: called&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;XesamEngine::hitsReady: needing &quot; &lt;&lt; pData-&gt;m_requiredHitsCount
++		&lt;&lt; &quot; hits, got &quot; &lt;&lt; xesam_g_hits_get_count(pHits) &lt;&lt; endl;
+ #endif
+ 
+-	CallbackData *pData = (CallbackData *)pUserData;
+ 	++pData-&gt;m_gettingHits;
+-	for (guint i = 0; i &lt; xesam_g_hits_get_count(pHits); ++i)
++	for (guint hitNum = 0; hitNum &lt; xesam_g_hits_get_count(pHits); ++hitNum)
+ 	{
+-		XesamGHit *pHit = xesam_g_hits_get(pHits, i);
++		XesamGHit *pHit = xesam_g_hits_get(pHits, hitNum);
+ 
+-		pushHit(pHit, pData-&gt;m_resultsList, i);
++		pushHit(pHit, pData-&gt;m_resultsList, hitNum);
+ 	}
+ 	--pData-&gt;m_gettingHits;
+ }
+@@ -146,10 +158,10 @@
+ 
+ 	// Check we are not in the middle of retrieving stuff
+ 	while (pData-&gt;m_gettingHits &gt; 0);
+-	g_main_loop_quit(pData-&gt;m_pMainLoop);
++	stopSearch(pData-&gt;m_pMainLoop);
+ }
+ 
+-void checkTimer(gpointer pUserData)
++void abortTimer(gpointer pUserData)
+ {
+ 	if (pUserData == NULL)
+ 	{
+@@ -161,7 +173,7 @@
+ 	cerr &lt;&lt; &quot;Aborting Xesam query&quot; &lt;&lt; endl;
+ 
+ 	// Stop
+-	g_main_loop_quit(pData-&gt;m_pMainLoop);
++	stopSearch(pData-&gt;m_pMainLoop);
+ }
+ 
+ XesamEngine::XesamEngine(const string &amp;dbusObject) :
+@@ -214,12 +226,12 @@
+ 	XesamGQuery *pQuery = NULL;
+ 	if (type == QueryProperties::XESAM_QL)
+ 	{
+-		pQuery = xesam_g_query_new_from_text(queryProps.getFreeQuery().c_str());
++		pQuery = xesam_g_query_new_from_xml(queryProps.getFreeQuery().c_str());
+ 	}
+ 	else
+ 	{
+ 		// Assume it's in the User Language
+-		pQuery = xesam_g_query_new_from_xml(queryProps.getFreeQuery().c_str());
++		pQuery = xesam_g_query_new_from_text(queryProps.getFreeQuery().c_str());
+ 	}
+ 	if (pQuery == NULL)
+ 	{
+@@ -247,25 +259,32 @@
+ 	GMainLoop *pMainLoop = g_main_loop_new(NULL, FALSE);
+ 	if (pMainLoop != NULL)
+ 	{
+-		CallbackData *pData = new CallbackData(pMainLoop,
+-			m_resultsList, m_resultsCountEstimate);
++		CallbackData *pData = new CallbackData(pMainLoop, m_resultsList,
++			queryProps.getMaximumResultsCount());
+ 
+ 		g_signal_connect(pSearch, &quot;hits-ready&quot;, G_CALLBACK(hitsReady), pData);
+ 		g_signal_connect(pSearch, &quot;done&quot;, G_CALLBACK(searchDone), pData);
+ 
+ 		// Don't let this run longer than necessary
+-		g_timeout_add(15000, (GSourceFunc)checkTimer, pData);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XesamEngine::runQuery: starting the main loop&quot; &lt;&lt; endl;
+-#endif
++		g_timeout_add(60000, (GSourceFunc)abortTimer, pData);
+ 
+ 		// Start
+ 		xesam_g_search_start(pSearch);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XesamEngine::runQuery: main loop start&quot; &lt;&lt; endl;
++#endif
+ 		g_main_loop_run(pMainLoop);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XesamEngine::runQuery: main loop end&quot; &lt;&lt; endl;
++#endif
+ 
+ 		// Stop
+ 		xesam_g_search_close(pSearch);
+ 
++		if (m_resultsList.size() &gt; pData-&gt;m_requiredHitsCount)
++		{
++			m_resultsList.resize(pData-&gt;m_requiredHitsCount);
++		}
+ 		m_resultsCountEstimate = m_resultsList.size();
+ 
+ 		delete pData;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001296.html">[Pinot-svn] r1302 - trunk/IndexSearch/XesamGLib
+</A></li>
+	<LI>Next message: <A HREF="001298.html">[Pinot-svn] r1304 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1297">[ date ]</a>
+              <a href="thread.html#1297">[ thread ]</a>
+              <a href="subject.html#1297">[ subject ]</a>
+              <a href="author.html#1297">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

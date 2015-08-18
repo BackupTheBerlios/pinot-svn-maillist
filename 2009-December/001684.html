@@ -1,0 +1,498 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1694 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1694%20-%20trunk/Core&In-Reply-To=%3C200912060850.nB68oBwe006147%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001685.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1694 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1694%20-%20trunk/Core&In-Reply-To=%3C200912060850.nB68oBwe006147%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1694 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Dec  6 09:50:11 CET 2009</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001685.html">[Pinot-svn] r1695 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1684">[ date ]</a>
+              <a href="thread.html#1684">[ thread ]</a>
+              <a href="subject.html#1684">[ subject ]</a>
+              <a href="author.html#1684">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-12-06 09:50:05 +0100 (Sun, 06 Dec 2009)
+New Revision: 1694
+
+Modified:
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/ServerThreads.h
+   trunk/Core/pinot-dbus-daemon.cpp
+Log:
+Battery status can now be obtained from DeviceKit-power.
+
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-11-14 04:54:51 UTC (rev 1693)
++++ trunk/Core/ServerThreads.cpp	2009-12-06 08:50:05 UTC (rev 1694)
+@@ -381,7 +381,8 @@
+ }
+ 
+ #ifdef HAVE_DBUS
+-DBusGConnection *DBusServletThread::m_pBus = NULL;
++DBusGConnection *DBusServletThread::m_pSystemBus = NULL;
++DBusGConnection *DBusServletThread::m_pSessionBus = NULL;
+ 
+ DBusServletThread::DBusServletThread(DaemonState *pServer, DBusServletInfo *pInfo) :
+ 	WorkerThread(),
+@@ -409,7 +410,7 @@
+ 	pIndex-&gt;flush();
+ 
+ 	// Signal
+-	if (m_pBus != NULL)
++	if (m_pSessionBus != NULL)
+ 	{
+ 		DBusMessage *pMessage = dbus_message_new_signal(PINOT_DBUS_OBJECT_PATH,
+ 			PINOT_DBUS_SERVICE_NAME, &quot;IndexFlushed&quot;);
+@@ -418,7 +419,7 @@
+ 		dbus_message_append_args(pMessage,
+ 			DBUS_TYPE_UINT32, &amp;docsCount,
+ 			DBUS_TYPE_INVALID);
+-		DBusConnection *pConnection = dbus_g_connection_get_connection(m_pBus);
++		DBusConnection *pConnection = dbus_g_connection_get_connection(m_pSessionBus);
+ 		if (pConnection != NULL)
+ 		{
+ 			dbus_connection_send(pConnection, pMessage, NULL);
+
+Modified: trunk/Core/ServerThreads.h
+===================================================================
+--- trunk/Core/ServerThreads.h	2009-11-14 04:54:51 UTC (rev 1693)
++++ trunk/Core/ServerThreads.h	2009-12-06 08:50:05 UTC (rev 1694)
+@@ -80,8 +80,10 @@
+ 		DBusServletThread(DaemonState *pServer, DBusServletInfo *pInfo);
+ 		virtual ~DBusServletThread();
+ 
+-		static DBusGConnection *m_pBus;
++		static DBusGConnection *m_pSystemBus;
+ 
++		static DBusGConnection *m_pSessionBus;
++
+ 		static void flushIndexAndSignal(IndexInterface *pIndex);
+ 
+ 		virtual std::string getType(void) const;
+
+Modified: trunk/Core/pinot-dbus-daemon.cpp
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.cpp	2009-11-14 04:54:51 UTC (rev 1693)
++++ trunk/Core/pinot-dbus-daemon.cpp	2009-12-06 08:50:05 UTC (rev 1694)
+@@ -126,9 +126,94 @@
+ }
+ 
+ #ifdef HAVE_DBUS
++static bool getBatteryState(const string &amp;name, bool systemBus,
++	const string &amp;path, const string &amp;interfaceName,
++	const string &amp;method, const string &amp;parameter,
++	gboolean &amp;result)
++{
++	if ((name.empty() == true) ||
++		(path.empty() == true) ||
++		(interfaceName.empty() == true) ||
++		(method.empty() == true))
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = NULL;
++	GError *pError = NULL;
++	gboolean callStatus = FALSE;
++
++	if ((systemBus == true) &amp;&amp;
++		(DBusServletThread::m_pSystemBus != NULL))
++	{
++		pBusProxy = dbus_g_proxy_new_for_name(DBusServletThread::m_pSystemBus,
++			name.c_str(), path.c_str(), interfaceName.c_str());
++	}
++	else if (DBusServletThread::m_pSessionBus != NULL)
++	{
++		pBusProxy = dbus_g_proxy_new_for_name(DBusServletThread::m_pSessionBus,
++			name.c_str(), path.c_str(), interfaceName.c_str());
++	}
++	if (pBusProxy != NULL)
++	{
++		if (parameter.empty() == false)
++		{
++			GHashTable *pProps = NULL;
++			const char *pParameter = parameter.c_str();
++
++			// Battery status is provided by the OnBattery property
++			// This only works for org.freedesktop.DeviceKit.Power
++			callStatus = dbus_g_proxy_call(pBusProxy, method.c_str(), &amp;pError,
++				G_TYPE_STRING, pParameter,
++				G_TYPE_INVALID,
++				dbus_g_type_get_map(&quot;GHashTable&quot;, G_TYPE_STRING, G_TYPE_VALUE), &amp;pProps,
++				G_TYPE_INVALID);
++			if (callStatus == TRUE)
++			{
++				GValue *pValue = (GValue *)g_hash_table_lookup(pProps, &quot;OnBattery&quot;);
++				if (pValue != NULL)
++				{
++					result = g_value_get_boolean(pValue);
++				}
++			}
++
++			if (pProps != NULL)
++			{
++				g_hash_table_unref(pProps);
++			}
++		}
++		else
++		{
++			// Battery status is returned by the method
++			// This works for other interfaces
++			callStatus = dbus_g_proxy_call(pBusProxy, method.c_str(), &amp;pError,
++				G_TYPE_INVALID,
++				G_TYPE_BOOLEAN, &amp;result,
++				G_TYPE_INVALID);
++		}
++
++		g_object_unref(pBusProxy);
++	}
++
++	if (callStatus == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;Couldn't get battery state: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++
++		return false;
++	}
++
++	return true;
++}
++
+ static DBusHandlerResult filterHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
+ 	DaemonState *pServer = (DaemonState *)pData;
++	gboolean onBattery = FALSE;
++	bool batteryChange = false;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;filterHandler: called&quot; &lt;&lt; endl;
+@@ -151,13 +236,25 @@
+ 		cout &lt;&lt; &quot;filterHandler: received NameOwnerChanged&quot; &lt;&lt; endl;
+ #endif
+ 	}
++	else if (dbus_message_is_signal(pMessage, &quot;org.freedesktop.DeviceKit.Power&quot;, &quot;Changed&quot;) == TRUE)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;filterHandler: received Changed&quot; &lt;&lt; endl;
++#endif
++		// Properties changed, check again
++		batteryChange = getBatteryState(&quot;org.freedesktop.DeviceKit.Power&quot;, true,
++			&quot;/org/freedesktop/DeviceKit/Power&quot;,
++			&quot;org.freedesktop.DBus.Properties&quot;,
++			&quot;GetAll&quot;,
++			&quot;org.freedesktop.DeviceKit.Power&quot;,
++			onBattery);
++	}
+ 	// The first two signals are specified by the freedesktop.org Power Management spec v0.1 and v0.2
+ 	else if ((dbus_message_is_signal(pMessage, &quot;org.freedesktop.PowerManagement&quot;, &quot;BatteryStateChanged&quot;) == TRUE) ||
+ 		(dbus_message_is_signal(pMessage, &quot;org.freedesktop.PowerManagement&quot;, &quot;OnBatteryChanged&quot;) == TRUE) ||
+ 		(dbus_message_is_signal(pMessage, &quot;org.gnome.PowerManager&quot;, &quot;OnAcChanged&quot;) == TRUE))
+ 	{
+ 		DBusError error;
+-		gboolean onBattery = FALSE;
+ 
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;filterHandler: received OnBatteryChanged&quot; &lt;&lt; endl;
+@@ -181,30 +278,35 @@
+ 				}
+ 			}
+ 
+-			if (onBattery == TRUE)
++			batteryChange = true;
++		}
++		dbus_error_free(&amp;error);
++	}
++
++	if (batteryChange == true)
++	{
++		if (onBattery == TRUE)
++		{
++			// We are now on battery
++			if (pServer != NULL)
+ 			{
+-				// We are now on battery
+-				if (pServer != NULL)
+-				{
+-					pServer-&gt;set_flag(DaemonState::ON_BATTERY);
+-					pServer-&gt;stop_crawling();
+-				}
++				pServer-&gt;set_flag(DaemonState::ON_BATTERY);
++				pServer-&gt;stop_crawling();
++			}
+ 
+-				cout &lt;&lt; &quot;System is now on battery&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;System is now on battery&quot; &lt;&lt; endl;
++		}
++		else
++		{
++			// Back on-line
++			if (pServer != NULL)
++			{
++				pServer-&gt;reset_flag(DaemonState::ON_BATTERY);
++				pServer-&gt;start_crawling();
+ 			}
+-			else
+-			{
+-				// Back on-line
+-				if (pServer != NULL)
+-				{
+-					pServer-&gt;reset_flag(DaemonState::ON_BATTERY);
+-					pServer-&gt;start_crawling();
+-				}
+ 
+-				cout &lt;&lt; &quot;System is now on AC&quot; &lt;&lt; endl;
+-			}
++			cout &lt;&lt; &quot;System is now on AC&quot; &lt;&lt; endl;
+ 		}
+-		dbus_error_free(&amp;error);
+ 
+ 		return DBUS_HANDLER_RESULT_HANDLED;
+ 	}
+@@ -239,46 +341,6 @@
+ 
+ 	return DBUS_HANDLER_RESULT_HANDLED;
+ }
+-
+-static bool getBatteryState(const string &amp;name, const string &amp;path,
+-	const string &amp;method, gboolean &amp;result)
+-{
+-	bool callSuccess = true;
+-
+-	if ((DBusServletThread::m_pBus == NULL) ||
+-		(name.empty() == true) ||
+-		(path.empty() == true) ||
+-		(method.empty() == true))
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = dbus_g_proxy_new_for_name(DBusServletThread::m_pBus, name.c_str(),
+-		path.c_str(), name.c_str());
+-	if (pBusProxy == NULL)
+-	{
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	if (dbus_g_proxy_call(pBusProxy, method.c_str(), &amp;pError,
+-		G_TYPE_INVALID,
+-		G_TYPE_BOOLEAN, &amp;result,
+-		G_TYPE_INVALID) == FALSE)
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;Couldn't get battery state: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-
+-		callSuccess = false;
+-	}
+-
+-	g_object_unref(pBusProxy);
+-
+-	return callSuccess;
+-}
+ #endif
+ 
+ int main(int argc, char **argv)
+@@ -567,12 +629,14 @@
+ 
+ #ifdef HAVE_DBUS
+ 	GError *pError = NULL;
+-	DBusServletThread::m_pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+-	if (DBusServletThread::m_pBus == NULL)
++
++	// Get on the bus(es) !
++	DBusServletThread::m_pSystemBus = dbus_g_bus_get(DBUS_BUS_SYSTEM, &amp;pError);
++	if (DBusServletThread::m_pSystemBus == NULL)
+ 	{
+ 		if (pError != NULL)
+ 		{
+-			cerr &lt;&lt; &quot;Couldn't open bus connection: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			cerr &lt;&lt; &quot;Couldn't open system bus connection: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+ 			if (pError-&gt;message != NULL)
+ 			{
+ 				cerr &lt;&lt; &quot;Error is &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+@@ -582,13 +646,34 @@
+ 
+ 		return EXIT_FAILURE;
+ 	}
++	DBusServletThread::m_pSessionBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
++	if (DBusServletThread::m_pSessionBus == NULL)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;Couldn't open session bus connection: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			if (pError-&gt;message != NULL)
++			{
++				cerr &lt;&lt; &quot;Error is &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			}
++			g_error_free(pError);
++		}
+ 
+-	DBusConnection *pConnection = dbus_g_connection_get_connection(DBusServletThread::m_pBus);
+-	if (pConnection == NULL)
++		return EXIT_FAILURE;
++	}
++
++	DBusConnection *pSystemConnection = dbus_g_connection_get_connection(DBusServletThread::m_pSystemBus);
++	if (pSystemConnection == NULL)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't get connection&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't get system connection&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
++	DBusConnection *pSessionConnection = dbus_g_connection_get_connection(DBusServletThread::m_pSessionBus);
++	if (pSessionConnection == NULL)
++	{
++		cerr &lt;&lt; &quot;Couldn't get session connection&quot; &lt;&lt; endl;
++		return EXIT_FAILURE;
++	}
+ #endif
+ 
+ 	DaemonState server;
+@@ -597,25 +682,30 @@
+ #ifdef HAVE_DBUS
+ 	DBusError error;
+ 	dbus_error_init(&amp;error);
+-	dbus_connection_set_exit_on_disconnect(pConnection, FALSE);
+-	dbus_connection_setup_with_g_main(pConnection, NULL);
++	dbus_connection_set_exit_on_disconnect(pSystemConnection, FALSE);
++	dbus_connection_set_exit_on_disconnect(pSessionConnection, FALSE);
++	dbus_connection_setup_with_g_main(pSessionConnection, NULL);
+ 
+-	if (dbus_connection_register_object_path(pConnection, PINOT_DBUS_OBJECT_PATH,
++	if (dbus_connection_register_object_path(pSessionConnection, PINOT_DBUS_OBJECT_PATH,
+ 		&amp;g_callVTable, &amp;server) == TRUE)
+ 	{
+ 		// Request to be identified by this name
+ 		// FIXME: flags are currently broken ?
+-		dbus_bus_request_name(pConnection, PINOT_DBUS_SERVICE_NAME, 0, &amp;error);
++		dbus_bus_request_name(pSessionConnection, PINOT_DBUS_SERVICE_NAME, 0, &amp;error);
+ 		if (dbus_error_is_set(&amp;error) == FALSE)
+ 		{
+ 			// See power management signals
+-			dbus_bus_add_match(pConnection,
++			dbus_bus_add_match(pSystemConnection,
++				&quot;type='signal',interface='org.freedesktop.DeviceKit.Power'&quot;, &amp;error);
++			dbus_bus_add_match(pSessionConnection,
+ 				&quot;type='signal',interface='org.freedesktop.PowerManagement'&quot;, &amp;error);
+-			dbus_bus_add_match(pConnection,
++			dbus_bus_add_match(pSessionConnection,
+ 				&quot;type='signal',interface='org.gnome.PowerManager'&quot;, &amp;error);
+ 
+-			dbus_connection_add_filter(pConnection,
++			dbus_connection_add_filter(pSystemConnection,
+ 				(DBusHandleMessageFunction)filterHandler, &amp;server, NULL);
++			dbus_connection_add_filter(pSessionConnection,
++				(DBusHandleMessageFunction)filterHandler, &amp;server, NULL);
+ 		}
+ 		else
+ 		{
+@@ -717,18 +807,36 @@
+ #ifdef HAVE_DBUS
+ 			// Try and get the battery state
+ 			gboolean result = FALSE;
+-			if ((getBatteryState(&quot;org.freedesktop.PowerManagement&quot;,
+-				&quot;/org/freedesktop/PowerManagement&quot;, &quot;GetOnBattery&quot;, result) == true) ||
+-				(getBatteryState(&quot;org.freedesktop.PowerManagement&quot;,
+-				&quot;/org/freedesktop/PowerManagement&quot;, &quot;GetBatteryState&quot;, result) == true))
++			if ((getBatteryState(&quot;org.freedesktop.DeviceKit.Power&quot;, true,
++	                        &quot;/org/freedesktop/DeviceKit/Power&quot;,
++				&quot;org.freedesktop.DBus.Properties&quot;,
++	                        &quot;GetAll&quot;,
++	                        &quot;org.freedesktop.DeviceKit.Power&quot;,
++                        	result) == true) ||
++				(getBatteryState(&quot;org.freedesktop.PowerManagement&quot;, false,
++				&quot;/org/freedesktop/PowerManagement&quot;,
++				&quot;org.freedesktop.PowerManagement&quot;,
++				&quot;GetOnBattery&quot;,
++				&quot;&quot;,
++				result) == true) ||
++				(getBatteryState(&quot;org.freedesktop.PowerManagement&quot;, false,
++				&quot;/org/freedesktop/PowerManagement&quot;,
++				&quot;org.freedesktop.PowerManagement&quot;,
++				&quot;GetBatteryState&quot;,
++				&quot;&quot;,
++				result) == true))
+ 			{
+ 				if (result == TRUE)
+ 				{
+ 					onBattery = true;
+ 				}
+ 			}
+-			else if (getBatteryState(&quot;org.gnome.PowerManager&quot;,
+-				&quot;/org/gnome/PowerManager&quot;, &quot;GetOnAc&quot;, result) == true)
++			else if (getBatteryState(&quot;org.gnome.PowerManager&quot;, false,
++				&quot;/org/gnome/PowerManager&quot;,
++				&quot;org.gnome.PowerManager&quot;,
++				&quot;GetOnAc&quot;,
++				&quot;&quot;,
++				result) == true)
+ 			{
+ 				if (result == FALSE)
+ 				{
+@@ -743,6 +851,10 @@
+ 
+ 				cout &lt;&lt; &quot;System is on battery&quot; &lt;&lt; endl;
+ 			}
++			else
++			{
++				cout &lt;&lt; &quot;System is on AC&quot; &lt;&lt; endl;
++			}
+ #endif
+ 
+ 			server.start(reindex);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001685.html">[Pinot-svn] r1695 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1684">[ date ]</a>
+              <a href="thread.html#1684">[ thread ]</a>
+              <a href="subject.html#1684">[ subject ]</a>
+              <a href="author.html#1684">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

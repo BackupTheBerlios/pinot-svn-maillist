@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r278 - trunk/Collect
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r278%20-%20trunk/Collect&In-Reply-To=%3C200605301241.k4UCfoLG030339%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000271.html">
+   <LINK REL="Next"  HREF="000273.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r278 - trunk/Collect</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r278%20-%20trunk/Collect&In-Reply-To=%3C200605301241.k4UCfoLG030339%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r278 - trunk/Collect">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue May 30 14:41:50 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000271.html">[Pinot-svn] r277 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000273.html">[Pinot-svn] r279 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#272">[ date ]</a>
+              <a href="thread.html#272">[ thread ]</a>
+              <a href="subject.html#272">[ subject ]</a>
+              <a href="author.html#272">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-30 14:41:33 +0200 (Tue, 30 May 2006)
+New Revision: 278
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+   trunk/Collect/FileCollector.cpp
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Collect/pinot-collect.cpp
+Log:
+Dropped HtmlDocument use.
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2006-05-30 12:39:56 UTC (rev 277)
++++ trunk/Collect/CurlDownloader.cpp	2006-05-30 12:41:33 UTC (rev 278)
+@@ -22,7 +22,6 @@
+ #include &lt;curl/curl.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+-#include &quot;HtmlDocument.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;CurlDownloader.h&quot;
+ 
+@@ -170,32 +169,29 @@
+ 			{
+ 				char *pContentType = NULL;
+ 
++				// Copy the document content
++				pDocument = new Document(docInfo);
++				pDocument-&gt;setData(pContentInfo-&gt;m_pContent, pContentInfo-&gt;m_contentLen);
++				pDocument-&gt;setLocation(url);
++
+ 				// What's the Content-Type ?
+ 				res = curl_easy_getinfo(pCurlHandler, CURLINFO_CONTENT_TYPE, &amp;pContentType);
+ 				if ((res == CURLE_OK) &amp;&amp;
+ 					(pContentType != NULL))
+ 				{
+-					if (strstr(pContentType, &quot;html&quot;) != NULL)
+-					{
+-						pDocument = new HtmlDocument(docInfo);
+-					}
+-					else
+-					{
+-						pDocument = new Document(docInfo);
+-					}
+-
+-					// ...and copy the content into it
+-					pDocument-&gt;setData(pContentInfo-&gt;m_pContent, pContentInfo-&gt;m_contentLen);
+-					pDocument-&gt;setLocation(url);
+ 					pDocument-&gt;setType(pContentType);
++				}
+ 
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: document size is &quot; &lt;&lt; pContentInfo-&gt;m_contentLen &lt;&lt; endl;
++				cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: document size is &quot; &lt;&lt; pContentInfo-&gt;m_contentLen &lt;&lt; endl;
+ #endif
+-				}
+ 			}
+ 		}
+ 
++		if (pContentInfo-&gt;m_pContent != NULL)
++		{
++			free(pContentInfo-&gt;m_pContent);
++		}
+ 		delete pContentInfo;
+ 
+ 		// Cleanup
+
+Modified: trunk/Collect/FileCollector.cpp
+===================================================================
+--- trunk/Collect/FileCollector.cpp	2006-05-30 12:39:56 UTC (rev 277)
++++ trunk/Collect/FileCollector.cpp	2006-05-30 12:41:33 UTC (rev 278)
+@@ -17,7 +17,6 @@
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
+ 
+-#include &quot;HtmlDocument.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+@@ -41,7 +40,6 @@
+ /// Retrieves the specified document; NULL if error.
+ Document *FileCollector::retrieveUrl(const DocumentInfo &amp;docInfo)
+ {
+-	Document *pDocument = NULL;
+ 	Url thisUrl(docInfo.getLocation());
+ 	string protocol = thisUrl.getProtocol();
+ 
+@@ -57,19 +55,10 @@
+ 	fileLocation += &quot;/&quot;;
+ 	fileLocation += fileName;
+ 
+-	// Determine the file type
+-	string fileType = MIMEScanner::scanFile(fileLocation);
+-	// Is it an HTML type ?
+-	if (fileType.find(&quot;html&quot;) != string::npos)
+-	{
+-		pDocument = new HtmlDocument(docInfo);
+-	}
+-	else
+-	{
+-		pDocument = new Document(docInfo);
+-	}
++	Document *pDocument = new Document(docInfo);
+ 
+-	pDocument-&gt;setType(fileType);
++	// Determine the file type
++	pDocument-&gt;setType(MIMEScanner::scanFile(fileLocation));
+ 	if (pDocument-&gt;setDataFromFile(fileLocation) == false)
+ 	{
+ 		delete pDocument;
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2006-05-30 12:39:56 UTC (rev 277)
++++ trunk/Collect/NeonDownloader.cpp	2006-05-30 12:41:33 UTC (rev 278)
+@@ -25,7 +25,6 @@
+ #include &lt;neon/ne_request.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+-#include &quot;HtmlDocument.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;NeonDownloader.h&quot;
+ 
+@@ -351,17 +350,8 @@
+ 	{
+ 		if (statusCode &lt; 400)
+ 		{
+-			// Is it an HTML type ?
+-			if (g_contentTypeHeaderValue.find(&quot;html&quot;) != string::npos)
+-			{
+-				pDocument = new HtmlDocument(docInfo);
+-			}
+-			else
+-			{
+-				pDocument = new Document(docInfo);
+-			}
+-
+-			// ...and copy the content into it
++			// Copy the document content
++			pDocument = new Document(docInfo);
+ 			pDocument-&gt;setData(pContent, contentLen);
+ 			pDocument-&gt;setLocation(url);
+ 			pDocument-&gt;setType(g_contentTypeHeaderValue);
+
+Modified: trunk/Collect/pinot-collect.cpp
+===================================================================
+--- trunk/Collect/pinot-collect.cpp	2006-05-30 12:39:56 UTC (rev 277)
++++ trunk/Collect/pinot-collect.cpp	2006-05-30 12:41:33 UTC (rev 278)
+@@ -99,23 +99,23 @@
+ 	unsigned int urlContentLen;
+ 	string contentType;
+ 	DocumentInfo docInfo(&quot;Test&quot;, url, &quot;&quot;, &quot;&quot;);
+-	Document *urlDoc = myDownloader-&gt;retrieveUrl(docInfo);
+-	if (urlDoc == NULL)
++	Document *pDoc = myDownloader-&gt;retrieveUrl(docInfo);
++	if (pDoc == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Download operation failed !&quot; &lt;&lt; endl;
+ 	}
+ 	else
+ 	{
+-		cout &lt;&lt; &quot;Document type is &quot; &lt;&lt; urlDoc-&gt;getType() &lt;&lt; endl;
++		cout &lt;&lt; &quot;Type: &quot; &lt;&lt; pDoc-&gt;getType() &lt;&lt; endl;
+ 
+-		unsigned int urlContentLen;
+-		const char *urlContent = urlDoc-&gt;getData(urlContentLen);
++		unsigned int contentLen;
++		const char *pContent = pDoc-&gt;getData(contentLen);
+ 
+-		if ((urlContent != NULL) &amp;&amp;
+-			(urlContentLen &gt; 0))
++		if ((pContent != NULL) &amp;&amp;
++			(contentLen &gt; 0))
+ 		{
+-			// Save the content to a file
+-			string fileName = thisUrl.getFile();
++			string fileName(thisUrl.getFile());
++
+ 			if (fileName.empty() == true)
+ 			{
+ 				fileName = &quot;index.html&quot;;
+@@ -123,8 +123,9 @@
+ 
+ 			cout &lt;&lt; &quot;Saving &quot; &lt;&lt; urlContentLen &lt;&lt; &quot; bytes to &quot; &lt;&lt; fileName &lt;&lt; endl;
+ 
++			// Save the content to a file
+ 			ofstream outputFile(fileName.c_str());
+-			outputFile.write(urlContent, urlContentLen);
++			outputFile.write(pContent, contentLen);
+ 			outputFile.close();
+ 		}
+ 		else
+@@ -132,7 +133,7 @@
+ 			cout &lt;&lt; &quot;Document is empty&quot; &lt;&lt; endl;
+ 		}
+ 
+-		delete urlDoc;
++		delete pDoc;
+ 	}
+ 
+ 	delete myDownloader;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000271.html">[Pinot-svn] r277 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000273.html">[Pinot-svn] r279 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#272">[ date ]</a>
+              <a href="thread.html#272">[ thread ]</a>
+              <a href="subject.html#272">[ subject ]</a>
+              <a href="author.html#272">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

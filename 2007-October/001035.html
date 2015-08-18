@@ -1,0 +1,435 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1041 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1041%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710150402.l9F42kmM003066%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001034.html">
+   <LINK REL="Next"  HREF="001036.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1041 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1041%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710150402.l9F42kmM003066%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1041 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 15 06:02:46 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001034.html">[Pinot-svn] r1040 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001036.html">[Pinot-svn] r1042 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1035">[ date ]</a>
+              <a href="thread.html#1035">[ thread ]</a>
+              <a href="subject.html#1035">[ subject ]</a>
+              <a href="author.html#1035">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-15 06:02:41 +0200 (Mon, 15 Oct 2007)
+New Revision: 1041
+
+Modified:
+   trunk/UI/GTK2/src/propertiesDialog.cc
+   trunk/UI/GTK2/src/propertiesDialog.hh
+Log:
+Manipulate the documents list the dialog was passed directly. There's no need
+to call getDocumentInfo(), since the tree now caches all that information.
+
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-15 03:57:50 UTC (rev 1040)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-15 04:02:41 UTC (rev 1041)
+@@ -34,120 +34,110 @@
+ using namespace Gtk;
+ 
+ propertiesDialog::propertiesDialog(const string &amp;indexLocation,
+-	const vector&lt;DocumentInfo&gt; &amp;documentsList) :
++	vector&lt;DocumentInfo&gt; &amp;documentsList) :
+ 	propertiesDialog_glade(),
+ 	m_indexLocation(indexLocation),
++	m_documentsList(documentsList),
+ 	m_docId(0),
++	m_notALanguageName(false),
+ 	m_editDocument(false)
+ {
+ 	set&lt;string&gt; docLabels;
+ 	string language;
+-	unsigned int termsCount = 0;
+-	bool notALanguageName = false;
+ 	char numStr[128];
+ 
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexLocation);
+-	if ((pIndex == NULL) ||
+-		(pIndex-&gt;isGood() == false))
+-	{
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+-		return;
+-	}
++	// Associate the columns model to the labels tree
++	m_refLabelsTree = ListStore::create(m_labelsColumns);
++	labelsTreeview-&gt;set_model(m_refLabelsTree);
++	labelsTreeview-&gt;append_column_editable(&quot; &quot;, m_labelsColumns.m_enabled);
++	labelsTreeview-&gt;append_column(_(&quot;Label&quot;), m_labelsColumns.m_name);
++	// Allow only single selection
++	labelsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 
+ 	// If there's only one document selected, get its labels
+-	if (documentsList.size() == 1)
++	if (m_documentsList.size() == 1)
+ 	{
+-		vector&lt;DocumentInfo&gt;::const_iterator docIter = documentsList.begin();
++		DocumentInfo docInfo(m_documentsList.front());
+ 		unsigned int indexId = 0;
++		unsigned int termsCount = 0;
+ 
+ 		// Get the document ID
+-		m_docId = docIter-&gt;getIsIndexed(indexId);
++		m_docId = docInfo.getIsIndexed(indexId);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;propertiesDialog::propertiesDialog: document &quot; &lt;&lt; m_docId &lt;&lt; &quot; in index &quot; &lt;&lt; indexId &lt;&lt; endl;
+ #endif
+ 		if (m_docId &gt; 0)
+ 		{
+-			// Get the properties from the index because they may have been altered
+-			// for display purposes
+-			pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
+-			pIndex-&gt;getDocumentLabels(m_docId, docLabels);
+-			m_docInfo.setIsIndexed(indexId, m_docId);
+-			termsCount = pIndex-&gt;getDocumentTermsCount(m_docId);
+-			language = m_docInfo.getLanguage();
+-			m_editDocument = true;
++			IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexLocation);
++			if (pIndex != NULL)
++			{
++				// Get the document's labels
++				pIndex-&gt;getDocumentLabels(m_docId, docLabels);
++				// Get the number of terms
++				termsCount = pIndex-&gt;getDocumentTermsCount(m_docId);
+ 
++				delete pIndex;
++			}
++			language = docInfo.getLanguage();
++
+ 			snprintf(numStr, 128, &quot;%u&quot;, m_docId);
+ 			set_title(get_title() + &quot; (ID &quot; + numStr + &quot;)&quot;);
++
++			titleEntry-&gt;set_text(to_utf8(docInfo.getTitle()));
++			typeEntry-&gt;set_text(to_utf8(docInfo.getType()));
++			unsigned int size = docInfo.getSize();
++			if (size == 0)
++			{
++				sizeEntry-&gt;set_text(_(&quot;Unknown&quot;));
++			}
++			else
++			{
++				snprintf(numStr, 128, &quot;%u&quot;, size);
++				sizeEntry-&gt;set_text(numStr);
++			}
++			if (termsCount == 0)
++			{
++				termsEntry-&gt;set_text(_(&quot;Unknown&quot;));
++			}
++			else
++			{
++				snprintf(numStr, 128, &quot;%u&quot;, termsCount);
++				termsEntry-&gt;set_text(numStr);
++			}
++
++			m_editDocument = true;
+ 		}
+ 	}
+ 	else
+ 	{
+ 		string perDoc(_(&quot;Per document&quot;));
++		bool firstDoc = true;
+ 
+-		// Leave the labels list blank
+ 		// If all documents are of the same language, show it
+-		for (vector&lt;DocumentInfo&gt;::const_iterator docIter = documentsList.begin();
+-			docIter != documentsList.end(); ++docIter)
++		for (vector&lt;DocumentInfo&gt;::const_iterator docIter = m_documentsList.begin();
++			docIter != m_documentsList.end(); ++docIter)
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;propertiesDialog::propertiesDialog: language &quot; &lt;&lt; docIter-&gt;getLanguage() &lt;&lt; endl;
++			cout &lt;&lt; &quot;propertiesDialog::propertiesDialog: language &quot; &lt;&lt; language &lt;&lt; endl;
+ #endif
+-			if (language.empty() == true)
++			if (firstDoc == true)
+ 			{
+ 				language = docIter-&gt;getLanguage();
++				firstDoc = false;
+ 			}
+ 			else if (language != docIter-&gt;getLanguage())
+ 			{
+ 				language = perDoc;
+-				notALanguageName = true;
++				m_notALanguageName = true;
+ 			}
+ 		}
+ 		if (language.empty() == true)
+ 		{
+ 			language = perDoc;
+-			notALanguageName = true;
++			m_notALanguageName = true;
+ 		}
+-	}
+-	delete pIndex;
+ 
+-	// Associate the columns model to the labels tree
+-	m_refLabelsTree = ListStore::create(m_labelsColumns);
+-	labelsTreeview-&gt;set_model(m_refLabelsTree);
+-	labelsTreeview-&gt;append_column_editable(&quot; &quot;, m_labelsColumns.m_enabled);
+-	labelsTreeview-&gt;append_column(_(&quot;Label&quot;), m_labelsColumns.m_name);
+-	// Allow only single selection
+-	labelsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+-
+-	if (m_editDocument == true)
+-	{
+-		unsigned int size = m_docInfo.getSize();
+-
+-		titleEntry-&gt;set_text(to_utf8(m_docInfo.getTitle()));
+-		typeEntry-&gt;set_text(to_utf8(m_docInfo.getType()));
+-		if (size == 0)
+-		{
+-			sizeEntry-&gt;set_text(_(&quot;Unknown&quot;));
+-		}
+-		else
+-		{
+-			snprintf(numStr, 128, &quot;%u&quot;, size);
+-			sizeEntry-&gt;set_text(numStr);
+-		}
+-		if (termsCount == 0)
+-		{
+-			termsEntry-&gt;set_text(_(&quot;Unknown&quot;));
+-		}
+-		else
+-		{
+-			snprintf(numStr, 128, &quot;%u&quot;, termsCount);
+-			termsEntry-&gt;set_text(numStr);
+-		}
+-	}
+-	else
+-	{
++		// Hide these widgets
+ 		titleLabel-&gt;hide();
+ 		titleEntry-&gt;hide();
+ 		typeLabel-&gt;hide();
+@@ -160,7 +150,7 @@
+ 		saveTermsButton-&gt;hide();
+ 	}
+ 
+-	populate_languageCombobox(language, notALanguageName);
++	populate_languageCombobox(language);
+ 	populate_labelsTreeview(docLabels);
+ }
+ 
+@@ -168,12 +158,12 @@
+ {
+ }
+ 
+-void propertiesDialog::populate_languageCombobox(const string &amp;language, bool notALanguageName)
++void propertiesDialog::populate_languageCombobox(const string &amp;language)
+ {
+ 	unsigned int languageStart = 0;
+ 	bool foundLanguage = false;
+ 
+-	if (notALanguageName == true)
++	if (m_notALanguageName == true)
+ 	{
+ 		languageCombobox-&gt;append_text(to_utf8(language));
+ 		languageCombobox-&gt;set_active(0);
+@@ -186,7 +176,7 @@
+ 		string languageName(Languages::getIntlName(languageNum));
+ 
+ 		languageCombobox-&gt;append_text(to_utf8(languageName));
+-		if ((notALanguageName == false) &amp;&amp;
++		if ((m_notALanguageName == false) &amp;&amp;
+ 			(languageName == language))
+ 		{
+ 			languageCombobox-&gt;set_active(languageNum + languageStart);
+@@ -195,7 +185,7 @@
+ 	}
+ 
+ 	// Did we find the given language ?
+-	if ((notALanguageName == false) &amp;&amp;
++	if ((m_notALanguageName == false) &amp;&amp;
+ 		(foundLanguage == false))
+ 	{
+ 		// Select the first language in the list
+@@ -232,6 +222,10 @@
+ 			row[m_labelsColumns.m_enabled] = false;
+ 		}
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;propertiesDialog::populate_labelsTreeview: showing &quot; &lt;&lt; docLabels.size()
++		&lt;&lt; &quot;/&quot; &lt;&lt; sysLabels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
+ }
+ 
+ void propertiesDialog::setHeight(int maxHeight)
+@@ -253,11 +247,6 @@
+ 	}
+ }
+ 
+-const DocumentInfo &amp;propertiesDialog::getDocumentInfo(void)
+-{
+-	return m_docInfo;
+-}
+-
+ const set&lt;string&gt; &amp;propertiesDialog::getLabels(void) const
+ {
+ 	return m_labels;
+@@ -266,22 +255,24 @@
+ void propertiesDialog::on_labelOkButton_clicked()
+ {
+ 	unsigned int languageStart = 0;
++
++	// If only one document was edited, set its title
+ 	if (m_editDocument == true)
+ 	{
+-		// Title
+-		m_docInfo.setTitle(from_utf8(titleEntry-&gt;get_text()));
++		vector&lt;DocumentInfo&gt;::iterator docIter = m_documentsList.begin();
++
++		docIter-&gt;setTitle(from_utf8(titleEntry-&gt;get_text()));
+ 	}
+ 
+ 	// Did we add an extra string to the languages list ?
+-	if (m_docInfo.getLanguage().empty() == true)
++	if (m_notALanguageName == true)
+ 	{
+ 		languageStart = 1;
+ 	}
+ 	int chosenLanguage = languageCombobox-&gt;get_active_row_number();
+-	if (chosenLanguage &gt;= languageStart)
+-	{
+-		m_docInfo.setLanguage(from_utf8(languageCombobox-&gt;get_active_text()));
+-	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen language &quot; &lt;&lt; languageCombobox-&gt;get_active_text() &lt;&lt; endl;
++#endif
+ 
+ 	// Go through the labels tree
+ 	m_labels.clear();
+@@ -300,6 +291,22 @@
+ 			}
+ 		}
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen &quot; &lt;&lt; m_labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
++
++	for (vector&lt;DocumentInfo&gt;::iterator docIter = m_documentsList.begin();
++		docIter != m_documentsList.end(); ++docIter)
++	{
++		// Apply the new language if necessary
++		if (chosenLanguage &gt;= languageStart)
++		{
++			docIter-&gt;setLanguage(from_utf8(languageCombobox-&gt;get_active_text()));
++		}
++
++		// Apply labels
++		docIter-&gt;setLabels(m_labels);
++	}
+ }
+ 
+ void propertiesDialog::on_saveTermsButton_clicked()
+@@ -312,13 +319,8 @@
+ #endif
+ 
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexLocation);
+-	if ((pIndex == NULL) ||
+-		(pIndex-&gt;isGood() == false))
++	if (pIndex == NULL)
+ 	{
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+ 		return;
+ 	}
+ 
+@@ -343,5 +345,7 @@
+ 			termsFile.close();
+ 		}
+ 	}
++
++	delete pIndex;
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.hh	2007-10-15 03:57:50 UTC (rev 1040)
++++ trunk/UI/GTK2/src/propertiesDialog.hh	2007-10-15 04:02:41 UTC (rev 1041)
+@@ -33,25 +33,24 @@
+ {  
+ public:
+ 	propertiesDialog(const std::string &amp;indexLocation,
+-	        const std::vector&lt;DocumentInfo&gt; &amp;documentsList);
++	        std::vector&lt;DocumentInfo&gt; &amp;documentsList);
+ 	virtual ~propertiesDialog();
+ 
+ 	void setHeight(int maxHeight);
+ 
+-	const DocumentInfo &amp;getDocumentInfo(void);
+-
+ 	const std::set&lt;std::string&gt; &amp;getLabels(void) const;
+ 
+ protected:
+ 	LabelModelColumns m_labelsColumns;
++	std::vector&lt;DocumentInfo&gt; &amp;m_documentsList;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelsTree;
+ 	std::string m_indexLocation;
+ 	std::set&lt;std::string&gt; m_labels;
+ 	unsigned int m_docId;
++	bool m_notALanguageName;
+ 	bool m_editDocument;
+-	DocumentInfo m_docInfo;
+ 
+-	void populate_languageCombobox(const std::string &amp;language, bool notALanguageName);
++	void populate_languageCombobox(const std::string &amp;language);
+ 
+ 	void populate_labelsTreeview(const std::set&lt;std::string&gt; &amp;docLabels);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001034.html">[Pinot-svn] r1040 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001036.html">[Pinot-svn] r1042 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1035">[ date ]</a>
+              <a href="thread.html#1035">[ thread ]</a>
+              <a href="subject.html#1035">[ subject ]</a>
+              <a href="author.html#1035">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,316 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r774 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r774%20-%20trunk/Index&In-Reply-To=%3C200703201139.l2KBdaS9018094%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000767.html">
+   <LINK REL="Next"  HREF="000769.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r774 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r774%20-%20trunk/Index&In-Reply-To=%3C200703201139.l2KBdaS9018094%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r774 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 20 12:39:36 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000767.html">[Pinot-svn] r773 - trunk/Monitor
+</A></li>
+        <LI>Next message: <A HREF="000769.html">[Pinot-svn] r775 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#768">[ date ]</a>
+              <a href="thread.html#768">[ thread ]</a>
+              <a href="subject.html#768">[ subject ]</a>
+              <a href="author.html#768">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-20 12:39:35 +0100 (Tue, 20 Mar 2007)
+New Revision: 774
+
+Modified:
+   trunk/Index/pinot-index.1
+   trunk/Index/pinot-index.cpp
+Log:
+Proxy can be configured with &quot;-a address -p port -t type&quot;.
+Check and index no longer require an URL each.
+
+
+Modified: trunk/Index/pinot-index.1
+===================================================================
+--- trunk/Index/pinot-index.1	2007-03-20 10:50:45 UTC (rev 773)
++++ trunk/Index/pinot-index.1	2007-03-20 11:39:35 UTC (rev 774)
+@@ -4,7 +4,7 @@
+ pinot-index \- Index documents from the command-line
+ .SH SYNOPSIS
+ .B pinot-index
+-[\fIOPTIONS\fR]
++[\fIOPTIONS\fR] \fIURL\fR
+ .SH DESCRIPTION
+ pinot\-index \- Index documents from the command\-line
+ .SH OPTIONS
+@@ -21,15 +21,24 @@
+ \fB\-i\fR, \fB\-\-index\fR
+ index the given URL
+ .TP
++\fB\-a\fR, \fB\-\-proxyaddress\fR
++proxy address
++.TP
++\fB\-p\fR, \fB\-\-proxyport\fR
++proxy port
++.TP
++\fB\-t\fR, \fB\-\-proxytype\fR
++proxy type (default HTTP, SOCKS4, SOCKS5)
++.TP
+ \fB\-s\fR, \fB\-\-showinfo\fR
+ show information about the document
+ .TP
+ \fB\-v\fR, \fB\-\-version\fR
+ output version information and exit
+ .SH EXAMPLES
+-pinot\-index \fB\-\-check\fR <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A> \fB\-\-showinfo\fR \fB\-\-db\fR ~/.pinot/daemon
++pinot\-index \fB\-\-check\fR \fB\-\-showinfo\fR \fB\-\-db\fR ~/.pinot/daemon <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A>
+ .PP
+-pinot\-index \fB\-\-index\fR <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A> \fB\-\-db\fR ~/.pinot/index
++pinot\-index \fB\-\-index\fR \fB\-\-db\fR ~/.pinot/index <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A>
+ .SH &quot;REPORTING BUGS&quot;
+ Report bugs to <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabricecolin at users.berlios.de</A>
+ .PP
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2007-03-20 10:50:45 UTC (rev 773)
++++ trunk/Index/pinot-index.cpp	2007-03-20 11:39:35 UTC (rev 774)
+@@ -35,36 +35,64 @@
+ using namespace std;
+ 
+ static struct option g_longOptions[] = {
+-	{&quot;check&quot;, 1, 0, 'c'},
++	{&quot;check&quot;, 0, 0, 'c'},
+ 	{&quot;db&quot;, 1, 0, 'd'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
+-	{&quot;index&quot;, 1, 0, 'i'},
++	{&quot;index&quot;, 0, 0, 'i'},
++	{&quot;proxyaddress&quot;, 1, 0, 'a'},
++	{&quot;proxyport&quot;, 1, 0, 'p'},
++	{&quot;proxytype&quot;, 1, 0, 't'},
+ 	{&quot;showinfo&quot;, 0, 0, 's'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
+ 
++static void printHelp(void)
++{
++	// Help
++	cout &lt;&lt; &quot;pinot-index - Index documents from the command-line\n\n&quot;
++		&lt;&lt; &quot;Usage: pinot-index [OPTIONS] URL\n\n&quot;
++		&lt;&lt; &quot;Options:\n&quot;
++		&lt;&lt; &quot;  -c, --check               check whether the given URL is in the index\n&quot;
++		&lt;&lt; &quot;  -d, --db                  path to index to use (mandatory)\n&quot;
++		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
++		&lt;&lt; &quot;  -i, --index               index the given URL\n&quot;
++		&lt;&lt; &quot;  -a, --proxyaddress        proxy address\n&quot;
++		&lt;&lt; &quot;  -p, --proxyport           proxy port\n&quot;
++		&lt;&lt; &quot;  -t, --proxytype           proxy type (default HTTP, SOCKS4, SOCKS5)\n&quot;
++		&lt;&lt; &quot;  -s, --showinfo            show information about the document\n&quot;
++		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;;
++	// Don't mention type dbus here as it doesn't support indexing and
++	// is identical to xapian when checking for URLs
++	cout &lt;&lt; &quot;Examples:\n&quot;
++		&lt;&lt; &quot;pinot-index --check --showinfo --db ~/.pinot/daemon <A HREF="file:///home/fabrice/Documents/Bozo.txt\n\n">file:///home/fabrice/Documents/Bozo.txt\n\n</A>&quot;
++		&lt;&lt; &quot;pinot-index --index --db ~/.pinot/index <A HREF="http://pinot.berlios.de/\n\n">http://pinot.berlios.de/\n\n</A>&quot;
++		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
++}
++
+ int main(int argc, char **argv)
+ {
+ 	string type, option;
+-	string databaseName, urlToCheck, urlToIndex;
++	string databaseName, proxyAddress, proxyPort, proxyType;
+ 	int longOptionIndex = 0;
+ 	unsigned int docId = 0;
+ 	bool checkDocument = false, indexDocument = false, showInfo = false, success = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:d:hi:sv&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;cd:hia:p:t:sv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		set&lt;string&gt; engines;
+ 
+ 		switch (optionChar)
+ 		{
+-			case 'c':
++			case 'a':
+ 				if (optarg != NULL)
+ 				{
+-					urlToCheck = optarg;
++					proxyAddress = optarg;
+ 				}
++				break;
++			case 'c':
+ 				checkDocument = true;
+ 				break;
+ 			case 'd':
+@@ -72,36 +100,28 @@
+ 				{
+ 					databaseName = optarg;
+ 				}
+-				checkDocument = true;
+ 				break;
+ 			case 'h':
+-				// Help
+-				cout &lt;&lt; &quot;pinot-index - Index documents from the command-line\n\n&quot;
+-					&lt;&lt; &quot;Usage: pinot-index [OPTIONS]\n\n&quot;
+-					&lt;&lt; &quot;Options:\n&quot;
+-					&lt;&lt; &quot;  -c, --check               check whether the given URL is in the index\n&quot;
+-					&lt;&lt; &quot;  -d, --db                  path to index to use (mandatory)\n&quot;
+-					&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
+-					&lt;&lt; &quot;  -i, --index               index the given URL\n&quot;
+-					&lt;&lt; &quot;  -s, --showinfo            show information about the document\n&quot;
+-					&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;;
+-				// Don't mention type dbus here as it doesn't support indexing and
+-				// is identical to xapian when checking for URLs
+-				cout &lt;&lt; &quot;Examples:\n&quot;
+-					&lt;&lt; &quot;pinot-index --check <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A> --showinfo --db ~/.pinot/daemon\n\n&quot;
+-					&lt;&lt; &quot;pinot-index --index <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A> --db ~/.pinot/index\n\n&quot;
+-					&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
++				printHelp();
+ 				return EXIT_SUCCESS;
+ 			case 'i':
++				indexDocument = true;
++				break;
++			case 'p':
+ 				if (optarg != NULL)
+ 				{
+-					urlToIndex = optarg;
++					proxyPort = optarg;
+ 				}
+-				indexDocument = true;
+ 				break;
+ 			case 's':
+ 				showInfo = true;
+ 				break;
++			case 't':
++				if (optarg != NULL)
++				{
++					proxyType = optarg;
++				}
++				break;
+ 			case 'v':
+ 				cout &lt;&lt; &quot;pinot-index - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot;
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+@@ -113,9 +133,22 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:d:hi:sv&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;cd:hia:p:t:sv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
++	if (argc == 1)
++	{
++		printHelp();
++		return EXIT_SUCCESS;
++	}
++
++	if ((argc &lt; 2) ||
++		(argc - optind != 1))
++	{
++		cerr &lt;&lt; &quot;Not enough parameters&quot; &lt;&lt; endl;
++		return EXIT_FAILURE;
++	}
++
+ 	if (((indexDocument == false) &amp;&amp;
+ 		(checkDocument == false)) ||
+ 		(databaseName.empty() == true))
+@@ -158,21 +191,23 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
++	string urlParam(argv[optind]);
++
+ 	if (checkDocument == true)
+ 	{
+ 		if (pIndex-&gt;isGood() == true)
+ 		{
+-			docId = pIndex-&gt;hasDocument(urlToCheck);
++			docId = pIndex-&gt;hasDocument(urlParam);
+ 			if (docId &gt; 0)
+ 			{
+-				cout &lt;&lt; urlToCheck &lt;&lt; &quot;: document ID &quot; &lt;&lt; docId &lt;&lt; endl;
++				cout &lt;&lt; urlParam &lt;&lt; &quot;: document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+ 				success = true;
+ 			}
+ 		}
+ 	}
+ 	if (indexDocument == true)
+ 	{
+-		Url thisUrl(urlToIndex);
++		Url thisUrl(urlParam);
+ 
+ 		// Which Downloader ?
+ 		DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+@@ -189,7 +224,16 @@
+ 			return EXIT_FAILURE;
+ 		}
+ 
+-		DocumentInfo docInfo(urlToIndex, urlToIndex, MIMEScanner::scanUrl(thisUrl), &quot;&quot;);
++		// Set up the proxy
++		if ((proxyAddress.empty() == false) &amp;&amp;
++			(proxyPort.empty() == false))
++		{
++			pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, proxyAddress);
++			pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
++			pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
++		}
++
++		DocumentInfo docInfo(urlParam, urlParam, MIMEScanner::scanUrl(thisUrl), &quot;&quot;);
+ 		Document *pDoc = pDownloader-&gt;retrieveUrl(docInfo);
+ 		if (pDoc == NULL)
+ 		{
+@@ -202,7 +246,7 @@
+ 			pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
+ 
+ 			// Update an existing document or add to the index ?
+-			docId = pIndex-&gt;hasDocument(urlToIndex);
++			docId = pIndex-&gt;hasDocument(urlParam);
+ 			if (docId &gt; 0)
+ 			{
+ 				// Update the document
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000767.html">[Pinot-svn] r773 - trunk/Monitor
+</A></li>
+	<LI>Next message: <A HREF="000769.html">[Pinot-svn] r775 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#768">[ date ]</a>
+              <a href="thread.html#768">[ thread ]</a>
+              <a href="subject.html#768">[ subject ]</a>
+              <a href="author.html#768">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

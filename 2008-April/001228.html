@@ -1,0 +1,242 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1234 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1234%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200804291257.m3TCvnpa028777%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001227.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1234 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1234%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200804291257.m3TCvnpa028777%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1234 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 29 14:57:49 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001227.html">[Pinot-svn] r1233 - trunk/IndexSearch/Xapian
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1228">[ date ]</a>
+              <a href="thread.html#1228">[ thread ]</a>
+              <a href="subject.html#1228">[ subject ]</a>
+              <a href="author.html#1228">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-04-29 14:57:49 +0200 (Tue, 29 Apr 2008)
+New Revision: 1234
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+We don't need to keep the Glib::Thread pointer around since all threads detach.
+Therefore entries can be inserted in the threads list before the new thread
+is started, and we get rid of a possible race condition between list insertion
+and thread exit.
+In ThreadsManager::get_thread(), the list should be locked in write mode since
+entries are removed.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-04-23 14:42:02 UTC (rev 1233)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-04-29 12:57:49 UTC (rev 1234)
+@@ -111,15 +111,15 @@
+ struct StopScannerThreadFunc
+ {
+ public:
+-	void operator()(map&lt;WorkerThread *, Thread *&gt;::value_type &amp;p)
++	void operator()(map&lt;unsigned int, WorkerThread *&gt;::value_type &amp;p)
+ 	{
+-		string type(p.first-&gt;getType());
++		string type(p.second-&gt;getType());
+ 
+ 		if (type == &quot;DirectoryScannerThread&quot;)
+ 		{
+-			p.first-&gt;stop();
++			p.second-&gt;stop();
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;StopScannerThreadFunc: stopped thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
++			cout &lt;&lt; &quot;StopScannerThreadFunc: stopped thread &quot; &lt;&lt; p.second-&gt;getId() &lt;&lt; endl;
+ #endif
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-04-23 14:42:02 UTC (rev 1233)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-04-29 12:57:49 UTC (rev 1234)
+@@ -58,11 +58,11 @@
+ struct StopThreadFunc
+ {
+ public:
+-	void operator()(map&lt;WorkerThread *, Thread *&gt;::value_type &amp;p)
++	void operator()(map&lt;unsigned int, WorkerThread *&gt;::value_type &amp;p)
+ 	{
+-		p.first-&gt;stop();
++		p.second-&gt;stop();
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;StopThreadFunc: stopped thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
++		cout &lt;&lt; &quot;StopThreadFunc: stopped thread &quot; &lt;&lt; p.second-&gt;getId() &lt;&lt; endl;
+ #endif
+ 		Thread::yield();
+ 	}
+@@ -345,14 +345,14 @@
+ 	WorkerThread *pWorkerThread = NULL;
+ 
+ 	// Get the first thread that's finished
+-	if (read_lock_threads() == true)
++	if (write_lock_threads() == true)
+ 	{
+-		for (map&lt;WorkerThread *, Thread *&gt;::iterator threadIter = m_threads.begin();
++		for (map&lt;unsigned int, WorkerThread *&gt;::iterator threadIter = m_threads.begin();
+ 			threadIter != m_threads.end(); ++threadIter)
+ 		{
+-			unsigned int threadId = threadIter-&gt;first-&gt;getId();
++			unsigned int threadId = threadIter-&gt;first;
+ 
+-			if (threadIter-&gt;first-&gt;isDone() == false)
++			if (threadIter-&gt;second-&gt;isDone() == false)
+ 			{
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;ThreadsManager::get_thread: thread &quot;
+@@ -360,11 +360,11 @@
+ #endif
+ 
+ 				// Foreground threads ought not to run very long
+-				if ((threadIter-&gt;first-&gt;isBackground() == false) &amp;&amp;
+-					(threadIter-&gt;first-&gt;getStartTime() + 300 &lt; timeNow))
++				if ((threadIter-&gt;second-&gt;isBackground() == false) &amp;&amp;
++					(threadIter-&gt;second-&gt;getStartTime() + 300 &lt; timeNow))
+ 				{
+ 					// This thread has been running for more than 5 minutes already !
+-					threadIter-&gt;first-&gt;stop();
++					threadIter-&gt;second-&gt;stop();
+ 
+ 					cerr &lt;&lt; &quot;Stopped long-running thread &quot; &lt;&lt; threadId &lt;&lt; endl;
+ 				}
+@@ -372,7 +372,7 @@
+ 			else
+ 			{
+ 				// This one will do...
+-				pWorkerThread = threadIter-&gt;first;
++				pWorkerThread = threadIter-&gt;second;
+ 				// Remove it
+ 				m_threads.erase(threadIter);
+ #ifdef DEBUG
+@@ -483,6 +483,8 @@
+ 
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+ {
++	bool createdThread = false;
++
+ 	if (pWorkerThread == NULL)
+ 	{
+ 		return false;
+@@ -503,25 +505,44 @@
+ 			&lt;&lt; &quot; will run in the foreground&quot; &lt;&lt; endl;
+ #endif
+ 
+-	// Start the thread
+-	Thread *pThread = pWorkerThread-&gt;start();
+-	if (pThread == NULL)
++	// Insert
++	pair&lt;map&lt;unsigned int, WorkerThread *&gt;::iterator, bool&gt; threadPair;
++	if (write_lock_threads() == true)
+ 	{
+-		delete pWorkerThread;
++		threadPair = m_threads.insert(pair&lt;unsigned int, WorkerThread *&gt;(pWorkerThread-&gt;getId(), pWorkerThread));
++		if (threadPair.second == false)
++		{
++			delete pWorkerThread;
++			pWorkerThread = NULL;
++		}
+ 
+-		return false;
++		unlock_threads();
+ 	}
+ 
+-	// Insert
+-	if (write_lock_threads() == true)
++	// Start the thread
++	if (pWorkerThread != NULL)
+ 	{
+-		m_threads[pWorkerThread] = pThread;
++		Thread *pThread = pWorkerThread-&gt;start();
++		if (pThread != NULL)
++		{
++			createdThread = true;
++		}
++		else
++		{
++			// Erase
++			if (write_lock_threads() == true)
++			{
++				m_threads.erase(threadPair.first);
+ 
+-		unlock_threads();
++				unlock_threads();
++			}
++			delete pWorkerThread;
++		}
+ 	}
++
+ 	++m_nextThreadId;
+ 
+-	return true;
++	return createdThread;
+ }
+ 
+ unsigned int ThreadsManager::get_threads_count(void)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-04-23 14:42:02 UTC (rev 1233)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-04-29 12:57:49 UTC (rev 1234)
+@@ -140,7 +140,7 @@
+ 		sigc::connection m_threadsEndConnection;
+ 		pthread_rwlock_t m_threadsLock;
+ 		pthread_rwlock_t m_listsLock;
+-		std::map&lt;WorkerThread *, Glib::Thread *&gt; m_threads;
++		std::map&lt;unsigned int, WorkerThread *&gt; m_threads;
+ 		std::string m_defaultIndexLocation;
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_nextThreadId;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001227.html">[Pinot-svn] r1233 - trunk/IndexSearch/Xapian
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1228">[ date ]</a>
+              <a href="thread.html#1228">[ thread ]</a>
+              <a href="subject.html#1228">[ subject ]</a>
+              <a href="author.html#1228">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

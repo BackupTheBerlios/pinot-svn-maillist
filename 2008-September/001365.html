@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1374 - trunk/IndexSearch/XesamGLib
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1374%20-%20trunk/IndexSearch/XesamGLib&In-Reply-To=%3C200809200840.m8K8eg16019182%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001364.html">
+   <LINK REL="Next"  HREF="001366.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1374 - trunk/IndexSearch/XesamGLib</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1374%20-%20trunk/IndexSearch/XesamGLib&In-Reply-To=%3C200809200840.m8K8eg16019182%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1374 - trunk/IndexSearch/XesamGLib">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep 20 10:40:42 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001364.html">[Pinot-svn] r1373 - in trunk: . po
+</A></li>
+        <LI>Next message: <A HREF="001366.html">[Pinot-svn] r1375 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1365">[ date ]</a>
+              <a href="thread.html#1365">[ thread ]</a>
+              <a href="subject.html#1365">[ subject ]</a>
+              <a href="author.html#1365">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-09-20 10:40:29 +0200 (Sat, 20 Sep 2008)
+New Revision: 1374
+
+Modified:
+   trunk/IndexSearch/XesamGLib/XesamEngine.cpp
+Log:
+Assume QueryProperties sanitized the query.
+Attempt to stop the search when enough hits have been received.
+Include &lt;xesam-glib.h&gt; as found in xesam-glib v0.5.0.
+
+
+Modified: trunk/IndexSearch/XesamGLib/XesamEngine.cpp
+===================================================================
+--- trunk/IndexSearch/XesamGLib/XesamEngine.cpp	2008-09-20 07:18:09 UTC (rev 1373)
++++ trunk/IndexSearch/XesamGLib/XesamEngine.cpp	2008-09-20 08:40:29 UTC (rev 1374)
+@@ -18,12 +18,11 @@
+ 
+ #include &lt;stdlib.h&gt;
+ #include &lt;glib.h&gt;
+-#include &lt;xesam-glib/xesam-glib.h&gt;
++#include &lt;xesam-glib.h&gt;
+ #include &lt;vector&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;DocumentInfo.h&quot;
+-#include &quot;StringManip.h&quot;
+ #include &quot;XesamEngine.h&quot;
+ 
+ using std::cout;
+@@ -47,6 +46,16 @@
+ 		{
+ 		}
+ 
++		bool enoughHits(void) const
++		{
++			if (m_resultsList.size() &gt;= m_requiredHitsCount)
++			{
++				return true;
++			}
++
++			return false;
++		}
++
+ 		GMainLoop *m_pMainLoop;
+ 		vector&lt;DocumentInfo&gt; &amp;m_resultsList;
+ 		unsigned int m_requiredHitsCount;
+@@ -70,9 +79,6 @@
+ 	{
+ 		return;
+ 	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;XesamEngine::pushHit: hit ID &quot; &lt;&lt; xesam_g_hit_get_id(pHit) &lt;&lt; endl;
+-#endif
+ 
+ 	DocumentInfo docInfo;
+ 
+@@ -142,6 +148,10 @@
+ 		// Assume hits are sorted by relevancy
+ 		docInfo.setScore((float )(100 - hitNum));
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XesamEngine::pushHit: hit &quot; &lt;&lt; xesam_g_hit_get_id(pHit)
++		&lt;&lt; &quot; on &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; endl;
++#endif
+ 
+ 	// Push into the results list
+ 	resultsList.push_back(docInfo);
+@@ -156,6 +166,8 @@
+ 	}
+ 
+ 	CallbackData *pData = (CallbackData *)pUserData;
++	bool haveEnough = false;
++
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;XesamEngine::hitsReady: needing &quot; &lt;&lt; pData-&gt;m_requiredHitsCount
+ 		&lt;&lt; &quot; hits, got &quot; &lt;&lt; xesam_g_hits_get_count(pHits) &lt;&lt; endl;
+@@ -164,11 +176,22 @@
+ 	++pData-&gt;m_gettingHits;
+ 	for (guint hitNum = 0; hitNum &lt; xesam_g_hits_get_count(pHits); ++hitNum)
+ 	{
++		if (pData-&gt;enoughHits() == true)
++		{
++			haveEnough = true;
++			break;
++		}
++
+ 		XesamGHit *pHit = xesam_g_hits_get(pHits, hitNum);
+ 
+ 		pushHit(pHit, pData-&gt;m_resultsList, hitNum);
+ 	}
+ 	--pData-&gt;m_gettingHits;
++
++	if (haveEnough == true)
++	{
++		stopSearch(pData-&gt;m_pMainLoop);
++	}
+ }
+ 
+ static void searchDone(XesamGSearch *pSearch, gpointer pUserData)
+@@ -217,7 +240,7 @@
+ bool XesamEngine::runQuery(QueryProperties&amp; queryProps,
+ 	unsigned int startDoc)
+ {
+-	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
++	string freeQuery(queryProps.getFreeQuery());
+ 	QueryProperties::QueryType type = queryProps.getType();
+ 	bool ranQuery = false;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001364.html">[Pinot-svn] r1373 - in trunk: . po
+</A></li>
+	<LI>Next message: <A HREF="001366.html">[Pinot-svn] r1375 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1365">[ date ]</a>
+              <a href="thread.html#1365">[ thread ]</a>
+              <a href="subject.html#1365">[ subject ]</a>
+              <a href="author.html#1365">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

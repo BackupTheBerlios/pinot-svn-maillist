@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r288 - in trunk: Tokenize Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r288%20-%20in%20trunk%3A%20Tokenize%20Utils&In-Reply-To=%3C200606021546.k52Fkq4A016492%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000281.html">
+   <LINK REL="Next"  HREF="000283.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r288 - in trunk: Tokenize Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r288%20-%20in%20trunk%3A%20Tokenize%20Utils&In-Reply-To=%3C200606021546.k52Fkq4A016492%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r288 - in trunk: Tokenize Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jun  2 17:46:52 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000281.html">[Pinot-svn] r287 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000283.html">[Pinot-svn] r289 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#282">[ date ]</a>
+              <a href="thread.html#282">[ thread ]</a>
+              <a href="subject.html#282">[ subject ]</a>
+              <a href="author.html#282">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-02 17:46:51 +0200 (Fri, 02 Jun 2006)
+New Revision: 288
+
+Modified:
+   trunk/Tokenize/HtmlTokenizer.cpp
+   trunk/Utils/StringManip.cpp
+Log:
+Some fixes for results title and abstract, including a fairly stupid bug in
+trimSpaces().
+
+
+Modified: trunk/Tokenize/HtmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.cpp	2006-06-02 14:04:47 UTC (rev 287)
++++ trunk/Tokenize/HtmlTokenizer.cpp	2006-06-02 15:46:51 UTC (rev 288)
+@@ -43,8 +43,11 @@
+ 	if ((pState-&gt;m_links.empty() == true) ||
+ 		(pState-&gt;m_currentLink.m_index == 0))
+ 	{
+-		pState-&gt;m_abstract = pState-&gt;m_text;
++		string abstract(pState-&gt;m_text);
+ 
++		StringManip::trimSpaces(abstract);
++		pState-&gt;m_abstract = abstract;
++
+ 		return true;
+ 	}
+ 
+@@ -173,7 +176,8 @@
+ 			// FIXME: get the NodeInfo to find out the position of this link
+ 			pState-&gt;m_currentLink.m_startPos = pState-&gt;m_textPos;
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;HtmlTokenizer::startHandler: link starts at position &quot; &lt;&lt; pState-&gt;m_textPos &lt;&lt; endl;
++			cout &lt;&lt; &quot;HtmlTokenizer::endHandler: link &quot; &lt;&lt; pState-&gt;m_currentLink.m_index
++				&lt;&lt; &quot; starts at position &quot; &lt;&lt; pState-&gt;m_textPos &lt;&lt; endl;
+ #endif
+ 
+ 			// Find abstract ?
+@@ -242,7 +246,7 @@
+ 	}
+ 	else if (tagName == &quot;title&quot;)
+ 	{
+-		StringManip::removeCharacters(pState-&gt;m_title, &quot;\t\r\n&quot;);
++		StringManip::trimSpaces(pState-&gt;m_title);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;HtmlTokenizer::endHandler: title is &quot; &lt;&lt; pState-&gt;m_title &lt;&lt; endl;
+ #endif
+@@ -256,12 +260,13 @@
+ 	{
+ 		if (pState-&gt;m_currentLink.m_url.empty() == false)
+ 		{
+-			// FIXME: get the NodeInfo to find out the position of this link
++			StringManip::trimSpaces(pState-&gt;m_currentLink.m_name);
+ 			pState-&gt;m_currentLink.m_endPos = pState-&gt;m_textPos;
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;HtmlTokenizer::endHandler: link ends at position &quot; &lt;&lt; pState-&gt;m_textPos &lt;&lt; endl;
++			cout &lt;&lt; &quot;HtmlTokenizer::endHandler: link &quot; &lt;&lt; pState-&gt;m_currentLink.m_index
++				&lt;&lt; &quot; ends at position &quot; &lt;&lt; pState-&gt;m_textPos &lt;&lt; endl;
+ #endif
+-				
++
+ 			// Store this link
+ 			pState-&gt;m_links.insert(pState-&gt;m_currentLink);
+ 			++pState-&gt;m_currentLink.m_index;
+
+Modified: trunk/Utils/StringManip.cpp
+===================================================================
+--- trunk/Utils/StringManip.cpp	2006-06-02 14:04:47 UTC (rev 287)
++++ trunk/Utils/StringManip.cpp	2006-06-02 15:46:51 UTC (rev 288)
+@@ -198,17 +198,18 @@
+ /// Trims spaces at the start and end of a string.
+ unsigned int StringManip::trimSpaces(string &amp;str)
+ {
++	unsigned int pos = 0;
+ 	unsigned int count = 0;
+ 
+-	for (unsigned int pos = 0;
+-		(str.empty() == false) &amp;&amp; (pos &lt; str.length()); ++pos)
++	while ((str.empty() == false) &amp;&amp; (pos &lt; str.length()))
+ 	{
+ 		if (isspace(str[pos]) == 0)
+ 		{
++			++pos;
+ 			break;
+ 		}
+ 
+-		str.erase(pos);
++		str.erase(pos, 1);
+ 		++count;
+ 	}
+ 
+@@ -220,7 +221,7 @@
+ 			break;
+ 		}
+ 
+-		str.erase(pos);
++		str.erase(pos, 1);
+ 		++count;
+ 	}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000281.html">[Pinot-svn] r287 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000283.html">[Pinot-svn] r289 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#282">[ date ]</a>
+              <a href="thread.html#282">[ thread ]</a>
+              <a href="subject.html#282">[ subject ]</a>
+              <a href="author.html#282">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

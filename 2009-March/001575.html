@@ -1,0 +1,215 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1585 - trunk/Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1585%20-%20trunk/Tokenize&In-Reply-To=%3C200903101207.n2AC7a20012470%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001574.html">
+   <LINK REL="Next"  HREF="001576.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1585 - trunk/Tokenize</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1585%20-%20trunk/Tokenize&In-Reply-To=%3C200903101207.n2AC7a20012470%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1585 - trunk/Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 10 13:07:36 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001574.html">[Pinot-svn] r1584 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001576.html">[Pinot-svn] r1586 - in trunk: . Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1575">[ date ]</a>
+              <a href="thread.html#1575">[ thread ]</a>
+              <a href="subject.html#1575">[ subject ]</a>
+              <a href="author.html#1575">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-10 13:07:31 +0100 (Tue, 10 Mar 2009)
+New Revision: 1585
+
+Modified:
+   trunk/Tokenize/FilterUtils.cpp
+Log:
+Feeding the data through a temporary file is the second most preferred way to
+feed filters as having the data very likely means that the original file
+already went through one filter.
+There's no point trying to convert to UTF8 stuff that's not plain text.
+
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2009-03-07 22:47:58 UTC (rev 1584)
++++ trunk/Tokenize/FilterUtils.cpp	2009-03-10 12:07:31 UTC (rev 1585)
+@@ -188,6 +188,43 @@
+ 	{
+ 		fedInput = pFilter-&gt;set_document_data(pData, dataLength);
+ 	}
++	// ... to feeding the data through a temporary file
++	if ((fedInput == false) &amp;&amp;
++		((dataLength &gt; 0) &amp;&amp; (pData != NULL)) &amp;&amp;
++		(pFilter-&gt;is_data_input_ok(Dijon::Filter::DOCUMENT_FILE_NAME) == true))
++	{
++		char inTemplate[18] = &quot;/tmp/filterXXXXXX&quot;;
++
++#ifdef HAVE_MKSTEMP
++		int inFd = mkstemp(inTemplate);
++#else
++		int inFd = -1;
++		char *pInFile = mktemp(inTemplate);
++		if (pInFile != NULL)
++		{
++			inFd = open(pInFile, O_RDONLY);
++		}
++#endif
++		if (inFd != -1)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;FilterUtils::feedFilter: feeding temporary file &quot; &lt;&lt; inTemplate &lt;&lt; endl;
++#endif
++
++			// Save the data
++			if (write(inFd, (const void*)pData, dataLength) != -1)
++			{
++				fedInput = pFilter-&gt;set_document_file(inTemplate, true);
++				if (fedInput == false)
++				{
++					// We might as well delete the file now
++					unlink(inTemplate);
++				}
++			}
++
++			close(inFd);
++		}
++	}
+ 	// ... to feeding the file
+ 	if ((fedInput == false) &amp;&amp;
+ 		(fileName.empty() == false))
+@@ -228,44 +265,7 @@
+ 			}
+ 		}
+ 	}
+-	// ... to feeding data through a temporary file
+-	if ((fedInput == false) &amp;&amp;
+-		((dataLength &gt; 0) &amp;&amp; (pData != NULL)) &amp;&amp;
+-		(pFilter-&gt;is_data_input_ok(Dijon::Filter::DOCUMENT_FILE_NAME) == true))
+-	{
+-		char inTemplate[18] = &quot;/tmp/filterXXXXXX&quot;;
+ 
+-#ifdef HAVE_MKSTEMP
+-		int inFd = mkstemp(inTemplate);
+-#else
+-		int inFd = -1;
+-		char *pInFile = mktemp(inTemplate);
+-		if (pInFile != NULL)
+-		{
+-			inFd = open(pInFile, O_RDONLY);
+-		}
+-#endif
+-		if (inFd != -1)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;FilterUtils::feedFilter: feeding temporary file &quot; &lt;&lt; inTemplate &lt;&lt; endl;
+-#endif
+-
+-			// Save the data
+-			if (write(inFd, (const void*)pData, dataLength) != -1)
+-			{
+-				fedInput = pFilter-&gt;set_document_file(inTemplate, true);
+-				if (fedInput == false)
+-				{
+-					// We might as well delete the file now
+-					unlink(inTemplate);
+-				}
+-			}
+-
+-			close(inFd);
+-		}
+-	}
+-
+ 	if (fedInput == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't feed filter for &quot; &lt;&lt; doc.getLocation() &lt;&lt; endl;
+@@ -317,7 +317,7 @@
+ 			}
+ 			else
+ 			{
+-				doc.setType(StringManip::toLowerCase(metaIter-&gt;second));
++				doc.setType(mimeType);
+ 			}
+ 		}
+ 		else if (metaIter-&gt;first == &quot;size&quot;)
+@@ -364,23 +364,25 @@
+ 	map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;content&quot;);
+ 	if (contentIter != metaData.end())
+ 	{
+-		string utf8Data(converter.toUTF8(contentIter-&gt;second, charset));
+-
+-		if (converter.getErrorsCount() &gt; 0)
++		if (checkType == true)
+ 		{
+-			cerr &lt;&lt; doc.getLocation() &lt;&lt; &quot; may not have been fully converted to UTF-8&quot; &lt;&lt; endl;
++			doc.setType(MIMEScanner::scanData(contentIter-&gt;second.c_str(), contentIter-&gt;second.length()));
+ 		}
+-		doc.setData(utf8Data.c_str(), utf8Data.length());
+ 
+-		if (checkType == true)
++		if (doc.getType().substr(0, 10) == &quot;text/plain&quot;)
+ 		{
+-			doc.setType(MIMEScanner::scanData(utf8Data.c_str(), utf8Data.length()));
++			string utf8Data(converter.toUTF8(contentIter-&gt;second, charset));
++
++			if (converter.getErrorsCount() &gt; 0)
++			{
++				cerr &lt;&lt; doc.getLocation() &lt;&lt; &quot; may not have been fully converted to UTF-8&quot; &lt;&lt; endl;
++			}
++			doc.setData(utf8Data.c_str(), utf8Data.length());
+ 		}
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterUtils::populateDocument: set &quot; &lt;&lt; utf8Data.length() &lt;&lt; &quot;/&quot; &lt;&lt; contentIter-&gt;second.length()
+-			&lt;&lt; &quot; bytes, converted from charset &quot; &lt;&lt; charset &lt;&lt; endl;
+-#endif
++		else
++		{
++			doc.setData(contentIter-&gt;second.c_str(), contentIter-&gt;second.length());
++		}
+ 	}
+ 	contentIter = metaData.find(&quot;title&quot;);
+ 	if (contentIter != metaData.end())
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001574.html">[Pinot-svn] r1584 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001576.html">[Pinot-svn] r1586 - in trunk: . Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1575">[ date ]</a>
+              <a href="thread.html#1575">[ thread ]</a>
+              <a href="subject.html#1575">[ subject ]</a>
+              <a href="author.html#1575">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

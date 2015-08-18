@@ -1,0 +1,317 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1559 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1559%20-%20trunk/Core&In-Reply-To=%3C200902151219.n1FCJpa1007328%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001548.html">
+   <LINK REL="Next"  HREF="001550.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1559 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1559%20-%20trunk/Core&In-Reply-To=%3C200902151219.n1FCJpa1007328%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1559 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Feb 15 13:19:51 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001548.html">[Pinot-svn] r1558 - in trunk: . Core
+</A></li>
+        <LI>Next message: <A HREF="001550.html">[Pinot-svn] r1560 - in trunk: Core SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1549">[ date ]</a>
+              <a href="thread.html#1549">[ thread ]</a>
+              <a href="subject.html#1549">[ subject ]</a>
+              <a href="author.html#1549">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-15 13:19:43 +0100 (Sun, 15 Feb 2009)
+New Revision: 1559
+
+Modified:
+   trunk/Core/WorkerThreads.cpp
+   trunk/Core/WorkerThreads.h
+Log:
+Cache what type of downloader DownloadingThread last got to avoid getting a new
+one every time. IndexingThread doesn't get a new Index on every call to its
+doWork() method.
+Look for the ROBOTS meta tag in remote documents only.
+
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2009-02-15 02:25:00 UTC (rev 1558)
++++ trunk/Core/WorkerThreads.cpp	2009-02-15 12:19:43 UTC (rev 1559)
+@@ -1208,21 +1208,36 @@
+ 
+ void DownloadingThread::doWork(void)
+ {
++	Url thisUrl(m_docInfo.getLocation());
++	bool getDownloader = true;
++
+ 	if (m_pDoc != NULL)
+ 	{
+ 		delete m_pDoc;
+ 		m_pDoc = NULL;
+ 	}
++
++	// Get a Downloader
+ 	if (m_pDownloader != NULL)
+ 	{
+-		delete m_pDownloader;
+-		m_pDownloader = NULL;
++		// Same protocol as what we now need ?
++		if (m_protocol == thisUrl.getProtocol())
++		{
++			getDownloader = false;
++		}
++		else
++		{
++			delete m_pDownloader;
++			m_pDownloader = NULL;
++			m_protocol.clear();
++		}
+ 	}
++	if (getDownloader == true)
++	{
++		m_protocol = thisUrl.getProtocol();
++		m_pDownloader = DownloaderFactory::getDownloader(m_protocol);
++	}
+ 
+-	Url thisUrl(m_docInfo.getLocation());
+-
+-	// Get a Downloader, the default one will do
+-	m_pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+ 	if (m_pDownloader == NULL)
+ 	{
+ 		m_errorNum = UNSUPPORTED_PROTOCOL;
+@@ -1234,7 +1249,8 @@
+ 		PinotSettings &amp;settings = PinotSettings::getInstance();
+ 
+ 		// Set up the proxy
+-		if ((settings.m_proxyEnabled == true) &amp;&amp;
++		if ((getDownloader == true) &amp;&amp;
++			(settings.m_proxyEnabled == true) &amp;&amp;
+ 			(settings.m_proxyAddress.empty() == false))
+ 		{
+ 			char portStr[64];
+@@ -1262,24 +1278,30 @@
+ IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, const string &amp;indexLocation,
+ 	bool allowAllMIMETypes) :
+ 	DownloadingThread(docInfo),
+-	m_docId(0),
++	m_pIndex(NULL),
+ 	m_indexLocation(indexLocation),
+ 	m_allowAllMIMETypes(allowAllMIMETypes),
+-	m_update(false)
++	m_update(false),
++	m_docId(0)
+ {
+ }
+ 
+-IndexingThread::IndexingThread() :
++IndexingThread::IndexingThread(const string &amp;indexLocation) :
+ 	DownloadingThread(),
+-	m_docId(0),
+-	m_indexLocation(&quot;&quot;),
++	m_pIndex(NULL),
++	m_indexLocation(indexLocation),
+ 	m_allowAllMIMETypes(true),
+-	m_update(false)
++	m_update(false),
++	m_docId(0)
+ {
+ }
+ 
+ IndexingThread::~IndexingThread()
+ {
++	if (m_pIndex != NULL)
++	{
++		delete m_pIndex;
++	}
+ }
+ 
+ string IndexingThread::getType(void) const
+@@ -1309,25 +1331,24 @@
+ 
+ void IndexingThread::doWork(void)
+ {
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexLocation);
+ 	Url thisUrl(m_docInfo.getLocation());
+ 	bool reliableType = false, doDownload = true;
+ 
+ 	// First things first, get the index
+-	if ((pIndex == NULL) ||
+-		(pIndex-&gt;isGood() == false))
++	if (m_pIndex == NULL)
+ 	{
++		m_pIndex = PinotSettings::getInstance().getIndex(m_indexLocation);
++	}
++	if ((m_pIndex == NULL) ||
++		(m_pIndex-&gt;isGood() == false))
++	{
+ 		m_errorNum = INDEX_ERROR;
+ 		m_errorParam = m_indexLocation;
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+ 		return;
+ 	}
+ 
+ 	// Is it an update ?
+-	m_docId = pIndex-&gt;hasDocument(m_docInfo.getLocation());
++	m_docId = m_pIndex-&gt;hasDocument(m_docInfo.getLocation());
+ 	if (m_docId &gt; 0)
+ 	{
+ 		// Ignore robots directives on updates
+@@ -1352,7 +1373,6 @@
+ 		{
+ 			m_errorNum = UNSUPPORTED_TYPE;
+ 			m_errorParam = m_docInfo.getType();
+-			delete pIndex;
+ 
+ 			return;
+ 		}
+@@ -1447,7 +1467,6 @@
+ 			{
+ 				m_errorNum = UNSUPPORTED_TYPE;
+ 				m_errorParam = m_docInfo.getType();
+-				delete pIndex;
+ 
+ 				return;
+ 			}
+@@ -1455,6 +1474,7 @@
+ 			// Let FilterWrapper handle unspported documents
+ 		}
+ 		else if ((PinotSettings::getInstance().m_ignoreRobotsDirectives == false) &amp;&amp;
++			(thisUrl.isLocal() == false) &amp;&amp;
+ 			(m_docInfo.getType().length() &gt;= 9) &amp;&amp;
+ 			(m_docInfo.getType().substr(9) == &quot;text/html&quot;))
+ 		{
+@@ -1480,7 +1500,6 @@
+ 						// No, it isn't
+ 						m_errorNum = ROBOTS_FORBIDDEN;
+ 						m_errorParam = m_docInfo.getLocation();
+-						delete pIndex;
+ 
+ 						return;
+ 					}
+@@ -1493,7 +1512,7 @@
+ 
+ 		if (m_done == false)
+ 		{
+-			FilterWrapper wrapFilter(pIndex);
++			FilterWrapper wrapFilter(m_pIndex);
+ 
+ 			// Update an existing document or add to the index ?
+ 			if (m_update == true)
+@@ -1544,11 +1563,11 @@
+ 				// Flush the index ?
+ 				if (m_immediateFlush == true)
+ 				{
+-					pIndex-&gt;flush();
++					m_pIndex-&gt;flush();
+ 				}
+ 
+ 				// The document properties may have changed
+-				pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
++				m_pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
+ 				m_docInfo.setIsIndexed(
+ 					PinotSettings::getInstance().getIndexPropertiesByLocation(m_indexLocation).m_id,
+ 					m_docId);
+@@ -1560,8 +1579,6 @@
+ #ifdef DEBUG
+ 	else cout &lt;&lt; &quot;IndexingThread::doWork: couldn't download &quot; &lt;&lt; m_docInfo.getLocation() &lt;&lt; endl;
+ #endif
+-
+-	delete pIndex;
+ }
+ 
+ UnindexingThread::UnindexingThread(const set&lt;unsigned int&gt; &amp;docIdList) :
+@@ -1924,14 +1941,13 @@
+ DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName,
+ 	const string &amp;indexLocation, unsigned int maxLevel,
+ 	bool inlineIndexing, bool followSymLinks) :
+-	IndexingThread(),
++	IndexingThread(indexLocation),
+ 	m_dirName(dirName),
+ 	m_currentLevel(0),
+ 	m_maxLevel(maxLevel),
+ 	m_inlineIndexing(inlineIndexing),
+ 	m_followSymLinks(followSymLinks)
+ {
+-	m_indexLocation = indexLocation;
+ }
+ 
+ DirectoryScannerThread::~DirectoryScannerThread()
+
+Modified: trunk/Core/WorkerThreads.h
+===================================================================
+--- trunk/Core/WorkerThreads.h	2009-02-15 02:25:00 UTC (rev 1558)
++++ trunk/Core/WorkerThreads.h	2009-02-15 12:19:43 UTC (rev 1559)
+@@ -287,6 +287,7 @@
+ 		DocumentInfo m_docInfo;
+ 		Document *m_pDoc;
+ 		DownloaderInterface *m_pDownloader;
++		std::string m_protocol;
+ 
+ 		DownloadingThread();
+ 
+@@ -303,6 +304,7 @@
+ 	public:
+ 		IndexingThread(const DocumentInfo &amp;docInfo, const std::string &amp;indexLocation,
+ 			bool allowAllMIMETypes = true);
++		IndexingThread(const std::string &amp;indexLocation);
+ 		virtual ~IndexingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -316,10 +318,11 @@
+ 		bool isNewDocument(void) const;
+ 
+ 	protected:
+-		unsigned int m_docId;
++		IndexInterface *m_pIndex;
+ 		std::string m_indexLocation;
+ 		bool m_allowAllMIMETypes;
+ 		bool m_update;
++		unsigned int m_docId;
+ 
+ 		IndexingThread();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001548.html">[Pinot-svn] r1558 - in trunk: . Core
+</A></li>
+	<LI>Next message: <A HREF="001550.html">[Pinot-svn] r1560 - in trunk: Core SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1549">[ date ]</a>
+              <a href="thread.html#1549">[ thread ]</a>
+              <a href="subject.html#1549">[ subject ]</a>
+              <a href="author.html#1549">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

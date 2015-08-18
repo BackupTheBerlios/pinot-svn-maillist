@@ -1,0 +1,421 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r98 - in trunk: Index Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r98%20-%20in%20trunk%3A%20Index%20Search%20Utils&In-Reply-To=%3C200602071218.k17CI60c008871%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000096.html">
+   <LINK REL="Next"  HREF="000098.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r98 - in trunk: Index Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r98%20-%20in%20trunk%3A%20Index%20Search%20Utils&In-Reply-To=%3C200602071218.k17CI60c008871%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r98 - in trunk: Index Search Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Feb  7 13:18:06 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000096.html">[Pinot-svn] r97 - in trunk: . Index
+</A></li>
+        <LI>Next message: <A HREF="000098.html">[Pinot-svn] r99 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#97">[ date ]</a>
+              <a href="thread.html#97">[ thread ]</a>
+              <a href="subject.html#97">[ subject ]</a>
+              <a href="author.html#97">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-02-07 13:18:03 +0100 (Tue, 07 Feb 2006)
+New Revision: 98
+
+Modified:
+   trunk/Index/Summarizer.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/Utils/Languages.cpp
+   trunk/Utils/Languages.h
+Log:
+Changed term prefixes to conform to Omega's termprefixes.txt document. This
+will allow indexes to be queried by other Xapian-based tools that follow
+those conventions and Pinot to use the QueryParser class at some point.
+Unfortunately, users will have to update their documents and reapply labels !
+
+
+Modified: trunk/Index/Summarizer.cpp
+===================================================================
+--- trunk/Index/Summarizer.cpp	2006-02-06 14:23:27 UTC (rev 97)
++++ trunk/Index/Summarizer.cpp	2006-02-07 12:18:03 UTC (rev 98)
+@@ -42,15 +42,7 @@
+ 	m_dictionaryCode(&quot;en&quot;)
+ {
+ 	// Look up the language code
+-	for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
+-	{
+-		if (strncasecmp(language.c_str(), Languages::m_names[langNum],
+-			min(language.length(), strlen(Languages::m_names[langNum]))) == 0)
+-		{
+-			m_dictionaryCode = Languages::m_codes[langNum];
+-			break;
+-		}
+-	}
++	m_dictionaryCode = Languages::toCode(language);
+ }
+ 
+ Summarizer::~Summarizer()
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-02-06 14:23:27 UTC (rev 97)
++++ trunk/Index/XapianIndex.cpp	2006-02-07 12:18:03 UTC (rev 98)
+@@ -20,11 +20,13 @@
+ #include &lt;unistd.h&gt;
+ #include &lt;stdio.h&gt;
+ #include &lt;stdarg.h&gt;
++#include &lt;strings.h&gt;
+ #include &lt;time.h&gt;
+ #include &lt;regex.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;algorithm&gt;
++#include &lt;utility&gt;
+ 
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+@@ -37,6 +39,7 @@
+ 
+ using std::string;
+ using std::set;
++using std::min;
+ 
+ // This puts a limit to terms length.
+ const unsigned int XapianIndex::m_maxTermLength = 128;
+@@ -170,13 +173,13 @@
+ 	// Add a magic term :-)
+ 	doc.add_term(MAGIC_TERM);
+ 
+-	// Index the title with and without prefix T
++	// Index the title with and without prefix S
+ 	if (title.empty() == false)
+ 	{
+ 		Document titleDoc;
+ 		titleDoc.setData(title.c_str(), title.length());
+ 		Tokenizer titleTokens(&amp;titleDoc);
+-		addTermsToDocument(titleTokens, doc, &quot;T&quot;, termPos, STORE_UNSTEM);
++		addTermsToDocument(titleTokens, doc, &quot;S&quot;, termPos, STORE_UNSTEM);
+ 		titleTokens.rewind();
+ 		addTermsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 	}
+@@ -197,14 +200,14 @@
+ 			dotPos = hostName.find('.', dotPos + 1);
+ 		}
+ 	}
+-	// ...and the file name with prefix F
++	// ...and the file name with prefix P
+ 	string fileName(urlObj.getFile());
+ 	if (fileName.empty() == false)
+ 	{
+-		doc.add_term(limitTermLength(string(&quot;F&quot;) + StringManip::toLowerCase(fileName), true));
++		doc.add_term(limitTermLength(string(&quot;P&quot;) + StringManip::toLowerCase(fileName), true));
+ 	}
+-	// Finally, add the language with prefix L
+-	doc.add_term(string(&quot;L&quot;) + StringManip::toLowerCase(m_stemLanguage));
++	// Finally, add the language code with prefix L
++	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
+ 
+ 	setDocumentData(doc, info, summary, m_stemLanguage);
+ 
+@@ -393,7 +396,7 @@
+ 		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 			++labelIter)
+ 		{
+-			doc.add_term(limitTermLength(string(&quot;C&quot;) + *labelIter));
++			doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 		}
+ 		if (prepareDocument(docInfo, doc, termPos, summary) == true)
+ 		{
+@@ -492,7 +495,7 @@
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(&quot;C&quot;);
++			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Get documents that have this label
+ 			// FIXME: would it be faster to get the document's terms ?
+@@ -541,16 +544,20 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
+-			for (Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
+-				termIter != pIndex-&gt;termlist_end(docId); ++termIter)
++			Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
++			if (termIter != pIndex-&gt;termlist_end(docId))
+ 			{
+-				// Is this a label ?
+-				if ((*termIter)[0] == 'C')
++				for (termIter.skip_to(&quot;XLABEL:&quot;);
++					termIter != pIndex-&gt;termlist_end(docId); ++termIter)
+ 				{
+-					labels.insert((*termIter).substr(1));
++					// Is this a label ?
++					if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
++					{
++						labels.insert((*termIter).substr(7));
++					}
+ 				}
++				gotLabels = true;
+ 			}
+-			gotLabels = true;
+ 		}
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+@@ -584,7 +591,7 @@
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(&quot;C&quot;);
++			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Get documents that have this label
+ 			term += name;
+@@ -659,7 +666,7 @@
+ 			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 				++labelIter)
+ 			{
+-				doc.add_term(limitTermLength(string(&quot;C&quot;) + *labelIter));
++				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 			}
+ 		}
+ 		if (prepareDocument(docInfo, doc, termPos, summary) == true)
+@@ -758,13 +765,17 @@
+ 			// Reset existing labels ?
+ 			if (resetLabels == true)
+ 			{
+-				for (Xapian::TermIterator termIter = doc.termlist_begin();
+-					termIter != doc.termlist_end(); ++termIter)
++				Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
++				if (termIter != pIndex-&gt;termlist_end(docId))
+ 				{
+-					// Is this a label ?
+-					if ((*termIter)[0] == 'C')
++					for (termIter.skip_to(&quot;XLABEL:&quot;);
++						termIter != pIndex-&gt;termlist_end(docId); ++termIter)
+ 					{
+-						doc.remove_term(*termIter);
++						// Is this a label ?
++						if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
++						{
++							doc.remove_term(*termIter);
++						}
+ 					}
+ 				}
+ 			}
+@@ -773,7 +784,7 @@
+ 			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 				++labelIter)
+ 			{
+-				doc.add_term(limitTermLength(string(&quot;C&quot;) + *labelIter));
++				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 			}
+ 
+ 			pIndex-&gt;replace_document(docId, doc);
+@@ -901,7 +912,7 @@
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(&quot;C&quot;);
++			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Delete documents from the index
+ 			term += labelName;
+@@ -996,7 +1007,7 @@
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(&quot;C&quot;);
++			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Get documents that have this label
+ 			term += name;
+@@ -1010,7 +1021,7 @@
+ 				// Remove the term
+ 				doc.remove_term(term);
+ 				// ...add the new one
+-				doc.add_term(limitTermLength(string(&quot;C&quot;) + newName));
++				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + newName));
+ 				// ...and update the document
+ 				pIndex-&gt;replace_document(docId, doc);
+ 			}
+@@ -1048,7 +1059,7 @@
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(&quot;C&quot;);
++			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Get documents that have this label
+ 			term += name;
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2006-02-06 14:23:27 UTC (rev 97)
++++ trunk/Search/QueryProperties.cpp	2006-02-07 12:18:03 UTC (rev 98)
+@@ -17,6 +17,7 @@
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
+ 
++#include &quot;Languages.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ QueryProperties::QueryProperties()
+@@ -298,7 +299,7 @@
+ 		if (m_language.empty() == false)
+ 		{
+ 			queryString += &quot; +L&quot;;
+-			queryString += m_language;
++			queryString += Languages::toCode(Languages::toEnglish(m_language));
+ 		}
+ 		if (m_hostFilter.empty() == false)
+ 		{
+@@ -307,12 +308,12 @@
+ 		}
+ 		if (m_fileFilter.empty() == false)
+ 		{
+-			queryString += &quot; +F&quot;;
++			queryString += &quot; +P&quot;;
+ 			queryString += m_fileFilter;
+ 		}
+ 		if (m_labelFilter.empty() == false)
+ 		{
+-			queryString += &quot; +C&quot;;
++			queryString += &quot; +XLABEL:&quot;;
+ 			queryString += m_labelFilter;
+ 		}
+ 	}
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-02-06 14:23:27 UTC (rev 97)
++++ trunk/Search/XapianEngine.cpp	2006-02-07 12:18:03 UTC (rev 98)
+@@ -287,7 +287,7 @@
+ 	{
+ 		vector&lt;string&gt; fileTerms;
+ 
+-		term = &quot;F&quot;;
++		term = &quot;P&quot;;
+ 		term += StringManip::toLowerCase(queryProps.getFileFilter());
+ 		fileTerms.push_back(term);
+ 		if (followOperators == true)
+@@ -302,7 +302,7 @@
+ 	{
+ 		vector&lt;string&gt; labelTerms;
+ 
+-		term = &quot;C&quot;;
++		term = &quot;XLABEL:&quot;;
+ 		term += queryProps.getLabelFilter();
+ 		labelTerms.push_back(term);
+ 		if (followOperators == true)
+@@ -319,7 +319,7 @@
+ 		vector&lt;string&gt; languageTerms;
+ 
+ 		term = &quot;L&quot;;
+-		term += StringManip::toLowerCase(Languages::toEnglish(language));
++		term += Languages::toCode(Languages::toEnglish(language));
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianEngine::stackQuery: filter &quot;  &lt;&lt; term &lt;&lt; endl;
+ #endif
+
+Modified: trunk/Utils/Languages.cpp
+===================================================================
+--- trunk/Utils/Languages.cpp	2006-02-06 14:23:27 UTC (rev 97)
++++ trunk/Utils/Languages.cpp	2006-02-07 12:18:03 UTC (rev 98)
+@@ -13,7 +13,7 @@
+  *  along with this program; if not, write to the Free Software
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+-
++ 
+ #include &lt;string.h&gt;
+ #include &lt;utility&gt;
+ 
+@@ -98,3 +98,22 @@
+ 
+ 	return language;
+ }
++
++string Languages::toCode(const string &amp;language)
++{
++	if (language.empty() == false)
++	{
++		// Get the language code
++		for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
++		{
++			if (strncasecmp(language.c_str(), Languages::m_names[langNum],
++				min(language.length(), strlen(Languages::m_names[langNum]))) == 0)
++			{
++				// That's the one !
++				return Languages::m_codes[langNum];
++			}
++		}
++	}
++
++	return language;
++}
+
+Modified: trunk/Utils/Languages.h
+===================================================================
+--- trunk/Utils/Languages.h	2006-02-06 14:23:27 UTC (rev 97)
++++ trunk/Utils/Languages.h	2006-02-07 12:18:03 UTC (rev 98)
+@@ -37,11 +37,14 @@
+ 		/// Returns a language name, in the current locale.
+ 		static std::string toLocale(const std::string &amp;language);
+ 
++		/// Returns a language code.
++		static std::string toCode(const std::string &amp;language);
++
+ 		static unsigned int m_count;
+-		static char *m_codes[];
+ 		static char *m_names[];
+ 
+ 	protected:
++		static char *m_codes[];
+ 		static std::map&lt;unsigned int, std::string&gt; m_intlNames;
+ 
+ 		Languages();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000096.html">[Pinot-svn] r97 - in trunk: . Index
+</A></li>
+	<LI>Next message: <A HREF="000098.html">[Pinot-svn] r99 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#97">[ date ]</a>
+              <a href="thread.html#97">[ thread ]</a>
+              <a href="subject.html#97">[ subject ]</a>
+              <a href="author.html#97">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

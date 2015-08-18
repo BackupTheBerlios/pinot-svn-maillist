@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r369 - in trunk: Monitor UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r369%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200608041205.k74C51nZ023764%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000361.html">
+   <LINK REL="Next"  HREF="000363.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r369 - in trunk: Monitor UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r369%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200608041205.k74C51nZ023764%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r369 - in trunk: Monitor UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug  4 14:05:01 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000361.html">[Pinot-svn] r368 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000363.html">[Pinot-svn] r370 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#362">[ date ]</a>
+              <a href="thread.html#362">[ thread ]</a>
+              <a href="subject.html#362">[ subject ]</a>
+              <a href="author.html#362">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-04 14:04:58 +0200 (Fri, 04 Aug 2006)
+New Revision: 369
+
+Modified:
+   trunk/Monitor/MonitorHandler.h
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Prototype of MonitorHandler::fileMoved() has changed.
+
+
+Modified: trunk/Monitor/MonitorHandler.h
+===================================================================
+--- trunk/Monitor/MonitorHandler.h	2006-08-04 11:59:37 UTC (rev 368)
++++ trunk/Monitor/MonitorHandler.h	2006-08-04 12:04:58 UTC (rev 369)
+@@ -45,7 +45,8 @@
+ 		virtual bool fileModified(const std::string &amp;fileName) = 0;
+ 
+ 		/// Handles file moved events.
+-		virtual bool fileMoved(const std::string &amp;fileName) = 0;
++		virtual bool fileMoved(const std::string &amp;fileName,
++			const std::string &amp;previousFileName) = 0;
+ 
+ 		/// Handles file deleted events.
+ 		virtual bool fileDeleted(const std::string &amp;fileName) = 0;
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-04 11:59:37 UTC (rev 368)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-04 12:04:58 UTC (rev 369)
+@@ -380,7 +380,7 @@
+ 	return indexMessages(fileName, mailAccount, mboxOffset);
+ }
+ 
+-bool MboxHandler::fileMoved(const string &amp;fileName)
++bool MboxHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName)
+ {
+ 	// Nothing to do here
+ 	return true;
+
+Modified: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2006-08-04 11:59:37 UTC (rev 368)
++++ trunk/UI/GTK2/src/MboxHandler.h	2006-08-04 12:04:58 UTC (rev 369)
+@@ -48,7 +48,8 @@
+ 		virtual bool fileModified(const std::string &amp;fileName);
+ 
+ 		/// Handles file moved events.
+-		virtual bool fileMoved(const std::string &amp;fileName);
++		virtual bool fileMoved(const std::string &amp;fileName,
++			const std::string &amp;previousFileName);
+ 
+ 		/// Handles file deleted events.
+ 		virtual bool fileDeleted(const std::string &amp;fileName);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-04 11:59:37 UTC (rev 368)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-04 12:04:58 UTC (rev 369)
+@@ -1514,7 +1514,7 @@
+ 				}
+ 				else if (event.m_type == MonitorEvent::MOVED)
+ 				{
+-					updatedIndex = m_pHandler-&gt;fileMoved(event.m_location);
++					updatedIndex = m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
+ 				}
+ 				else if (event.m_type == MonitorEvent::DELETED)
+ 				{
+@@ -1557,6 +1557,11 @@
+ 	return &quot;DirectoryScannerThread&quot;;
+ }
+ 
++string DirectoryScannerThread::getDirectory(void) const
++{
++	return m_dirName;
++}
++
+ bool DirectoryScannerThread::stop(void)
+ {
+ 	m_done = true;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-04 11:59:37 UTC (rev 368)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-04 12:04:58 UTC (rev 369)
+@@ -398,6 +398,8 @@
+ 
+ 		virtual std::string getType(void) const;
+ 
++		virtual std::string getDirectory(void) const;
++
+ 		virtual bool stop(void);
+ 
+ 		SigC::Signal1&lt;bool, const std::string&amp;&gt;&amp; getFileFoundSignal(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000361.html">[Pinot-svn] r368 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000363.html">[Pinot-svn] r370 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#362">[ date ]</a>
+              <a href="thread.html#362">[ thread ]</a>
+              <a href="subject.html#362">[ subject ]</a>
+              <a href="author.html#362">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

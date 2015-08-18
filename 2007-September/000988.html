@@ -1,0 +1,602 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r994 - in trunk: Search UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r994%20-%20in%20trunk%3A%20Search%20UI/GTK2/src&In-Reply-To=%3C200709261459.l8QExmY5011914%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000987.html">
+   <LINK REL="Next"  HREF="000989.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r994 - in trunk: Search UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r994%20-%20in%20trunk%3A%20Search%20UI/GTK2/src&In-Reply-To=%3C200709261459.l8QExmY5011914%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r994 - in trunk: Search UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 26 16:59:48 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000987.html">[Pinot-svn] r993 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000989.html">[Pinot-svn] r995 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#988">[ date ]</a>
+              <a href="thread.html#988">[ thread ]</a>
+              <a href="subject.html#988">[ subject ]</a>
+              <a href="author.html#988">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-26 16:59:46 +0200 (Wed, 26 Sep 2007)
+New Revision: 994
+
+Modified:
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+QueryingThread and ExpandQueryThread made assumptions about how index stuff
+works that are better encapsulated in SearchEngine classes.
+
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/Search/SearchEngineInterface.cpp	2007-09-26 14:59:46 UTC (rev 994)
+@@ -36,17 +36,24 @@
+ {
+ }
+ 
+-/// Sets the set of documents to expand from.
+-bool SearchEngineInterface::setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet)
++/// Sets whether AND is the default operator.
++void SearchEngineInterface::setDefaultOperator(DefaultOperator op)
+ {
++	m_defaultOperator = op;
++}
++
++/// Sets the set of documents to limit to.
++bool SearchEngineInterface::setLimitSet(const set&lt;string&gt; &amp;docsSet)
++{
+ 	// Not all engines support this
+ 	return false;
+ }
+ 
+-/// Sets whether AND is the default operator.
+-void SearchEngineInterface::setDefaultOperator(DefaultOperator op)
++/// Sets the set of documents to expand from.
++bool SearchEngineInterface::setExpandSet(const set&lt;string&gt; &amp;docsSet)
+ {
+-	m_defaultOperator = op;
++	// Not all engines support this
++	return false;
+ }
+ 
+ /// Returns the downloader used if any.
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/Search/SearchEngineInterface.h	2007-09-26 14:59:46 UTC (rev 994)
+@@ -34,16 +34,19 @@
+ class SearchEngineInterface
+ {
+ 	public:
++		typedef enum { DEFAULT_OP_AND = 0, DEFAULT_OP_OR } DefaultOperator;
++
+ 		virtual ~SearchEngineInterface();
+ 
+-		/// Sets the set of documents to expand from.
+-		virtual bool setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet);
+-
+-		typedef enum { DEFAULT_OP_AND = 0, DEFAULT_OP_OR } DefaultOperator;
+-
+ 		/// Sets whether AND is the default operator.
+ 		virtual void setDefaultOperator(DefaultOperator op);
+ 
++		/// Sets the set of documents to limit to.
++		virtual bool setLimitSet(const set&lt;string&gt; &amp;docsSet);
++
++		/// Sets the set of documents to expand from.
++		virtual bool setExpandSet(const set&lt;string&gt; &amp;docsSet);
++
+ 		/// Returns the downloader used if any.
+ 		virtual DownloaderInterface *getDownloader(void);
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/Search/XapianEngine.cpp	2007-09-26 14:59:46 UTC (rev 994)
+@@ -167,10 +167,11 @@
+ 
+ Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 	const string &amp;stemLanguage, DefaultOperator defaultOperator,
+-	string &amp;correctedFreeQuery, bool minimal)
++	const string &amp;limitQuery, string &amp;correctedFreeQuery, bool minimal)
+ {
+ 	Xapian::QueryParser parser;
+ 	Xapian::Stem stemmer;
++	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 	unsigned int minDay, minMonth, minYear = 0;
+ 	unsigned int maxDay, maxMonth, maxYear = 0;
+ 
+@@ -218,6 +219,15 @@
+ 	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
+ 
++	// Any limit on what documents should be searched ?
++	if (limitQuery.empty() == false)
++	{
++		freeQuery += limitQuery;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; freeQuery &lt;&lt; endl;
++#endif
++	}
++
+ 	// What type of query is this ?
+ 	QueryProperties::QueryType type = queryProps.getType();
+ 	if (type != QueryProperties::XAPIAN_QP)
+@@ -242,7 +252,7 @@
+ 
+ 		if (pParser != NULL)
+ 		{
+-			bool parsedQuery = pParser-&gt;parse(queryProps.getFreeQuery(), builder);
++			bool parsedQuery = pParser-&gt;parse(freeQuery, builder);
+ 
+ 			delete pParser;
+ 
+@@ -256,7 +266,6 @@
+ 	}
+ 
+ 	// Do some pre-processing : look for filters with quoted values
+-	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 	string::size_type escapedFilterEnd = 0;
+ 	string::size_type escapedFilterStart = freeQuery.find(&quot;:\&quot;&quot;);
+ 	while ((escapedFilterStart != string::npos) &amp;&amp;
+@@ -310,18 +319,6 @@
+ 		escapedFilterStart = freeQuery.find(&quot;:\&quot;&quot;, escapedFilterEnd);
+ 	}
+ 
+-	// Activate all necessary options
+-	unsigned int flags = Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|
+-		Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|
+-		Xapian::QueryParser::FLAG_PURE_NOT;
+-	if (minimal == false)
+-	{
+-		flags |= Xapian::QueryParser::FLAG_WILDCARD;
+-#if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
+-		flags |= Xapian::QueryParser::FLAG_SPELLING_CORRECTION;
+-#endif
+-	}
+-
+ 	// Date range
+ 	Xapian::DateValueRangeProcessor dateProcessor(0);
+ 	parser.add_valuerangeprocessor(&amp;dateProcessor);
+@@ -344,7 +341,17 @@
+ 	TimeValueRangeProcessor timeProcessor(3);
+ 	parser.add_valuerangeprocessor(&amp;timeProcessor);
+ 
+-	// Parse the query string
++	// Parse the query string with all necessary options
++	unsigned int flags = Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|
++		Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|
++		Xapian::QueryParser::FLAG_PURE_NOT;
++	if (minimal == false)
++	{
++		flags |= Xapian::QueryParser::FLAG_WILDCARD;
++#if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
++		flags |= Xapian::QueryParser::FLAG_SPELLING_CORRECTION;
++#endif
++	}
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+ 	if (minimal == true)
+ 	{
+@@ -461,11 +468,21 @@
+ 			Xapian::RSet expandDocs;
+ 			unsigned int count = 0;
+ 
+-			for (set&lt;unsigned int&gt;::const_iterator docIter = m_expandDocuments.begin();
++			for (set&lt;string&gt;::const_iterator docIter = m_expandDocuments.begin();
+ 				docIter != m_expandDocuments.end(); ++docIter)
+ 			{
+-				expandDocs.add_document(*docIter);
++				string uniqueTerm(string(&quot;U&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(Url::canonicalizeUrl(*docIter)), true));
++
++				// Only one document may have this term
++				Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(uniqueTerm);
++				if (postingIter != pIndex-&gt;postlist_end(uniqueTerm))
++				{
++					expandDocs.add_document(*postingIter);
++				}
+ 			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianEngine::queryDatabase: expand from &quot; &lt;&lt; expandDocs.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
++#endif
+ 
+ 			// Get 10 non-prefixed terms
+ 			PrefixDecider expandDecider(&quot;RS&quot;);
+@@ -510,8 +527,42 @@
+ // Implementation of SearchEngineInterface
+ //
+ 
++/// Sets the set of documents to limit to.
++bool XapianEngine::setLimitSet(const set&lt;string&gt; &amp;docsSet)
++{
++	bool firstLocation = true;
++
++	m_limitQuery.clear();
++
++	if (docsSet.empty() == true)
++	{
++		return true;
++	}
++
++	// FIXME: there must be a better way !
++	m_limitQuery = &quot; +(&quot;;
++	for (set&lt;string&gt;::const_iterator docIter = docsSet.begin();
++		docIter != docsSet.end(); ++docIter)
++	{
++		if (firstLocation == false)
++		{
++			m_limitQuery += &quot; or &quot;;
++		}
++		m_limitQuery += &quot;url:\&quot;&quot;;
++		m_limitQuery += *docIter;
++		m_limitQuery += &quot;\&quot;&quot;;
++		firstLocation = false;
++	}
++	m_limitQuery += &quot;)&quot;;
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianEngine::setLimitSet: &quot; &lt;&lt; m_limitQuery &lt;&lt; endl;
++#endif
++
++	return true;
++}
++
+ /// Sets the set of documents to expand from.
+-bool XapianEngine::setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet)
++bool XapianEngine::setExpandSet(const set&lt;string&gt; &amp;docsSet)
+ {
+ 	copy(docsSet.begin(), docsSet.end(),
+ 		inserter(m_expandDocuments, m_expandDocuments.begin()));
+@@ -557,7 +608,7 @@
+ 		// 1. don't stem terms
+ 		// 2. if no results, stem terms if a language is defined for the query
+ 		Xapian::Query fullQuery = parseQuery(pIndex, queryProps, &quot;&quot;,
+-			m_defaultOperator, m_correctedFreeQuery);
++			m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
+ 		while (fullQuery.empty() == false)
+ 		{
+ #ifdef DEBUG
+@@ -578,7 +629,7 @@
+ 				cout &lt;&lt; &quot;XapianEngine::runQuery: trying again with stemming&quot; &lt;&lt; endl;
+ #endif
+ 				fullQuery = parseQuery(pIndex, queryProps, Languages::toEnglish(stemLanguage),
+-					m_defaultOperator, m_correctedFreeQuery);
++					m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
+ 				++searchStep;
+ 				continue;
+ 			}
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/Search/XapianEngine.h	2007-09-26 14:59:46 UTC (rev 994)
+@@ -50,8 +50,11 @@
+ 		XapianEngine(const std::string &amp;database);
+ 		virtual ~XapianEngine();
+ 
++		/// Sets the set of documents to limit to.
++		virtual bool setLimitSet(const std::set&lt;std::string&gt; &amp;docsSet);
++
+ 		/// Sets the set of documents to expand from.
+-		virtual bool setExpandSet(const std::set&lt;unsigned int&gt; &amp;docsSet);
++		virtual bool setExpandSet(const std::set&lt;std::string&gt; &amp;docsSet);
+ 
+ 		/// Runs a query; true if success.
+ 		virtual bool runQuery(QueryProperties&amp; queryProps,
+@@ -59,14 +62,15 @@
+ 
+ 	protected:
+ 		std::string m_databaseName;
+-		std::set&lt;Xapian::docid&gt; m_expandDocuments;
++		std::string m_limitQuery;
++		std::set&lt;std::string&gt; m_expandDocuments;
+ 
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+ 			unsigned int startDoc, const QueryProperties &amp;queryProps);
+ 
+ 		static Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, DefaultOperator defaultOperator,
+-			string &amp;correctedFreeQuery, bool minimal = false);
++			const string &amp;limitQuery, string &amp;correctedFreeQuery, bool minimal = false);
+ 
+ 	private:
+ 		XapianEngine(const XapianEngine &amp;other);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-26 14:59:46 UTC (rev 994)
+@@ -69,34 +69,6 @@
+ 	}
+ };
+ 
+-static string locationsToMergedIndexIds(const set&lt;string&gt; &amp;locations, set&lt;unsigned int&gt; &amp;docIds)
+-{
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(&quot;MERGED&quot;);
+-
+-	if ((pIndex == NULL) ||
+-		(pIndex-&gt;isGood() == false))
+-	{
+-		string status(_(&quot;Index error on&quot;));
+-		status += &quot; MERGED&quot;;
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+-		return status;
+-	}
+-
+-	for (set&lt;string&gt;::iterator locationIter = locations.begin();
+-		locationIter != locations.end(); ++locationIter)
+-	{
+-		unsigned int docId = pIndex-&gt;hasDocument(*locationIter);
+-		docIds.insert(docId);
+-	}
+-
+-	delete pIndex;
+-
+-	return &quot;&quot;;
+-}
+-
+ Dispatcher WorkerThread::m_dispatcher;
+ pthread_mutex_t WorkerThread::m_dispatcherMutex = PTHREAD_MUTEX_INITIALIZER;
+ bool WorkerThread::m_immediateFlush = true;
+@@ -744,33 +716,29 @@
+ 	m_documentsList.clear();
+ 	m_documentsList.reserve(m_maxDocsCount);
+ 
++	unsigned int indexId = PinotSettings::getInstance().getIndexId(m_indexName);
+ 	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+ 	{
++		unsigned int docId = (*iter);
++
+ 		if (m_done == true)
+ 		{
+ 			break;
+ 		}
+ 
+-		// Get the document ID
+-		unsigned int docId = (*iter);
+-
+ 		DocumentInfo docInfo;
+ 		if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+ 		{
+-			string type = docInfo.getType();
++			string type(docInfo.getType());
++
+ 			if (type.empty() == true)
+ 			{
+-				type = &quot;text/html&quot;;
++				docInfo.setType(&quot;text/html&quot;);
+ 			}
++			docInfo.setIsIndexed(indexId, docId);
+ 
+-			DocumentInfo indexedDoc(docInfo.getTitle(), docInfo.getLocation(),
+-				type, docInfo.getLanguage());
+-			indexedDoc.setTimestamp(docInfo.getTimestamp());
+-			indexedDoc.setSize(docInfo.getSize());
+-			indexedDoc.setIsIndexed(PinotSettings::getInstance().getIndexId(m_indexName), docId);
+-
+ 			// Insert that document
+-			m_documentsList.push_back(indexedDoc);
++			m_documentsList.push_back(docInfo);
+ 			++numDocs;
+ 		}
+ #ifdef DEBUG
+@@ -797,6 +765,25 @@
+ #endif
+ }
+ 
++QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
++	const string &amp;engineOption, const QueryProperties &amp;queryProps,
++	const set&lt;string&gt; &amp;limitToDocsSet, unsigned int startDoc) :
++	ListerThread(engineDisplayableName, startDoc),
++	m_engineName(&quot;xapian&quot;),
++	m_engineDisplayableName(engineDisplayableName),
++	m_engineOption(engineOption),
++	m_queryProps(queryProps),
++	m_listingIndex(false),
++	m_correctedSpelling(false)
++{
++	copy(limitToDocsSet.begin(), limitToDocsSet.end(),
++		inserter(m_limitToDocsSet, m_limitToDocsSet.begin()));
++#ifdef DEBUG
++	cout &lt;&lt; &quot;QueryingThread::QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
++		&lt;&lt; &quot;, limited to &quot; &lt;&lt; m_limitToDocsSet.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
++#endif
++}
++
+ QueryingThread::~QueryingThread()
+ {
+ }
+@@ -991,6 +978,11 @@
+ 		pDownloader-&gt;setSetting(&quot;proxytype&quot;, settings.m_proxyType);
+ 	}
+ 
++	if (m_listingIndex == false)
++	{
++		pEngine-&gt;setLimitSet(m_limitToDocsSet);
++	}
++
+ 	// Run the query
+ 	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+ 	if (pEngine-&gt;runQuery(m_queryProps, m_startDoc) == false)
+@@ -1039,8 +1031,8 @@
+ 	WorkerThread(),
+ 	m_queryProps(queryProps)
+ {
+-	// Get the IDs of the documents to expand from
+-	m_status = locationsToMergedIndexIds(expandFromDocsSet, m_docIdsSet);
++	copy(expandFromDocsSet.begin(), expandFromDocsSet.end(),
++		inserter(m_expandFromDocsSet, m_expandFromDocsSet.begin()));
+ }
+ 
+ ExpandQueryThread::~ExpandQueryThread()
+@@ -1070,12 +1062,6 @@
+ 
+ void ExpandQueryThread::doWork(void)
+ {
+-	// Did locationsToMergedIndexIds() fail ?
+-	if (m_status.empty() == false)
+-	{
+-		return;
+-	}
+-
+ 	// Get the SearchEngine
+ 	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;, &quot;MERGED&quot;);
+ 	if (pEngine == NULL)
+@@ -1087,7 +1073,7 @@
+ 	}
+ 
+ 	// Expand the query
+-	pEngine-&gt;setExpandSet(m_docIdsSet);
++	pEngine-&gt;setExpandSet(m_expandFromDocsSet);
+ 
+ 	// Run the query
+ 	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+@@ -1110,8 +1096,10 @@
+ 	const map&lt;string, string&gt; &amp;labelsToRename) :
+ 	WorkerThread()
+ {
+-	copy(labelsToDelete.begin(), labelsToDelete.end(), inserter(m_labelsToDelete, m_labelsToDelete.begin()));
+-	copy(labelsToRename.begin(), labelsToRename.end(), inserter(m_labelsToRename, m_labelsToRename.begin()));
++	copy(labelsToDelete.begin(), labelsToDelete.end(),
++		inserter(m_labelsToDelete, m_labelsToDelete.begin()));
++	copy(labelsToRename.begin(), labelsToRename.end(),
++		inserter(m_labelsToRename, m_labelsToRename.begin()));
+ }
+ 
+ LabelUpdateThread::LabelUpdateThread(const string &amp;labelName,
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-09-26 14:59:46 UTC (rev 994)
+@@ -211,6 +211,9 @@
+ 		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+ 			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
+ 			unsigned int startDoc = 0, bool listingIndex = false);
++		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
++			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
++			const std::set&lt;std::string&gt; &amp;limitToDocsSet, unsigned int startDoc = 0);
+ 		virtual ~QueryingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -229,6 +232,7 @@
+ 		std::string m_engineOption;
+ 		QueryProperties m_queryProps;
+ 		std::string m_resultsCharset;
++		std::set&lt;std::string&gt; m_limitToDocsSet;
+ 		bool m_listingIndex;
+ 		bool m_correctedSpelling;
+ 
+@@ -262,7 +266,7 @@
+ 
+ 	protected:
+ 		QueryProperties m_queryProps;
+-		std::set&lt;unsigned int&gt; m_docIdsSet;
++		std::set&lt;std::string&gt; m_expandFromDocsSet;
+ 		std::set&lt;std::string&gt; m_expandTerms;
+ 
+ 		virtual void doWork(void);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-09-26 14:09:53 UTC (rev 993)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-09-26 14:59:46 UTC (rev 994)
+@@ -999,41 +999,22 @@
+ 	{
+ 		std::map&lt;std::string, std::string&gt; indexes = m_settings.getIndexes();
+ 		ustring queryName(queryProps.getName());
+-		ustring queryStr(queryProps.getFreeQuery());
+ 		bool firstLocation = true;
+ 
+-		queryProps.setName(queryName + &quot; &quot; + _(&quot;in results&quot;));
+-		queryStr += &quot; +(&quot;;
+-		for (set&lt;string&gt;::const_iterator locationIter = locations.begin();
+-			locationIter != locations.end(); ++locationIter)
+-		{
+-			if (firstLocation == false)
+-			{
+-				queryStr += &quot; or &quot;;
+-			}
+-			queryStr += &quot;url:\&quot;&quot;;
+-			queryStr += *locationIter;
+-			queryStr += &quot;\&quot;&quot;;
+-			firstLocation = false;
+-		}
+-		queryStr += &quot;)&quot;;
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_searchagain_changed: &quot; &lt;&lt; queryStr &lt;&lt; endl;
+-#endif
+-		queryProps.setFreeQuery(queryStr);
++		queryProps.setName(queryName + &quot; &quot; + _(&quot;In Results&quot;));
+ 
+ 		// Spawn new threads
+ 		std::map&lt;std::string, std::string&gt;::const_iterator indexIter = indexes.find(_(&quot;My Documents&quot;));
+ 		if (indexIter != indexes.end())
+ 		{
+ 			start_thread(new QueryingThread(&quot;xapian&quot;, indexIter-&gt;first,
+-				indexIter-&gt;second, queryProps));
++				indexIter-&gt;second, queryProps, locations));
+ 		}
+ 		indexIter = indexes.find(_(&quot;My Web Pages&quot;));
+ 		if (indexIter != indexes.end())
+ 		{
+ 			start_thread(new QueryingThread(&quot;xapian&quot;, indexIter-&gt;first,
+-				indexIter-&gt;second, queryProps));
++				indexIter-&gt;second, queryProps, locations));
+ 		}
+ 	}
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000987.html">[Pinot-svn] r993 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000989.html">[Pinot-svn] r995 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#988">[ date ]</a>
+              <a href="thread.html#988">[ thread ]</a>
+              <a href="subject.html#988">[ subject ]</a>
+              <a href="author.html#988">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

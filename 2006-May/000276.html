@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r282 - in trunk: Collect Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r282%20-%20in%20trunk%3A%20Collect%20Search%20Utils&In-Reply-To=%3C200605311456.k4VEuVp2023756%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000275.html">
+   <LINK REL="Next"  HREF="000277.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r282 - in trunk: Collect Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r282%20-%20in%20trunk%3A%20Collect%20Search%20Utils&In-Reply-To=%3C200605311456.k4VEuVp2023756%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r282 - in trunk: Collect Search Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed May 31 16:56:31 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000275.html">[Pinot-svn] r281 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000277.html">[Pinot-svn] r283 - in trunk: Search Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#276">[ date ]</a>
+              <a href="thread.html#276">[ thread ]</a>
+              <a href="subject.html#276">[ subject ]</a>
+              <a href="author.html#276">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-31 16:56:30 +0200 (Wed, 31 May 2006)
+New Revision: 282
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Utils/StringManip.cpp
+   trunk/Utils/StringManip.h
+Log:
+Less verbose CurlDownloader. Added StringManip::trimSpaces().
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2006-05-30 12:46:42 UTC (rev 281)
++++ trunk/Collect/CurlDownloader.cpp	2006-05-31 14:56:30 UTC (rev 282)
+@@ -66,9 +66,6 @@
+ 	memcpy(pInfo-&gt;m_pContent + pInfo-&gt;m_contentLen, pData, totalSize);
+ 	pInfo-&gt;m_contentLen += totalSize;
+ 	pInfo-&gt;m_pContent[pInfo-&gt;m_contentLen] = '\0';
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;writeCallback: copied &quot; &lt;&lt; totalSize &lt;&lt; &quot; bytes into buffer&quot; &lt;&lt; endl;
+-#endif
+ 
+ 	return totalSize;
+ }
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2006-05-30 12:46:42 UTC (rev 281)
++++ trunk/Search/SearchEngineInterface.cpp	2006-05-31 14:56:30 UTC (rev 282)
+@@ -16,6 +16,7 @@
+ 
+ #include &lt;iostream&gt;
+ 
++#include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;SearchEngineInterface.h&quot;
+ 
+@@ -165,25 +166,11 @@
+ #endif
+ 	}
+ 
+-	// Remove trailing spaces at the end of the URL
++	// Trim spaces
+ 	string trimmedUrl(resultUrl);
+-	string::size_type pos = trimmedUrl.find_last_of(&quot; &quot;);
+-	while (pos != string::npos)
+-	{
+-		int len = trimmedUrl.length();
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;SearchEngineInterface::processResult: trimming space at &quot; &lt;&lt; pos &lt;&lt; endl;
+-#endif
+-		if (pos == len - 1)
+-		{
+-			trimmedUrl.resize(pos);
+-			pos = trimmedUrl.find_last_of(&quot; &quot;);
+-		}
+-		else
+-		{
+-			break;
+-		}
+-	}
++	StringManip::trimSpaces(trimmedUrl);
++
++	// Return a canonical form
+ 	resultUrl = Url::canonicalizeUrl(trimmedUrl);
+ 
+ 	return true;
+
+Modified: trunk/Utils/StringManip.cpp
+===================================================================
+--- trunk/Utils/StringManip.cpp	2006-05-30 12:46:42 UTC (rev 281)
++++ trunk/Utils/StringManip.cpp	2006-05-31 14:56:30 UTC (rev 282)
+@@ -195,6 +195,38 @@
+ 	return count;	
+ }
+ 
++/// Trims spaces at the start and end of a string.
++unsigned int StringManip::trimSpaces(string &amp;str)
++{
++	unsigned int count = 0;
++
++	for (unsigned int pos = 0;
++		(str.empty() == false) &amp;&amp; (pos &lt; str.length()); ++pos)
++	{
++		if (isspace(str[pos]) == 0)
++		{
++			break;
++		}
++
++		str.erase(pos);
++		++count;
++	}
++
++	for (unsigned int pos = str.length() - 1;
++		(str.empty() == false) &amp;&amp; (pos &gt;= 0); --pos)
++	{
++		if (isspace(str[pos]) == 0)
++		{
++			break;
++		}
++
++		str.erase(pos);
++		++count;
++	}
++
++	return count;
++}
++
+ /// Removes double and single quotes in links or any other attribute.
+ string StringManip::removeQuotes(const string &amp;str)
+ {
+
+Modified: trunk/Utils/StringManip.h
+===================================================================
+--- trunk/Utils/StringManip.h	2006-05-30 12:46:42 UTC (rev 281)
++++ trunk/Utils/StringManip.h	2006-05-31 14:56:30 UTC (rev 282)
+@@ -46,6 +46,9 @@
+ 		/// Removes double and single quotes.
+ 		static std::string removeQuotes(const std::string &amp;str);
+ 
++		/// Trims spaces at the start and end of a string.
++		static unsigned int trimSpaces(std::string &amp;str);
++
+ 		/// Hashes a string.
+ 		static std::string hashString(const std::string &amp;str);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000275.html">[Pinot-svn] r281 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000277.html">[Pinot-svn] r283 - in trunk: Search Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#276">[ date ]</a>
+              <a href="thread.html#276">[ thread ]</a>
+              <a href="subject.html#276">[ subject ]</a>
+              <a href="author.html#276">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,357 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r422 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r422%20-%20trunk/Utils&In-Reply-To=%3C200608260136.k7Q1aiex021409%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000414.html">
+   <LINK REL="Next"  HREF="000416.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r422 - trunk/Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r422%20-%20trunk/Utils&In-Reply-To=%3C200608260136.k7Q1aiex021409%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r422 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 26 03:36:44 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000414.html">[Pinot-svn] r421 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000416.html">[Pinot-svn] r423 - in trunk: SQL Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#415">[ date ]</a>
+              <a href="thread.html#415">[ thread ]</a>
+              <a href="subject.html#415">[ subject ]</a>
+              <a href="author.html#415">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-26 03:36:43 +0200 (Sat, 26 Aug 2006)
+New Revision: 422
+
+Modified:
+   trunk/Utils/XapianDatabase.cpp
+   trunk/Utils/XapianDatabase.h
+   trunk/Utils/XapianDatabaseFactory.cpp
+   trunk/Utils/XapianDatabaseFactory.h
+Log:
+Allow to add a database to another with Xapian::Database::add_database() while
+making sure both are read-locked.
+
+
+Modified: trunk/Utils/XapianDatabase.cpp
+===================================================================
+--- trunk/Utils/XapianDatabase.cpp	2006-08-26 01:34:15 UTC (rev 421)
++++ trunk/Utils/XapianDatabase.cpp	2006-08-26 01:36:43 UTC (rev 422)
+@@ -32,23 +32,45 @@
+ 	m_databaseName(databaseName),
+ 	m_readOnly(readOnly),
+ 	m_pDatabase(NULL),
+-	m_isOpen(false)
++	m_isOpen(false),
++	m_merge(false),
++	m_pFirst(NULL),
++	m_pSecond(NULL)
+ {
+ 	pthread_rwlock_init(&amp;m_rwLock, NULL);
+ 	openDatabase();
+ }
+ 
++XapianDatabase::XapianDatabase(const string &amp;databaseName, 
++	XapianDatabase *pFirst, XapianDatabase *pSecond) :
++	m_databaseName(databaseName),
++	m_readOnly(true),
++	m_pDatabase(NULL),
++	m_isOpen(pFirst-&gt;m_isOpen),
++	m_merge(true),
++	m_pFirst(pFirst),
++	m_pSecond(pSecond)
++{
++	pthread_rwlock_init(&amp;m_rwLock, NULL);
++}
++
+ XapianDatabase::XapianDatabase(const XapianDatabase &amp;other) :
+ 	m_databaseName(other.m_databaseName),
+ 	m_readOnly(other.m_readOnly),
+ 	m_pDatabase(NULL),
+-	m_isOpen(other.m_isOpen)
++	m_isOpen(other.m_isOpen),
++	m_merge(other.m_merge),
++	m_pFirst(other.m_pFirst),
++	m_pSecond(other.m_pSecond)
+ {
++	pthread_rwlock_init(&amp;m_rwLock, NULL);
+ 	if (other.m_pDatabase != NULL)
+ 	{
+ 		m_pDatabase = new Xapian::Database(*other.m_pDatabase);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase: copied &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++#endif
+ 	}
+-	pthread_rwlock_init(&amp;m_rwLock, NULL);
+ }
+ 
+ XapianDatabase::~XapianDatabase()
+@@ -56,6 +78,9 @@
+ 	if (m_pDatabase != NULL)
+ 	{
+ 		delete m_pDatabase;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase::~XapianDatabase:unlock: deleted&quot; &lt;&lt; endl;
++#endif
+ 	}
+ 	pthread_rwlock_destroy(&amp;m_rwLock);
+ }
+@@ -68,12 +93,21 @@
+ 	{
+ 		delete m_pDatabase;
+ 		m_pDatabase = NULL;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase::operator=: deleted&quot; &lt;&lt; endl;
++#endif
+ 	}
+ 	if (other.m_pDatabase != NULL)
+ 	{
+ 		m_pDatabase = new Xapian::Database(*other.m_pDatabase);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase::operator=: copied &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++#endif
+ 	}
+ 	m_isOpen = other.m_isOpen;
++	m_merge = other.m_merge;
++	m_pFirst = other.m_pFirst;
++	m_pSecond = other.m_pSecond;
+ 
+ 	return *this;
+ }
+@@ -94,6 +128,9 @@
+ 	{
+ 		delete m_pDatabase;
+ 		m_pDatabase = NULL;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase::openDatabase: deleted&quot; &lt;&lt; endl;
++#endif
+ 	}
+ 
+ 	// Is it a remote database ?
+@@ -168,6 +205,9 @@
+ 		{
+ 			m_pDatabase = new Xapian::WritableDatabase(m_databaseName, Xapian::DB_CREATE_OR_OPEN);
+ 		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase::openDatabase: opened &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++#endif
+ 		m_isOpen = true;
+ 
+ 		return;
+@@ -190,17 +230,50 @@
+ /// Attempts to lock and retrieve the database.
+ Xapian::Database *XapianDatabase::readLock(void)
+ {
++	if (m_merge == false)
++	{
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianDatabase::readLock: &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		cout &lt;&lt; &quot;XapianDatabase::readLock: &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+ #endif
+-	if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++		if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++		{
++			if (m_pDatabase == NULL)
++			{
++				// Try again
++				openDatabase();
++			}
++			return m_pDatabase;
++		}
++	}
++	else
+ 	{
+-		if (m_pDatabase == NULL)
++		if ((m_pFirst == NULL) ||
++			(m_pFirst-&gt;isOpen() == false) ||
++			(m_pSecond == NULL) ||
++			(m_pSecond-&gt;isOpen() == false))
+ 		{
+-			// Try again
+-			openDatabase();
++			return NULL;
+ 		}
+-		return m_pDatabase;
++
++		if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++		{
++			// Lock both indexes
++			Xapian::Database *pFirstDatabase = m_pFirst-&gt;readLock();
++			Xapian::Database *pSecondDatabase = m_pSecond-&gt;readLock();
++			// Copy the first one
++			m_pDatabase = new Xapian::Database(*pFirstDatabase);
++			// Add the second index to it
++			if (pSecondDatabase != NULL)
++			{
++				m_pDatabase-&gt;add_database(*pSecondDatabase);
++			}
++			// Until unlock() is called, both indexes are read locked
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianDatabase::readLock: copied &quot; &lt;&lt; m_pFirst-&gt;m_databaseName &lt;&lt; endl;
++#endif
++
++			return m_pDatabase;
++		}
+ 	}
+ 
+ 	return NULL;
+@@ -209,7 +282,8 @@
+ /// Attempts to lock and retrieve the database.
+ Xapian::WritableDatabase *XapianDatabase::writeLock(void)
+ {
+-	if (m_readOnly == true)
++	if ((m_readOnly == true) ||
++		(m_merge == true))
+ 	{
+ 		// FIXME: close and reopen in write mode
+ 		cerr &lt;&lt; &quot;Couldn't open read-only database &quot; &lt;&lt; m_databaseName
+@@ -240,6 +314,29 @@
+ 	cout &lt;&lt; &quot;XapianDatabase::unlock: &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+ #endif
+ 	pthread_rwlock_unlock(&amp;m_rwLock);
++
++	if (m_merge == true)
++	{
++		// Unlock the original indexes
++		if (m_pFirst != NULL)
++		{
++			m_pFirst-&gt;unlock();
++		}
++		if (m_pSecond != NULL)
++		{
++			m_pSecond-&gt;unlock();
++		}
++
++		// Delete merge
++		if (m_pDatabase != NULL)
++		{
++			delete m_pDatabase;
++			m_pDatabase = NULL;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianDatabase::unlock: deleted merge&quot; &lt;&lt; endl;
++#endif
++		}
++	}
+ }
+ 
+ /// Returns the URL for the given document in the given index.
+
+Modified: trunk/Utils/XapianDatabase.h
+===================================================================
+--- trunk/Utils/XapianDatabase.h	2006-08-26 01:34:15 UTC (rev 421)
++++ trunk/Utils/XapianDatabase.h	2006-08-26 01:36:43 UTC (rev 422)
+@@ -27,6 +27,8 @@
+ {
+ 	public:
+ 		XapianDatabase(const std::string &amp;databaseName, bool readOnly = true);
++		XapianDatabase(const std::string &amp;databaseName,
++			XapianDatabase *pFirst, XapianDatabase *pSecond);
+ 		XapianDatabase(const XapianDatabase &amp;other);
+ 		virtual ~XapianDatabase();
+ 
+@@ -53,6 +55,9 @@
+ 		pthread_rwlock_t m_rwLock;
+ 		Xapian::Database *m_pDatabase;
+ 		bool m_isOpen;
++		bool m_merge;
++		XapianDatabase *m_pFirst;
++		XapianDatabase *m_pSecond;
+ 
+ 		void openDatabase(void);
+ 
+
+Modified: trunk/Utils/XapianDatabaseFactory.cpp
+===================================================================
+--- trunk/Utils/XapianDatabaseFactory.cpp	2006-08-26 01:34:15 UTC (rev 421)
++++ trunk/Utils/XapianDatabaseFactory.cpp	2006-08-26 01:36:43 UTC (rev 422)
+@@ -35,6 +35,33 @@
+ {
+ }
+ 
++/// Merges two databases together and add the result to the list.
++bool XapianDatabaseFactory::mergeDatabases(const string &amp;name,
++	XapianDatabase *pFirst, XapianDatabase *pSecond)
++{
++	map&lt;string, XapianDatabase *&gt;::iterator dbIter = m_databases.find(name);
++	if (dbIter != m_databases.end())
++	{
++		return false;
++	}
++
++	// Create the new database
++	XapianDatabase *pDb = new XapianDatabase(name, pFirst, pSecond);
++
++	// Insert it into the map
++	pair&lt;map&lt;string, XapianDatabase *&gt;::iterator, bool&gt; insertPair = m_databases.insert(pair&lt;string, XapianDatabase *&gt;(name, pDb));
++	// Was it inserted ?
++	if (insertPair.second == false)
++	{
++		// No, it wasn't : delete the object
++		delete pDb;
++
++		return false;
++	}
++
++	return true;
++}
++
+ /// Returns a XapianDatabase pointer; NULL if unavailable.
+ XapianDatabase *XapianDatabaseFactory::getDatabase(const string &amp;location, bool readOnly)
+ {
+
+Modified: trunk/Utils/XapianDatabaseFactory.h
+===================================================================
+--- trunk/Utils/XapianDatabaseFactory.h	2006-08-26 01:34:15 UTC (rev 421)
++++ trunk/Utils/XapianDatabaseFactory.h	2006-08-26 01:36:43 UTC (rev 422)
+@@ -28,6 +28,10 @@
+ 	public:
+ 		virtual ~XapianDatabaseFactory();
+ 
++		/// Merges two databases together and add the result to the list.
++		static bool mergeDatabases(const std::string &amp;name,
++			XapianDatabase *pFirst, XapianDatabase *pSecond);
++
+ 		/// Returns a XapianDatabase pointer; NULL if unavailable.
+ 		static XapianDatabase *getDatabase(const std::string &amp;location, bool readOnly = true);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000414.html">[Pinot-svn] r421 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000416.html">[Pinot-svn] r423 - in trunk: SQL Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#415">[ date ]</a>
+              <a href="thread.html#415">[ thread ]</a>
+              <a href="subject.html#415">[ subject ]</a>
+              <a href="author.html#415">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

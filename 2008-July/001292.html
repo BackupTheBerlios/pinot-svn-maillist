@@ -1,0 +1,549 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1298 - in trunk/UI/GTK2: . src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1298%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200807131351.m6DDpnCc027610%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001291.html">
+   <LINK REL="Next"  HREF="001293.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1298 - in trunk/UI/GTK2: . src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1298%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200807131351.m6DDpnCc027610%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1298 - in trunk/UI/GTK2: . src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jul 13 15:51:49 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001291.html">[Pinot-svn] r1297 - in trunk/IndexSearch: . Plugins
+</A></li>
+        <LI>Next message: <A HREF="001293.html">[Pinot-svn] r1299 - in trunk/IndexSearch: . Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1292">[ date ]</a>
+              <a href="thread.html#1292">[ thread ]</a>
+              <a href="subject.html#1292">[ subject ]</a>
+              <a href="author.html#1292">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-13 15:51:08 +0200 (Sun, 13 Jul 2008)
+New Revision: 1298
+
+Modified:
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+   trunk/UI/GTK2/src/prefsDialog_glade.cc
+   trunk/UI/GTK2/src/prefsDialog_glade.hh
+Log:
+Preferences let the user edit all editable parameters defined in the plugins.
+Values are saved to and loaded from the configuration file, and are passed to
+WebEngine-derived search engines.
+
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/metase-gtk2.glade	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -994,6 +994,7 @@
+ 
+ 	  &lt;child&gt;
+ 	    &lt;widget class=&quot;GtkTable&quot; id=&quot;generalTable&quot;&gt;
++	      &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 	      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+ 	      &lt;property name=&quot;n_rows&quot;&gt;4&lt;/property&gt;
+ 	      &lt;property name=&quot;n_columns&quot;&gt;2&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -18,6 +18,7 @@
+ 
+ #include &lt;stdio.h&gt;
+ #include &lt;stdlib.h&gt;
++#include &lt;ctype.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+@@ -286,6 +287,7 @@
+ 	m_indexableLocations.clear();
+ 	m_filePatternsList.clear();
+ 	m_isBlackList = true;
++	m_editablePluginValues.clear();
+ 	m_cacheProviders.clear();
+ 	m_cacheProtocols.clear();
+ 
+@@ -312,6 +314,40 @@
+ 
+ bool PinotSettings::load(void)
+ {
++	map&lt;string, bool&gt; engines;
++	bool hasBackends = false;
++
++	// Some search engines are hardcoded
++#ifdef HAVE_GOOGLEAPI
++	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;Google API&quot;;
++	m_engines.insert(Engine(&quot;Google API&quot;, &quot;googleapi&quot;, &quot;&quot;, &quot;The Web&quot;));
++	m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;The Web&quot;, true));
++#endif
++	// Others are available as back-ends
++	ModuleFactory::getSupportedEngines(engines);
++	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin();
++		engineIter != engines.end(); ++engineIter)
++	{
++		if (engineIter-&gt;second == true)
++		{
++			string engineName(engineIter-&gt;first);
++
++			if (isalpha(engineName[0]) != 0)
++			{
++				engineName = toupper(engineName[0]);
++				engineName += engineIter-&gt;first.substr(1);
++			}
++
++			m_engineIds[1 &lt;&lt; m_engines.size()] = engineIter-&gt;first;
++			m_engines.insert(Engine(engineName, engineIter-&gt;first, &quot;&quot;, &quot;Backends&quot;));
++			hasBackends = true;
++		}
++	}
++	if (hasBackends == true)
++	{
++		m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;Backends&quot;, true));
++	}
++
+ 	// Load the configuration file
+ 	string fileName = getConfigurationFileName();
+ 	if (m_firstRun == false)
+@@ -356,25 +392,6 @@
+ 		}
+ 	}
+ 
+-	// Some search engines are hardcoded
+-#ifdef HAVE_GOOGLEAPI
+-	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;Google API&quot;;
+-	m_engines.insert(Engine(&quot;Google API&quot;, &quot;googleapi&quot;, &quot;&quot;, &quot;The Web&quot;));
+-	m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;The Web&quot;, true));
+-#endif
+-	// Others are available as back-ends
+-	map&lt;string, bool&gt; engines;
+-	ModuleFactory::getSupportedEngines(engines);
+-	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin();
+-		engineIter != engines.end(); ++engineIter)
+-	{
+-		if (engineIter-&gt;second == true)
+-		{
+-			m_engineIds[1 &lt;&lt; m_engines.size()] = engineIter-&gt;first;
+-			m_engines.insert(Engine(engineIter-&gt;first, engineIter-&gt;first, &quot;&quot;, &quot;&quot;));
+-		}
+-	}
+-
+ 	return true;
+ }
+ 
+@@ -529,6 +546,10 @@
+ 				{
+ 					loadFilePatterns(pElem);
+ 				}
++				else if (nodeName == &quot;pluginparameters&quot;)
++				{
++					loadPluginParameters(pElem);
++				}
+ 			}
+ 		}
+ 	}
+@@ -1161,6 +1182,53 @@
+ 	return true;
+ }
+ 
++bool PinotSettings::loadPluginParameters(const Element *pElem)
++{
++	if (pElem == NULL)
++	{
++		return false;
++	}
++
++	Node::NodeList childNodes = pElem-&gt;get_children();
++	if (childNodes.empty() == true)
++	{
++		return false;
++	}
++
++	string name, value;
++
++	// Load the plugin parameters' values 
++	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++	{
++		Node *pNode = (*iter);
++		Element *pChildElem = dynamic_cast&lt;Element*&gt;(pNode);
++		if (pChildElem == NULL)
++		{
++			continue;
++		}
++
++		string nodeName(pChildElem-&gt;get_name());
++		string nodeContent(getElementContent(pChildElem));
++
++		if (nodeName == &quot;name&quot;)
++		{
++			name = nodeContent;
++		}
++		else if (nodeName == &quot;value&quot;)
++		{
++			value = nodeContent;
++		}
++	}
++
++	map&lt;string, string&gt;::iterator valueIter = m_editablePluginValues.find(name);
++	if (valueIter != m_editablePluginValues.end())
++	{
++		valueIter-&gt;second = value;
++	}
++
++	return true;
++}
++
+ bool PinotSettings::loadCacheProviders(const Element *pElem)
+ {
+ 	if (pElem == NULL)
+@@ -1259,18 +1327,29 @@
+ 			if ((stat(location.c_str(), &amp;fileStat) == 0) &amp;&amp;
+ 				(S_ISREG(fileStat.st_mode)))
+ 			{
+-				string engineName, engineChannel;
++				SearchPluginProperties properties;
+ 
+-				if ((PluginWebEngine::getDetails(location, engineName, engineChannel) == true) &amp;&amp;
+-					(engineName.empty() == false))
++				if ((PluginWebEngine::getDetails(location, properties) == true) &amp;&amp;
++					(properties.m_name.empty() == false))
+ 				{
+-					m_engineIds[1 &lt;&lt; m_engines.size()] = engineName;
+-					if (engineChannel.empty() == true)
++					m_engineIds[1 &lt;&lt; m_engines.size()] = properties.m_name;
++					if (properties.m_channel.empty() == true)
+ 					{
+-						engineChannel = _(&quot;Unclassified&quot;);
++						properties.m_channel = _(&quot;Unclassified&quot;);
+ 					}
+-					m_engines.insert(Engine(engineName, &quot;sherlock&quot;, location, engineChannel));
+-					m_engineChannels.insert(pair&lt;string, bool&gt;(engineChannel, true));
++					m_engines.insert(Engine(properties.m_name, &quot;sherlock&quot;, location, properties.m_channel));
++					m_engineChannels.insert(pair&lt;string, bool&gt;(properties.m_channel, true));
++
++					// Any editable parameters in this plugin ?
++					for (map&lt;string, string&gt;::const_iterator editableIter = properties.m_editableParameters.begin();
++						editableIter != properties.m_editableParameters.end(); ++editableIter)
++					{
++						m_editablePluginValues[editableIter-&gt;second] = &quot;&quot;;
++					}
++#ifdef DEBUG
++					cout &lt;&lt; &quot;PinotSettings::loadSearchEngines: &quot; &lt;&lt; properties.m_name
++						&lt;&lt; &quot; has &quot; &lt;&lt; properties.m_editableParameters.size() &lt;&lt; &quot; editable values&quot; &lt;&lt; endl;
++#endif
+ 				}
+ 			}
+ 		}
+@@ -1448,7 +1527,24 @@
+ 			addChildElement(pElem, &quot;pattern&quot;, *patternIter);
+ 		}
+ 		addChildElement(pElem, &quot;forbid&quot;, (m_isBlackList ? &quot;YES&quot; : &quot;NO&quot;));
++		// Values of editable plugin parameters
++		for (map&lt;string, string&gt;::iterator editableIter = m_editablePluginValues.begin();
++			editableIter != m_editablePluginValues.end() ; ++editableIter)
++		{
++			if (editableIter-&gt;second.empty() == true)
++			{
++				continue;
++			}
+ 
++			pElem = pRootElem-&gt;add_child(&quot;pluginparameters&quot;);
++			if (pElem == NULL)
++			{
++				return false;
++			}
++			addChildElement(pElem, &quot;name&quot;, editableIter-&gt;first);
++			addChildElement(pElem, &quot;value&quot;, editableIter-&gt;second);
++		}
++
+ 		// Save to file
+ 		doc.write_to_file_formatted(getConfigurationFileName());
+ 	}
+@@ -1624,7 +1720,7 @@
+ 			return false;
+ 		}
+ 
+-		// Copy channels that belong to the given channel
++		// Copy engines that belong to the given channel
+ 		for (set&lt;Engine&gt;::iterator engineIter = m_engines.begin(); engineIter != m_engines.end(); ++engineIter)
+ 		{
+ 			if (engineIter-&gt;m_channel == channelName)
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/PinotSettings.h	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -214,6 +214,7 @@
+ 		std::set&lt;IndexableLocation&gt; m_indexableLocations;
+ 		std::set&lt;Glib::ustring&gt; m_filePatternsList;
+ 		bool m_isBlackList;
++		std::map&lt;std::string, std::string&gt; m_editablePluginValues;
+ 		std::vector&lt;CacheProvider&gt; m_cacheProviders;
+ 		std::set&lt;Glib::ustring&gt; m_cacheProtocols;
+ 
+@@ -239,6 +240,7 @@
+ 		bool loadProxy(const xmlpp::Element *pElem);
+ 		bool loadIndexableLocations(const xmlpp::Element *pElem);
+ 		bool loadFilePatterns(const xmlpp::Element *pElem);
++		bool loadPluginParameters(const xmlpp::Element *pElem);
+ 		bool loadCacheProviders(const xmlpp::Element *pElem);
+ 
+ 	private:
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -1092,6 +1092,8 @@
+ 			pDownloader-&gt;setSetting(&quot;proxyport&quot;, portStr);
+ 			pDownloader-&gt;setSetting(&quot;proxytype&quot;, settings.m_proxyType);
+ 		}
++
++		pWebEngine-&gt;setEditableValues(settings.m_editablePluginValues);
+ 	}
+ 
+ 	if (m_listingIndex == false)
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -22,6 +22,8 @@
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;gdkmm/color.h&gt;
+ #include &lt;gtkmm/colorselection.h&gt;
++#include &lt;gtkmm/label.h&gt;
++#include &lt;gtkmm/entry.h&gt;
+ #include &lt;gtkmm/menu.h&gt;
+ #include &lt;gtkmm/messagedialog.h&gt;
+ 
+@@ -61,6 +63,26 @@
+ 	// Enable terms suggestion
+ 	enableCompletionCheckbutton-&gt;set_active(m_settings.m_suggestQueryTerms);
+ 
++	// Any plugin editable parameter ?
++	if (m_settings.m_editablePluginValues.empty() == false)
++	{
++		Glib::PropertyProxy&lt;guint&gt; columnsProp(generalTable-&gt;property_n_columns());
++		Glib::PropertyProxy&lt;guint&gt; rowsProp(generalTable-&gt;property_n_rows());
++		guint rowsCount = rowsProp.get_value();
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog: adding &quot; &lt;&lt; m_settings.m_editablePluginValues.size() &lt;&lt; &quot; more rows&quot; &lt;&lt; endl;
++#endif
++		generalTable-&gt;resize(rowsCount + m_settings.m_editablePluginValues.size(), columnsProp.get_value());
++
++		for (std::map&lt;string, string&gt;::const_iterator valueIter = m_settings.m_editablePluginValues.begin();
++			valueIter != m_settings.m_editablePluginValues.end(); ++valueIter)
++		{
++			++rowsCount;
++			attach_value_widgets(valueIter-&gt;first, valueIter-&gt;second, rowsCount);
++		}
++	}
++
+ 	populate_proxyTypeCombobox();
+ 	proxyRadiobutton-&gt;set_active(m_settings.m_proxyEnabled);
+ 	proxyAddressEntry-&gt;set_text(m_settings.m_proxyAddress);
+@@ -143,6 +165,41 @@
+ 	return m_startDaemon;
+ }
+ 
++void prefsDialog::attach_value_widgets(const string &amp;name, const string &amp;value, guint rowNumber)
++{
++	Label *valueLabel = manage(new Label(name + &quot;:&quot;));
++	Entry *valueEntry = manage(new Entry());
++
++	// These settings are what Glade-- would use
++	valueLabel-&gt;set_alignment(0,0.5); 
++	valueLabel-&gt;set_padding(4,4);
++	valueLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT); 
++	valueLabel-&gt;set_line_wrap(false);
++	valueLabel-&gt;set_use_markup(false);
++	valueLabel-&gt;set_selectable(false);
++	valueLabel-&gt;set_ellipsize(Pango::ELLIPSIZE_NONE);
++	valueLabel-&gt;set_width_chars(-1);
++	valueLabel-&gt;set_angle(0);
++	valueLabel-&gt;set_single_line_mode(false);
++
++	valueEntry-&gt;set_flags(Gtk::CAN_FOCUS);
++	valueEntry-&gt;set_visibility(true);
++	valueEntry-&gt;set_editable(true);
++	valueEntry-&gt;set_max_length(0);
++	valueEntry-&gt;set_has_frame(true);
++	valueEntry-&gt;set_activates_default(false);
++
++	valueEntry-&gt;set_text(to_utf8(value));
++
++	generalTable-&gt;attach(*valueLabel, 0, 1, rowNumber, rowNumber + 1, Gtk::FILL, Gtk::FILL, 0, 0);
++	generalTable-&gt;attach(*valueEntry, 1, 2, rowNumber, rowNumber + 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++
++	m_editableValueEntries.push_back(valueEntry);
++
++	valueLabel-&gt;show();
++	valueEntry-&gt;show();
++}
++
+ void prefsDialog::populate_proxyTypeCombobox()
+ {
+ 	proxyTypeCombobox-&gt;append_text(&quot;HTTP&quot;);
+@@ -435,7 +492,24 @@
+ 	m_settings.m_newResultsColourBlue = newColour.get_blue();
+ 	m_settings.m_suggestQueryTerms = enableCompletionCheckbutton-&gt;get_active();
+ 	m_settings.m_googleAPIKey = apiKeyEntry-&gt;get_text();
++	// Any plugin editable parameter ?
++	if (m_settings.m_editablePluginValues.empty() == false)
++	{
++		std::map&lt;string, string&gt;::iterator valueIter = m_settings.m_editablePluginValues.begin();
++		vector&lt;Entry *&gt;::const_iterator entryIter = m_editableValueEntries.begin();
++		while ((valueIter != m_settings.m_editablePluginValues.end()) &amp;&amp;
++			(entryIter != m_editableValueEntries.end()))
++		{
++			ustring value((*entryIter)-&gt;get_text());
+ 
++			valueIter-&gt;second = from_utf8(value);
++
++			// Next
++			++valueIter;
++			++entryIter;
++		}
++	}
++
+ 	m_settings.m_proxyEnabled = proxyRadiobutton-&gt;get_active();
+ 	m_settings.m_proxyAddress = proxyAddressEntry-&gt;get_text();
+ 	m_settings.m_proxyPort = (unsigned int)proxyPortSpinbutton-&gt;get_value();
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -22,6 +22,7 @@
+ #include &lt;string&gt;
+ #include &lt;map&gt;
+ #include &lt;set&gt;
++#include &lt;vector&gt;
+ #include &lt;glibmm/refptr.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;gtkmm/liststore.h&gt;
+@@ -54,6 +55,7 @@
+ 	TimestampedModelColumns m_mailColumns;
+ 	TimestampedModelColumns m_patternsColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refPatternsTree;
++	std::vector&lt;Gtk::Entry *&gt; m_editableValueEntries;
+ 	std::set&lt;std::string&gt; m_addedLabels;
+ 	std::set&lt;std::string&gt; m_deletedLabels;
+ 	std::map&lt;std::string, std::string&gt; m_renamedLabels;
+@@ -73,6 +75,7 @@
+ 	virtual void on_removePatternButton_clicked();
+ 	virtual void on_resetPatternsButton_clicked();
+ 
++	void attach_value_widgets(const std::string &amp;name, const std::string &amp;value, guint rowNumber);
+ 	void populate_proxyTypeCombobox();
+ 	void populate_labelsTreeview();
+ 	void save_labelsTreeview();
+
+Modified: trunk/UI/GTK2/src/prefsDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog_glade.cc	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/prefsDialog_glade.cc	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -1,9 +1,9 @@
+-// generated 2008/3/24 13:00:10 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2008/7/13 20:38:58 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at rexor.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.12.5 and gtkmm 2.12.3
++// for gtk 2.12.11 and gtkmm 2.12.7
+ //
+ // Please modify the corresponding derived classes in ./src/prefsDialog.cc
+ 
+@@ -72,7 +72,7 @@
+    ignoreRobotsCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Ignore robots.txt and Robots META tag&quot;)));
+    robotsLabel = Gtk::manage(new class Gtk::Label(_(&quot;HTTP crawling:&quot;)));
+    
+-   Gtk::Table *generalTable = Gtk::manage(new class Gtk::Table(2, 2, false));
++   generalTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    Gtk::Label *generalLabel = Gtk::manage(new class Gtk::Label(_(&quot;General&quot;)));
+    Gtk::RadioButton::Group _RadioBGroup_directConnectionRadiobutton;
+    directConnectionRadiobutton = Gtk::manage(new class Gtk::RadioButton(_RadioBGroup_directConnectionRadiobutton, _(&quot;Direct connection to the Internet&quot;)));
+
+Modified: trunk/UI/GTK2/src/prefsDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog_glade.hh	2008-07-13 13:46:53 UTC (rev 1297)
++++ trunk/UI/GTK2/src/prefsDialog_glade.hh	2008-07-13 13:51:08 UTC (rev 1298)
+@@ -1,9 +1,9 @@
+-// generated 2008/3/24 13:00:10 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2008/7/13 20:38:58 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at rexor.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.12.5 and gtkmm 2.12.3
++// for gtk 2.12.11 and gtkmm 2.12.7
+ //
+ // Please modify the corresponding derived classes in ./src/prefsDialog.hh and./src/prefsDialog.cc
+ 
+@@ -37,6 +37,7 @@
+ #include &lt;gtkmm/entry.h&gt;
+ #include &lt;gtkmm/checkbutton.h&gt;
+ #include &lt;gtkmm/colorbutton.h&gt;
++#include &lt;gtkmm/table.h&gt;
+ #include &lt;gtkmm/radiobutton.h&gt;
+ #include &lt;gtkmm/spinbutton.h&gt;
+ #include &lt;gtkmm/comboboxtext.h&gt;
+@@ -58,6 +59,7 @@
+         class Gtk::ColorButton * newResultsColorbutton;
+         class Gtk::CheckButton * ignoreRobotsCheckbutton;
+         class Gtk::Label * robotsLabel;
++	class Gtk::Table * generalTable;
+         class Gtk::RadioButton * directConnectionRadiobutton;
+         class Gtk::RadioButton * proxyRadiobutton;
+         class Gtk::Entry * proxyAddressEntry;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001291.html">[Pinot-svn] r1297 - in trunk/IndexSearch: . Plugins
+</A></li>
+	<LI>Next message: <A HREF="001293.html">[Pinot-svn] r1299 - in trunk/IndexSearch: . Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1292">[ date ]</a>
+              <a href="thread.html#1292">[ thread ]</a>
+              <a href="subject.html#1292">[ subject ]</a>
+              <a href="author.html#1292">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

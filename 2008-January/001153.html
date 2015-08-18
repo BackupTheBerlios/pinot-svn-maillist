@@ -1,0 +1,196 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1159 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1159%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200801111448.m0BEmObw005002%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001152.html">
+   <LINK REL="Next"  HREF="001154.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1159 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1159%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200801111448.m0BEmObw005002%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1159 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan 11 15:48:24 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001152.html">[Pinot-svn] r1158 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001154.html">[Pinot-svn] r1160 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1153">[ date ]</a>
+              <a href="thread.html#1153">[ thread ]</a>
+              <a href="subject.html#1153">[ subject ]</a>
+              <a href="author.html#1153">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-01-11 15:48:24 +0100 (Fri, 11 Jan 2008)
+New Revision: 1159
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+New XCLASS:-prefixed term for MIME type classes, eg audio, application...
+When removing a term, remove the spelling too if spelling is enabled.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-01-06 06:42:36 UTC (rev 1158)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-01-11 14:48:24 UTC (rev 1159)
+@@ -228,6 +228,7 @@
+ 	parser.add_boolean_prefix(&quot;dir&quot;, &quot;XDIR:&quot;);
+ 	parser.add_boolean_prefix(&quot;lang&quot;, &quot;L&quot;);
+ 	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
++	parser.add_boolean_prefix(&quot;class&quot;, &quot;XCLASS:&quot;);
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
+ 
+ 	// Any limit on what documents should be searched ?
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-01-06 06:42:36 UTC (rev 1158)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-01-11 14:48:24 UTC (rev 1159)
+@@ -241,7 +241,7 @@
+ }
+ 
+ void XapianIndex::removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-	const string &amp;prefix, const string &amp;language, bool noStemming) const
++	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, const string &amp;language, bool noStemming) const
+ {
+ 	Xapian::Document termsDoc;
+ 	Xapian::TermGenerator generator;
+@@ -326,6 +326,12 @@
+ 			try
+ 			{
+ 				doc.remove_term(*termListIter);
++
++				// Decrease this term's frequency in the spelling dictionary
++				if (m_doSpelling == true)
++				{
++					db.remove_spelling(*termListIter);
++				}
+ 			}
+ 			catch (const Xapian::Error &amp;error)
+ 			{
+@@ -373,6 +379,7 @@
+ {
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
++	string type(info.getType());
+ 	Url urlObj(location);
+ 
+ 	// Add a magic term :-)
+@@ -456,10 +463,15 @@
+ 	// Finally, add the language code with prefix L
+ 	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
+ 	// ...and the MIME type with prefix T
+-	doc.add_term(string(&quot;T&quot;) + info.getType());
++	doc.add_term(string(&quot;T&quot;) + type);
++	string::size_type slashPos = type.find('/');
++	if (slashPos != string::npos)
++	{
++		doc.add_term(string(&quot;XCLASS:&quot;) + type.substr(0, slashPos));
++	}
+ }
+ 
+-void XapianIndex::removeCommonTerms(Xapian::Document &amp;doc)
++void XapianIndex::removeCommonTerms(Xapian::Document &amp;doc, const Xapian::WritableDatabase &amp;db)
+ {
+ 	DocumentInfo docInfo;
+ 	set&lt;string&gt; commonTerms;
+@@ -497,8 +509,8 @@
+ 	string title(docInfo.getTitle());
+ 	if (title.empty() == false)
+ 	{
+-		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, &quot;S&quot;, language, true);
+-		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, &quot;&quot;, language, false);
++		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;, language, true);
++		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;&quot;, language, false);
+ 	}
+ 
+ 	// Location 
+@@ -574,7 +586,13 @@
+ 	// Language code
+ 	commonTerms.insert(string(&quot;L&quot;) + Languages::toCode(language));
+ 	// MIME type
+-	commonTerms.insert(string(&quot;T&quot;) + docInfo.getType());
++	string type(docInfo.getType());
++	commonTerms.insert(string(&quot;T&quot;) + type);
++	string::size_type slashPos = type.find('/');
++	if (slashPos != string::npos)
++	{
++		commonTerms.insert(string(&quot;XCLASS:&quot;) + type.substr(0, slashPos));
++	}
+ 
+ 	for (set&lt;string&gt;::const_iterator termIter = commonTerms.begin(); termIter != commonTerms.end(); ++termIter)
+ 	{
+@@ -1810,7 +1828,7 @@
+ 
+ 			// Update the document data with the current language
+ 			m_stemLanguage = Languages::toEnglish(docInfo.getLanguage());
+-			removeCommonTerms(doc);
++			removeCommonTerms(doc, *pIndex);
+ 			addCommonTerms(docInfo, doc, *pIndex);
+ 			setDocumentData(docInfo, doc, m_stemLanguage);
+ 
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2008-01-06 06:42:36 UTC (rev 1158)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2008-01-11 14:48:24 UTC (rev 1159)
+@@ -162,12 +162,13 @@
+ 			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix, bool noStemming);
+ 
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-			const std::string &amp;prefix, const std::string &amp;language, bool noStemming) const;
++			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix,
++			const std::string &amp;language, bool noStemming) const;
+ 
+ 		void addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 			const Xapian::WritableDatabase &amp;db);
+ 
+-		void removeCommonTerms(Xapian::Document &amp;doc);
++		void removeCommonTerms(Xapian::Document &amp;doc, const Xapian::WritableDatabase &amp;db);
+ 
+ 		std::string scanDocument(const char *pData, unsigned int dataLength,
+ 			DocumentInfo &amp;info);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001152.html">[Pinot-svn] r1158 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001154.html">[Pinot-svn] r1160 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1153">[ date ]</a>
+              <a href="thread.html#1153">[ thread ]</a>
+              <a href="subject.html#1153">[ subject ]</a>
+              <a href="author.html#1153">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

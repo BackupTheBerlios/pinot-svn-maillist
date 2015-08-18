@@ -1,0 +1,345 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r36 - in trunk: Index Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r36%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200512301425.jBUEPM0i019482%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000034.html">
+   <LINK REL="Next"  HREF="000036.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r36 - in trunk: Index Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r36%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200512301425.jBUEPM0i019482%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r36 - in trunk: Index Search UI/GTK2/src Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Dec 30 15:25:22 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000034.html">[Pinot-svn] r35 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000036.html">[Pinot-svn] r37 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35">[ date ]</a>
+              <a href="thread.html#35">[ thread ]</a>
+              <a href="subject.html#35">[ subject ]</a>
+              <a href="author.html#35">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-30 15:25:21 +0100 (Fri, 30 Dec 2005)
+New Revision: 36
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/Utils/Languages.cpp
+   trunk/Utils/Languages.h
+Log:
+Save language names in English, load in current locale.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2005-12-30 13:47:31 UTC (rev 35)
++++ trunk/Index/XapianIndex.cpp	2005-12-30 14:25:21 UTC (rev 36)
+@@ -24,7 +24,6 @@
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;algorithm&gt;
+-#include &lt;utility&gt;
+ 
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+@@ -37,7 +36,6 @@
+ 
+ using std::string;
+ using std::set;
+-using std::min;
+ 
+ // This puts a limit to terms length.
+ const unsigned int XapianIndex::m_maxTermLength = 64;
+@@ -368,20 +366,8 @@
+ 			string record = doc.get_data();
+ 			if (record.empty() == false)
+ 			{
+-				string language = StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;);
++				string language = Languages::toLocale(StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;));
+ 
+-				// Get the language name in the current locale
+-				for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
+-				{
+-					if (strncasecmp(language.c_str(), Languages::m_names[langNum],
+-						min(language.length(), strlen(Languages::m_names[langNum]))) == 0)
+-					{
+-						// That's the one !
+-						language = Languages::getIntlName(langNum);
+-						break;
+-					}
+-				}
+-
+ 				docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
+ 					StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
+ 					StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2005-12-30 13:47:31 UTC (rev 35)
++++ trunk/Search/XapianEngine.cpp	2005-12-30 14:25:21 UTC (rev 36)
+@@ -20,7 +20,6 @@
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
+ #include &lt;iostream&gt;
+-#include &lt;utility&gt;
+ 
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+@@ -35,7 +34,6 @@
+ using std::cout;
+ using std::cerr;
+ using std::endl;
+-using std::min;
+ 
+ static bool extractWords(const string &amp;text, const string &amp;stemLanguage, vector&lt;string&gt; &amp;wordsList)
+ {
+@@ -82,23 +80,6 @@
+ 	return true;
+ }
+ 
+-static string getLanguageNameInEnglish(const string &amp;language)
+-{
+-	for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
+-	{
+-		string intlLanguage = Languages::getIntlName(langNum);
+-
+-		if (strncasecmp(language.c_str(), intlLanguage.c_str(),
+-			min(language.length(), intlLanguage.length())) == 0)
+-		{
+-			// That's the one !
+-			return StringManip::toLowerCase(Languages::m_names[langNum]);
+-		}
+-	}
+-
+-	return language;
+-}
+-
+ XapianEngine::XapianEngine(const string &amp;database) :
+ 	SearchEngineInterface()
+ {
+@@ -338,7 +319,7 @@
+ 		vector&lt;string&gt; languageTerms;
+ 
+ 		term = &quot;L&quot;;
+-		term += getLanguageNameInEnglish(language);
++		term += StringManip::toLowerCase(Languages::toEnglish(language));
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianEngine::stackQuery: filter &quot;  &lt;&lt; term &lt;&lt; endl;
+ #endif
+@@ -471,7 +452,7 @@
+ 					cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
+ #endif
+ 					stackQuery(queryProps, queryStack,
+-						getLanguageNameInEnglish(stemLanguage), followOperators);
++						Languages::toEnglish(stemLanguage), followOperators);
+ 					continue;
+ 				}
+ 
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2005-12-30 13:47:31 UTC (rev 35)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2005-12-30 14:25:21 UTC (rev 36)
+@@ -30,6 +30,7 @@
+ #include &lt;libxml++/nodes/textnode.h&gt;
+ 
+ #include &quot;config.h&quot;
++#include &quot;Languages.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PluginWebEngine.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -474,7 +475,7 @@
+ 		}
+ 		else if (nodeName == &quot;language&quot;)
+ 		{
+-			queryProps.setLanguage(nodeContent);
++			queryProps.setLanguage(Languages::toLocale(nodeContent));
+ 		}
+ 		else if (nodeName == &quot;hostfilter&quot;)
+ 		{
+@@ -796,7 +797,7 @@
+ 		addChildElement(pElem, &quot;hostfilter&quot;, queryIter-&gt;second.getHostFilter());
+ 		addChildElement(pElem, &quot;filefilter&quot;, queryIter-&gt;second.getFileFilter());
+ 		addChildElement(pElem, &quot;labelfilter&quot;, queryIter-&gt;second.getLabelFilter());
+-		addChildElement(pElem, &quot;language&quot;, queryIter-&gt;second.getLanguage());
++		addChildElement(pElem, &quot;language&quot;, Languages::toEnglish(queryIter-&gt;second.getLanguage()));
+ 		sprintf(numStr, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
+ 		addChildElement(pElem, &quot;maxresults&quot;, numStr);
+ 		addChildElement(pElem, &quot;index&quot;, (queryIter-&gt;second.getIndexResults() ? &quot;ALL&quot; : &quot;NONE&quot;));
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2005-12-30 13:47:31 UTC (rev 35)
++++ trunk/UI/GTK2/src/pinot.cc	2005-12-30 14:25:21 UTC (rev 36)
+@@ -114,6 +114,20 @@
+ 	cout.rdbuf(outputFile.rdbuf());
+ 	cerr.rdbuf(outputFile.rdbuf());
+ 
++	// Localize language names
++	Languages::setIntlName(0, _(&quot;Danish&quot;));
++	Languages::setIntlName(1, _(&quot;Dutch&quot;));
++	Languages::setIntlName(2, _(&quot;English&quot;));
++	Languages::setIntlName(3, _(&quot;Finnish&quot;));
++	Languages::setIntlName(4, _(&quot;French&quot;));
++	Languages::setIntlName(5, _(&quot;German&quot;));
++	Languages::setIntlName(6, _(&quot;Italian&quot;));
++	Languages::setIntlName(7, _(&quot;Norwegian&quot;));
++	Languages::setIntlName(8, _(&quot;Portuguese&quot;));
++	Languages::setIntlName(9, _(&quot;Russian&quot;));
++	Languages::setIntlName(10, _(&quot;Spanish&quot;));
++	Languages::setIntlName(11, _(&quot;Swedish&quot;));
++
+ 	// Load the settings
+ 	settings.load();
+ 	settings.loadSearchEngines(&quot;/usr/share/pinot/engines&quot;);
+@@ -153,20 +167,6 @@
+ 
+ 	atexit(closeAll);
+ 
+-	// Localize language names
+-	Languages::setIntlName(0, _(&quot;Danish&quot;));
+-	Languages::setIntlName(1, _(&quot;Dutch&quot;));
+-	Languages::setIntlName(2, _(&quot;English&quot;));
+-	Languages::setIntlName(3, _(&quot;Finnish&quot;));
+-	Languages::setIntlName(4, _(&quot;French&quot;));
+-	Languages::setIntlName(5, _(&quot;German&quot;));
+-	Languages::setIntlName(6, _(&quot;Italian&quot;));
+-	Languages::setIntlName(7, _(&quot;Norwegian&quot;));
+-	Languages::setIntlName(8, _(&quot;Portuguese&quot;));
+-	Languages::setIntlName(9, _(&quot;Russian&quot;));
+-	Languages::setIntlName(10, _(&quot;Spanish&quot;));
+-	Languages::setIntlName(11, _(&quot;Swedish&quot;));
+-
+ 	// Create and open the main dialog box
+ 	mainWindow mainBox;
+ 	m.run(mainBox);
+
+Modified: trunk/Utils/Languages.cpp
+===================================================================
+--- trunk/Utils/Languages.cpp	2005-12-30 13:47:31 UTC (rev 35)
++++ trunk/Utils/Languages.cpp	2005-12-30 14:25:21 UTC (rev 36)
+@@ -14,11 +14,15 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;string.h&gt;
++#include &lt;utility&gt;
++
+ #include &quot;Languages.h&quot;
+ 
+ using std::string;
+ using std::map;
+ using std::pair;
++using std::min;
+ 
+ unsigned int Languages::m_count = 12;
+ 
+@@ -56,3 +60,41 @@
+ 
+ 	return iter-&gt;second;
+ }
++
++string Languages::toEnglish(const string &amp;language)
++{
++	if (language.empty() == false)
++	{
++		for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
++		{
++			string intlLanguage = Languages::getIntlName(langNum);
++
++			if (strncasecmp(language.c_str(), intlLanguage.c_str(),
++				min(language.length(), intlLanguage.length())) == 0)
++			{
++				return Languages::m_names[langNum];
++			}
++		}
++	}
++
++	return language;
++}
++
++string Languages::toLocale(const string &amp;language)
++{
++	if (language.empty() == false)
++	{
++		// Get the language name in the current locale
++		for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
++		{
++			if (strncasecmp(language.c_str(), Languages::m_names[langNum],
++				min(language.length(), strlen(Languages::m_names[langNum]))) == 0)
++			{
++				// That's the one !
++				return Languages::getIntlName(langNum);
++			}
++		}
++	}
++
++	return language;
++}
+
+Modified: trunk/Utils/Languages.h
+===================================================================
+--- trunk/Utils/Languages.h	2005-12-30 13:47:31 UTC (rev 35)
++++ trunk/Utils/Languages.h	2005-12-30 14:25:21 UTC (rev 36)
+@@ -28,9 +28,15 @@
+ 		/// Sets the name for the given code.
+ 		static bool setIntlName(unsigned int num, const std::string &amp;name);
+ 
+-		/// Gets the name for the given code.
++		/// Gets the name of the language at the given position.
+ 		static std::string getIntlName(unsigned int num);
+ 
++		/// Returns a language name, in English.
++		static std::string toEnglish(const std::string &amp;language);
++
++		/// Returns a language name, in the current locale.
++		static std::string toLocale(const std::string &amp;language);
++
+ 		static unsigned int m_count;
+ 		static char *m_codes[];
+ 		static char *m_names[];
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000034.html">[Pinot-svn] r35 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000036.html">[Pinot-svn] r37 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35">[ date ]</a>
+              <a href="thread.html#35">[ thread ]</a>
+              <a href="subject.html#35">[ subject ]</a>
+              <a href="author.html#35">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

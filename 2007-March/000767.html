@@ -1,0 +1,251 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r773 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r773%20-%20trunk/Monitor&In-Reply-To=%3C200703201050.l2KAokW9026784%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000766.html">
+   <LINK REL="Next"  HREF="000768.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r773 - trunk/Monitor</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r773%20-%20trunk/Monitor&In-Reply-To=%3C200703201050.l2KAokW9026784%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r773 - trunk/Monitor">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 20 11:50:46 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000766.html">[Pinot-svn] r772 - trunk/Collect
+</A></li>
+        <LI>Next message: <A HREF="000768.html">[Pinot-svn] r774 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#767">[ date ]</a>
+              <a href="thread.html#767">[ thread ]</a>
+              <a href="subject.html#767">[ subject ]</a>
+              <a href="author.html#767">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-20 11:50:45 +0100 (Tue, 20 Mar 2007)
+New Revision: 773
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/MonitorEvent.cpp
+   trunk/Monitor/MonitorEvent.h
+Log:
+Don't skip CREATE events on files !
+MOVED_FROM events for which we didn't receive a MOVED_TO (because eg, the file
+was moved to an unmonitored location on the same filesystem) are expired after
+a minute and become DELETE events.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2007-03-19 13:27:07 UTC (rev 772)
++++ trunk/Monitor/INotifyMonitor.cpp	2007-03-20 10:50:45 UTC (rev 773)
+@@ -201,6 +201,7 @@
+ 		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: read &quot;
+ 			&lt;&lt; bytesRead &lt;&lt; &quot; bytes at offset &quot; &lt;&lt; offset &lt;&lt; endl;
+ #endif
++
+ 		// What location is this event for ?
+ 		map&lt;int, string&gt;::iterator watchIter = m_watches.find(pEvent-&gt;wd);
+ 		if (watchIter == m_watches.end())
+@@ -230,8 +231,6 @@
+ 			monEvent.m_isWatch = false;
+ 		}
+ 
+-		map&lt;uint32_t, MonitorEvent&gt;::iterator movedIter = m_movedFrom.end();
+-
+ 		// What type of event ?
+ 		if (pEvent-&gt;mask &amp; IN_CREATE)
+ 		{
+@@ -239,11 +238,7 @@
+ 			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: created &quot;
+ 				&lt;&lt; monEvent.m_location &lt;&lt; endl;
+ #endif
+-			// Skip regular files
+-			if (monEvent.m_isDirectory == true)
+-			{
+-				monEvent.m_type = MonitorEvent::CREATED;
+-			}
++			monEvent.m_type = MonitorEvent::CREATED;
+ 		}
+ 		else if (pEvent-&gt;mask &amp; IN_CLOSE_WRITE)
+ 		{
+@@ -269,7 +264,7 @@
+ 				&lt;&lt; monEvent.m_location &lt;&lt; &quot; &quot; &lt;&lt; pEvent-&gt;cookie &lt;&lt; endl;
+ #endif
+ 			// What was the previous location ?
+-			movedIter = m_movedFrom.find(pEvent-&gt;cookie);
++			map&lt;uint32_t, MonitorEvent&gt;::iterator movedIter = m_movedFrom.find(pEvent-&gt;cookie);
+ 			if (movedIter != m_movedFrom.end())
+ 			{
+ 				monEvent.m_previousLocation = movedIter-&gt;second.m_location;
+@@ -305,6 +300,8 @@
+ 		}
+ 		else if (pEvent-&gt;mask &amp; IN_MOVE_SELF)
+ 		{
++			map&lt;uint32_t, MonitorEvent&gt;::iterator movedIter = m_movedFrom.end();
++
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved self on &quot;
+ 				&lt;&lt; monEvent.m_location &lt;&lt; &quot; &quot; &lt;&lt; pEvent-&gt;cookie &lt;&lt; endl;
+@@ -382,6 +379,33 @@
+ 			events.push(monEvent);
+ 		}
+ 
++		// Any IN_MOVED_FROM event for which we didn't get a IN_MOVED_TO ?
++		time_t now = time(NULL);
++		map&lt;uint32_t, MonitorEvent&gt;::iterator movedIter = m_movedFrom.begin();
++		while (movedIter != m_movedFrom.end())
++		{
++			// The file was probably moved to an unmonitored location on the same filesystem
++			if (movedIter-&gt;second.m_time + 60 &lt; now)
++			{
++				// It's as good as if it was deleted
++				movedIter-&gt;second.m_type = MonitorEvent::DELETED;
++				events.push(movedIter-&gt;second);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: don't know where &quot;
++					&lt;&lt; movedIter-&gt;second.m_location &lt;&lt; &quot; was moved to&quot; &lt;&lt; endl;
++#endif
++
++				map&lt;uint32_t, MonitorEvent&gt;::iterator nextMovedIter = movedIter;
++				++nextMovedIter;
++				m_movedFrom.erase(movedIter);
++				movedIter = nextMovedIter;
++			}
++			else
++			{
++				++movedIter;
++			}
++		}
++
+ 		offset += eventSize;
+ 	}
+ 	pthread_mutex_unlock(&amp;m_mutex);
+
+Modified: trunk/Monitor/MonitorEvent.cpp
+===================================================================
+--- trunk/Monitor/MonitorEvent.cpp	2007-03-19 13:27:07 UTC (rev 772)
++++ trunk/Monitor/MonitorEvent.cpp	2007-03-20 10:50:45 UTC (rev 773)
+@@ -24,7 +24,8 @@
+ MonitorEvent::MonitorEvent() :
+ 	m_isWatch(false),
+ 	m_type(UNKNOWN),
+-	m_isDirectory(false)
++	m_isDirectory(false),
++	m_time(time(NULL))
+ {
+ }
+ 
+@@ -33,7 +34,8 @@
+ 	m_previousLocation(other.m_previousLocation),
+ 	m_isWatch(other.m_isWatch),
+ 	m_type(other.m_type),
+-	m_isDirectory(other.m_isDirectory)
++	m_isDirectory(other.m_isDirectory),
++	m_time(other.m_time)
+ {
+ }
+ 
+@@ -50,6 +52,7 @@
+ 		m_isWatch = other.m_isWatch;
+ 		m_type = other.m_type;
+ 		m_isDirectory = other.m_isDirectory;
++		m_time = other.m_time;
+ 	}
+ 
+ 	return *this;
+@@ -61,6 +64,24 @@
+ 	{
+ 		return true;
+ 	}
++	else if (m_location == other.m_location)
++	{
++		if (m_type &lt; other.m_type)
++		{
++			return true;
++		}
++	}
+ 
+ 	return false;
+ }
++
++bool MonitorEvent::operator==(const MonitorEvent&amp; other) const
++{
++	if ((m_location == other.m_location) &amp;&amp;
++		(m_type == other.m_type))
++	{
++		return true;
++	}
++
++	return false;
++}
+
+Modified: trunk/Monitor/MonitorEvent.h
+===================================================================
+--- trunk/Monitor/MonitorEvent.h	2007-03-19 13:27:07 UTC (rev 772)
++++ trunk/Monitor/MonitorEvent.h	2007-03-20 10:50:45 UTC (rev 773)
+@@ -19,6 +19,7 @@
+ #ifndef _MONITOR_EVENT_H
+ #define _MONITOR_EVENT_H
+ 
++#include &lt;time.h&gt;
+ #include &lt;string&gt;
+ 
+ /// An event generated by a monitor.
+@@ -33,6 +34,8 @@
+ 
+ 		bool operator&lt;(const MonitorEvent&amp; other) const;
+ 
++		bool operator==(const MonitorEvent&amp; other) const;
++
+ 		typedef enum { UNKNOWN = 0, EXISTS, CREATED, WRITE_CLOSED, MOVED, DELETED } EventType;
+ 
+ 		std::string m_location;
+@@ -40,6 +43,7 @@
+ 		bool m_isWatch;
+ 		EventType m_type;
+ 		bool m_isDirectory;
++		time_t m_time;
+ 
+ };
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000766.html">[Pinot-svn] r772 - trunk/Collect
+</A></li>
+	<LI>Next message: <A HREF="000768.html">[Pinot-svn] r774 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#767">[ date ]</a>
+              <a href="thread.html#767">[ thread ]</a>
+              <a href="subject.html#767">[ subject ]</a>
+              <a href="author.html#767">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

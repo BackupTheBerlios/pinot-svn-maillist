@@ -1,0 +1,194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1568 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1568%20-%20trunk/Core&In-Reply-To=%3C200903010239.n212dFqW000593%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001557.html">
+   <LINK REL="Next"  HREF="001559.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1568 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1568%20-%20trunk/Core&In-Reply-To=%3C200903010239.n212dFqW000593%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1568 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Mar  1 03:39:15 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001557.html">[Pinot-svn] r1567 - in trunk: . Core
+</A></li>
+        <LI>Next message: <A HREF="001559.html">[Pinot-svn] r1569 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1558">[ date ]</a>
+              <a href="thread.html#1558">[ thread ]</a>
+              <a href="subject.html#1558">[ subject ]</a>
+              <a href="author.html#1558">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-01 03:39:08 +0100 (Sun, 01 Mar 2009)
+New Revision: 1568
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/DaemonState.h
+Log:
+Flush the index when all foreground threads have returned so that it doesn't
+interfere with indexing.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-03-01 02:35:42 UTC (rev 1567)
++++ trunk/Core/DaemonState.cpp	2009-03-01 02:39:08 UTC (rev 1568)
+@@ -312,6 +312,7 @@
+ 	m_fullScan(false),
+ 	m_isReindex(false),
+ 	m_reload(false),
++	m_flush(false),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+ 	m_pDiskHandler(NULL),
+ 	m_crawlers(0)
+@@ -628,20 +629,11 @@
+ 		{
+ 			// Pop the queue
+ 			m_crawlQueue.pop();
++			m_flush = true;
+ 		}
+ 		// Else, the directory wasn't fully crawled so better leave it in the queue
+ 
+-		if (start_crawling() == false)
+-		{
+-			// Flush the index if no new crawler was started
+-			IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+-			if (pIndex != NULL)
+-			{
+-				pIndex-&gt;flush();
+-
+-				delete pIndex;
+-			}
+-		}
++		start_crawling();
+ 	}
+ 	else if (type == &quot;IndexingThread&quot;)
+ 	{
+@@ -756,34 +748,43 @@
+ 	// Delete the thread
+ 	delete pThread;
+ 
+-	// Are we supposed to reload the configuration ?
+ 	// Wait until there are no threads running (except background ones)
+-	if ((m_reload == true) &amp;&amp;
+-		(get_threads_count() == 0))
++	// to flush the index or reload the configuration
++	if (get_threads_count() == 0)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::on_thread_end: stopping all threads&quot; &lt;&lt; endl;
+-#endif
+-		// Stop background threads
+-		stop_threads();
+-		// ...clear the queues
+-		clear_queues();
++		if (m_flush == true)
++		{
++			m_flush = false;
+ 
+-		// Reload
+-		PinotSettings &amp;settings = PinotSettings::getInstance();
+-		settings.clear();
+-		settings.load(PinotSettings::LOAD_ALL);
+-		m_reload = false;
++			IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++			if (pIndex != NULL)
++			{
++				pIndex-&gt;flush();
++
++				delete pIndex;
++			}
++		}
++
++		if (m_reload == true)
++		{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::on_thread_end: reloading&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;DaemonState::on_thread_end: stopping all threads&quot; &lt;&lt; endl;
+ #endif
++			// Stop background threads
++			stop_threads();
++			// ...clear the queues
++			clear_queues();
+ 
+-		// ...and restart everything 
+-		start(true, false);
++			// Reload
++			PinotSettings &amp;settings = PinotSettings::getInstance();
++			settings.clear();
++			settings.load(PinotSettings::LOAD_ALL);
++			m_reload = false;
++
++			// ...and restart everything 
++			start(true, false);
++		}
+ 	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;DaemonState::on_thread_end: reload status &quot; &lt;&lt; m_reload &lt;&lt; endl;
+-#endif
+ 
+ 	// Try to run a queued action unless threads were stopped
+ 	if (isStopped == false)
+
+Modified: trunk/Core/DaemonState.h
+===================================================================
+--- trunk/Core/DaemonState.h	2009-03-01 02:35:42 UTC (rev 1567)
++++ trunk/Core/DaemonState.h	2009-03-01 02:39:08 UTC (rev 1568)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -104,6 +104,7 @@
+ 		bool m_fullScan;
+ 		bool m_isReindex;
+ 		bool m_reload;
++		bool m_flush;
+ 		fd_set m_flagsSet;
+ 		MonitorInterface *m_pDiskMonitor;
+ 		MonitorHandler *m_pDiskHandler;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001557.html">[Pinot-svn] r1567 - in trunk: . Core
+</A></li>
+	<LI>Next message: <A HREF="001559.html">[Pinot-svn] r1569 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1558">[ date ]</a>
+              <a href="thread.html#1558">[ thread ]</a>
+              <a href="subject.html#1558">[ subject ]</a>
+              <a href="author.html#1558">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

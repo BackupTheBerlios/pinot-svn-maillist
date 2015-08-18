@@ -1,0 +1,475 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r547 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r547%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611021146.kA2BkKqf002205%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000539.html">
+   <LINK REL="Next"  HREF="000541.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r547 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r547%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611021146.kA2BkKqf002205%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r547 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov  2 12:46:20 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000539.html">[Pinot-svn] r546 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000541.html">[Pinot-svn] r548 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#540">[ date ]</a>
+              <a href="thread.html#540">[ thread ]</a>
+              <a href="subject.html#540">[ subject ]</a>
+              <a href="author.html#540">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-02 12:46:18 +0100 (Thu, 02 Nov 2006)
+New Revision: 547
+
+Modified:
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Load and save glob patterns for files that shouldn't be indexed. Both
+ThreadsManager::index_document() and OnDiskHandler::indexFile() now check files
+with PinotSettings::isBlackListed().
+Index_document() returns why it failed.
+PinotSettings saves the current version string to allow automatic upgrades.
+
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-11-01 16:07:12 UTC (rev 546)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-11-02 11:46:18 UTC (rev 547)
+@@ -31,6 +31,7 @@
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;FileCollector.h&quot;
++#include &quot;PinotSettings.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ 
+ using namespace std;
+@@ -63,6 +64,15 @@
+ 		return false;
+ 	}
+ 
++	// Is it black-listed ?
++	if (PinotSettings::getInstance().isBlackListed(fileName) == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;OnDiskHandler::indexFile: &quot; &lt;&lt; location &lt;&lt; &quot; is black-listed&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
+ 	// Has this file been indexed already ?
+ 	unsigned int docId = m_index.hasDocument(location);
+ 	if ((docId &gt; 0) &amp;&amp;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-11-01 16:07:12 UTC (rev 546)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-11-02 11:46:18 UTC (rev 547)
+@@ -23,6 +23,7 @@
+ #include &lt;sys/stat.h&gt;
+ #include &lt;dirent.h&gt;
+ #include &lt;pwd.h&gt;
++#include &lt;fnmatch.h&gt;
+ #include &lt;algorithm&gt;
+ #include &lt;iostream&gt;
+ 
+@@ -206,6 +207,7 @@
+ 	m_labels.clear();
+ 	m_mailAccounts.clear();
+ 	m_indexableLocations.clear();
++	m_filePatternsBlackList.clear();
+ 	m_cacheProviders.clear();
+ }
+ 
+@@ -233,12 +235,23 @@
+ 	addIndex(_(&quot;My Web Pages&quot;), m_docsIndexLocation);
+ 	addIndex(_(&quot;My Documents&quot;), m_daemonIndexLocation);
+ 
+-	// Add default labels on the first run
+ 	if (m_firstRun == true)
+ 	{
++		// Add default labels
+ 		m_labels.insert(_(&quot;Important&quot;));
+ 		m_labels.insert(_(&quot;New&quot;));
+ 		m_labels.insert(_(&quot;Personal&quot;));
++		// Skip common image and video types
++		m_filePatternsBlackList.insert(&quot;*.avi&quot;);
++		m_filePatternsBlackList.insert(&quot;*.asf&quot;);
++		m_filePatternsBlackList.insert(&quot;*.gif&quot;);
++		m_filePatternsBlackList.insert(&quot;*.jpeg&quot;);
++		m_filePatternsBlackList.insert(&quot;*.jpg&quot;);
++		m_filePatternsBlackList.insert(&quot;*.png&quot;);
++		m_filePatternsBlackList.insert(&quot;*.mov&quot;);
++		m_filePatternsBlackList.insert(&quot;*.mpeg&quot;);
++		m_filePatternsBlackList.insert(&quot;*.mpg&quot;);
++		m_filePatternsBlackList.insert(&quot;*.wmv&quot;);
+ 	}
+ 
+ 	// Some search engines are hardcoded
+@@ -318,6 +331,10 @@
+ 						continue;
+ 					}
+ 				}
++				else if (nodeName == &quot;version&quot;)
++				{
++					m_version = nodeContent;
++				}
+ 				else if (nodeName == &quot;googleapikey&quot;)
+ 				{
+ 					m_googleAPIKey = nodeContent;
+@@ -376,6 +393,10 @@
+ 				{
+ 					loadIndexableLocations(pElem);
+ 				}
++				else if (nodeName == &quot;blacklist&quot;)
++				{
++					loadFilePatterns(pElem);
++				}
+ 			}
+ 		}
+ 	}
+@@ -874,6 +895,41 @@
+ 	return true;
+ }
+ 
++bool PinotSettings::loadFilePatterns(const Element *pElem)
++{
++	if (pElem == NULL)
++	{
++		return false;
++	}
++
++	Node::NodeList childNodes = pElem-&gt;get_children();
++	if (childNodes.empty() == true)
++	{
++		return false;
++	}
++
++	// Load the file patterns list
++	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++	{
++		Node *pNode = (*iter);
++		Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++		if (pElem == NULL)
++		{
++			continue;
++		}
++
++		string nodeName = pElem-&gt;get_name();
++		string nodeContent = getElementContent(pElem);
++
++		if (nodeName == &quot;pattern&quot;)
++		{
++			m_filePatternsBlackList.insert(nodeContent);
++		}
++	}
++
++	return true;
++}
++
+ bool PinotSettings::loadCacheProviders(const Element *pElem)
+ {
+ 	if (pElem == NULL)
+@@ -1011,6 +1067,7 @@
+ 		return false;
+ 	}
+ 	// ...with text children nodes
++	addChildElement(pRootElem, &quot;version&quot;, VERSION);
+ 	addChildElement(pRootElem, &quot;googleapikey&quot;, m_googleAPIKey);
+ 	// User interface position and size
+ 	pElem = pRootElem-&gt;add_child(&quot;ui&quot;);
+@@ -1128,6 +1185,16 @@
+ 		addChildElement(pElem, &quot;name&quot;, locationIter-&gt;m_name);
+ 		addChildElement(pElem, &quot;monitor&quot;, (locationIter-&gt;m_monitor ? &quot;YES&quot; : &quot;NO&quot;));
+ 	}
++	// File patterns that are blacklisted
++	pElem = pRootElem-&gt;add_child(&quot;blacklist&quot;);
++	if (pElem == NULL)
++	{
++		return false;
++	}
++	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsBlackList.begin(); patternIter != m_filePatternsBlackList.end() ; ++patternIter)
++	{
++		addChildElement(pElem, &quot;pattern&quot;, *patternIter);
++	}
+ 
+ 	// Save to file
+ 	doc.write_to_file_formatted(getConfigurationFileName());
+@@ -1417,6 +1484,35 @@
+ 	m_labels.clear();
+ }
+ 
++/// Determines if a file matches the blacklist.
++bool PinotSettings::isBlackListed(const string &amp;fileName)
++{
++	if (m_filePatternsBlackList.empty() == true)
++	{
++		return false;
++	}
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;PinotSettings::isBlackListed: examining &quot; &lt;&lt; fileName &lt;&lt; endl;
++#endif
++	// Any pattern matches this the file name ?
++	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsBlackList.begin(); patternIter != m_filePatternsBlackList.end() ; ++patternIter)
++	{
++		if (fnmatch(patternIter-&gt;c_str(), fileName.c_str(), FNM_NOESCAPE) == 0)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;PinotSettings::isBlackListed: matched &quot; &lt;&lt; *patternIter &lt;&lt; endl;
++#endif
++			return true;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;PinotSettings::isBlackListed: didn't match &quot; &lt;&lt; *patternIter &lt;&lt; endl;
++#endif
++	}
++
++	return false;
++}
++
+ PinotSettings::Engine::Engine()
+ {
+ }
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-11-01 16:07:12 UTC (rev 546)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-11-02 11:46:18 UTC (rev 547)
+@@ -134,6 +134,9 @@
+ 		/// Clears the labels list.
+ 		void clearLabels(void);
+ 
++		/// Determines if a file matches the blacklist.
++		bool isBlackListed(const std::string &amp;fileName);
++
+ 		class TimestampedItem
+ 		{
+ 			public:
+@@ -181,6 +184,7 @@
+ 				std::set&lt;Glib::ustring&gt; m_protocols;
+ 		};
+ 
++		Glib::ustring m_version;
+ 		Glib::ustring m_googleAPIKey;
+ 		Glib::ustring m_docsIndexLocation;
+ 		Glib::ustring m_daemonIndexLocation;
+@@ -199,6 +203,7 @@
+ 		unsigned short m_newResultsColourBlue;
+ 		std::set&lt;TimestampedItem&gt; m_mailAccounts;
+ 		std::set&lt;IndexableLocation&gt; m_indexableLocations;
++		std::set&lt;Glib::ustring&gt; m_filePatternsBlackList;
+ 		std::vector&lt;CacheProvider&gt; m_cacheProviders;
+ 		std::set&lt;Glib::ustring&gt; m_cacheProtocols;
+ 
+@@ -224,6 +229,7 @@
+ 		bool loadColour(const xmlpp::Element *pElem);
+ 		bool loadMailAccounts(const xmlpp::Element *pElem);
+ 		bool loadIndexableLocations(const xmlpp::Element *pElem);
++		bool loadFilePatterns(const xmlpp::Element *pElem);
+ 		bool loadCacheProviders(const xmlpp::Element *pElem);
+ 
+ 	private:
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-01 16:07:12 UTC (rev 546)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-02 11:46:18 UTC (rev 547)
+@@ -285,21 +285,21 @@
+ 	return pWorkerThread;
+ }
+ 
+-bool ThreadsManager::index_document(const DocumentInfo &amp;docInfo)
++ustring ThreadsManager::index_document(const DocumentInfo &amp;docInfo)
+ {
+ 	string location(docInfo.getLocation());
+ 
+ 	if (location.empty() == true)
+ 	{
+ 		// Nothing to do
+-		return false;
++		return &quot;&quot;;
+ 	}
+ 
+ 	// If the document is a mail message, we can't index it again
+ 	Url urlObj(location);
+ 	if (urlObj.getProtocol() == &quot;mailbox&quot;)
+ 	{
+-		return false;
++		return _(&quot;Couldn't index mailbox data here&quot;);
+ 	}
+ 
+ 	// Is the document being indexed/updated ?
+@@ -318,15 +318,33 @@
+ 		if (beingProcessed == true)
+ 		{
+ 			// FIXME: we may have to set labels on this document
+-			return false;
++			ustring status(location);
++			status += &quot; &quot;;
++			status += _(&quot;is already being indexed&quot;);
++			return status;
+ 		}
+ 	}
+ 
++	// Is the document blacklisted ?
++	if (PinotSettings::getInstance().isBlackListed(location) == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::index_document: &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; is blacklisted&quot; &lt;&lt; endl;
++#endif
++		ustring status(location);
++		status += &quot; &quot;;
++		status += _(&quot;is blacklisted&quot;);
++		return status;
++	}
++
+ 	// Is it an update ?
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_defaultIndexLocation);
+ 	if (pIndex == NULL)
+ 	{
+-		return false;
++		ustring status = _(&quot;Index error on&quot;);
++		status += &quot; &quot;;
++		status += m_defaultIndexLocation;
++		return status;
+ 	}
+ 
+ 	unsigned int docId = pIndex-&gt;hasDocument(docInfo.getLocation());
+@@ -342,7 +360,7 @@
+ 	}
+ 	delete pIndex;
+ 
+-	return true;
++	return &quot;&quot;;
+ }
+ 
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+@@ -468,7 +486,7 @@
+ 	m_onThreadEndSignal.emit(pThread);
+ }
+ 
+-bool ThreadsManager::queue_index(const DocumentInfo &amp;docInfo)
++ustring ThreadsManager::queue_index(const DocumentInfo &amp;docInfo)
+ {
+ 	double averageLoad[3];
+ 	bool addToQueue = false;
+@@ -497,7 +515,7 @@
+ 			unlock_lists();
+ 		}
+ 
+-		return true;
++		return &quot;&quot;;
+ 	}
+ 
+ 	return index_document(docInfo);
+@@ -530,25 +548,27 @@
+ 			}
+ 		}
+ 
+-		// Get the first item ?
+-		if ((getItem == true) &amp;&amp;
+-			(m_indexQueue.empty() == false))
++		// Get an item ?
++		if (getItem == true)
+ 		{
+-			docInfo = m_indexQueue.front();
+-			m_indexQueue.pop();
+-			foundItem = true;
++			while (m_indexQueue.empty() == false)
++			{
++				docInfo = m_indexQueue.front();
++				m_indexQueue.pop();
++
++				ustring status = index_document(docInfo);
++				if (status.empty() == true)
++				{
++					foundItem = true;
++					break;
++				}
++			}
+ 		}
+ 
+ 		unlock_lists();
+ 	}
+ 
+-	if (foundItem == false)
+-	{
+-		// Nothing to do
+-		return false;
+-	}
+-
+-	return index_document(docInfo);
++	return foundItem;
+ }
+ 
+ void ThreadsManager::get_statistics(unsigned int &amp;queueSize)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-11-01 16:07:12 UTC (rev 546)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-11-02 11:46:18 UTC (rev 547)
+@@ -122,7 +122,7 @@
+ 
+ 		void unlock_lists(void);
+ 
+-		bool queue_index(const DocumentInfo &amp;docInfo);
++		Glib::ustring queue_index(const DocumentInfo &amp;docInfo);
+ 
+ 		bool pop_queue(const std::string &amp;urlWasIndexed = &quot;&quot;);
+ 
+@@ -146,7 +146,7 @@
+ 		bool write_lock_threads(void);
+ 		void unlock_threads(void);
+ 		WorkerThread *get_thread(void);
+-		bool index_document(const DocumentInfo &amp;docInfo);
++		Glib::ustring index_document(const DocumentInfo &amp;docInfo);
+ 
+ 	private:
+ 		ThreadsManager(const ThreadsManager &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000539.html">[Pinot-svn] r546 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000541.html">[Pinot-svn] r548 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#540">[ date ]</a>
+              <a href="thread.html#540">[ thread ]</a>
+              <a href="subject.html#540">[ subject ]</a>
+              <a href="author.html#540">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

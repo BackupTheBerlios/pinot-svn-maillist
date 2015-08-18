@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r182 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r182%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200604041314.k34DEr4r027335%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000179.html">
+   <LINK REL="Next"  HREF="000181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r182 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r182%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200604041314.k34DEr4r027335%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r182 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Apr  4 15:14:53 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000179.html">[Pinot-svn] r181 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000181.html">[Pinot-svn] r183 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#180">[ date ]</a>
+              <a href="thread.html#180">[ thread ]</a>
+              <a href="subject.html#180">[ subject ]</a>
+              <a href="author.html#180">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-04-04 15:14:50 +0200 (Tue, 04 Apr 2006)
+New Revision: 182
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+IndexingThread can skip MIME type check.
+Minor fixes to get rid of compilation warnings.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-04-04 12:29:15 UTC (rev 181)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-04-04 13:14:50 UTC (rev 182)
+@@ -245,8 +245,6 @@
+ 
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+ {
+-	bool insertedThread = false;
+-
+ 	if (pWorkerThread == NULL)
+ 	{
+ 		return false;
+@@ -467,10 +465,10 @@
+ QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+ 	const string &amp;engineOption, const QueryProperties &amp;queryProps) :
+ 	WorkerThread(),
+-	m_queryProps(queryProps),
+ 	m_engineName(engineName),
+ 	m_engineDisplayableName(engineDisplayableName),
+-	m_engineOption(engineOption)
++	m_engineOption(engineOption),
++	m_queryProps(queryProps)
+ {
+ }
+ 
+@@ -722,11 +720,12 @@
+ }
+ 
+ IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, const string &amp;labelName,
+-	unsigned int docId) :
++	unsigned int docId, bool allowAllMIMETypes) :
+ 	DownloadingThread(docInfo.getLocation(), false),
+ 	m_docInfo(docInfo),
+ 	m_labelName(labelName),
+-	m_docId(docId)
++	m_docId(docId),
++	m_allowAllMIMETypes(allowAllMIMETypes)
+ {
+ 	m_indexLocation = PinotSettings::getInstance().m_indexLocation;
+ 	if (m_docId &gt; 0)
+@@ -816,9 +815,7 @@
+ 	}
+ 	else
+ 	{
+-		unsigned int urlContentLen;
+ 		string docType = m_pDoc-&gt;getType();
+-		const char *urlContent = m_pDoc-&gt;getData(urlContentLen);
+ 		bool success = false;
+ 
+ 		// The type may have been obtained when downloading
+@@ -831,8 +828,9 @@
+ 			m_pDoc-&gt;setType(m_docInfo.getType());
+ 		}
+ 
+-		// Skip unsupported types
+-		if (TokenizerFactory::isSupportedType(m_docInfo.getType()) == false)
++		// Skip unsupported types ?
++		if ((m_allowAllMIMETypes == false) &amp;&amp;
++			(TokenizerFactory::isSupportedType(m_docInfo.getType()) == false))
+ 		{
+ 			m_status = _(&quot;Cannot index document type&quot;);
+ 			m_status += &quot; &quot;;
+@@ -1194,7 +1192,6 @@
+ 	FAMConnection famConn;
+ 	FAMRequest famReq;
+ 	map&lt;unsigned long, string&gt; fsLocations;
+-	struct stat fileStat;
+ 	bool setLocationsToMonitor = true;
+ 	bool firstTime = true;
+ 	bool closeMonitor = false, resumeMonitor = false;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-04-04 12:29:15 UTC (rev 181)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-04-04 13:14:50 UTC (rev 182)
+@@ -246,7 +246,7 @@
+ {
+ 	public:
+ 		IndexingThread(const DocumentInfo &amp;docInfo, const std::string &amp;labelName,
+-			unsigned int docId = 0);
++			unsigned int docId = 0, bool allowAllMIMETypes = false);
+ 		virtual ~IndexingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -265,6 +265,7 @@
+ 		DocumentInfo m_docInfo;
+ 		std::string m_labelName;
+ 		unsigned int m_docId;
++		bool m_allowAllMIMETypes;
+ 		std::string m_indexLocation;
+ 		bool m_ignoreRobotsDirectives;
+ 		bool m_update;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000179.html">[Pinot-svn] r181 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000181.html">[Pinot-svn] r183 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#180">[ date ]</a>
+              <a href="thread.html#180">[ thread ]</a>
+              <a href="subject.html#180">[ subject ]</a>
+              <a href="author.html#180">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

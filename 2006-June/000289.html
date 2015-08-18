@@ -1,0 +1,598 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r295 - in trunk: . Collect Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r295%20-%20in%20trunk%3A%20.%20Collect%20Search%20Utils&In-Reply-To=%3C200606071333.k57DXtl7016037%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000288.html">
+   <LINK REL="Next"  HREF="000290.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r295 - in trunk: . Collect Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r295%20-%20in%20trunk%3A%20.%20Collect%20Search%20Utils&In-Reply-To=%3C200606071333.k57DXtl7016037%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r295 - in trunk: . Collect Search Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed Jun  7 15:33:55 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000288.html">[Pinot-svn] r294 - in trunk: Collect Search UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000290.html">[Pinot-svn] r296 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#289">[ date ]</a>
+              <a href="thread.html#289">[ thread ]</a>
+              <a href="subject.html#289">[ subject ]</a>
+              <a href="author.html#289">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-07 15:33:52 +0200 (Wed, 07 Jun 2006)
+New Revision: 295
+
+Added:
+   trunk/Utils/CommandLine.cpp
+   trunk/Utils/CommandLine.h
+Modified:
+   trunk/Collect/Makefile.am
+   trunk/Search/Makefile.am
+   trunk/Utils/MIMEScanner.cpp
+   trunk/Utils/MIMEScanner.h
+   trunk/Utils/Makefile.am
+   trunk/configure.in
+Log:
+Extended MIMEAction, added CommandLine: it runs commands asynchronously after
+having expanded parameters. Since this makes use of glibmm, check for it
+explictely in configure.
+
+
+Modified: trunk/Collect/Makefile.am
+===================================================================
+--- trunk/Collect/Makefile.am	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Collect/Makefile.am	2006-06-07 13:33:52 UTC (rev 295)
+@@ -12,13 +12,6 @@
+ 
+ bin_PROGRAMS = pinot-collect
+ 
+-pinot_collect_SOURCES = \
+-	pinot-collect.cpp
+-
+-pinot_collect_LDADD = -L../Utils -L../Tokenize \
+-	-lCollect -lTokenize -lUtils \
+-	@INDEX_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
+-
+ libCollect_la_SOURCES = \
+ 	@<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">HTTP_DOWNLOADER at .cpp</A> \
+ 	DownloaderFactory.cpp \
+@@ -27,6 +20,13 @@
+ 	MboxCollector.cpp \
+ 	XapianCollector.cpp
+ 
++pinot_collect_SOURCES = \
++	pinot-collect.cpp
++
++pinot_collect_LDADD = -L../Utils -L../Tokenize \
++	-lCollect -lTokenize -lUtils \
++	@GLIBMM_LIBS@ @INDEX_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
++
+ AM_CXXFLAGS = -I../Utils -I../Tokenize \
+-	@INDEX_CFLAGS@ @XML_CFLAGS@ @HTTP_CFLAGS@ @MIME_CFLAGS@
++	@INDEX_CFLAGS@ @XML_CFLAGS@ @HTTP_CFLAGS@ @MIME_CFLAGS@ @GLIBMM_CFLAGS@
+ 
+
+Modified: trunk/Search/Makefile.am
+===================================================================
+--- trunk/Search/Makefile.am	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Search/Makefile.am	2006-06-07 13:33:52 UTC (rev 295)
+@@ -43,11 +43,11 @@
+ 
+ pinot_search_LDADD = -L../Utils -L../Tokenize -L../Collect -LGoogle \
+ 	@SEARCH_LIBS@ -lCollect -lTokenize -lUtils \
+-	@INDEX_LIBS@ @SOAP_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
++	@GLIBMM_LIBS@ @INDEX_LIBS@ @SOAP_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
+ 
+ SOAPEnvC.cpp : SOAPEnv.h
+ 	soapcpp2 -pSOAPEnv SOAPEnv.h
+ 
+ AM_CXXFLAGS = -I../Utils -I../Tokenize -I../Collect -IGoogle \
+-	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @SOAP_CFLAGS@ @MIME_CFLAGS@
++	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @SOAP_CFLAGS@ @MIME_CFLAGS@ @GLIBMM_CFLAGS@
+ 
+
+Added: trunk/Utils/CommandLine.cpp
+===================================================================
+--- trunk/Utils/CommandLine.cpp	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Utils/CommandLine.cpp	2006-06-07 13:33:52 UTC (rev 295)
+@@ -0,0 +1,183 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;strings.h&gt;
++#include &lt;glibmm/shell.h&gt;
++#include &lt;glibmm/spawn.h&gt;
++#include &lt;iostream&gt;
++
++#include &quot;CommandLine.h&quot;
++#include &quot;Url.h&quot;
++
++using std::cout;
++using std::endl;
++using std::string;
++using std::vector;
++
++CommandLine::CommandLine()
++{
++}
++
++CommandLine::~CommandLine()
++{
++}
++
++/// Runs a command asynchronously.
++bool CommandLine::runAsync(const MIMEAction &amp;action, const vector&lt;string&gt; &amp;arguments)
++{
++	string commandLine(action.m_exec);
++
++	if (commandLine.empty() == true)
++	{
++		return false;
++	}
++
++	if (arguments.empty() == false)
++	{
++		vector&lt;string&gt;::const_iterator firstArg = arguments.begin();
++		Url firstUrl(*firstArg);
++		bool foundParam = false;
++
++		// Expand parameters
++		// We assume that arguments are URLs
++		string::size_type paramPos = commandLine.find('%');
++		while ((paramPos != string::npos) &amp;&amp;
++				(paramPos + 1 &lt; commandLine.length()))
++		{
++			string replacement;
++
++			foundParam = true;
++			switch (commandLine[paramPos + 1])
++			{
++				// Single parameter arguments
++				case 'u':
++					replacement = *firstArg;
++					break;
++				case 'f':
++					if (firstUrl.isLocal() == true)
++					{
++						replacement = firstUrl.getLocation();
++						replacement += &quot;/&quot;;
++						replacement += firstUrl.getFile();
++					}
++					break;
++				case 'd':
++					if (firstUrl.isLocal() == true)
++					{
++						replacement = firstUrl.getLocation();
++					}
++					break;
++				case 'n':
++					if (firstUrl.isLocal() == true)
++					{
++						replacement = firstUrl.getFile();
++					}
++				// Multiple parameters arguments
++				case 'U':
++					for (vector&lt;string&gt;::const_iterator argIter = firstArg; argIter != arguments.end(); ++argIter)
++					{
++						if (replacement.empty() == false)
++						{
++							replacement += &quot; &quot;;
++						}
++						replacement += *argIter;
++					}
++					break;
++				case 'F':
++					for (vector&lt;string&gt;::const_iterator argIter = firstArg; argIter != arguments.end(); ++argIter)
++					{
++						Url argUrl(*argIter);
++
++						if (argUrl.isLocal() == true)
++						{
++							if (replacement.empty() == false)
++							{
++								replacement += &quot; &quot;;
++							}
++							replacement += argUrl.getLocation();
++							replacement += &quot;/&quot;;
++							replacement += argUrl.getFile();
++						}
++					}
++					break;
++				case 'D':
++					for (vector&lt;string&gt;::const_iterator argIter = firstArg; argIter != arguments.end(); ++argIter)
++					{
++						Url argUrl(*argIter);
++
++						if (argUrl.isLocal() == true)
++						{
++							if (replacement.empty() == false)
++							{
++								replacement += &quot; &quot;;
++							}
++							replacement += argUrl.getLocation();
++						}
++					}
++					break;
++				case 'N':
++					for (vector&lt;string&gt;::const_iterator argIter = firstArg; argIter != arguments.end(); ++argIter)
++					{
++						Url argUrl(*argIter);
++
++						if (argUrl.isLocal() == true)
++						{
++							if (replacement.empty() == false)
++							{
++								replacement += &quot; &quot;;
++							}
++							replacement += argUrl.getFile();
++						}
++					}
++					break;
++				// Other parameters
++				case 'i':
++					replacement = action.m_icon;
++					break;
++				case 'c':
++					// FIXME: this should be the &quot;translated name&quot;
++					replacement = action.m_name;
++					break;
++				case 'k':
++					replacement = action.m_location;
++					break;
++				case 'v':
++					replacement = action.m_device;
++					break;
++				default:
++					break;
++			}
++
++			commandLine.replace(paramPos, 2, Glib::shell_quote(replacement));
++
++			// Next
++			paramPos = commandLine.find('%', paramPos + 1);
++		}
++
++		if (foundParam == false)
++		{
++			// If no parameter was found, assume %f
++			commandLine += *firstArg;
++		}
++	}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;CommandLine::runAsync: spawning '&quot; &lt;&lt; commandLine &lt;&lt; &quot;'&quot; &lt;&lt; endl;
++#endif
++
++	Glib::spawn_command_line_async(commandLine);
++
++	return true;
++}
+
+Added: trunk/Utils/CommandLine.h
+===================================================================
+--- trunk/Utils/CommandLine.h	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Utils/CommandLine.h	2006-06-07 13:33:52 UTC (rev 295)
+@@ -0,0 +1,42 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _COMMAND_LINE_H
++#define _COMMAND_LINE_H
++
++#include &lt;string&gt;
++#include &lt;vector&gt;
++
++#include &quot;MIMEScanner.h&quot;
++
++class CommandLine
++{
++	public:
++		~CommandLine();
++
++		/// Runs a command asynchronously.
++		static bool runAsync(const MIMEAction &amp;action, const std::vector&lt;std::string&gt; &amp;arguments);
++
++	protected:
++		CommandLine();
++
++	private:
++		CommandLine(const CommandLine &amp;other);
++		CommandLine&amp; operator=(const CommandLine&amp; other);
++
++};
++
++#endif // _COMMAND_LINE_H
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Utils/MIMEScanner.cpp	2006-06-07 13:33:52 UTC (rev 295)
+@@ -34,64 +34,94 @@
+ using std::endl;
+ using std::string;
+ using std::map;
++using std::pair;
+ 
+-static MIMEAction getTypeAction(const string &amp;desktopFile)
++static string getKeyValue(GKeyFile *pDesktopFile, const string &amp;key)
+ {
+-	MIMEAction typeAction;
+-	GKeyFile *pDesktopFile = g_key_file_new();
+-	GError *pError = NULL;
++	string value;
+ 
+-	if (pDesktopFile == NULL)
++	if ((pDesktopFile == NULL) ||
++		(key.empty() == true))
+ 	{
+-		return typeAction;
++		return &quot;&quot;;
+ 	}
+ 
+-	g_key_file_load_from_file(pDesktopFile, (const gchar *)desktopFile.c_str(),
+-		G_KEY_FILE_NONE, &amp;pError);
++	GError *pError = NULL;
++	gchar *pKeyValue = g_key_file_get_string(pDesktopFile,
++		&quot;Desktop Entry&quot;, key.c_str(), &amp;pError);
++
+ 	if (pError == NULL)
+ 	{
+-		gchar *pExecKey = g_key_file_get_string(pDesktopFile,
+-			&quot;Desktop Entry&quot;, &quot;Exec&quot;, &amp;pError);
+-
+-		if (pError == NULL)
++		if (pKeyValue != NULL)
+ 		{
+-			if (pExecKey != NULL)
+-			{
+-				typeAction.m_exec = pExecKey;
++			value = pKeyValue;
+ 
+-				// Does it support URLs as parameter, as described here ?
+-				// <A HREF="http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html">http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html</A>
+-				if ((typeAction.m_exec.find(&quot;%u&quot;) != string::npos) ||
+-					(typeAction.m_exec.find(&quot;%U&quot;) != string::npos))
+-				{
+-					// It does, therefore it's not exclusively local
+-					typeAction.m_localOnly = false;
+-				}
+-
+-				g_free(pExecKey);
+-			}
++			g_free(pKeyValue);
+ 		}
+-		else
+-		{
+-			g_error_free(pError);
+-		}
+ 	}
+ 	else
+ 	{
+ 		g_error_free(pError);
+ 	}
+ 
+-	g_key_file_free(pDesktopFile);
+-
+-	return typeAction;
++	return value;
+ }
+ 
+ MIMEAction::MIMEAction() :
++	m_multipleArgs(false),
+ 	m_localOnly(true)
+ {
+ }
+ 
++MIMEAction::MIMEAction(const string &amp;desktopFile) :
++	m_multipleArgs(false),
++	m_localOnly(true),
++	m_location(desktopFile)
++{
++	GKeyFile *pDesktopFile = g_key_file_new();
++	GError *pError = NULL;
++
++	if (pDesktopFile != NULL)
++	{
++		g_key_file_load_from_file(pDesktopFile, (const gchar *)desktopFile.c_str(),
++			G_KEY_FILE_NONE, &amp;pError);
++		if (pError == NULL)
++		{
++			m_name = getKeyValue(pDesktopFile, &quot;Name&quot;);
++			// This may contain parameters described here :
++			// <A HREF="http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html">http://standards.freedesktop.org/desktop-entry-spec/latest/ar01s06.html</A>
++			m_exec = getKeyValue(pDesktopFile, &quot;Exec&quot;);
++			m_icon = getKeyValue(pDesktopFile, &quot;Icon&quot;);
++			m_device = getKeyValue(pDesktopFile, &quot;Device&quot;);
++
++			// Does it support multiple arguments ?
++			if ((m_exec.find(&quot;%U&quot;) != string::npos) ||
++				(m_exec.find(&quot;%F&quot;) != string::npos) ||
++				(m_exec.find(&quot;%D&quot;) != string::npos) ||
++				(m_exec.find(&quot;%N&quot;) != string::npos))
++			{
++				// Yes, it does
++				m_multipleArgs = true;
++			}
++			// What about URLs as parameters ?
++			if ((m_exec.find(&quot;%u&quot;) != string::npos) ||
++				(m_exec.find(&quot;%U&quot;) != string::npos))
++			{
++				// It does, therefore it's not exclusively local
++				m_localOnly = false;
++			}
++		}
++		else
++		{
++			g_error_free(pError);
++		}
++
++		g_key_file_free(pDesktopFile);
++	}
++}
++
+ MIMEAction::MIMEAction(const MIMEAction &amp;other) :
++	m_multipleArgs(other.m_multipleArgs),
+ 	m_localOnly(other.m_localOnly),
+ 	m_exec(other.m_exec)
+ {
+@@ -103,6 +133,7 @@
+ 
+ MIMEAction &amp;MIMEAction::operator=(const MIMEAction &amp;other)
+ {
++	m_multipleArgs = other.m_multipleArgs;
+ 	m_localOnly = other.m_localOnly;
+ 	m_exec = other.m_exec;
+ 
+@@ -170,15 +201,11 @@
+ 					// Register the last application
+ 					if (pDesktopFiles[defaultApp] != NULL)
+ 					{
+-						MIMEAction typeAction(getTypeAction(desktopFilesDirectory + string(pDesktopFiles[defaultApp])));
++						MIMEAction typeAction(desktopFilesDirectory + string(pDesktopFiles[defaultApp]));
+ 
+ 						if (typeAction.m_exec.empty() == false)
+ 						{
+-#ifdef DEBUG
+-							cout &lt;&lt; &quot;MIMEScanner::initialize: default for &quot; &lt;&lt; pMimeTypes[i]
+-								&lt;&lt; &quot; is &quot; &lt;&lt; typeAction.m_exec &lt;&lt; endl;
+-#endif
+-							m_defaultActions[pMimeTypes[i]] = typeAction;
++							m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(pMimeTypes[i], typeAction));
+ 						}
+ 					}
+ 
+
+Modified: trunk/Utils/MIMEScanner.h
+===================================================================
+--- trunk/Utils/MIMEScanner.h	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Utils/MIMEScanner.h	2006-06-07 13:33:52 UTC (rev 295)
+@@ -26,13 +26,19 @@
+ {
+ 	public:
+ 		MIMEAction();
++		MIMEAction(const std::string &amp;desktopFile);
+ 		MIMEAction(const MIMEAction &amp;other);
+ 		virtual ~MIMEAction();
+ 
+ 		MIMEAction &amp;operator=(const MIMEAction &amp;other);
+ 
++		bool m_multipleArgs;
+ 		bool m_localOnly;
++		std::string m_name;
++		std::string m_location;
+ 		std::string m_exec;
++		std::string m_icon;
++		std::string m_device;
+ 
+ };
+ 
+
+Modified: trunk/Utils/Makefile.am
+===================================================================
+--- trunk/Utils/Makefile.am	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/Utils/Makefile.am	2006-06-07 13:33:52 UTC (rev 295)
+@@ -1,6 +1,7 @@
+ # Process this file with automake to produce Makefile.in
+ 
+ noinst_HEADERS = \
++	CommandLine.h \
+ 	Document.h \
+ 	Languages.h \
+ 	MIMEScanner.h \
+@@ -26,6 +27,7 @@
+ noinst_LTLIBRARIES = libUtils.la
+ 
+ libUtils_la_SOURCES = \
++	CommandLine.cpp \
+ 	Document.cpp \
+ 	Languages.cpp \
+ 	MIMEScanner.cpp \
+@@ -48,5 +50,5 @@
+ 	xdgmime/xdgmimeparent.c
+ 
+ AM_CFLAGS = -fPIC -DXDG_PREFIX=pinot_xdg
+-AM_CXXFLAGS = -fPIC @HTTP_CFLAGS@ @INDEX_CFLAGS@ @MIME_CFLAGS@ -DXDG_PREFIX=pinot_xdg
++AM_CXXFLAGS = -fPIC @HTTP_CFLAGS@ @INDEX_CFLAGS@ @MIME_CFLAGS@ @GLIBMM_CFLAGS@ -DXDG_PREFIX=pinot_xdg
+ 
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-06-07 11:24:05 UTC (rev 294)
++++ trunk/configure.in	2006-06-07 13:33:52 UTC (rev 295)
+@@ -191,6 +191,9 @@
+ PKG_CHECK_MODULES(SIGCPP, sigc++-2.0 &gt;= 2.0 )
+ AC_SUBST(SIGCPP_CFLAGS)
+ AC_SUBST(SIGCPP_LIBS)
++PKG_CHECK_MODULES(GLIBMM, glibmm-2.4 &gt;= 2.6 )
++AC_SUBST(GLIBMM_CFLAGS)
++AC_SUBST(GLIBMM_LIBS)
+ PKG_CHECK_MODULES(UI, gtkmm-2.4 &gt;= 2.6 )
+ UI_CFLAGS=&quot;$MOZILLANS_CFLAGS -D$MOZILLA_NS_DIR $GECKO_CFLAGS $UI_CFLAGS&quot;
+ UI_LIBS=&quot;-lpthread -L$MOZILLA_LIB_DIR -Xlinker -rpath -Xlinker $MOZILLA_LIB_DIR $GECKO_LIBS $MOZILLANS_LIBS $UI_LIBS&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000288.html">[Pinot-svn] r294 - in trunk: Collect Search UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000290.html">[Pinot-svn] r296 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#289">[ date ]</a>
+              <a href="thread.html#289">[ thread ]</a>
+              <a href="subject.html#289">[ subject ]</a>
+              <a href="author.html#289">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

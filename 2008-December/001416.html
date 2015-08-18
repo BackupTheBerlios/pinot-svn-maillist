@@ -1,0 +1,513 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1425 - in trunk: IndexSearch IndexSearch/Xapian	Tokenize Utils Utils/unac
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1425%20-%20in%20trunk%3A%20IndexSearch%20IndexSearch/Xapian%0A%09Tokenize%20Utils%20Utils/unac&In-Reply-To=%3C200812011301.mB1D1JON010475%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001415.html">
+   <LINK REL="Next"  HREF="001417.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1425 - in trunk: IndexSearch IndexSearch/Xapian	Tokenize Utils Utils/unac</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1425%20-%20in%20trunk%3A%20IndexSearch%20IndexSearch/Xapian%0A%09Tokenize%20Utils%20Utils/unac&In-Reply-To=%3C200812011301.mB1D1JON010475%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1425 - in trunk: IndexSearch IndexSearch/Xapian	Tokenize Utils Utils/unac">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec  1 14:01:19 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001415.html">[Pinot-svn] r1424 - in trunk: Collect IndexSearch	IndexSearch/Xapian IndexSearch/XesamGLib Monitor SQL Tokenize	UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="001417.html">[Pinot-svn] r1426 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1416">[ date ]</a>
+              <a href="thread.html#1416">[ thread ]</a>
+              <a href="subject.html#1416">[ subject ]</a>
+              <a href="author.html#1416">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-01 14:01:09 +0100 (Mon, 01 Dec 2008)
+New Revision: 1425
+
+Modified:
+   trunk/IndexSearch/ModuleFactory.cpp
+   trunk/IndexSearch/Xapian/LanguageDetector.cpp
+   trunk/Tokenize/FilterUtils.cpp
+   trunk/Utils/Document.cpp
+   trunk/Utils/TimeConverter.cpp
+   trunk/Utils/unac/unac.c
+Log:
+Portability fixes, brought up when compiling with MingW.
+
+
+Modified: trunk/IndexSearch/ModuleFactory.cpp
+===================================================================
+--- trunk/IndexSearch/ModuleFactory.cpp	2008-12-01 12:57:36 UTC (rev 1424)
++++ trunk/IndexSearch/ModuleFactory.cpp	2008-12-01 13:01:09 UTC (rev 1425)
+@@ -15,28 +15,29 @@
+  *  along with this program; if not, write to the Free Software
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
++
++#include &quot;config.h&quot;
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;dirent.h&gt;
++#ifdef HAVE_DLFCN_H
+ #include &lt;dlfcn.h&gt;
++#endif
+ #include &lt;utility&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;DBusIndex.h&quot;
+ #include &quot;PluginWebEngine.h&quot;
+ #include &quot;ModuleFactory.h&quot;
+-#if 0
+-#include &quot;XapianDatabaseFactory.h&quot;
+-#include &quot;XapianIndex.h&quot;
+-#include &quot;XapianEngine.h&quot;
+-#endif
+ 
++#ifdef HAVE_DLFCN_H
+ #ifdef __CYGWIN__
+ #define DLOPEN_FLAGS RTLD_NOW
+ #else
+ #define DLOPEN_FLAGS (RTLD_NOW|RTLD_LOCAL)
+ #endif
++#endif
+ 
+ #define GETMODULEPROPERTIESFUNC	&quot;getModuleProperties&quot;
+ #define OPENORCREATEINDEXFUNC	&quot;openOrCreateIndex&quot;
+@@ -136,12 +137,14 @@
+ 		return NULL;
+ 	}
+ 
++#ifdef HAVE_DLFCN_H
+ 	getIndexFunc *pFunc = (getIndexFunc *)dlsym(pHandle,
+ 		GETINDEXFUNC);
+ 	if (pFunc != NULL)
+ 	{
+ 		return (*pFunc)(option);
+ 	}
++#endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ModuleFactory::getLibraryIndex: couldn't find export getIndex&quot; &lt;&lt; endl;
+ #endif
+@@ -164,12 +167,14 @@
+ 		return NULL;
+ 	}
+ 
++#ifdef HAVE_DLFCN_H
+ 	getSearchEngineFunc *pFunc = (getSearchEngineFunc *)dlsym(pHandle,
+ 		GETSEARCHENGINEFUNC);
+ 	if (pFunc != NULL)
+ 	{
+ 		return (*pFunc)(option);
+ 	}
++#endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ModuleFactory::getLibrarySearchEngine: couldn't find export getSearchEngine&quot; &lt;&lt; endl;
+ #endif
+@@ -179,8 +184,9 @@
+ 
+ unsigned int ModuleFactory::loadModules(const string &amp;directory)
+ {
++	unsigned int count = 0;
++#ifdef HAVE_DLFCN_H
+ 	struct stat fileStat;
+-	unsigned int count = 0;
+ 
+ 	if (directory.empty() == true)
+ 	{
+@@ -280,6 +286,7 @@
+ 		pDirEntry = readdir(pDir);
+ 	}
+ 	closedir(pDir);
++#endif
+ 
+ 	return count;
+ }
+@@ -301,12 +308,14 @@
+ 		return false;
+ 	}
+ 
++#ifdef HAVE_DLFCN_H
+ 	openOrCreateIndexFunc *pFunc = (openOrCreateIndexFunc *)dlsym(pHandle,
+ 		OPENORCREATEINDEXFUNC);
+ 	if (pFunc != NULL)
+ 	{
+ 		return (*pFunc)(option, obsoleteFormat, readOnly, overwrite);
+ 	}
++#endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ModuleFactory::openOrCreateIndex: couldn't find export openOrCreateIndex&quot; &lt;&lt; endl;
+ #endif
+@@ -331,12 +340,14 @@
+ 		return false;
+ 	}
+ 
++#ifdef HAVE_DLFCN_H
+ 	mergeIndexesFunc *pFunc = (mergeIndexesFunc *)dlsym(pHandle,
+ 		MERGEINDEXESFUNC);
+ 	if (pFunc != NULL)
+ 	{
+ 		return (*pFunc)(option0, option1, option2);
+ 	}
++#endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ModuleFactory::mergeIndexes: couldn't find export mergeIndexes&quot; &lt;&lt; endl;
+ #endif
+@@ -482,6 +493,7 @@
+ 			continue;
+ 		}
+ 
++#ifdef HAVE_DLFCN_H
+ 		closeAllFunc *pFunc = (closeAllFunc *)dlsym(pHandle, CLOSEALLFUNC);
+ 		if (pFunc != NULL)
+ 		{
+@@ -497,6 +509,7 @@
+ 			cout &lt;&lt; &quot;ModuleFactory::unloadModules: failed on &quot; &lt;&lt; typeIter-&gt;first &lt;&lt; endl;
+ #endif
+ 		}
++#endif
+ 	}
+ 
+ 	m_types.clear();
+
+Modified: trunk/IndexSearch/Xapian/LanguageDetector.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/LanguageDetector.cpp	2008-12-01 12:57:36 UTC (rev 1424)
++++ trunk/IndexSearch/Xapian/LanguageDetector.cpp	2008-12-01 13:01:09 UTC (rev 1425)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -25,11 +25,16 @@
+ #include &quot;config.h&quot;
+ extern &quot;C&quot;
+ {
++#define USE_TEXTCAT 1
+ #ifdef HAVE_LIBTEXTCAT_TEXTCAT_H
+ #include &lt;libtextcat/textcat.h&gt;
+ #else
++#ifdef HAVE_TEXTCAT_H
+ #include &lt;textcat.h&gt;
++#else
++#undef USE_TEXTCAT
+ #endif
++#endif
+ }
+ 
+ #include &quot;StringManip.h&quot;
+@@ -61,6 +66,7 @@
+ void LanguageDetector::guessLanguage(const char *pData, unsigned int dataLength,
+ 			std::vector&lt;std::string&gt; &amp;candidates)
+ {
++#ifdef USE_TEXTCAT
+ 	string confFile(SYSCONFDIR);
+ 	char *textCatVersion = textcat_Version();
+ #ifdef HAVE_TEXTCAT_CAT
+@@ -177,4 +183,7 @@
+ 
+ 	// Close the descriptor
+ 	textcat_Done(td);
++#else
++	candidates.push_back(&quot;unknown&quot;);
++#endif
+ }
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2008-12-01 12:57:36 UTC (rev 1424)
++++ trunk/Tokenize/FilterUtils.cpp	2008-12-01 13:01:09 UTC (rev 1425)
+@@ -16,11 +16,15 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;fcntl.h&gt;
+ #include &lt;stdlib.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;set&gt;
+ 
++#include &quot;config.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+@@ -230,7 +234,16 @@
+ 	{
+ 		char inTemplate[18] = &quot;/tmp/filterXXXXXX&quot;;
+ 
++#ifdef HAVE_MKSTEMP
+ 		int inFd = mkstemp(inTemplate);
++#else
++		int inFd = -1;
++		char *pInFile = mktemp(inTemplate);
++		if (pInFile != NULL)
++		{
++			inFd = open(pInFile, O_RDONLY);
++		}
++#endif
+ 		if (inFd != -1)
+ 		{
+ #ifdef DEBUG
+
+Modified: trunk/Utils/Document.cpp
+===================================================================
+--- trunk/Utils/Document.cpp	2008-12-01 12:57:36 UTC (rev 1424)
++++ trunk/Utils/Document.cpp	2008-12-01 13:01:09 UTC (rev 1425)
+@@ -22,7 +22,9 @@
+ #include &lt;ctype.h&gt;
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
++#ifdef HAVE_MMAP
+ #include &lt;sys/mman.h&gt;
++#endif
+ #ifdef HAVE_ATTR_XATTR_H
+ #include &lt;attr/xattr.h&gt;
+ #endif
+@@ -208,21 +210,37 @@
+ 	// Discard existing data
+ 	resetData();
+ 
++#ifdef HAVE_MMAP
+ 	// Request a private mapping of the whole file
+ 	void *mapSpace = mmap(NULL, fileStat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+ 	if (mapSpace != MAP_FAILED)
+ 	{
+ 		m_pData = (char*)mapSpace;
+ 		m_dataLength = fileStat.st_size;
+-		setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
+-		setSize(fileStat.st_size);
+ 		m_isMapped = true;
+ 	}
+-	else
++	else cerr &lt;&lt; &quot;Document::setDataFromFile: mapping failed&quot; &lt;&lt; endl;
++#else
++	m_pData = (char *)malloc(sizeof(char) * (fileStat.st_size + 1));
++	if (m_pData != NULL)
+ 	{
+-		cerr &lt;&lt; &quot;Document::setDataFromFile: mapping failed&quot; &lt;&lt; endl;
++		if (read(fd, (void*)m_pData, fileStat.st_size) == fileStat.st_size)
++		{
++			m_pData[fileStat.st_size] = '\0';
++			m_dataLength = (unsigned int)fileStat.st_size;
++		}
++		else
++		{
++			free(m_pData);
++			m_pData = NULL;
++		}
+ 	}
++	else cerr &lt;&lt; &quot;Document::setDataFromFile: reading failed&quot; &lt;&lt; endl;
++#endif
+ 
++	setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
++	setSize(fileStat.st_size);
++
+ #ifdef HAVE_ATTR_XATTR_H
+ 	// Any extended attributes ?
+ 	ssize_t listSize = flistxattr(fd, NULL, 0);
+@@ -311,11 +329,13 @@
+ 			// Free
+ 			free(m_pData);
+ 		}
++#ifdef HAVE_MMAP
+ 		else
+ 		{
+ 			// Unmap
+ 			munmap((void*)m_pData, m_dataLength);
+ 		}
++#endif
+ 	}
+ 
+ 	m_pData = NULL;
+
+Modified: trunk/Utils/TimeConverter.cpp
+===================================================================
+--- trunk/Utils/TimeConverter.cpp	2008-12-01 12:57:36 UTC (rev 1424)
++++ trunk/Utils/TimeConverter.cpp	2008-12-01 13:01:09 UTC (rev 1425)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include &quot;config.h&quot;
++#include &lt;stdlib.h&gt;
+ #ifdef HAVE_TIMEGM
+ #ifndef _XOPEN_SOURCE
+ #define _XOPEN_SOURCE
+@@ -118,24 +119,36 @@
+ /// Converts into an RFC 822 timestamp.
+ string TimeConverter::toTimestamp(time_t aTime, bool inGMTime)
+ {
+-	struct tm timeTm;
++	struct tm *pTimeTm = new struct tm;
+ 
+ 	if (((inGMTime == true) &amp;&amp;
+-		(gmtime_r(&amp;aTime, &amp;timeTm) != NULL)) ||
+-		(localtime_r(&amp;aTime, &amp;timeTm) != NULL))
++#ifdef HAVE_GMTIME_R
++		(gmtime_r(&amp;aTime, pTimeTm) != NULL)
++#else
++		((pTimeTm = gmtime(&amp;aTime)) != NULL)
++#endif
++		) ||
++#ifdef HAVE_LOCALTIME_R
++		(localtime_r(&amp;aTime, pTimeTm) != NULL)
++#else
++		((pTimeTm = localtime(&amp;aTime)) != NULL)
++#endif
++		)
+ 	{
+ 		char timeStr[64];
+ 
++		// FIXME: don't use this extension ?
+ #if defined(__GNU_LIBRARY__)
+ 		// %z is a GNU extension
+-		if (strftime(timeStr, 64, &quot;%a, %d %b %Y %H:%M:%S %z&quot;, &amp;timeTm) &gt; 0)
++		if (strftime(timeStr, 64, &quot;%a, %d %b %Y %H:%M:%S %z&quot;, pTimeTm) &gt; 0)
+ #else
+-		if (strftime(timeStr, 64, &quot;%a, %d %b %Y %H:%M:%S %Z&quot;, &amp;timeTm) &gt; 0)
++		if (strftime(timeStr, 64, &quot;%a, %d %b %Y %H:%M:%S %Z&quot;, pTimeTm) &gt; 0)
+ #endif
+ 		{
+ 			return timeStr;
+ 		}
+ 	}
++	delete pTimeTm;
+ 
+ 	return &quot;&quot;;
+ }
+@@ -207,7 +220,13 @@
+ 	timeTm.tm_sec = timeTm.tm_min = timeTm.tm_hour = timeTm.tm_mday = 0;
+ 	timeTm.tm_mon = timeTm.tm_year = timeTm.tm_wday = timeTm.tm_yday = timeTm.tm_isdst = 0;
+ 
++#ifdef HAVE_STRPTIME
+ 	strptime(yyyymmdd.c_str(), &quot;%Y%m%d&quot;, &amp;timeTm);
++#else
++	timeTm.tm_year = atoi(yyyymmdd.substr(0, 4).c_str());
++	timeTm.tm_mon = atoi(yyyymmdd.substr(4, 2).c_str());
++	timeTm.tm_mday = atoi(yyyymmdd.substr(6, 2).c_str());
++#endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;TimeConverter::fromYYYYMMDDString: &quot; &lt;&lt; timeTm.tm_year &lt;&lt; &quot; &quot; &lt;&lt; timeTm.tm_mon &lt;&lt; &quot; &quot; &lt;&lt; timeTm.tm_mday &lt;&lt; endl;
+ #endif
+@@ -271,7 +290,13 @@
+ 	timeTm.tm_sec = timeTm.tm_min = timeTm.tm_hour = timeTm.tm_mday = 0;
+ 	timeTm.tm_mon = timeTm.tm_year = timeTm.tm_wday = timeTm.tm_yday = timeTm.tm_isdst = 0;
+ 
++#ifdef HAVE_STRPTIME
+ 	strptime(hhmmss.c_str(), &quot;%H%M%S&quot;, &amp;timeTm);
++#else
++	timeTm.tm_hour = atoi(hhmmss.substr(0, 2).c_str());
++	timeTm.tm_min = atoi(hhmmss.substr(2, 2).c_str());
++	timeTm.tm_sec = atoi(hhmmss.substr(4, 2).c_str());
++#endif
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;TimeConverter::fromHHMMSSString: &quot; &lt;&lt; timeTm.tm_hour &lt;&lt; &quot; &quot; &lt;&lt; timeTm.tm_min &lt;&lt; &quot; &quot; &lt;&lt; timeTm.tm_sec &lt;&lt; endl;
+ #endif
+
+Modified: trunk/Utils/unac/unac.c
+===================================================================
+--- trunk/Utils/unac/unac.c	2008-12-01 12:57:36 UTC (rev 1424)
++++ trunk/Utils/unac/unac.c	2008-12-01 13:01:09 UTC (rev 1425)
+@@ -12617,10 +12617,10 @@
+   if(*outp) {
+     out = *outp;
+     /* +1 for null */
+-    out = realloc(out, out_size + 1);
++    out = (char*)realloc(out, out_size + 1);
+   } else {
+     /* +1 for null */
+-    out = malloc(out_size + 1);
++    out = (char*)malloc(out_size + 1);
+     if(out == 0) return -1;
+   }
+   out_length = 0;
+@@ -12657,7 +12657,7 @@
+      */
+     if(out_length + ((l + 1) * 2) &gt; out_size) {
+       out_size += ((l + 1) * 2) + 1024;
+-      out = realloc(out, out_size);
++      out = (char*)realloc(out, out_size);
+       if(out == 0) {
+ 	if(debug_level == UNAC_DEBUG_LOW)
+ 	  DEBUG(&quot;realloc %d bytes failed\n&quot;, out_size);
+@@ -12718,10 +12718,10 @@
+   if(*outp) {
+     out = *outp;
+     /* +1 for null */
+-    out = realloc(out, out_size + 1);
++    out = (char*)realloc(out, out_size + 1);
+   } else {
+     /* +1 for null */
+-    out = malloc(out_size + 1);
++    out = (char*)malloc(out_size + 1);
+     if(out == 0) return -1;
+   }
+   out_remain = out_size;
+@@ -12779,7 +12779,7 @@
+ 	  int length = out - out_base;
+ 	  out_size *= 2;
+ 	  /* +1 for null */
+-	  out_base = realloc(out_base, out_size + 1);
++	  out_base = (char*)realloc(out_base, out_size + 1);
+ 	  if(out_base == 0) return -1;
+ 	  out = out_base + length;
+ 	  out_remain = out_size - length;
+@@ -12810,7 +12810,7 @@
+    */
+   if(in_length &lt;= 0) {
+     if(!*outp)
+-      *outp = malloc(32);
++      *outp = (char*)malloc(32);
+     (*outp)[0] = '\0';
+     *out_lengthp = 0;
+   } else {
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001415.html">[Pinot-svn] r1424 - in trunk: Collect IndexSearch	IndexSearch/Xapian IndexSearch/XesamGLib Monitor SQL Tokenize	UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="001417.html">[Pinot-svn] r1426 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1416">[ date ]</a>
+              <a href="thread.html#1416">[ thread ]</a>
+              <a href="subject.html#1416">[ subject ]</a>
+              <a href="author.html#1416">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

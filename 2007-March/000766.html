@@ -1,0 +1,305 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r772 - trunk/Collect
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r772%20-%20trunk/Collect&In-Reply-To=%3C200703191327.l2JDR8iV003270%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000765.html">
+   <LINK REL="Next"  HREF="000767.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r772 - trunk/Collect</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r772%20-%20trunk/Collect&In-Reply-To=%3C200703191327.l2JDR8iV003270%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r772 - trunk/Collect">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Mar 19 14:27:08 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000765.html">[Pinot-svn] r771 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="000767.html">[Pinot-svn] r773 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#766">[ date ]</a>
+              <a href="thread.html#766">[ thread ]</a>
+              <a href="subject.html#766">[ subject ]</a>
+              <a href="author.html#766">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-19 14:27:07 +0100 (Mon, 19 Mar 2007)
+New Revision: 772
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+   trunk/Collect/CurlDownloader.h
+   trunk/Collect/DownloaderInterface.h
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Collect/NeonDownloader.h
+Log:
+Added settings for proxy address, port and type (not applicable to Neon).
+Note that curl should automatically use the *_proxy environment variables.
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2007-03-18 12:47:08 UTC (rev 771)
++++ trunk/Collect/CurlDownloader.cpp	2007-03-19 13:27:07 UTC (rev 772)
+@@ -86,7 +86,8 @@
+ unsigned int CurlDownloader::m_initialized = 0;
+ 
+ CurlDownloader::CurlDownloader() :
+-	DownloaderInterface()
++	DownloaderInterface(),
++	m_proxyPort(0)
+ {
+ 	if (m_initialized == 0)
+ 	{
+@@ -114,15 +115,34 @@
+ // Implementation of DownloaderInterface
+ //
+ 
+-/// Sets a (name, value) setting; true if success.
++/**
++  * Sets a (name, value) setting. Setting names include :
++  * proxyaddress - the address of the proxy to use
++  * proxyport - the port of the proxy to use (positive integer)
++  * proxytype - the type of the proxy to use
++  * Returns true if success.
++  */
+ bool CurlDownloader::setSetting(const string &amp;name, const string &amp;value)
+ {
+         bool goodSetting = true;
+ 
+-        if (name == &quot;User-Agent&quot;)
++        if (name == &quot;useragent&quot;)
+         {
+                 m_userAgent = value;
+         }
++	else if (name == &quot;proxyaddress&quot;)
++	{
++		m_proxyAddress = value;
++	}
++	else if ((name == &quot;proxyport&quot;) &amp;&amp;
++		(value.empty() == false))
++	{
++		m_proxyPort = (unsigned int )atoi(value.c_str());
++	}
++	else if (name == &quot;proxytype&quot;)
++	{
++		m_proxyType = value;
++	}
+         else
+         {
+                 goodSetting = false;
+@@ -170,7 +190,30 @@
+ 		cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: URL is &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_URL, url.c_str());
++		// Is a proxy defined ?
++		// Curl automatically checks and makes use of the *_proxy environment variables 
++		if ((m_proxyAddress.empty() == false) &amp;&amp;
++			(m_proxyPort &gt; 0))
++		{
++			curl_proxytype proxyType = CURLPROXY_HTTP;
+ 
++			curl_easy_setopt(pCurlHandler, CURLOPT_PROXY, m_proxyAddress.c_str());
++			curl_easy_setopt(pCurlHandler, CURLOPT_PROXYPORT, m_proxyPort);
++			// Type defaults to HTTP
++			if (m_proxyType.empty() == false)
++			{
++				if (m_proxyType == &quot;SOCKS4&quot;)
++				{
++					proxyType = CURLPROXY_SOCKS4;
++				}
++				else if (m_proxyType == &quot;SOCKS5&quot;)
++				{
++					proxyType = CURLPROXY_SOCKS5;
++				}
++			}
++			curl_easy_setopt(pCurlHandler, CURLOPT_PROXYTYPE, proxyType);
++		}
++
+ 		CURLcode res = curl_easy_perform(pCurlHandler);
+ 		if (res == CURLE_OK)
+ 		{
+
+Modified: trunk/Collect/CurlDownloader.h
+===================================================================
+--- trunk/Collect/CurlDownloader.h	2007-03-18 12:47:08 UTC (rev 771)
++++ trunk/Collect/CurlDownloader.h	2007-03-19 13:27:07 UTC (rev 772)
+@@ -30,7 +30,13 @@
+ 		CurlDownloader();
+ 		virtual ~CurlDownloader();
+ 
+-		/// Sets a (name, value) setting; true if success.
++		/**
++		  * Sets a (name, value) setting. Setting names include :
++		  * proxyaddress - the address of the proxy to use
++		  * proxyport - the port of the proxy to use (positive integer)
++		  * proxytype - the type of the proxy to use
++		  * Returns true if success.
++		  */
+ 		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+ 
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+@@ -39,6 +45,9 @@
+ 	protected:
+ 		static unsigned int m_initialized;
+ 		std::string m_userAgent;
++		std::string m_proxyAddress;
++		unsigned int m_proxyPort;
++		std::string m_proxyType;
+ 
+ 	private:
+ 		CurlDownloader(const CurlDownloader &amp;other);
+
+Modified: trunk/Collect/DownloaderInterface.h
+===================================================================
+--- trunk/Collect/DownloaderInterface.h	2007-03-18 12:47:08 UTC (rev 771)
++++ trunk/Collect/DownloaderInterface.h	2007-03-19 13:27:07 UTC (rev 772)
+@@ -35,7 +35,13 @@
+ 		/// Shutdowns downloaders.
+ 		static void shutdown(void);
+ 
+-		/// Sets a (name, value) setting; true if success.
++		/**
++		  * Sets a (name, value) setting. Setting names include :
++		  * proxyaddress - the address of the proxy to use
++		  * proxyport - the port of the proxy to use (positive integer)
++		  * proxytype - the type of the proxy to use
++		  * Returns true if success.
++		  */
+ 		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+ 
+ 		/// Sets timeout.
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2007-03-18 12:47:08 UTC (rev 771)
++++ trunk/Collect/NeonDownloader.cpp	2007-03-19 13:27:07 UTC (rev 772)
+@@ -35,7 +35,8 @@
+ unsigned int NeonDownloader::m_initialized = 0;
+ 
+ NeonDownloader::NeonDownloader() :
+-	DownloaderInterface()
++	DownloaderInterface(),
++	m_proxyPort(0)
+ {
+ 	if (m_initialized == 0)
+ 	{
+@@ -96,15 +97,34 @@
+ // Implementation of DownloaderInterface
+ //
+ 
+-/// Sets a (name, value) setting; true if success.
++/**
++  * Sets a (name, value) setting. Setting names include :
++  * proxyaddress - the address of the proxy to use
++  * proxyport - the port of the proxy to use (positive integer)
++  * proxytype - the type of the proxy to use
++  * Returns true if success.
++  */
+ bool NeonDownloader::setSetting(const string &amp;name, const string &amp;value)
+ {
+ 	bool goodSetting = true;
+ 
+-	if (name == &quot;User-Agent&quot;)
++	if (name == &quot;useragent&quot;)
+ 	{
+ 		m_userAgent = value;
+ 	}
++	else if (name == &quot;proxyaddress&quot;)
++	{
++		m_proxyAddress = value;
++	}
++	else if ((name == &quot;proxyport&quot;) &amp;&amp;
++		(value.empty() == false))
++	{
++		m_proxyPort = (unsigned int )atoi(value.c_str());
++	}
++	else if (name == &quot;proxytype&quot;)
++	{
++		m_proxyType = value;
++	}
+ 	else
+ 	{
+ 		goodSetting = false;
+@@ -152,6 +172,13 @@
+ 	ne_set_useragent(pSession, m_userAgent.c_str());
+ 	// ...and the timeout
+ 	ne_set_read_timeout(pSession, (int)m_timeout);
++	// Is a proxy defined ?
++	if ((m_proxyAddress.empty() == false) &amp;&amp;
++		(m_proxyPort &gt; 0))
++	{
++		// Type is HTTP
++		ne_session_proxy(pSession, m_proxyAddress.c_str(), m_proxyPort);
++	}
+ 
+ 	string fullLocation = &quot;/&quot;;
+ 	if (location.empty() == false)
+
+Modified: trunk/Collect/NeonDownloader.h
+===================================================================
+--- trunk/Collect/NeonDownloader.h	2007-03-18 12:47:08 UTC (rev 771)
++++ trunk/Collect/NeonDownloader.h	2007-03-19 13:27:07 UTC (rev 772)
+@@ -30,7 +30,13 @@
+ 		NeonDownloader();
+ 		virtual ~NeonDownloader();
+ 
+-		/// Sets a (name, value) setting; true if success.
++		/**
++		  * Sets a (name, value) setting. Setting names include :
++		  * proxyaddress - the address of the proxy to use
++		  * proxyport - the port of the proxy to use (positive integer)
++		  * proxytype - the type of the proxy to use
++		  * Returns true if success.
++		  */
+ 		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+ 
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+@@ -39,6 +45,9 @@
+ 	protected:
+ 		static unsigned int m_initialized;
+ 		std::string m_userAgent;
++		std::string m_proxyAddress;
++		unsigned int m_proxyPort;
++		std::string m_proxyType;
+ 
+ 		std::string handleRedirection(const char *pBody, unsigned int length);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000765.html">[Pinot-svn] r771 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="000767.html">[Pinot-svn] r773 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#766">[ date ]</a>
+              <a href="thread.html#766">[ thread ]</a>
+              <a href="subject.html#766">[ subject ]</a>
+              <a href="author.html#766">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

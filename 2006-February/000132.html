@@ -1,0 +1,348 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r133 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r133%20-%20trunk/Search&In-Reply-To=%3C200602271530.k1RFUO05025891%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000131.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r133 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r133%20-%20trunk/Search&In-Reply-To=%3C200602271530.k1RFUO05025891%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r133 - trunk/Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Mon Feb 27 16:30:24 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000131.html">[Pinot-svn] r132 - tags
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#132">[ date ]</a>
+              <a href="thread.html#132">[ thread ]</a>
+              <a href="subject.html#132">[ subject ]</a>
+              <a href="author.html#132">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-02-27 16:30:23 +0100 (Mon, 27 Feb 2006)
+New Revision: 133
+
+Added:
+   trunk/Search/AbstractGenerator.cpp
+   trunk/Search/AbstractGenerator.h
+Modified:
+   trunk/Search/Makefile.am
+Log:
+AbstractGenerator attempts to produce a summary of a document based on the
+positions of a query's terms.
+Abstract &quot;windows&quot; are anchored on both side of the query's top term positions
+and weighted by the presence of terms. The window that has the most terms
+is chosen.
+
+
+Added: trunk/Search/AbstractGenerator.cpp
+===================================================================
+--- trunk/Search/AbstractGenerator.cpp	2006-02-25 05:59:08 UTC (rev 132)
++++ trunk/Search/AbstractGenerator.cpp	2006-02-27 15:30:23 UTC (rev 133)
+@@ -0,0 +1,182 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;string.h&gt;
++#include &lt;sys/time.h&gt;
++#include &lt;map&gt;
++#include &lt;iostream&gt;
++#include &lt;utility&gt;
++
++#include &lt;ots/libots.h&gt;
++
++#include &quot;Timer.h&quot;
++#include &quot;AbstractGenerator.h&quot;
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::string;
++using std::vector;
++using std::map;
++
++unsigned int AbstractGenerator::m_minTermPositions = 10;
++
++AbstractGenerator::PositionWindow::PositionWindow() :
++	m_backWeight(0),
++	m_forwardWeight(0)
++{
++}
++
++AbstractGenerator::PositionWindow::~PositionWindow()
++{
++}
++
++AbstractGenerator::AbstractGenerator(const Xapian::Database *pIndex,
++	unsigned int wordsCount) :
++	m_pIndex(pIndex),
++	m_wordsCount(wordsCount)
++{
++}
++
++AbstractGenerator::~AbstractGenerator()
++{
++}
++
++/// Attempts to generate an abstract of wordsCount words.
++string AbstractGenerator::generateAbstract(const vector&lt;string&gt; &amp;queryTerms,
++	Xapian::docid docId)
++{
++	map&lt;Xapian::termpos, PositionWindow&gt; abstractWindows;
++	map&lt;Xapian::termpos, string&gt; wordsBuffer;
++	string summary;
++	Xapian::termpos bestPosition = 0, startPosition =0;
++	unsigned int topTermCount = 0, bestWeight = 0;
++	bool topTerm = true;
++
++	if ((m_pIndex == NULL) ||
++		(queryTerms.empty() == true))
++	{
++		return &quot;&quot;;
++	}
++
++#ifdef DEBUG
++	Timer timer;
++	timer.start();
++#endif
++	for (vector&lt;string&gt;::const_iterator termIter = queryTerms.begin();
++		termIter != queryTerms.end(); ++termIter)
++	{
++		string termName(*termIter);
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: term &quot; &lt;&lt; termName &lt;&lt; endl;
++#endif
++		// Go through that term's position list in the document
++		for (Xapian::PositionIterator positionIter = m_pIndex-&gt;positionlist_begin(docId, termName);
++			positionIter != m_pIndex-&gt;positionlist_end(docId, termName); ++positionIter)
++		{
++			Xapian::termpos termPos = *positionIter;
++
++			// Take all the top term's positions into account, and some of 
++			// the other terms' too if the minimum number is not reached
++			if ((topTermCount &lt; m_minTermPositions) ||
++				(topTerm == true))
++			{
++				abstractWindows[termPos] = PositionWindow();
++			}
++
++			// Look for other terms close to that position
++			for (map&lt;Xapian::termpos, PositionWindow&gt;::iterator winIter = abstractWindows.begin();
++				winIter != abstractWindows.end(); ++winIter)
++			{
++				// Is this within the number of words we are interested in ?
++				if (winIter-&gt;first &gt; termPos)
++				{
++					if (winIter-&gt;first - termPos &lt;= m_wordsCount)
++					{
++						++winIter-&gt;second.m_backWeight;
++					}
++				}
++				else
++				{
++					if (termPos - winIter-&gt;first &lt;= m_wordsCount)
++					{
++						++winIter-&gt;second.m_forwardWeight;
++					}
++				}
++			}
++		}
++
++		topTerm = false;
++		++topTermCount;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: &quot; &lt;&lt; abstractWindows.size()
++			&lt;&lt; &quot; positions, &quot; &lt;&lt; topTermCount &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
++#endif
++	}
++
++	// Go through positions and find out which one has the largest
++	// number of terms nearby
++	for (map&lt;Xapian::termpos, PositionWindow&gt;::iterator winIter = abstractWindows.begin();
++		winIter != abstractWindows.end(); ++winIter)
++	{
++		if (bestWeight &lt; winIter-&gt;second.m_backWeight)
++		{
++			bestPosition = winIter-&gt;first;
++			startPosition = bestPosition - m_wordsCount;
++			bestWeight = winIter-&gt;second.m_backWeight;
++		}
++		if (bestWeight &lt; winIter-&gt;second.m_forwardWeight)
++		{
++			bestPosition = startPosition = winIter-&gt;first;
++			bestWeight = winIter-&gt;second.m_forwardWeight;
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: best position is &quot;
++		&lt;&lt; bestPosition &lt;&lt; &quot;:&quot; &lt;&lt; startPosition &lt;&lt; &quot; with weight &quot; &lt;&lt; bestWeight &lt;&lt; endl;
++#endif
++
++	// Go through the position list of each term
++	for (Xapian::TermIterator termIter = m_pIndex-&gt;termlist_begin(docId);
++		termIter != m_pIndex-&gt;termlist_end(docId); ++termIter)
++	{
++		for (Xapian::PositionIterator positionIter = m_pIndex-&gt;positionlist_begin(docId, *termIter);
++			positionIter != m_pIndex-&gt;positionlist_end(docId, *termIter); ++positionIter)
++		{
++			Xapian::termpos termPos = *positionIter;
++
++			// ...and get those that fall in the abstract window
++			if ((startPosition &lt;= termPos) &amp;&amp;
++				(termPos &lt;= startPosition + m_wordsCount))
++			{
++				wordsBuffer[termPos] = *termIter;
++			}
++		}
++	}
++
++	for (map&lt;Xapian::termpos, string&gt;::iterator wordIter = wordsBuffer.begin();
++		wordIter != wordsBuffer.end(); ++wordIter)
++	{
++		summary += &quot; &quot;;
++		summary += wordIter-&gt;second;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;AbstractGenerator: done in &quot; &lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++#endif
++
++	return summary;
++}
+
+Added: trunk/Search/AbstractGenerator.h
+===================================================================
+--- trunk/Search/AbstractGenerator.h	2006-02-25 05:59:08 UTC (rev 132)
++++ trunk/Search/AbstractGenerator.h	2006-02-27 15:30:23 UTC (rev 133)
+@@ -0,0 +1,57 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _ABSTRACT_GENERATOR_H
++#define _ABSTRACT_GENERATOR_H
++
++#include &lt;string&gt;
++#include &lt;vector&gt;
++
++#include &lt;xapian.h&gt;
++
++class AbstractGenerator
++{
++	public:
++		AbstractGenerator(const Xapian::Database *pIndex, unsigned int wordsCount);
++		virtual ~AbstractGenerator();
++
++		/// Attempts to generate an abstract of wordsCount words.
++		std::string generateAbstract(const std::vector&lt;std::string&gt; &amp;queryTerms,
++			Xapian::docid docId);
++
++	protected:
++		static unsigned int m_minTermPositions;
++		const Xapian::Database *m_pIndex;
++		unsigned int m_wordsCount;
++
++		class PositionWindow
++		{
++			public:
++				PositionWindow();
++				~PositionWindow();
++
++				unsigned int m_backWeight;
++				unsigned int m_forwardWeight;
++
++		};
++
++	private:
++		AbstractGenerator(const AbstractGenerator &amp;other);
++		AbstractGenerator &amp;operator=(const AbstractGenerator &amp;other);
++
++};
++
++#endif // _ABSTRACT_GENERATOR_H
+
+Modified: trunk/Search/Makefile.am
+===================================================================
+--- trunk/Search/Makefile.am	2006-02-25 05:59:08 UTC (rev 132)
++++ trunk/Search/Makefile.am	2006-02-27 15:30:23 UTC (rev 133)
+@@ -1,6 +1,7 @@
+ # Process this file with automake to produce Makefile.in
+ 
+ noinst_HEADERS = \
++	AbstractGenerator.h \
+ 	OpenSearchParser.h \
+ 	QueryProperties.h \
+ 	SearchPluginProperties.h \
+@@ -17,6 +18,7 @@
+ bin_PROGRAMS = pinot_search
+ 
+ libSearch_la_SOURCES = \
++	AbstractGenerator.cpp \
+ 	OpenSearchParser.cpp \
+ 	QueryProperties.cpp \
+ 	SearchPluginProperties.cpp \
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000131.html">[Pinot-svn] r132 - tags
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#132">[ date ]</a>
+              <a href="thread.html#132">[ thread ]</a>
+              <a href="subject.html#132">[ subject ]</a>
+              <a href="author.html#132">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

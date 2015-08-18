@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r287 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r287%20-%20trunk/Search&In-Reply-To=%3C200606021405.k52E5SKN028117%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000280.html">
+   <LINK REL="Next"  HREF="000282.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r287 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r287%20-%20trunk/Search&In-Reply-To=%3C200606021405.k52E5SKN028117%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r287 - trunk/Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jun  2 16:05:28 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000280.html">[Pinot-svn] r286 - in trunk: Collect UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000282.html">[Pinot-svn] r288 - in trunk: Tokenize Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#281">[ date ]</a>
+              <a href="thread.html#281">[ thread ]</a>
+              <a href="subject.html#281">[ subject ]</a>
+              <a href="author.html#281">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-02 16:04:47 +0200 (Fri, 02 Jun 2006)
+New Revision: 287
+
+Modified:
+   trunk/Search/SherlockParser.cpp
+   trunk/Search/WebEngine.cpp
+   trunk/Search/WebEngine.h
+Log:
+If necessary, WebEngine looks for a http-equiv META tag for Content-Type
+to determine a page's charset.
+SherlockParser wraps chunks to make them look like full-blown documents.
+
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2006-06-02 13:59:47 UTC (rev 286)
++++ trunk/Search/SherlockParser.cpp	2006-06-02 14:04:47 UTC (rev 287)
+@@ -322,8 +322,43 @@
+ 		if (strncasecmp(contentType.c_str(), &quot;text/html&quot;, 9) == 0)
+ 		{
+ 			Document chunkDoc(&quot;&quot;, &quot;&quot;, contentType, &quot;&quot;);
+-			chunkDoc.setData(resultItem.c_str(), resultItem.length());
+-			HtmlTokenizer chunkTokens(&amp;chunkDoc, true);
++			string htmlChunk(resultItem);
++
++			// The chunk may contain truncated tags, get rid of them !
++			string::size_type firstOpen = htmlChunk.find('&lt;');
++			string::size_type firstClose = htmlChunk.find('&gt;');
++			if (firstClose != string::npos)
++			{
++				if ((firstOpen == string::npos) ||
++					(firstClose &lt; firstOpen))
++				{
++					htmlChunk.erase(0, firstClose + 1);
++				}
++			}
++			string::size_type lastClose = htmlChunk.find_last_of(&quot;&gt;&quot;);
++			string::size_type lastOpen = htmlChunk.find_last_of(&quot;&lt;&quot;);
++			if (lastOpen != string::npos)
++			{
++				if ((lastClose == string::npos) ||
++					(lastOpen &gt; lastClose))
++				{
++					htmlChunk.erase(lastOpen);
++				}
++			}
++
++			// Wrap input
++			string dummyHtml(&quot;&lt;html&gt;&lt;head&gt;&lt;meta HTTP-EQUIV=\&quot;content-type\&quot; CONTENT=\&quot;&quot;);
++			dummyHtml += pResponseDoc-&gt;getType();
++			dummyHtml += &quot;\&quot;&gt;&lt;/head&gt;&lt;body&gt;&quot;;
++			dummyHtml += htmlChunk;
++			dummyHtml += &quot;&lt;/body&gt;&lt;/html&gt;&quot;;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;SherlockResponseParser::parse: wrapped chunk \&quot;&quot;
++				&lt;&lt; dummyHtml &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
++#endif
++			chunkDoc.setData(dummyHtml.c_str(), dummyHtml.length());
++
++			HtmlTokenizer chunkTokens(&amp;chunkDoc, false, true);
+ 			set&lt;Link&gt; &amp;chunkLinks = chunkTokens.getLinks();
+ 			unsigned int endOfFirstLink = 0, startOfSecondLink = 0, endOfSecondLink = 0, startOfThirdLink = 0;
+ 
+@@ -351,6 +386,7 @@
+ 				}
+ 			}
+ 
++			// Any extract ?
+ 			extract = chunkTokens.getAbstract();
+ 			if (extract.empty() == true)
+ 			{
+
+Modified: trunk/Search/WebEngine.cpp
+===================================================================
+--- trunk/Search/WebEngine.cpp	2006-06-02 13:59:47 UTC (rev 286)
++++ trunk/Search/WebEngine.cpp	2006-06-02 14:04:47 UTC (rev 287)
+@@ -17,15 +17,31 @@
+ #include &lt;string.h&gt;
+ #include &lt;sys/types.h&gt;
+ #include &lt;regex.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;algorithm&gt;
++#include &lt;string&gt;
+ 
+-#include &quot;HtmlTokenizer.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;HtmlTokenizer.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;WebEngine.h&quot;
+ 
++using std::string;
++
++static string getCharset(const string &amp;contentType)
++{
++	if (contentType.empty() == false)
++	{
++		// Is a charset specified ?
++		string::size_type pos = contentType.find(&quot;charset=&quot;);
++		if (pos != string::npos)
++		{
++			return StringManip::removeQuotes(contentType.substr(pos + 8));
++		}
++	}
++
++	return &quot;&quot;;
++}
++
+ WebEngine::WebEngine() :
+ 	SearchEngineInterface()
+ {
+@@ -41,25 +57,34 @@
+ 	m_charset.clear();
+ 
+ 	// Any type of downloader will do...
+-	DownloaderInterface *myDownloader = DownloaderFactory::getDownloader(&quot;http&quot;);
+-	if (myDownloader == NULL)
++	DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(&quot;http&quot;);
++	if (pDownloader == NULL)
+ 	{
+ 		return NULL;
+ 	}
+ 
+-	Document *urlDoc = myDownloader-&gt;retrieveUrl(docInfo);
+-	if (urlDoc != NULL)
++	Document *pDoc = pDownloader-&gt;retrieveUrl(docInfo);
++	if (pDoc != NULL)
+ 	{
+-		string contentType = urlDoc-&gt;getType();
++		string contentType(pDoc-&gt;getType());
+ 
+-		// Was a charset specified ?
+-		string::size_type pos = contentType.find(&quot;charset=&quot;);
+-		if (pos != string::npos)
++		// Found a charset ?
++		m_charset = getCharset(contentType);
++		if (m_charset.empty() == true)
+ 		{
+-			m_charset = StringManip::removeQuotes(contentType.substr(pos + 8));
++			HtmlTokenizer tokens(pDoc, true);
++
++			// Content-Type might be specified as a META tag 
++			contentType = tokens.getMetaTag(&quot;Content-Type&quot;);
++			m_charset = getCharset(contentType);
++			if (m_charset.empty() == false)
++			{
++				// Reset the document's type
++				pDoc-&gt;setType(contentType);
++			}
+ 		}
+ 	}
+-	delete myDownloader;
++	delete pDownloader;
+ 
+-	return urlDoc;
++	return pDoc;
+ }
+
+Modified: trunk/Search/WebEngine.h
+===================================================================
+--- trunk/Search/WebEngine.h	2006-06-02 13:59:47 UTC (rev 286)
++++ trunk/Search/WebEngine.h	2006-06-02 14:04:47 UTC (rev 287)
+@@ -18,13 +18,10 @@
+ #define _WEB_ENGINE_H
+ 
+ #include &lt;string&gt;
+-#include &lt;set&gt;
+ 
+ #include &quot;SearchEngineInterface.h&quot;
+ #include &quot;Document.h&quot;
+ 
+-using namespace std;
+-
+ class WebEngine : public SearchEngineInterface
+ {
+ 	public:
+@@ -32,8 +29,8 @@
+ 		virtual ~WebEngine();
+ 
+ 	protected:
+-		string m_hostFilter;
+-		string m_fileFilter;
++		std::string m_hostFilter;
++		std::string m_fileFilter;
+ 
+ 		Document *downloadPage(const DocumentInfo &amp;docInfo);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000280.html">[Pinot-svn] r286 - in trunk: Collect UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000282.html">[Pinot-svn] r288 - in trunk: Tokenize Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#281">[ date ]</a>
+              <a href="thread.html#281">[ thread ]</a>
+              <a href="subject.html#281">[ subject ]</a>
+              <a href="author.html#281">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

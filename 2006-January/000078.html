@@ -1,0 +1,648 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r79 - in trunk: . Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r79%20-%20in%20trunk%3A%20.%20Search&In-Reply-To=%3C200601261512.k0QFC6M4018636%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000077.html">
+   <LINK REL="Next"  HREF="000079.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r79 - in trunk: . Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r79%20-%20in%20trunk%3A%20.%20Search&In-Reply-To=%3C200601261512.k0QFC6M4018636%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r79 - in trunk: . Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Jan 26 16:12:06 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000077.html">[Pinot-svn] r78 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000079.html">[Pinot-svn] r80 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#78">[ date ]</a>
+              <a href="thread.html#78">[ thread ]</a>
+              <a href="subject.html#78">[ subject ]</a>
+              <a href="author.html#78">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-26 16:12:05 +0100 (Thu, 26 Jan 2006)
+New Revision: 79
+
+Modified:
+   trunk/Search/OpenSearchParser.cpp
+   trunk/Search/OpenSearchParser.h
+   trunk/Search/PluginParsers.h
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/SearchPluginProperties.cpp
+   trunk/Search/SearchPluginProperties.h
+   trunk/Search/SherlockParser.cpp
+   trunk/Search/SherlockParser.h
+   trunk/Search/XapianEngine.cpp
+   trunk/variables.mk
+Log:
+More than one results page can be requested with OpenSearch. XapianEngine
+no longer loops ad vitam eternam if the index couldn't be locked !
+Minor changes to variables.mk.
+
+
+Modified: trunk/Search/OpenSearchParser.cpp
+===================================================================
+--- trunk/Search/OpenSearchParser.cpp	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/OpenSearchParser.cpp	2006-01-26 15:12:05 UTC (rev 79)
+@@ -83,11 +83,11 @@
+ }
+ 
+ bool OpenSearchResponseParser::parse(const ::Document *pResponseDoc, vector&lt;Result&gt; &amp;resultsList,
+-	unsigned int maxResultsCount) const
++	unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const
+ {
+ 	float pseudoScore = 100;
+ 	unsigned int contentLen = 0;
+-	bool foundResult = true;
++	bool foundResult = false;
+ 
+ 	if ((pResponseDoc == NULL) ||
+ 		(pResponseDoc-&gt;getData(contentLen) == NULL) ||
+@@ -96,6 +96,17 @@
+ 		return false;
+ 	}
+ 
++	// Make sure the response MIME type is sensible
++	string mimeType = pResponseDoc-&gt;getType();
++	if ((mimeType.empty() == false) &amp;&amp;
++		(mimeType.find(&quot;xml&quot;) == string::npos))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;OpenSearchResponseParser::parse: response is not XML&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
+ 	const char *pContent = pResponseDoc-&gt;getData(contentLen);
+ 	try
+ 	{
+@@ -177,6 +188,33 @@
+ 			Node *pNode = (*iter);
+ 
+ 			ustring nodeName = pNode-&gt;get_name();
++			ustring nodeContent = getNodeContent(pNode);
++
++			// Is this an OpenSearch extension ?
++			// FIXME: make sure namespace is opensearch
++			if (nodeName == &quot;totalResults&quot;)
++			{
++				if (nodeContent.empty() == false)
++				{
++					totalResults = min((unsigned int)atoi(nodeContent.c_str()), totalResults);
++#ifdef DEBUG
++					cout &lt;&lt; &quot;OpenSearchResponseParser::parse: total results &quot;
++						&lt;&lt; totalResults &lt;&lt; endl;
++#endif
++				}
++			}
++			else if (nodeName == &quot;startIndex&quot;)
++			{
++				if (nodeContent.empty() == false)
++				{
++					firstResultIndex = (unsigned int)atoi(nodeContent.c_str());
++#ifdef DEBUG
++					cout &lt;&lt; &quot;OpenSearchResponseParser::parse: first result index &quot;
++						&lt;&lt; firstResultIndex &lt;&lt; endl;
++#endif
++				}
++			}
++
+ 			if (nodeName != itemNode)
+ 			{
+ 				continue;
+@@ -224,7 +262,7 @@
+ 			resultsList.push_back(Result(url, title, extract, &quot;&quot;, pseudoScore));
+ 			--pseudoScore;
+ 			foundResult = true;
+-			if (resultsList.size() == maxResultsCount)
++			if (resultsList.size() &gt;= totalResults)
+ 			{
+ 				// Enough results
+ 				break;
+@@ -372,6 +410,7 @@
+ 						else if ((type.empty() == false) &amp;&amp;
+ 							(type != &quot;application/rss+xml&quot;))
+ 						{
++							response = SearchPluginProperties::UNKNOWN_RESPONSE;
+ #ifdef DEBUG
+ 							cout &lt;&lt; &quot;OpenSearchParser::parse: unsupported response type &quot;
+ 								&lt;&lt; type &lt;&lt; endl;
+@@ -504,5 +543,17 @@
+ 		return NULL;
+ 	}
+ 
++	// Scrolling
++	properties.m_nextIncrement = 1;
++	properties.m_nextBase = 1;
++	if (properties.m_parameters.find(SearchPluginProperties::START_PAGE_PARAM) != properties.m_parameters.end())
++	{
++		properties.m_scrolling = SearchPluginProperties::PER_PAGE;
++	}
++	else
++	{
++		properties.m_scrolling = SearchPluginProperties::PER_INDEX;
++	}
++
+ 	return new OpenSearchResponseParser(rssResponse);
+ }
+
+Modified: trunk/Search/OpenSearchParser.h
+===================================================================
+--- trunk/Search/OpenSearchParser.h	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/OpenSearchParser.h	2006-01-26 15:12:05 UTC (rev 79)
+@@ -30,7 +30,7 @@
+ 
+ 		/// Parses the response; false if not all could be parsed.
+ 		virtual bool parse(const Document *pResponseDoc, std::vector&lt;Result&gt; &amp;resultsList,
+-			unsigned int maxResultsCount) const;
++			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const;
+ 
+ 	protected:
+ 		bool m_rssResponse;
+
+Modified: trunk/Search/PluginParsers.h
+===================================================================
+--- trunk/Search/PluginParsers.h	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/PluginParsers.h	2006-01-26 15:12:05 UTC (rev 79)
+@@ -36,7 +36,7 @@
+ 
+ 		/// Parses the response; false if not all could be parsed.
+ 		virtual bool parse(const Document *pResponseDoc, std::vector&lt;Result&gt; &amp;resultsList,
+-			unsigned int maxResultsCount) const = 0;
++			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const = 0;
+ 
+ 	protected:
+ 		ResponseParserInterface()
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/PluginWebEngine.cpp	2006-01-26 15:12:05 UTC (rev 79)
+@@ -93,7 +93,8 @@
+ 	pageBackup.close();
+ #endif
+ 
+-	bool success = m_pResponseParser-&gt;parse(pResponseDoc, m_resultsList, m_maxResultsCount);
++	bool success = m_pResponseParser-&gt;parse(pResponseDoc, m_resultsList,
++		m_maxResultsCount, m_properties.m_nextBase);
+ 	vector&lt;Result&gt;::iterator resultIter = m_resultsList.begin();
+ 	while (resultIter != m_resultsList.end())
+ 	{
+@@ -169,7 +170,8 @@
+ 	}
+ 
+ 	SearchPluginProperties properties;
+-	if (pParser-&gt;parse(properties, true) == false)
++	ResponseParserInterface *pResponseParser = pParser-&gt;parse(properties, true);
++	if (pResponseParser == NULL)
+ 	{
+ #ifdef DEBUG
+ 		cerr &lt;&lt; &quot;PluginWebEngine::getDetails: couldn't parse &quot; &lt;&lt; fileName &lt;&lt; endl;
+@@ -178,8 +180,18 @@
+ 
+ 		return false;
+ 	}
++	delete pResponseParser;
+ 	delete pParser;
+ 
++	if (properties.m_response == SearchPluginProperties::UNKNOWN_RESPONSE)
++	{
++#ifdef DEBUG
++		cerr &lt;&lt; &quot;PluginWebEngine::getDetails: bad response type for &quot;
++			&lt;&lt; fileName &lt;&lt; endl;
++#endif
++		return false;
++	}
++
+ 	name = properties.m_name;
+ 	channel = properties.m_channel;
+ 
+@@ -194,7 +206,8 @@
+ bool PluginWebEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+ 	string queryString = queryProps.toString(false);
+-	unsigned int currentFactor = 0, count = 0;
++	char countStr[64];
++	unsigned int currentIncrement = 0, count = 0;
+ 
+ 	m_resultsList.clear();
+ 
+@@ -221,8 +234,11 @@
+ 	formattedQuery += userInputTag;
+ 	formattedQuery += &quot;=&quot;;
+ 	formattedQuery += queryString;
+-	formattedQuery += &quot;&amp;&quot;;
+-	formattedQuery += m_properties.m_parametersRemainder;
++	if (m_properties.m_parametersRemainder.empty() == false)
++	{
++		formattedQuery += &quot;&amp;&quot;;
++		formattedQuery += m_properties.m_parametersRemainder;
++	}
+ 
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
+@@ -233,30 +249,44 @@
+ #endif
+ 	while (count &lt; m_maxResultsCount)
+ 	{
+-		string pageQuery = formattedQuery;
++		string pageQuery(formattedQuery);
+ 
+-		if (m_properties.m_nextTag.empty() == false)
++		// How do we scroll ?
++		if (m_properties.m_scrolling == SearchPluginProperties::PER_INDEX)
+ 		{
+-			char factorStr[64];
++			paramIter = m_properties.m_parameters.find(SearchPluginProperties::COUNT_PARAM);
++			if (paramIter != m_properties.m_parameters.end())
++			{
++				// Number of results requested
++				pageQuery += &quot;&amp;&quot;;
++				pageQuery += paramIter-&gt;second;
++				pageQuery += &quot;=&quot;;
++				snprintf(countStr, 64, &quot;%u&quot;, m_maxResultsCount);
++				pageQuery += countStr;
++			}
+ 
+-			// Is the INPUTNEXT FACTOR set to zero ?
+-			if (m_properties.m_nextFactor == 0)
++			paramIter = m_properties.m_parameters.find(SearchPluginProperties::START_INDEX_PARAM);
++			if (paramIter != m_properties.m_parameters.end())
+ 			{
+-				// Assume INPUTNEXT allows to specify a number of results
+-				// Not sure if this is how Sherlock/Mozilla interpret this
++				// The offset of the first result (typically 1 or 0)
+ 				pageQuery += &quot;&amp;&quot;;
+-				pageQuery += m_properties.m_nextTag;
++				pageQuery += paramIter-&gt;second;
+ 				pageQuery += &quot;=&quot;;
+-				snprintf(factorStr, 64, &quot;%u&quot;, m_maxResultsCount);
+-				pageQuery += factorStr;
++				snprintf(countStr, 64, &quot;%u&quot;, count + m_properties.m_nextBase);
++				pageQuery += countStr;
+ 			}
+-			else
++		}
++		else
++		{
++			paramIter = m_properties.m_parameters.find(SearchPluginProperties::START_PAGE_PARAM);
++			if (paramIter != m_properties.m_parameters.end())
+ 			{
++				// The offset of the page
+ 				pageQuery += &quot;&amp;&quot;;
+-				pageQuery += m_properties.m_nextTag;
++				pageQuery += paramIter-&gt;second;
+ 				pageQuery += &quot;=&quot;;
+-				snprintf(factorStr, 64, &quot;%u&quot;, currentFactor + m_properties.m_nextBase);
+-				pageQuery += factorStr;
++				snprintf(countStr, 64, &quot;%u&quot;, currentIncrement + m_properties.m_nextBase);
++				pageQuery += countStr;
+ 			}
+ 		}
+ 
+@@ -265,7 +295,7 @@
+ 			break;
+ 		}
+ 
+-		if (m_properties.m_nextFactor == 0)
++		if (m_properties.m_nextIncrement == 0)
+ 		{
+ 			// That one page should have all the results...
+ #ifdef DEBUG
+@@ -275,7 +305,7 @@
+ 		}
+ 		else
+ 		{
+-			if (m_resultsList.size() &lt; count + m_properties.m_nextFactor)
++			if (m_resultsList.size() &lt; count + m_properties.m_nextIncrement)
+ 			{
+ 				// We got less than the maximum number of results per page
+ 				// so there's no point in requesting the next page
+@@ -286,7 +316,7 @@
+ 			}
+ 
+ 			// Increase factor
+-			currentFactor += m_properties.m_nextFactor;
++			currentIncrement += m_properties.m_nextIncrement;
+ 		}
+ 		count = m_resultsList.size();
+ 	}
+
+Modified: trunk/Search/SearchPluginProperties.cpp
+===================================================================
+--- trunk/Search/SearchPluginProperties.cpp	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/SearchPluginProperties.cpp	2006-01-26 15:12:05 UTC (rev 79)
+@@ -22,7 +22,8 @@
+ 
+ SearchPluginProperties::SearchPluginProperties() :
+ 	m_method(GET_METHOD),
+-	m_nextFactor(10),
++	m_scrolling(PER_PAGE),
++	m_nextIncrement(0),
+ 	m_nextBase(0),
+ 	m_response(UNKNOWN_RESPONSE)
+ {
+@@ -37,8 +38,8 @@
+ 	m_method(other.m_method),
+ 	m_parametersRemainder(other.m_parametersRemainder),
+ 	m_outputType(other.m_outputType),
+-	m_nextTag(other.m_nextTag),
+-	m_nextFactor(other.m_nextFactor),
++	m_scrolling(other.m_scrolling),
++	m_nextIncrement(other.m_nextIncrement),
+ 	m_nextBase(other.m_nextBase),
+ 	m_response(other.m_response)
+ {
+@@ -66,8 +67,8 @@
+ 	m_method = other.m_method;
+ 	m_parametersRemainder = other.m_parametersRemainder;
+ 	m_outputType = other.m_outputType;
+-	m_nextTag = other.m_nextTag;
+-	m_nextFactor = other.m_nextFactor;
++	m_scrolling = other.m_scrolling;
++	m_nextIncrement = other.m_nextIncrement;
+ 	m_nextBase = other.m_nextBase;
+ 	m_response = other.m_response;
+ 
+
+Modified: trunk/Search/SearchPluginProperties.h
+===================================================================
+--- trunk/Search/SearchPluginProperties.h	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/SearchPluginProperties.h	2006-01-26 15:12:05 UTC (rev 79)
+@@ -38,6 +38,8 @@
+ 			 COUNT_PARAM,START_INDEX_PARAM, START_PAGE_PARAM, LANGUAGE_PARAM,
+ 			OUTPUT_ENCODING_PARAM, INPUT_ENCODING_PARAM } Parameter;
+ 
++		typedef enum { PER_PAGE = 0, PER_INDEX } Scrolling;
++
+ 		typedef enum { UNKNOWN_RESPONSE = 0, HTML_RESPONSE,
+ 			RSS_RESPONSE, ATOM_RESPONSE } Response;
+ 
+@@ -55,9 +57,9 @@
+ 		std::map&lt;Parameter, std::string&gt; m_parameters;
+ 		std::string m_parametersRemainder;
+ 		std::string m_outputType;
+-		// Query, next page
+-		std::string m_nextTag;
+-		unsigned int m_nextFactor;
++		// Scrolling
++		Scrolling m_scrolling;
++		unsigned int m_nextIncrement;
+ 		unsigned int m_nextBase;
+ 		// Response
+ 		Response m_response;
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/SherlockParser.cpp	2006-01-26 15:12:05 UTC (rev 79)
+@@ -263,7 +263,7 @@
+ }
+ 
+ bool SherlockResponseParser::parse(const Document *pResponseDoc, vector&lt;Result&gt; &amp;resultsList,
+-	unsigned int maxResultsCount) const
++	unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const
+ {
+ 	float pseudoScore = 100;
+ 	unsigned int contentLen = 0;
+@@ -443,7 +443,7 @@
+ 			resultsList.push_back(Result(url, name, extract, &quot;&quot;, pseudoScore));
+ 			--pseudoScore;
+ 			foundResult = true;
+-			if (resultsList.size() == maxResultsCount)
++			if (resultsList.size() == totalResults)
+ 			{
+ 				// Enough results
+ 				break;
+@@ -651,18 +651,32 @@
+ 				}
+ 			}
+ 
+-			properties.m_nextTag = nextInput;
+ 			// Here we differ from how Mozilla uses these parameters
+ 			// Normally, either factor or value is used, but we use value
+ 			// as the parameter's initial value
+ 			if (nextFactor.empty() == false)
+ 			{
+-				properties.m_nextFactor = (unsigned int)atoi(nextFactor.c_str());
++				properties.m_parameters[SearchPluginProperties::START_PAGE_PARAM] = nextInput;
++				properties.m_scrolling = SearchPluginProperties::PER_PAGE;
++				// What Sherlock calls a factor is actually an increment
++				properties.m_nextIncrement = (unsigned int)atoi(nextFactor.c_str());
+ 			}
++			else
++			{
++				// Assume INPUTNEXT allows to specify a number of results
++				// Not sure if this is how Sherlock/Mozilla interpret this
++				properties.m_parameters[SearchPluginProperties::COUNT_PARAM] = nextInput;
++				properties.m_scrolling = SearchPluginProperties::PER_INDEX;
++				properties.m_nextIncrement = 0;
++			}
+ 			if (nextValue.empty() == false)
+ 			{
+ 				properties.m_nextBase = (unsigned int)atoi(nextValue.c_str());
+ 			}
++			else
++			{
++				properties.m_nextBase = 0;
++			}
+ 		}
+ 	}
+ #ifdef DEBUG
+
+Modified: trunk/Search/SherlockParser.h
+===================================================================
+--- trunk/Search/SherlockParser.h	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/SherlockParser.h	2006-01-26 15:12:05 UTC (rev 79)
+@@ -30,7 +30,7 @@
+ 
+ 		/// Parses the response; false if not all could be parsed.
+ 		virtual bool parse(const Document *pResponseDoc, std::vector&lt;Result&gt; &amp;resultsList,
+-			unsigned int maxResultsCount) const;
++			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const;
+ 
+ 		std::string m_resultListStart;
+ 		std::string m_resultListEnd;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/Search/XapianEngine.cpp	2006-01-26 15:12:05 UTC (rev 79)
+@@ -411,53 +411,55 @@
+ 			}
+ 
+ 			// Query the database
+-			if (queryDatabase(queryStack.top()) == true)
++			if (queryDatabase(queryStack.top()) == false)
+ 			{
+-				if (m_resultsList.empty() == true)
++				break;
++			}
++
++			if (m_resultsList.empty() == true)
++			{
++				// The search did succeed but didn't return anything
++				// Try the next step
++				switch (++searchStep)
+ 				{
+-					// The search did succeed but didn't return anything
+-					// Try the next step
+-					switch (++searchStep)
+-					{
+-						case 2:
+-							followOperators = true;
+-							stemLanguage = queryProps.getLanguage();
+-							if (stemLanguage.empty() == false)
+-							{
+-								break;
+-							}
+-							++searchStep;
+-						case 3:
+-							followOperators = false;
+-							stemLanguage.clear();
++					case 2:
++						followOperators = true;
++						stemLanguage = queryProps.getLanguage();
++						if (stemLanguage.empty() == false)
++						{
+ 							break;
+-						case 4:
+-							followOperators = false;
+-							stemLanguage = queryProps.getLanguage();
+-							if (stemLanguage.empty() == false)
+-							{
+-								break;
+-							}
+-							++searchStep;
+-						default:
+-							return true;
+-					}
++						}
++						++searchStep;
++					case 3:
++						followOperators = false;
++						stemLanguage.clear();
++						break;
++					case 4:
++						followOperators = false;
++						stemLanguage = queryProps.getLanguage();
++						if (stemLanguage.empty() == false)
++						{
++							break;
++						}
++						++searchStep;
++					default:
++						return true;
++				}
+ 
+-					// Empty the stack
+-					while (queryStack.empty() == false)
+-					{
+-						queryStack.pop();
+-					}
++				// Empty the stack
++				while (queryStack.empty() == false)
++				{
++					queryStack.pop();
++				}
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
++				cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
+ #endif
+-					stackQuery(queryProps, queryStack,
+-						Languages::toEnglish(stemLanguage), followOperators);
+-					continue;
+-				}
++				stackQuery(queryProps, queryStack,
++					Languages::toEnglish(stemLanguage), followOperators);
++				continue;
++			}
+ 
+-				return true;
+-			}
++			return true;
+ 		}
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+
+Modified: trunk/variables.mk
+===================================================================
+--- trunk/variables.mk	2006-01-25 14:39:03 UTC (rev 78)
++++ trunk/variables.mk	2006-01-26 15:12:05 UTC (rev 79)
+@@ -1,5 +1,5 @@
+ CXX := @g++
+-LINK := @libtool --mode=link g++
++LINK := @libtool --tag=CXX --mode=link g++ -fPIC
+ AR := @ar
+ WSDLC := @${GSOAP_HOME}/wsdl2h
+ SOAPC := @${GSOAP_HOME}/soapcpp2 -I${GSOAP_HOME}
+@@ -52,8 +52,8 @@
+ endif
+ 
+ # NEON
+-NEON_CXXFLAGS = $(shell neon-config --cflags)
+-NEON_LIBS = $(shell neon-config --libs)
++NEON_CXXFLAGS = $(shell /usr/bin/pkg-config --cflags neon)
++NEON_LIBS = $(shell /usr/bin/pkg-config --libs neon)
+ # OTS
+ OTS_CXXFLAGS = $(shell /usr/bin/pkg-config --cflags libots-1)
+ OTS_LIBS = $(shell /usr/bin/pkg-config --libs libots-1)
+@@ -69,7 +69,7 @@
+ # SQLite
+ SQLITE_CXXFLAGS = $(shell /usr/bin/pkg-config --cflags sqlite3)
+ SQLITE_LIBS = $(shell /usr/bin/pkg-config --libs sqlite3)
+-# LibXML 2.0
++# LibXML++
+ LIBXML_CXXFLAGS = $(shell /usr/bin/pkg-config --cflags libxml++-2.6)
+ LIBXML_LIBS = $(shell /usr/bin/pkg-config --libs libxml++-2.6)
+ # Mozilla
+@@ -85,7 +85,7 @@
+ MOZILLA_XPCOM_LIBS = -Xlinker -rpath -Xlinker ${MOZILLA_LIB_DIR} $(shell /usr/bin/pkg-config --libs mozilla-xpcom)
+ GTKMOZ_CXXFLAGS = $(shell /usr/bin/pkg-config --cflags mozilla-gtkmozembed gtk+-2.0)
+ GTKMOZ_LIBS = -Xlinker -rpath -Xlinker ${MOZILLA_LIB_DIR} $(shell /usr/bin/pkg-config --libs mozilla-gtkmozembed gtk+-2.0 mozilla-nss)
+-# GTKmm 2.0
++# GTKmm
+ GTKMM_CXXFLAGS = $(shell /usr/bin/pkg-config --cflags gtkmm-2.4)
+ GTKMM_LIBS = $(shell /usr/bin/pkg-config --libs gtkmm-2.4)
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000077.html">[Pinot-svn] r78 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000079.html">[Pinot-svn] r80 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#78">[ date ]</a>
+              <a href="thread.html#78">[ thread ]</a>
+              <a href="subject.html#78">[ subject ]</a>
+              <a href="author.html#78">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

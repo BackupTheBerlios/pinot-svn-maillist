@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1672 - in trunk/UI/GTK2: . src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1672%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200910101152.n9ABqKpk028961%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001663.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1672 - in trunk/UI/GTK2: . src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1672%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200910101152.n9ABqKpk028961%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1672 - in trunk/UI/GTK2: . src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 10 13:52:21 CEST 2009</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001663.html">[Pinot-svn] r1673 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1662">[ date ]</a>
+              <a href="thread.html#1662">[ thread ]</a>
+              <a href="subject.html#1662">[ subject ]</a>
+              <a href="author.html#1662">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-10-10 13:52:09 +0200 (Sat, 10 Oct 2009)
+New Revision: 1672
+
+Modified:
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/mainWindow_glade.cc
+Log:
+If gtkmm &gt;= 2.16 is available, replace the find button with a QueryEntry icon.
+
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/metase-gtk2.glade	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -674,7 +674,7 @@
+ 
+ 		  &lt;child&gt;
+ 		    &lt;widget class=&quot;GtkVButtonBox&quot; id=&quot;findVbuttonbox&quot;&gt;
+-		      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
++		      &lt;property name=&quot;visible&quot;&gt;False&lt;/property&gt;
+ 		      &lt;property name=&quot;layout_style&quot;&gt;GTK_BUTTONBOX_DEFAULT_STYLE&lt;/property&gt;
+ 		      &lt;property name=&quot;spacing&quot;&gt;0&lt;/property&gt;
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/src/mainWindow.cc	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -27,6 +27,7 @@
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;list&gt;
++#include &lt;glibmmconfig.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;glibmm/stringutils.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+@@ -183,6 +184,16 @@
+ 	m_refLiveQueryCompletion-&gt;set_popup_completion(true);
+ 	liveQueryEntry-&gt;set_completion(m_refLiveQueryCompletion);
+ 
++#if GTKMM_MAJOR_VERSION&gt;=2 &amp;&amp; GTKMM_MINOR_VERSION&gt;=16
++	// Enable the find icon
++	liveQueryEntry-&gt;set_icon_from_stock(Stock::FIND, ENTRY_ICON_SECONDARY);
++	liveQueryEntry-&gt;signal_icon_press().connect(sigc::mem_fun(*this, &amp;mainWindow::on_liveQueryEntry_icon), false);
++	liveQueryEntry-&gt;set_icon_sensitive(ENTRY_ICON_SECONDARY, false);
++#else
++	findButton-&gt;set_sensitive(false);
++	findVbuttonbox-&gt;show();
++#endif
++
+ 	// Associate the columns model to the query tree
+ 	m_refQueryTree = ListStore::create(m_queryColumns);
+ 	queryTreeview-&gt;set_model(m_refQueryTree);
+@@ -230,17 +241,20 @@
+ 		sigc::mem_fun(*this, &amp;mainWindow::on_switch_page), false);
+ 
+ 	// Gray out menu items
+-	removeQueryButton-&gt;set_sensitive(false);
+-	queryHistoryButton-&gt;set_sensitive(false);
+-	findQueryButton-&gt;set_sensitive(false);
+ 	show_pagebased_menuitems(false);
+ 	show_selectionbased_menuitems(false);
+ 	// ...and buttons
+ 	removeIndexButton-&gt;set_sensitive(false);
++	removeQueryButton-&gt;set_sensitive(false);
++	queryHistoryButton-&gt;set_sensitive(false);
+ 
+ 	// Set tooltips
+ 	m_tooltips.set_tip(*enginesTogglebutton, _(&quot;Show all search engines&quot;));
++#if GTKMM_MAJOR_VERSION&gt;=2 &amp;&amp; GTKMM_MINOR_VERSION&gt;=16
++	liveQueryEntry-&gt;set_icon_tooltip_text(_(&quot;Find documents that match the query&quot;), ENTRY_ICON_SECONDARY);
++#else
+ 	m_tooltips.set_tip(*findButton, _(&quot;Find documents that match the query string&quot;));
++#endif
+ 	m_tooltips.set_tip(*addIndexButton, _(&quot;Add an index&quot;));
+ 	m_tooltips.set_tip(*removeIndexButton, _(&quot;Remove an index&quot;));
+ 	m_tooltips.set_tip(*addQueryButton, _(&quot;Add a query&quot;));
+@@ -2719,13 +2733,26 @@
+ //
+ void mainWindow::on_liveQueryEntry_changed()
+ {
++	ustring term(liveQueryEntry-&gt;get_text());
++	bool enableFindButton = true;
++
++	if (term.empty() == true)
++	{
++		enableFindButton = false;
++	}
++#if GTKMM_MAJOR_VERSION&gt;=2 &amp;&amp; GTKMM_MINOR_VERSION&gt;=16
++	liveQueryEntry-&gt;set_icon_sensitive(ENTRY_ICON_SECONDARY, enableFindButton);
++#else
++	findButton-&gt;set_sensitive(enableFindButton);
++#endif
++
+ 	if (m_settings.m_suggestQueryTerms == false)
+ 	{
+-		// This functionality is disabled
++		// Suggestions are disabled
+ 		return;
+ 	}
+ 
+-	ustring prefix, term = liveQueryEntry-&gt;get_text();
++	ustring prefix;
+ 	unsigned int liveQueryLength = term.length();
+ 
+ 	// Reset the list
+@@ -2782,12 +2809,23 @@
+ 	}
+ }
+ 
++//
++// Live query entry activate
++//
+ void mainWindow::on_liveQueryEntry_activate()
+ {
+ 	on_findButton_clicked();
+ }
+ 
+ //
++// Live query entry icon press
++//
++void mainWindow::on_liveQueryEntry_icon(EntryIconPosition position, const GdkEventButton *ev)
++{
++	on_findButton_clicked();
++}
++
++//
+ // Find button click
+ //
+ void mainWindow::on_findButton_clicked()
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/src/mainWindow.hh	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -114,6 +114,7 @@
+         virtual void on_enginesTogglebutton_toggled();
+         virtual void on_liveQueryEntry_changed();
+         virtual void on_liveQueryEntry_activate();
++	virtual void on_liveQueryEntry_icon(Gtk::EntryIconPosition position, const GdkEventButton *ev);
+         virtual void on_findButton_clicked();
+         virtual bool on_queryTreeview_button_press_event(GdkEventButton *ev);
+         virtual void on_addQueryButton_clicked();
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.cc	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/src/mainWindow_glade.cc	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -452,7 +452,6 @@
+    liveQueryLabel-&gt;show();
+    liveQueryEntry-&gt;show();
+    findButton-&gt;show();
+-   findVbuttonbox-&gt;show();
+    liveQueryHbox-&gt;show();
+    queryTreeview-&gt;show();
+    queryScrolledwindow-&gt;show();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001663.html">[Pinot-svn] r1673 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1662">[ date ]</a>
+              <a href="thread.html#1662">[ thread ]</a>
+              <a href="subject.html#1662">[ subject ]</a>
+              <a href="author.html#1662">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

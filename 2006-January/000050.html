@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r51 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r51%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200601031918.k03JIeqt011472%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000049.html">
+   <LINK REL="Next"  HREF="000051.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r51 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r51%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200601031918.k03JIeqt011472%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r51 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Jan  3 20:18:40 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000049.html">[Pinot-svn] r50 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000051.html">[Pinot-svn] r52 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#50">[ date ]</a>
+              <a href="thread.html#50">[ thread ]</a>
+              <a href="subject.html#50">[ subject ]</a>
+              <a href="author.html#50">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-03 20:18:38 +0100 (Tue, 03 Jan 2006)
+New Revision: 51
+
+Modified:
+   trunk/UI/GTK2/src/importDialog_glade.cc
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Minor tweaks.
+
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.cc	2006-01-03 16:27:03 UTC (rev 50)
++++ trunk/UI/GTK2/src/importDialog_glade.cc	2006-01-03 19:18:38 UTC (rev 51)
+@@ -108,14 +108,12 @@
+    locationEntry-&gt;set_visibility(true);
+    locationEntry-&gt;set_editable(true);
+    locationEntry-&gt;set_max_length(0);
+-   locationEntry-&gt;set_text(_(&quot;&quot;));
+    locationEntry-&gt;set_has_frame(true);
+    locationEntry-&gt;set_activates_default(false);
+    titleEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+    titleEntry-&gt;set_visibility(true);
+    titleEntry-&gt;set_editable(true);
+    titleEntry-&gt;set_max_length(0);
+-   titleEntry-&gt;set_text(_(&quot;&quot;));
+    titleEntry-&gt;set_has_frame(true);
+    titleEntry-&gt;set_activates_default(false);
+    locationLabel-&gt;set_alignment(0,0.5);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-01-03 16:27:03 UTC (rev 50)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-01-03 19:18:38 UTC (rev 51)
+@@ -2252,16 +2252,27 @@
+ //
+ void mainWindow::on_liveQueryEntry_changed()
+ {
+-	ustring liveQuery = liveQueryEntry-&gt;get_text();
+-	unsigned int liveQueryLength = liveQuery.length();
++	ustring prefix, term = liveQueryEntry-&gt;get_text();
++	unsigned int liveQueryLength = term.length();
+ 
+ 	// Reset the list
+ 	m_refLiveQueryList-&gt;clear();
++	// Get the last term from the entry field
++	ustring::size_type pos = term.find_last_of(&quot; &quot;);
++	if (pos != ustring::npos)
++	{
++		ustring liveQuery(term);
+ 
+-	// If characters are being deleted or if the string is too short, don't
++		prefix = liveQuery.substr(0, pos);
++		prefix += &quot; &quot;;
++		term = liveQuery.substr(pos + 1);
++	}
++
++	// If characters are being deleted or if the term is too short, don't
+ 	// attempt to offer suggestions
+ 	if ((m_state.m_liveQueryLength &gt; liveQueryLength) ||
+-		(m_refLiveQueryCompletion-&gt;get_minimum_key_length() &gt; liveQueryLength))
++		(term.empty() == true) ||
++		(m_refLiveQueryCompletion-&gt;get_minimum_key_length() &gt; term.length()))
+ 	{
+ 		m_state.m_liveQueryLength = liveQueryLength;
+ 		return;
+@@ -2272,39 +2283,25 @@
+ 	XapianIndex docsIndex(m_settings.m_indexLocation);
+ 	if (docsIndex.isGood() == true)
+ 	{
+-		ustring prefix, term = liveQuery;
++		set&lt;string&gt; suggestedTerms;
++		int termIndex = 0;
+ 
+-		// Get the last term from the entry field
+-		ustring::size_type pos = liveQuery.find_last_of(&quot; &quot;);
+-		if (pos != ustring::npos)
+-		{
+-			prefix = liveQuery.substr(0, pos);
+-			prefix += &quot; &quot;;
+-			term = liveQuery.substr(pos + 1);
+-		}
++		// Get a list of suggestions
++		docsIndex.getCloseTerms(locale_from_utf8(term), suggestedTerms);
+ 
+-		if (term.empty() == false)
++		// Populate the list
++		for (set&lt;string&gt;::iterator termIter = suggestedTerms.begin();
++			termIter != suggestedTerms.end(); ++termIter)
+ 		{
+-			set&lt;string&gt; suggestedTerms;
+-			int termIndex = 0;
++			TreeModel::iterator iter = m_refLiveQueryList-&gt;append();
++			TreeModel::Row row = *iter;
+ 
+-			// Get a list of suggestions
+-			docsIndex.getCloseTerms(locale_from_utf8(term), suggestedTerms);
+-
+-			// Populate the list
+-			for (set&lt;string&gt;::iterator termIter = suggestedTerms.begin();
+-				termIter != suggestedTerms.end(); ++termIter)
+-			{
+-				TreeModel::iterator iter = m_refLiveQueryList-&gt;append();
+-				TreeModel::Row row = *iter;
+-
+-				row[m_liveQueryColumns.m_name] = prefix + to_utf8(*termIter);
+-				++termIndex;
+-			}
++			row[m_liveQueryColumns.m_name] = prefix + to_utf8(*termIter);
++			++termIndex;
++		}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_liveQueryEntry_changed: &quot; &lt;&lt; termIndex &lt;&lt; &quot; suggestions&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;mainWindow::on_liveQueryEntry_changed: &quot; &lt;&lt; termIndex &lt;&lt; &quot; suggestions&quot; &lt;&lt; endl;
+ #endif
+-		}
+ 	}
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000049.html">[Pinot-svn] r50 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000051.html">[Pinot-svn] r52 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#50">[ date ]</a>
+              <a href="thread.html#50">[ thread ]</a>
+              <a href="subject.html#50">[ subject ]</a>
+              <a href="author.html#50">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

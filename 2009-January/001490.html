@@ -1,0 +1,296 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1500 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1500%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200901191403.n0JE3dak024634%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001489.html">
+   <LINK REL="Next"  HREF="001491.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1500 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1500%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200901191403.n0JE3dak024634%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1500 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 19 15:03:39 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001489.html">[Pinot-svn] r1499 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001491.html">[Pinot-svn] r1501 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1490">[ date ]</a>
+              <a href="thread.html#1490">[ thread ]</a>
+              <a href="subject.html#1490">[ subject ]</a>
+              <a href="author.html#1490">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-19 15:03:28 +0100 (Mon, 19 Jan 2009)
+New Revision: 1500
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianDatabase.cpp
+   trunk/IndexSearch/Xapian/XapianDatabase.h
+   trunk/IndexSearch/Xapian/XapianDatabaseFactory.cpp
+   trunk/IndexSearch/Xapian/XapianDatabaseFactory.h
+Log:
+The factory doesn't serve objects once closeAll() is called.
+Lock databases before deleting them, processing merged databases first.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.cpp	2009-01-19 14:01:12 UTC (rev 1499)
++++ trunk/IndexSearch/Xapian/XapianDatabase.cpp	2009-01-19 14:03:28 UTC (rev 1500)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -191,6 +191,7 @@
+ 	{
+ 		Url urlObj(m_databaseName);
+ 
++		// FIXME: in newer versions, the remote backend supports writing
+ 		if (m_readOnly == false)
+ 		{
+ 			cerr &lt;&lt; &quot;XapianDatabase::openDatabase: remote databases &quot; &lt;&lt; m_databaseName &lt;&lt; &quot; are read-only&quot; &lt;&lt; endl;
+@@ -376,6 +377,25 @@
+ 	return m_isOpen;
+ }
+ 
++/// Returns true if the database is a merge of other databases.
++bool XapianDatabase::isMerge(void) const
++{
++	return m_merge;
++}
++
++/// Returns false if the database isn't opened in write mode.
++bool XapianDatabase::isWritable(void) const
++{
++	if ((m_isOpen == false) ||
++		(m_readOnly == true) ||
++		(m_merge == true))
++	{
++		return false;
++	}
++
++	return true;
++}
++
+ /// Returns false if the database was of an obsolete format.
+ bool XapianDatabase::wasObsoleteFormat(void) const
+ {
+@@ -434,14 +454,15 @@
+ 			// Lock both indexes
+ 			Xapian::Database *pFirstDatabase = m_pFirst-&gt;readLock();
+ 			Xapian::Database *pSecondDatabase = m_pSecond-&gt;readLock();
+-			// Copy the first one
+-			m_pDatabase = new Xapian::Database(*pFirstDatabase);
+-			// Add the second index to it
+-			if (pSecondDatabase != NULL)
++			if ((pFirstDatabase != NULL) &amp;&amp;
++				(pSecondDatabase != NULL))
+ 			{
++				// Copy the first one
++				m_pDatabase = new Xapian::Database(*pFirstDatabase);
++				// Add the second index to it
+ 				m_pDatabase-&gt;add_database(*pSecondDatabase);
++				// Until unlock() is called, both indexes are read locked
+ 			}
+-			// Until unlock() is called, both indexes are read locked
+ 
+ 			return m_pDatabase;
+ 		}
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.h	2009-01-19 14:01:12 UTC (rev 1499)
++++ trunk/IndexSearch/Xapian/XapianDatabase.h	2009-01-19 14:03:28 UTC (rev 1500)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -42,6 +42,12 @@
+ 		/// Returns false if the database couldn't be opened.
+ 		bool isOpen(void) const;
+ 
++		/// Returns true if the database is a merge of other databases.
++		bool isMerge(void) const;
++
++		/// Returns false if the database isn't opened in write mode.
++		bool isWritable(void) const;
++
+ 		/// Returns true if the database supports spelling.
+ 		bool withSpelling(void);
+ 
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabaseFactory.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabaseFactory.cpp	2009-01-19 14:01:12 UTC (rev 1499)
++++ trunk/IndexSearch/Xapian/XapianDatabaseFactory.cpp	2009-01-19 14:03:28 UTC (rev 1500)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -28,6 +28,7 @@
+ 
+ pthread_mutex_t XapianDatabaseFactory::m_mutex = PTHREAD_MUTEX_INITIALIZER;
+ map&lt;string, XapianDatabase *&gt; XapianDatabaseFactory::m_databases;
++bool XapianDatabaseFactory::m_closed = false;
+ 
+ XapianDatabaseFactory::XapianDatabaseFactory()
+ {
+@@ -41,6 +42,11 @@
+ bool XapianDatabaseFactory::mergeDatabases(const string &amp;name,
+ 	XapianDatabase *pFirst, XapianDatabase *pSecond)
+ {
++	if (m_closed == true)
++	{
++		return false;
++	}
++
+ 	map&lt;string, XapianDatabase *&gt;::iterator dbIter = m_databases.find(name);
+ 	if (dbIter != m_databases.end())
+ 	{
+@@ -70,7 +76,8 @@
+ {
+ 	XapianDatabase *pDb = NULL;
+ 
+-	if (location.empty() == true)
++	if ((m_closed == true) ||
++		(location.empty() == true))
+ 	{
+ 		return NULL;
+ 	}
+@@ -132,20 +139,66 @@
+ 	}
+ 
+ 	// Lock the map
++	// FIXME: another thread may have a database and try and lock it after the loop below deletes it
+ 	if (pthread_mutex_lock(&amp;m_mutex) != 0)
+ 	{
+ 		return;
+ 	}
++	m_closed = true;
+ 
++	// Close merged databases first
+ 	std::map&lt;std::string, XapianDatabase *&gt;::iterator dbIter = m_databases.begin();
+ 	while (dbIter != m_databases.end())
+ 	{
+ 		XapianDatabase *pDb = dbIter-&gt;second;
++
++		if (pDb-&gt;isMerge() == false)
++		{
++			++dbIter;
++			continue;
++		}
++
++		std::map&lt;std::string, XapianDatabase *&gt;::iterator nextIter = dbIter;
++		++nextIter;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabaseFactory::closeAll: closing &quot; &lt;&lt; dbIter-&gt;first &lt;&lt; endl;
++#endif
++
++		// Remove from the map
+ 		dbIter-&gt;second = NULL;
++		m_databases.erase(dbIter);
++
++		Xapian::Database *pIndex = pDb-&gt;readLock();
++		pDb-&gt;unlock();
++		// Close the database
++		delete pDb;
++
++		dbIter = nextIter;
++	}
++	// Now close all other databases
++	dbIter = m_databases.begin();
++	while (dbIter != m_databases.end())
++	{
++		XapianDatabase *pDb = dbIter-&gt;second;
++		Xapian::Database *pIndex = NULL;
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianDatabaseFactory::closeAll: closing &quot; &lt;&lt; dbIter-&gt;first &lt;&lt; endl;
+ #endif
++
++		// Remove from the map
++		dbIter-&gt;second = NULL;
+ 		m_databases.erase(dbIter);
++
++		if (pDb-&gt;isWritable() == true)
++		{
++			pIndex = pDb-&gt;writeLock();
++		}
++		else
++		{
++			pIndex = pDb-&gt;readLock();
++		}
++		pDb-&gt;unlock();
++		// Close the database
+ 		delete pDb;
+ 
+ 		dbIter = m_databases.begin();
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabaseFactory.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabaseFactory.h	2009-01-19 14:01:12 UTC (rev 1499)
++++ trunk/IndexSearch/Xapian/XapianDatabaseFactory.h	2009-01-19 14:03:28 UTC (rev 1500)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -45,6 +45,7 @@
+ 	protected:
+ 		static pthread_mutex_t m_mutex;
+ 		static std::map&lt;std::string, XapianDatabase *&gt; m_databases;
++		static bool m_closed;
+ 
+ 		XapianDatabaseFactory();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001489.html">[Pinot-svn] r1499 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001491.html">[Pinot-svn] r1501 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1490">[ date ]</a>
+              <a href="thread.html#1490">[ thread ]</a>
+              <a href="subject.html#1490">[ subject ]</a>
+              <a href="author.html#1490">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

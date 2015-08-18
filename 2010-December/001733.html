@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1744 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1744%20-%20trunk/Core&In-Reply-To=%3C20101214140044.35477480BFC%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001732.html">
+   <LINK REL="Next"  HREF="001734.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1744 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1744%20-%20trunk/Core&In-Reply-To=%3C20101214140044.35477480BFC%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1744 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec 14 15:00:43 CET 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001732.html">[Pinot-svn] r1743 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001734.html">[Pinot-svn] r1745 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1733">[ date ]</a>
+              <a href="thread.html#1733">[ thread ]</a>
+              <a href="subject.html#1733">[ subject ]</a>
+              <a href="author.html#1733">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-12-14 15:00:43 +0100 (Tue, 14 Dec 2010)
+New Revision: 1744
+
+Modified:
+   trunk/Core/pinot-dbus-daemon.cpp
+   trunk/Core/pinot-index.cpp
+Log:
+Both call mustQuit() when signaled; simply quitting the main loop isn't enough
+when running in single thread mode.
+pinot-index's IndexingState provides a simple, queue-less queue_index(),
+attempts to reclaim memory when threads end.
+
+
+Modified: trunk/Core/pinot-dbus-daemon.cpp
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.cpp	2010-12-14 13:27:33 UTC (rev 1743)
++++ trunk/Core/pinot-dbus-daemon.cpp	2010-12-14 14:00:43 UTC (rev 1744)
+@@ -84,6 +84,7 @@
+ };
+ #endif
+ static Glib::RefPtr&lt;Glib::MainLoop&gt; g_refMainLoop;
++static ThreadsManager *g_pState = NULL;
+ 
+ static void closeAll(void)
+ {
+@@ -121,6 +122,10 @@
+ 	{
+ 		cout &lt;&lt; &quot;Quitting...&quot; &lt;&lt; endl;
+ 
++		if (g_pState != NULL)
++		{
++			g_pState-&gt;mustQuit(true);
++		}
+ 		g_refMainLoop-&gt;quit();
+ 	}
+ }
+@@ -692,6 +697,7 @@
+ 	DaemonState server;
+ 	IndexInterface *pIndex = NULL;
+ 
++	g_pState = &server;
+ #ifdef HAVE_DBUS
+ 	DBusError error;
+ 	dbus_error_init(&amp;error);
+@@ -927,7 +933,8 @@
+ 
+ 	// Stop everything
+ 	server.disconnect();
+-	server.stop_threads();
++	server.mustQuit(true);
++	g_pState = NULL;
+ 
+ 	return EXIT_SUCCESS;
+ }
+
+Modified: trunk/Core/pinot-index.cpp
+===================================================================
+--- trunk/Core/pinot-index.cpp	2010-12-14 13:27:33 UTC (rev 1743)
++++ trunk/Core/pinot-index.cpp	2010-12-14 14:00:43 UTC (rev 1744)
+@@ -32,6 +32,7 @@
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;Languages.h&quot;
++#include &quot;Memory.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;FilterFactory.h&quot;
+@@ -73,6 +74,12 @@
+ 		{
+ 		}
+ 
++		virtual Glib::ustring queue_index(const DocumentInfo &amp;docInfo)
++		{
++			// Index directly
++			return index_document(docInfo);
++		}
++
+ 		void on_thread_end(WorkerThread *pThread)
+ 		{
+ 			string indexedUrl;
+@@ -115,6 +122,8 @@
+ 			// Delete the thread
+ 			delete pThread;
+ 
++			Memory::reclaim();
++
+ 			// Stop there
+ 			g_refMainLoop-&gt;quit();
+ 		}
+@@ -178,6 +187,10 @@
+ 	{
+ 		cout &lt;&lt; &quot;Quitting...&quot; &lt;&lt; endl;
+ 
++		if (g_pState != NULL)
++		{
++			g_pState-&gt;mustQuit(true);
++		}
+ 		g_refMainLoop-&gt;quit();
+ 	}
+ }
+@@ -454,6 +467,10 @@
+ 			g_pState-&gt;disconnect();
+ 
+ 			docId = g_pState-&gt;getDocumentID();
++			if (g_pState-&gt;mustQuit() == true)
++			{
++				break;
++			}
+ 		}
+ 		if ((showInfo == true) &amp;&amp;
+ 			(docId &gt; 0))
+@@ -502,6 +519,7 @@
+ 	if (g_pState != NULL)
+ 	{
+ 		delete g_pState;
++		g_pState = NULL;
+ 	}
+ 
+ 	// Did whatever operation we carried out succeed ?
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001732.html">[Pinot-svn] r1743 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001734.html">[Pinot-svn] r1745 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1733">[ date ]</a>
+              <a href="thread.html#1733">[ thread ]</a>
+              <a href="subject.html#1733">[ subject ]</a>
+              <a href="author.html#1733">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

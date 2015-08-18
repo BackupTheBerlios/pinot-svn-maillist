@@ -1,0 +1,366 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1704 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1704%20-%20trunk/SQL&In-Reply-To=%3C201006190853.o5J8roMc007663%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001693.html">
+   <LINK REL="Next"  HREF="001695.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1704 - trunk/SQL</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1704%20-%20trunk/SQL&In-Reply-To=%3C201006190853.o5J8roMc007663%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1704 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jun 19 10:53:50 CEST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001693.html">[Pinot-svn] r1703 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001695.html">[Pinot-svn] r1705 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1694">[ date ]</a>
+              <a href="thread.html#1694">[ thread ]</a>
+              <a href="subject.html#1694">[ subject ]</a>
+              <a href="author.html#1694">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-06-19 10:53:48 +0200 (Sat, 19 Jun 2010)
+New Revision: 1704
+
+Modified:
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+Log:
+Prepare a lot more statements.
+
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2010-06-19 08:53:13 UTC (rev 1703)
++++ trunk/SQL/CrawlHistory.cpp	2010-06-19 08:53:48 UTC (rev 1704)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -37,14 +37,36 @@
+ CrawlHistory::CrawlHistory(const string &amp;database) :
+ 	SQLiteBase(database, false, false)
+ {
++	prepareStatement(&quot;has-source&quot;,
++		&quot;SELECT SourceID FROM CrawlSources WHERE Url=?;&quot;);
++	prepareStatement(&quot;get-sources&quot;,
++		&quot;SELECT SourceID, Url FROM CrawlSources;&quot;);
++	prepareStatement(&quot;insert-item&quot;,
++		&quot;INSERT INTO CrawlHistory VALUES(?, ?, ?, ?, ?);&quot;);
+ 	prepareStatement(&quot;has-item&quot;,
+ 		&quot;SELECT Status, Date FROM CrawlHistory WHERE Url=?;&quot;);
++	prepareStatement(&quot;update-item&quot;,
++		&quot;UPDATE CrawlHistory SET Status=?, Date=?, ErrorNum=? WHERE Url=?;&quot;);
++	prepareStatement(&quot;update-items-status1&quot;,
++		&quot;UPDATE CrawlHistory SET Status=? WHERE Status=?;&quot;);
++	prepareStatement(&quot;update-items-status2&quot;,
++		&quot;UPDATE CrawlHistory SET Status=? WHERE SourceId=? AND Status=?;&quot;);
+ 	prepareStatement(&quot;get-items&quot;,
+ 		&quot;SELECT Url FROM CrawlHistory WHERE Status=?;&quot;);
+ 	prepareStatement(&quot;get-source-items1&quot;,
+ 		&quot;SELECT Url FROM CrawlHistory WHERE SourceId=? AND Status=? AND Date&gt;? LIMIT ? OFFSET ?;&quot;);
+ 	prepareStatement(&quot;get-source-items2&quot;,
+ 		&quot;SELECT Url FROM CrawlHistory WHERE SourceId=? AND Status=? LIMIT ? OFFSET ?;&quot;);
++	prepareStatement(&quot;get-items-count&quot;,
++		&quot;SELECT COUNT(*) FROM CrawlHistory WHERE Status=?;&quot;);
++	prepareStatement(&quot;delete-item&quot;,
++		&quot;DELETE FROM CrawlHistory WHERE Url=?;&quot;);
++	prepareStatement(&quot;delete-items1&quot;,
++		&quot;DELETE FROM CrawlHistory WHERE SourceID=?;&quot;);
++	prepareStatement(&quot;delete-items2&quot;,
++		&quot;DELETE FROM CrawlHistory WHERE SourceID=? AND Status=?;&quot;);
++	prepareStatement(&quot;expire-items&quot;,
++		&quot;DELETE FROM CrawlHistory WHERE Date&lt;?;&quot;);
+ }
+ 
+ CrawlHistory::~CrawlHistory()
+@@ -200,10 +222,12 @@
+ /// Checks if the source exists.
+ bool CrawlHistory::hasSource(const string &amp;url, unsigned int &amp;sourceId)
+ {
++	vector&lt;string&gt; values;
+ 	bool success = false;
+ 
+-	SQLResults *results = executeStatement(&quot;SELECT SourceID FROM CrawlSources \
+-		WHERE Url='%q';&quot;, Url::escapeUrl(url).c_str());
++	values.push_back(Url::escapeUrl(url));
++
++	SQLResults *results = executePreparedStatement(&quot;has-source&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		SQLRow *row = results-&gt;nextRow();
+@@ -224,9 +248,10 @@
+ /// Returns sources.
+ unsigned int CrawlHistory::getSources(map&lt;unsigned int, string&gt; &amp;sources)
+ {
++	vector&lt;string&gt; values;
+ 	unsigned int count = 0;
+ 
+-	SQLResults *results = executeStatement(&quot;SELECT SourceID, Url FROM CrawlSources;&quot;);
++	SQLResults *results = executePreparedStatement(&quot;get-sources&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		while (results-&gt;hasMoreRows() == true)
+@@ -269,12 +294,27 @@
+ bool CrawlHistory::insertItem(const string &amp;url, CrawlStatus status, unsigned int sourceId,
+ 	time_t date, int errNum)
+ {
++	vector&lt;string&gt; values;
++	stringstream numStr;
+ 	bool success = false;
+ 
+-	SQLResults *results = executeStatement(&quot;INSERT INTO CrawlHistory \
+-		VALUES('%q', '%q', '%u', '%d', '%d');&quot;,
+-		Url::escapeUrl(url).c_str(), statusToText(status).c_str(), sourceId,
+-		(date == 0 ? time(NULL) : date), errNum);
++	if (date == 0)
++	{
++		date = time(NULL);
++	}
++
++	values.push_back(Url::escapeUrl(url));
++	values.push_back(statusToText(status));
++	numStr &lt;&lt; sourceId;
++	values.push_back(numStr.str());
++	numStr.clear();
++	numStr &lt;&lt; date;
++	values.push_back(numStr.str());
++	numStr.clear();
++	numStr &lt;&lt; errNum;
++	values.push_back(numStr.str());
++
++	SQLResults *results = executePreparedStatement(&quot;insert-item&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+@@ -314,12 +354,24 @@
+ /// Updates an URL.
+ bool CrawlHistory::updateItem(const string &amp;url, CrawlStatus status, time_t date, int errNum)
+ {
++	vector&lt;string&gt; values;
++	stringstream numStr;
+ 	bool success = false;
+ 
+-	SQLResults *results = executeStatement(&quot;UPDATE CrawlHistory \
+-		SET Status='%q', Date='%d', ErrorNum='%d' WHERE Url='%q';&quot;,
+-		statusToText(status).c_str(), (date == 0 ? time(NULL) : date), errNum,
+-		Url::escapeUrl(url).c_str());
++	if (date == 0)
++	{
++		date = time(NULL);
++	}
++
++	values.push_back(statusToText(status));
++	numStr &lt;&lt; date;
++	values.push_back(numStr.str());
++	numStr.clear();
++	numStr &lt;&lt; errNum;
++	values.push_back(numStr.str());
++	values.push_back(Url::escapeUrl(url));
++
++	SQLResults *results = executePreparedStatement(&quot;update-item&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+@@ -342,16 +394,10 @@
+ 	for (map&lt;string, CrawlItem&gt;::const_iterator updateIter = items.begin();
+ 		updateIter != items.end(); ++updateIter)
+ 	{
+-		SQLResults *results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q', Date='%d', ErrorNum='%d' WHERE Url='%q';&quot;,
+-			statusToText(updateIter-&gt;second.m_itemStatus).c_str(),
+-			(updateIter-&gt;second.m_itemDate == 0 ? time(NULL) : updateIter-&gt;second.m_itemDate),
+-			updateIter-&gt;second.m_errNum,
+-			Url::escapeUrl(updateIter-&gt;first).c_str());
+-		if (results != NULL)
++		if (updateItem(updateIter-&gt;first, updateIter-&gt;second.m_itemStatus,
++			updateIter-&gt;second.m_itemDate, updateIter-&gt;second.m_errNum) == true)
+ 		{
+ 			success = true;
+-			delete results;
+ 		}
+ 	}
+ 
+@@ -367,9 +413,12 @@
+ bool CrawlHistory::updateItemsStatus(CrawlStatus oldStatus, CrawlStatus newStatus,
+ 	unsigned int sourceId, bool allSources)
+ {
++	vector&lt;string&gt; values;
+ 	SQLResults *results = NULL;
+ 	bool success = false;
+ 
++	values.push_back(statusToText(newStatus));
++
+ 	if (beginTransaction() == false)
+ 	{
+ 		return false;
+@@ -377,16 +426,20 @@
+ 
+ 	if (allSources == false)
+ 	{
+-		results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q' WHERE SourceId='%u' AND Status='%q';&quot;,
+-			statusToText(newStatus).c_str(), sourceId, statusToText(oldStatus).c_str());
++		stringstream numStr;
++
++		numStr &lt;&lt; sourceId;
++		values.push_back(numStr.str());
++		values.push_back(statusToText(oldStatus));
++
++		results = executePreparedStatement(&quot;update-items-status2&quot;, values);
+ 	}
+ 	else
+ 	{
++		values.push_back(statusToText(oldStatus));
++
+ 		// Ignore the source
+-		results = executeStatement(&quot;UPDATE CrawlHistory \
+-			SET Status='%q' WHERE Status='%q';&quot;,
+-			statusToText(newStatus).c_str(), statusToText(oldStatus).c_str());
++		results = executePreparedStatement(&quot;update-items-status1&quot;, values);
+ 	}
+ 
+ 	if (results != NULL)
+@@ -523,10 +576,12 @@
+ /// Returns the number of URLs.
+ unsigned int CrawlHistory::getItemsCount(CrawlStatus status)
+ {
++	vector&lt;string&gt; values;
+ 	unsigned int count = 0;
+ 
+-	SQLResults *results = executeStatement(&quot;SELECT COUNT(*) FROM CrawlHistory WHERE Status='%q';&quot;,
+-		statusToText(status).c_str());
++	values.push_back(statusToText(status));
++
++	SQLResults *results = executePreparedStatement(&quot;get-items-count&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		SQLRow *row = results-&gt;nextRow();
+@@ -546,10 +601,12 @@
+ /// Deletes an URL.
+ bool CrawlHistory::deleteItem(const string &amp;url)
+ {
++	vector&lt;string&gt; values;
+ 	bool success = false;
+ 
+-	SQLResults *results = executeStatement(&quot;DELETE FROM CrawlHistory \
+-		WHERE Url='%q';&quot;, Url::escapeUrl(url).c_str());
++	values.push_back(Url::escapeUrl(url));
++
++	SQLResults *results = executePreparedStatement(&quot;delete-item&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+@@ -588,9 +645,14 @@
+ /// Deletes URLs belonging to a source.
+ bool CrawlHistory::deleteItems(unsigned int sourceId, CrawlStatus status)
+ {
++	vector&lt;string&gt; values;
++	stringstream numStr;
+ 	SQLResults *results = NULL;
+ 	bool success = false;
+ 
++	numStr &lt;&lt; sourceId;
++	values.push_back(numStr.str());
++
+ 	if (beginTransaction() == false)
+ 	{
+ 		return false;
+@@ -598,14 +660,13 @@
+ 
+ 	if (status == UNKNOWN)
+ 	{
+-		results = executeStatement(&quot;DELETE FROM CrawlHistory \
+-			WHERE SourceID='%u';&quot;, sourceId);
++		results = executePreparedStatement(&quot;delete-items1&quot;, values);
+ 	}
+ 	else
+ 	{
+-		results = executeStatement(&quot;DELETE FROM CrawlHistory \
+-			WHERE SourceID='%u' AND Status='%q';&quot;,
+-			sourceId, statusToText(status).c_str());
++		values.push_back(statusToText(status));
++
++		results = executePreparedStatement(&quot;delete-items2&quot;, values);
+ 	}
+ 
+ 	if (results != NULL)
+@@ -625,15 +686,19 @@
+ /// Expires items older than the given date.
+ bool CrawlHistory::expireItems(time_t expiryDate)
+ {
++	vector&lt;string&gt; values;
++	stringstream numStr;
+ 	bool success = false;
+ 
++	numStr &lt;&lt; expiryDate;
++	values.push_back(numStr.str());
++
+ 	if (beginTransaction() == false)
+ 	{
+ 		return false;
+ 	}
+ 
+-	SQLResults *results = executeStatement(&quot;DELETE FROM CrawlHistory \
+-		WHERE Date&lt;'%d';&quot;, expiryDate);
++	SQLResults *results = executePreparedStatement(&quot;expire-items&quot;, values);
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2010-06-19 08:53:13 UTC (rev 1703)
++++ trunk/SQL/CrawlHistory.h	2010-06-19 08:53:48 UTC (rev 1704)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001693.html">[Pinot-svn] r1703 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001695.html">[Pinot-svn] r1705 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1694">[ date ]</a>
+              <a href="thread.html#1694">[ thread ]</a>
+              <a href="subject.html#1694">[ subject ]</a>
+              <a href="author.html#1694">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,137 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1354 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1354%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200809081334.m88DYppN011531%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001346.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1354 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1354%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200809081334.m88DYppN011531%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1354 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Sep  8 15:34:51 CEST 2008</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001346.html">[Pinot-svn] r1355 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1345">[ date ]</a>
+              <a href="thread.html#1345">[ thread ]</a>
+              <a href="subject.html#1345">[ subject ]</a>
+              <a href="author.html#1345">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-09-08 15:34:46 +0200 (Mon, 08 Sep 2008)
+New Revision: 1354
+
+Modified:
+   trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+Log:
+When there's only one term, no abstract window would be chosen because the
+default weights were zero.
+Prefer the window leading to terms, rather than following.
+Rely on terms' positions to determine whether terms should be highlighted as
+sometimes one position may have more than one term.
+
+
+Modified: trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-08-29 16:09:16 UTC (rev 1353)
++++ trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-09-08 13:34:46 UTC (rev 1354)
+@@ -44,8 +44,8 @@
+ unsigned int AbstractGenerator::m_minTermPositions = 10;
+ 
+ AbstractGenerator::PositionWindow::PositionWindow() :
+-	m_backWeight(0),
+-	m_forwardWeight(0)
++	m_backWeight(1),
++	m_forwardWeight(1)
+ {
+ }
+ 
+@@ -167,6 +167,16 @@
+ 	for (map&lt;Xapian::termpos, PositionWindow&gt;::iterator winIter = abstractWindows.begin();
+ 		winIter != abstractWindows.end(); ++winIter)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: position &quot; &lt;&lt; winIter-&gt;first
++			&lt;&lt; &quot; weights &quot; &lt;&lt; winIter-&gt;second.m_backWeight 
++			&lt;&lt; &quot;/&quot; &lt;&lt; winIter-&gt;second.m_forwardWeight &lt;&lt; endl;
++#endif
++		if (bestWeight &lt; winIter-&gt;second.m_forwardWeight)
++		{
++			bestPosition = startPosition = winIter-&gt;first;
++			bestWeight = winIter-&gt;second.m_forwardWeight;
++		}
+ 		if (bestWeight &lt; winIter-&gt;second.m_backWeight)
+ 		{
+ 			bestPosition = winIter-&gt;first;
+@@ -177,11 +187,6 @@
+ 			}
+ 			bestWeight = winIter-&gt;second.m_backWeight;
+ 		}
+-		if (bestWeight &lt; winIter-&gt;second.m_forwardWeight)
+-		{
+-			bestPosition = startPosition = winIter-&gt;first;
+-			bestWeight = winIter-&gt;second.m_forwardWeight;
+-		}
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: best position is &quot;
+@@ -205,6 +210,9 @@
+ 			if ((tokenizer.has_cjkv(termName) == true) &amp;&amp;
+ 				(termName.length() &gt; 4))
+ 			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: skipping &quot; &lt;&lt; termName &lt;&lt; endl;
++#endif
+ 				continue;
+ 			}
+ 
+@@ -258,7 +266,7 @@
+ 		}
+ 
+ 		// Is this a seed term ?
+-		if (find(seedTerms.begin(), seedTerms.end(), wordIter-&gt;second) != seedTerms.end())
++		if (abstractWindows.find(wordIter-&gt;first) != abstractWindows.end())
+ 		{
+ 			summary += &quot;&lt;b&gt;&quot;;
+ 			summary += pEscToken;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001346.html">[Pinot-svn] r1355 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1345">[ date ]</a>
+              <a href="thread.html#1345">[ thread ]</a>
+              <a href="subject.html#1345">[ subject ]</a>
+              <a href="author.html#1345">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r570 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r570%20-%20trunk/Search&In-Reply-To=%3C200611120503.kAC53b3g020205%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000562.html">
+   <LINK REL="Next"  HREF="000564.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r570 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r570%20-%20trunk/Search&In-Reply-To=%3C200611120503.kAC53b3g020205%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r570 - trunk/Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov 12 06:03:37 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000562.html">[Pinot-svn] r569 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000564.html">[Pinot-svn] r571 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#563">[ date ]</a>
+              <a href="thread.html#563">[ thread ]</a>
+              <a href="subject.html#563">[ subject ]</a>
+              <a href="author.html#563">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-12 06:03:36 +0100 (Sun, 12 Nov 2006)
+New Revision: 570
+
+Modified:
+   trunk/Search/AbstractGenerator.cpp
+   trunk/Search/AbstractGenerator.h
+   trunk/Search/XapianEngine.cpp
+Log:
+Use a simple markup on terms that should be highlighted, so that the abstract
+doesn't have to be parsed again when displayed.
+That markup is conveniently the same as Pango's :-)
+
+
+Modified: trunk/Search/AbstractGenerator.cpp
+===================================================================
+--- trunk/Search/AbstractGenerator.cpp	2006-11-12 04:52:30 UTC (rev 569)
++++ trunk/Search/AbstractGenerator.cpp	2006-11-12 05:03:36 UTC (rev 570)
+@@ -20,6 +20,7 @@
+ #include &lt;ctype.h&gt;
+ #include &lt;sys/time.h&gt;
+ #include &lt;map&gt;
++#include &lt;algorithm&gt;
+ #include &lt;iostream&gt;
+ #include &lt;utility&gt;
+ 
+@@ -32,8 +33,9 @@
+ using std::string;
+ using std::vector;
+ using std::map;
++using std::find;
+ 
+-unsigned int AbstractGenerator::m_maxSeedTerms = 4;
++unsigned int AbstractGenerator::m_maxSeedTerms = 5;
+ unsigned int AbstractGenerator::m_minTermPositions = 10;
+ 
+ AbstractGenerator::PositionWindow::PositionWindow() :
+@@ -58,8 +60,8 @@
+ }
+ 
+ /// Attempts to generate an abstract of wordsCount words.
+-string AbstractGenerator::generateAbstract(const vector&lt;string&gt; &amp;seedTerms,
+-	Xapian::docid docId)
++string AbstractGenerator::generateAbstract(Xapian::docid docId,
++	const vector&lt;string&gt; &amp;seedTerms)
+ {
+ 	map&lt;Xapian::termpos, PositionWindow&gt; abstractWindows;
+ 	map&lt;Xapian::termpos, string&gt; wordsBuffer;
+@@ -209,11 +211,22 @@
+ 		return &quot;&quot;;
+ 	}
+ 
++	// Generate the abstract
+ 	for (map&lt;Xapian::termpos, string&gt;::iterator wordIter = wordsBuffer.begin();
+ 		wordIter != wordsBuffer.end(); ++wordIter)
+ 	{
++		// Is this a seed term ?
++		if (find(seedTerms.begin(), seedTerms.end(), wordIter-&gt;second) != seedTerms.end())
++		{
++			summary += &quot;&lt;b&gt;&quot;;
++			summary += wordIter-&gt;second;
++			summary += &quot;&lt;/b&gt;&quot;;
++		}
++		else
++		{
++			summary += wordIter-&gt;second;
++		}
+ 		summary += &quot; &quot;;
+-		summary += wordIter-&gt;second;
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: summarized document &quot;
+
+Modified: trunk/Search/AbstractGenerator.h
+===================================================================
+--- trunk/Search/AbstractGenerator.h	2006-11-12 04:52:30 UTC (rev 569)
++++ trunk/Search/AbstractGenerator.h	2006-11-12 05:03:36 UTC (rev 570)
+@@ -31,8 +31,8 @@
+ 		virtual ~AbstractGenerator();
+ 
+ 		/// Attempts to generate an abstract of wordsCount words.
+-		std::string generateAbstract(const std::vector&lt;std::string&gt; &amp;seedTerms,
+-			Xapian::docid docId);
++		std::string generateAbstract(Xapian::docid docId,
++			const std::vector&lt;std::string&gt; &amp;seedTerms);
+ 
+ 	protected:
+ 		static unsigned int m_maxSeedTerms;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-11-12 04:52:30 UTC (rev 569)
++++ trunk/Search/XapianEngine.cpp	2006-11-12 05:03:36 UTC (rev 570)
+@@ -268,7 +268,7 @@
+ 					string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
+ 
+ 					// Generate an abstract based on the query's terms
+-					string summary = abstractGen.generateAbstract(seedTerms, docId);
++					string summary = abstractGen.generateAbstract(docId, seedTerms);
+ 
+ 					// Add this result
+ 					Result thisResult(url, title, summary, language, (float)mIter.get_percent());
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000562.html">[Pinot-svn] r569 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000564.html">[Pinot-svn] r571 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#563">[ date ]</a>
+              <a href="thread.html#563">[ thread ]</a>
+              <a href="subject.html#563">[ subject ]</a>
+              <a href="author.html#563">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

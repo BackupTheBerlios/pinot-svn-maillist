@@ -1,0 +1,275 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r977 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r977%20-%20trunk/Utils&In-Reply-To=%3C200709191532.l8JFWK03002530%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000970.html">
+   <LINK REL="Next"  HREF="000972.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r977 - trunk/Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r977%20-%20trunk/Utils&In-Reply-To=%3C200709191532.l8JFWK03002530%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r977 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 19 17:32:20 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000970.html">[Pinot-svn] r976 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000972.html">[Pinot-svn] r978 - in trunk: Tokenize UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#971">[ date ]</a>
+              <a href="thread.html#971">[ thread ]</a>
+              <a href="subject.html#971">[ subject ]</a>
+              <a href="author.html#971">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-19 17:32:19 +0200 (Wed, 19 Sep 2007)
+New Revision: 977
+
+Modified:
+   trunk/Utils/MIMEScanner.cpp
+   trunk/Utils/MIMEScanner.h
+Log:
+Support for reinitialization.
+Protect the caches list with a read/write lock as it can be emptied or appended
+to while being read.
+Prevent getDefaultActions() from returning the same action more than once.
+
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2007-09-12 15:03:04 UTC (rev 976)
++++ trunk/Utils/MIMEScanner.cpp	2007-09-19 15:32:19 UTC (rev 977)
+@@ -356,7 +356,8 @@
+ 	return foundActions;
+ }
+ 
+-pthread_mutex_t MIMEScanner::m_mutex = PTHREAD_MUTEX_INITIALIZER;
++pthread_mutex_t MIMEScanner::m_xdgMutex = PTHREAD_MUTEX_INITIALIZER;
++pthread_rwlock_t MIMEScanner::m_cachesLock = PTHREAD_RWLOCK_INITIALIZER;
+ list&lt;MIMECache&gt; MIMEScanner::m_caches;
+ 
+ MIMEScanner::MIMEScanner()
+@@ -372,6 +373,15 @@
+ 	list&lt;string&gt; desktopFilesPaths;
+ 	bool foundActions = false;
+ 
++	// This may be a re-initialize
++	if (pthread_rwlock_wrlock(&amp;m_cachesLock) == 0)
++	{
++		// Empty the caches list
++		m_caches.clear();
++
++		pthread_rwlock_unlock(&amp;m_cachesLock);
++	}
++
+ 	if (systemDirectory.empty() == false)
+ 	{
+ 		// User-specific actions may point to desktop files in this path, so add it in
+@@ -415,9 +425,18 @@
+ bool MIMEScanner::addCache(const string &amp;file, const string &amp;section,
+ 	const list&lt;string&gt; &amp;desktopFilesPaths)
+ {
+-	m_caches.push_back(MIMECache(file, section));
++	bool addedCache = false;
+ 
+-	return m_caches.back().load(desktopFilesPaths);
++	if (pthread_rwlock_wrlock(&amp;m_cachesLock) == 0)
++	{
++		m_caches.push_back(MIMECache(file, section));
++
++		addedCache = m_caches.back().load(desktopFilesPaths);
++
++		pthread_rwlock_unlock(&amp;m_cachesLock);
++	}
++
++	return addedCache;
+ }
+ 
+ void MIMEScanner::shutdown(void)
+@@ -435,11 +454,11 @@
+ 	}
+ 
+ 	// Does it have an obvious extension ?
+-	if (pthread_mutex_lock(&amp;m_mutex) == 0)
++	if (pthread_mutex_lock(&amp;m_xdgMutex) == 0)
+ 	{
+ 		pType = xdg_mime_get_mime_type_from_file_name(fileName.c_str());
+ 
+-		pthread_mutex_unlock(&amp;m_mutex);
++		pthread_mutex_unlock(&amp;m_xdgMutex);
+ 	}
+ 
+ 	if ((pType == NULL) ||
+@@ -466,11 +485,11 @@
+ 		const char *pType = NULL;
+ 
+ 		// Have a peek at the file
+-		if (pthread_mutex_lock(&amp;m_mutex) == 0)
++		if (pthread_mutex_lock(&amp;m_xdgMutex) == 0)
+ 		{
+ 			pType = xdg_mime_get_mime_type_for_file(fileName.c_str(), NULL);
+ 
+-			pthread_mutex_unlock(&amp;m_mutex);
++			pthread_mutex_unlock(&amp;m_xdgMutex);
+ 		}
+ 
+ 		if (pType != NULL)
+@@ -555,19 +574,30 @@
+ {
+ 	// Custom actions get stored in a cache object which is not connected to a file
+ 	// We need to create this object the first time a custom action gets added
+-	if ((m_caches.empty() == true) ||
+-		(m_caches.front().m_file.empty() == false))
++	if (pthread_rwlock_wrlock(&amp;m_cachesLock) == 0)
+ 	{
+-		m_caches.push_front(MIMECache());
++		if ((m_caches.empty() == true) ||
++			(m_caches.front().m_file.empty() == false))
++		{
++			m_caches.push_front(MIMECache());
++		}
++
++		m_caches.front().m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, typeAction));
++
++		pthread_rwlock_unlock(&amp;m_cachesLock);
+ 	}
+-
+-	m_caches.front().m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, typeAction));
+ }
+ 
+-bool MIMEScanner::getDefaultActionsForType(const string &amp;mimeType, vector&lt;MIMEAction&gt; &amp;typeActions)
++bool MIMEScanner::getDefaultActionsForType(const string &amp;mimeType, set&lt;string&gt; &amp;actionNames,
++	vector&lt;MIMEAction&gt; &amp;typeActions)
+ {
+ 	bool foundAction = false;
+ 
++	if (pthread_rwlock_rdlock(&amp;m_cachesLock) != 0)
++	{
++		return false;
++	}
++
+ 	// Each cache may have more than one action for this type
+ 	for (list&lt;MIMECache&gt;::iterator cacheIter = m_caches.begin(); cacheIter != m_caches.end(); ++cacheIter)
+ 	{
+@@ -579,27 +609,36 @@
+ 		// Found anything ?
+ 		for (; actionIter != endActionIter; ++actionIter)
+ 		{
++			// The same action may be defined for another type
++			if (actionNames.find(actionIter-&gt;second.m_name) == actionNames.end())
++			{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; actionIter-&gt;second.m_name
+-				&lt;&lt; &quot; at &quot; &lt;&lt; actionIter-&gt;second.m_location &lt;&lt; endl;
++				cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; actionIter-&gt;second.m_name
++					&lt;&lt; &quot; at &quot; &lt;&lt; actionIter-&gt;second.m_location &lt;&lt; endl;
+ #endif
+-			typeActions.push_back(actionIter-&gt;second);
+-			foundAction = true;
++				actionNames.insert(actionIter-&gt;second.m_name);
++				typeActions.push_back(actionIter-&gt;second);
++				foundAction = true;
++			}
+ 		}
+ 	}
+   
++	pthread_rwlock_unlock(&amp;m_cachesLock);
++
+ 	return foundAction;
+ }
+ 
+ /// Determines the default action(s) for the given type.
+ bool MIMEScanner::getDefaultActions(const string &amp;mimeType, vector&lt;MIMEAction&gt; &amp;typeActions)
+ {
++	set&lt;string&gt; actionNames;
++	
+ 	typeActions.clear();
+   
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: searching for &quot; &lt;&lt; mimeType &lt;&lt; endl;
+ #endif
+-	bool foundAction = getDefaultActionsForType(mimeType, typeActions);
++	bool foundAction = getDefaultActionsForType(mimeType, actionNames, typeActions);
+ 	if (foundAction == false)
+ 	{
+ 		// Is there an action for any of this type's parents ?
+@@ -609,10 +648,12 @@
+ 		{
+ 			for (unsigned int i = 0; pParentTypes[i] != NULL; ++i)
+ 			{
++				string parentType(pParentTypes[i]);
++
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: searching for parent type &quot; &lt;&lt; pParentTypes[i] &lt;&lt; endl;
++				cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: searching for parent type &quot; &lt;&lt; parentType &lt;&lt; endl;
+ #endif
+-				foundAction = getDefaultActionsForType(string(pParentTypes[i]), typeActions);
++				foundAction = getDefaultActionsForType(parentType, actionNames, typeActions);
+ 				if (foundAction)
+ 				{
+ 					break;
+
+Modified: trunk/Utils/MIMEScanner.h
+===================================================================
+--- trunk/Utils/MIMEScanner.h	2007-09-12 15:03:04 UTC (rev 976)
++++ trunk/Utils/MIMEScanner.h	2007-09-19 15:32:19 UTC (rev 977)
+@@ -117,7 +117,9 @@
+ 
+ 	protected:
+ 		/// Mutex to protect access to xdgmime.
+-		static pthread_mutex_t m_mutex;
++		static pthread_mutex_t m_xdgMutex;
++		/// Lock to protect access to caches.
++		static pthread_rwlock_t m_cachesLock;
+ 		/// MIME type caches, ordered by decreasing priority.
+ 		static std::list&lt;MIMECache&gt; m_caches;
+ 
+@@ -128,7 +130,8 @@
+ 		static bool addCache(const std::string &amp;file, const std::string &amp;section,
+ 			const std::list&lt;std::string&gt; &amp;desktopFilesPaths);
+   
+-		static bool getDefaultActionsForType(const std::string &amp;mimeType, std::vector&lt;MIMEAction&gt; &amp;typeActions);
++		static bool getDefaultActionsForType(const std::string &amp;mimeType, std::set&lt;std::string&gt; &amp;actionNames,
++			std::vector&lt;MIMEAction&gt; &amp;typeActions);
+ 
+ 	private:
+ 		MIMEScanner(const MIMEScanner &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000970.html">[Pinot-svn] r976 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000972.html">[Pinot-svn] r978 - in trunk: Tokenize UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#971">[ date ]</a>
+              <a href="thread.html#971">[ thread ]</a>
+              <a href="subject.html#971">[ subject ]</a>
+              <a href="author.html#971">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

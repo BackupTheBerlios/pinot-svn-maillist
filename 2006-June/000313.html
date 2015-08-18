@@ -1,0 +1,328 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r319 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r319%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606161114.k5GBExGs003068%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000312.html">
+   <LINK REL="Next"  HREF="000314.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r319 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r319%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606161114.k5GBExGs003068%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r319 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jun 16 13:14:59 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000312.html">[Pinot-svn] r318 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000314.html">[Pinot-svn] r320 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#313">[ date ]</a>
+              <a href="thread.html#313">[ thread ]</a>
+              <a href="subject.html#313">[ subject ]</a>
+              <a href="author.html#313">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-16 13:14:55 +0200 (Fri, 16 Jun 2006)
+New Revision: 319
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/propertiesDialog.cc
+   trunk/UI/GTK2/src/propertiesDialog.hh
+Log:
+Allow to change the language of several documents at once.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-06-16 00:19:19 UTC (rev 318)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-06-16 11:14:55 UTC (rev 319)
+@@ -1800,7 +1800,7 @@
+ 	DocumentInfo docInfo;
+ 	unsigned int docId = 0;
+ 	int width, height;
+-	bool matchedLabel = false, editTitle = false;
++	bool matchedLabel = false, editDocument = false;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: called&quot; &lt;&lt; endl;
+@@ -1841,7 +1841,7 @@
+ 	// If there's only one document selected, get its labels
+ 	if (documentsList.size() == 1)
+ 	{
+-		vector&lt;IndexedDocument&gt;::const_iterator docIter = documentsList.begin();
++		vector&lt;IndexedDocument&gt;::iterator docIter = documentsList.begin();
+ 
+ 		// Get the document ID
+ 		docId = docIter-&gt;getID();
+@@ -1860,13 +1860,32 @@
+ 				matchedLabel = true;
+ 			}
+ 		}
+-		editTitle = true;
++		editDocument = true;
+ 	}
+-	// Else, start with a blank list
++	else
++	{
++		// If all documents are of the same language, show it
++		for (vector&lt;IndexedDocument&gt;::iterator docIter = documentsList.begin();
++			docIter != documentsList.end(); ++docIter)
++		{
++			if (docInfo.getLanguage().empty() == true)
++			{
++				docInfo.setLanguage(docIter-&gt;getLanguage());
++			}
++			if (docIter-&gt;getLanguage() != docInfo.getLanguage())
++			{
++				// They aren't
++				docInfo.setLanguage(&quot;&quot;);
++				break;
++			}
++		}
+ 
++		// Show a blank labels list
++	}
++
+ 	// Let the user set the labels
+ 	get_size(width, height);
+-	propertiesDialog propertiesBox(docLabels, docInfo, editTitle);
++	propertiesDialog propertiesBox(docLabels, docInfo, editDocument);
+ 	propertiesBox.setHeight(height / 2);
+ 	propertiesBox.show();
+ 	if (propertiesBox.run() != RESPONSE_OK)
+@@ -1874,11 +1893,17 @@
+ 		return;
+ 	}
+ 	const set&lt;string&gt; &amp;labels = propertiesBox.getLabels();
++	string newTitle(propertiesBox.getDocumentInfo().getTitle());
++	string newLanguage(propertiesBox.getDocumentInfo().getLanguage());
++#ifdef DEBUG
++	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: properties changed to &quot;
++		&lt;&lt; newTitle &lt;&lt; &quot;, &quot; &lt;&lt; newLanguage &lt;&lt; endl;
++#endif
+ 
+ 	if (index.isGood() == true)
+ 	{
+ 		// Now apply these labels to all the documents
+-		for (vector&lt;IndexedDocument&gt;::const_iterator docIter = documentsList.begin();
++		for (vector&lt;IndexedDocument&gt;::iterator docIter = documentsList.begin();
+ 			docIter != documentsList.end(); ++docIter)
+ 		{
+ 			// Set the document's labels list
+@@ -1890,24 +1915,31 @@
+ 		(docId &gt; 0))
+ 	{
+ 		// Did the title or language change ?
+-		string newTitle = propertiesBox.getDocumentInfo().getTitle();
+-		string newLanguage = propertiesBox.getDocumentInfo().getLanguage();
+ 		if ((newTitle != docInfo.getTitle()) ||
+ 			(newLanguage != docInfo.getLanguage()))
+ 		{
+ 			docInfo.setTitle(newTitle);
+ 			docInfo.setLanguage(newLanguage);
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: properties changed to &quot;
+-				&lt;&lt; newTitle &lt;&lt; &quot;, &quot; &lt;&lt; newLanguage &lt;&lt; endl;
+-#endif
+-			
++
+ 			// Update the document
+ 			start_thread(new UpdateDocumentThread(indexName, docId, docInfo));
+ 		}
+ 	}
+ 	else
+ 	{
++		// Was the language changed ?
++		if (newLanguage.empty() == false)
++		{
++			// Update all documents
++			for (vector&lt;IndexedDocument&gt;::iterator docIter = documentsList.begin();
++				docIter != documentsList.end(); ++docIter)
++			{
++				docIter-&gt;setLanguage(newLanguage);
++
++				start_thread(new UpdateDocumentThread(indexName, docIter-&gt;getID(), *docIter));
++			}
++		}
++
+ 		if (labelName.empty() == false)
+ 		{
+ 			// The current label may have been applied to or removed from
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2006-06-16 00:19:19 UTC (rev 318)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2006-06-16 11:14:55 UTC (rev 319)
+@@ -34,6 +34,9 @@
+ 	m_editDocument(editDocument),
+ 	m_docInfo(docInfo)
+ {
++	string language(docInfo.getLanguage());
++	bool notALanguageName = false;
++
+ 	// Associate the columns model to the language combo
+ 	m_refLanguageTree = ListStore::create(m_languageColumns);
+ 	languageCombobox-&gt;set_model(m_refLanguageTree);
+@@ -50,19 +53,28 @@
+ 	if (m_editDocument == true)
+ 	{
+ 		titleEntry-&gt;set_text(to_utf8(docInfo.getTitle()));
+-		populate_languageCombobox(docInfo.getLanguage());
+ 		typeEntry-&gt;set_text(to_utf8(docInfo.getType()));
++		if (language.empty() == true)
++		{
++			language = _(&quot;Unknown&quot;);
++			notALanguageName = true;
++		}
+ 	}
+ 	else
+ 	{
++		if (language.empty() == true)
++		{
++			language = _(&quot;Per document&quot;); 
++			notALanguageName = true;
++		}
++
+ 		titleLabel-&gt;hide();
+ 		titleEntry-&gt;hide();
+-		languageLabel-&gt;hide();
+-		languageCombobox-&gt;hide();
+ 		typeLabel-&gt;hide();
+ 		typeEntry-&gt;hide();
+ 	}
+ 
++	populate_languageCombobox(language, notALanguageName);
+ 	populate_labelsTreeview(docLabels);
+ }
+ 
+@@ -70,18 +82,19 @@
+ {
+ }
+ 
+-void propertiesDialog::populate_languageCombobox(string language)
++void propertiesDialog::populate_languageCombobox(const string &amp;language, bool notALanguageName)
+ {
+ 	TreeModel::iterator iter;
+ 	TreeModel::Row row;
+ 	unsigned int languageStart = 0;
+ 
+-	if (language.empty() == true)
++	if (notALanguageName == true)
+ 	{
+ 		iter = m_refLanguageTree-&gt;append();
+ 		row = *iter;
+ 
+-		row[m_languageColumns.m_name] = _(&quot;Unknown&quot;);
++		// This is not a language name as such
++		row[m_languageColumns.m_name] = language;
+ 		languageCombobox-&gt;set_active(0);
+ 		languageStart = 1;
+ 	}
+@@ -94,7 +107,8 @@
+ 		row = *iter;
+ 		row[m_languageColumns.m_name] = languageName;
+ 
+-		if (languageName == language)
++		if ((notALanguageName == false) &amp;&amp;
++			(languageName == language))
+ 		{
+ 			languageCombobox-&gt;set_active(languageNum + languageStart);
+ 		}
+@@ -162,28 +176,28 @@
+ 
+ void propertiesDialog::on_labelOkButton_clicked()
+ {
++	unsigned int languageStart = 0;
+ 	if (m_editDocument == true)
+ 	{
+-		unsigned int languageStart = 0;
+-
+ 		// Title
+ 		m_docInfo.setTitle(from_utf8(titleEntry-&gt;get_text()));
++	}
+ 
+-		// Language
+-		if (m_docInfo.getLanguage().empty() == true)
+-		{
+-			languageStart = 1;
+-		}
+-		int chosenLanguage = languageCombobox-&gt;get_active_row_number();
+-		if (chosenLanguage &gt;= languageStart)
+-		{
+-			TreeModel::iterator iter = languageCombobox-&gt;get_active();
+-			TreeModel::Row row = *iter;
+-			string languageName = from_utf8(row[m_languageColumns.m_name]);
++	// Did we add an extra string to the languages list ?
++	if (m_docInfo.getLanguage().empty() == true)
++	{
++		languageStart = 1;
++	}
++	int chosenLanguage = languageCombobox-&gt;get_active_row_number();
++	if (chosenLanguage &gt;= languageStart)
++	{
++		TreeModel::iterator iter = languageCombobox-&gt;get_active();
++		TreeModel::Row row = *iter;
++		string languageName = from_utf8(row[m_languageColumns.m_name]);
+ 
+-			m_docInfo.setLanguage(languageName);
+-		}
++		m_docInfo.setLanguage(languageName);
+ 	}
++
+ 	// Go through the labels tree
+ 	TreeModel::Children children = m_refLabelsTree-&gt;children();
+ 	if (children.empty() == false)
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.hh	2006-06-16 00:19:19 UTC (rev 318)
++++ trunk/UI/GTK2/src/propertiesDialog.hh	2006-06-16 11:14:55 UTC (rev 319)
+@@ -48,7 +48,7 @@
+ 	bool m_editDocument;
+ 	DocumentInfo m_docInfo;
+ 
+-	void populate_languageCombobox(std::string language);
++	void populate_languageCombobox(const std::string &amp;language, bool notALanguageName);
+ 
+ 	void populate_labelsTreeview(const std::set&lt;std::string&gt; &amp;docLabels);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000312.html">[Pinot-svn] r318 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000314.html">[Pinot-svn] r320 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#313">[ date ]</a>
+              <a href="thread.html#313">[ thread ]</a>
+              <a href="subject.html#313">[ subject ]</a>
+              <a href="author.html#313">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

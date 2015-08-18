@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r245 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r245%20-%20trunk/Index&In-Reply-To=%3C200605170007.k4H07ae4011453%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000242.html">
+   <LINK REL="Next"  HREF="000244.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r245 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r245%20-%20trunk/Index&In-Reply-To=%3C200605170007.k4H07ae4011453%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r245 - trunk/Index">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed May 17 02:07:36 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000242.html">[Pinot-svn] r244 - in trunk: . Monitor
+</A></li>
+        <LI>Next message: <A HREF="000244.html">[Pinot-svn] r246 - in trunk: Tokenize Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#243">[ date ]</a>
+              <a href="thread.html#243">[ thread ]</a>
+              <a href="subject.html#243">[ subject ]</a>
+              <a href="author.html#243">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-17 02:07:20 +0200 (Wed, 17 May 2006)
+New Revision: 245
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+On update, don't attempt to detect the document's language if one is provided.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-05-17 00:05:04 UTC (rev 244)
++++ trunk/Index/XapianIndex.cpp	2006-05-17 00:07:20 UTC (rev 245)
+@@ -219,7 +219,7 @@
+ 	return true;
+ }
+ 
+-void XapianIndex::scanDocument(const char *pData, unsigned int dataLength,
++string XapianIndex::scanDocument(const char *pData, unsigned int dataLength,
+ 	DocumentInfo &amp;info)
+ {
+ 	vector&lt;string&gt; candidates;
+@@ -250,23 +250,14 @@
+ 		language = *langIter;
+ 		break;
+ 	}
+-	m_stemLanguage = language;
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianIndex::scanDocument: language now &quot; &lt;&lt; m_stemLanguage &lt;&lt; endl;
++	cout &lt;&lt; &quot;XapianIndex::scanDocument: language &quot; &lt;&lt; language &lt;&lt; endl;
+ #endif
+ 
+ 	// Update the document's properties
+-	string title = info.getTitle();
+-	if (title.empty() == true)
+-	{
+-		// Remove heading spaces
+-		while (isspace(title[0]))
+-		{
+-			title.erase(0, 1);
+-		}
+-		info.setTitle(title);
+-	}
+-	info.setLanguage(m_stemLanguage);
++	info.setLanguage(language);
++
++	return language;
+ }
+ 
+ void XapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+@@ -414,7 +405,7 @@
+ 		docInfo.setTimestamp(pDocument-&gt;getTimestamp());
+ 		docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+ 
+-		scanDocument(pData, dataLength, docInfo);
++		m_stemLanguage = scanDocument(pData, dataLength, docInfo);
+ 
+ 		Xapian::Document doc;
+ 		Xapian::termcount termPos = 0;
+@@ -641,7 +632,12 @@
+ 	docInfo.setTimestamp(pDocument-&gt;getTimestamp());
+ 	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+ 
+-	scanDocument(pData, dataLength, docInfo);
++	// Don't scan the document if a language is specified
++	m_stemLanguage = pDocument-&gt;getLanguage();
++	if (m_stemLanguage.empty() == true)
++	{
++		m_stemLanguage = scanDocument(pData, dataLength, docInfo);
++	}
+ 
+ 	try
+ 	{
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-05-17 00:05:04 UTC (rev 244)
++++ trunk/Index/XapianIndex.h	2006-05-17 00:07:20 UTC (rev 245)
+@@ -105,7 +105,7 @@
+ 		bool prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 			Xapian::termcount &amp;termPos) const;
+ 
+-		void scanDocument(const char *pData, unsigned int dataLength,
++		std::string scanDocument(const char *pData, unsigned int dataLength,
+ 			DocumentInfo &amp;info);
+ 
+ 		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000242.html">[Pinot-svn] r244 - in trunk: . Monitor
+</A></li>
+	<LI>Next message: <A HREF="000244.html">[Pinot-svn] r246 - in trunk: Tokenize Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#243">[ date ]</a>
+              <a href="thread.html#243">[ thread ]</a>
+              <a href="subject.html#243">[ subject ]</a>
+              <a href="author.html#243">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

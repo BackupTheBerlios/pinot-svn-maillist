@@ -1,0 +1,1688 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r75 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r75%20-%20trunk/Search&In-Reply-To=%3C200601251146.k0PBkFVi027181%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000073.html">
+   <LINK REL="Next"  HREF="000075.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r75 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r75%20-%20trunk/Search&In-Reply-To=%3C200601251146.k0PBkFVi027181%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r75 - trunk/Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed Jan 25 12:46:15 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000073.html">[Pinot-svn] r74 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000075.html">[Pinot-svn] r76 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#74">[ date ]</a>
+              <a href="thread.html#74">[ thread ]</a>
+              <a href="subject.html#74">[ subject ]</a>
+              <a href="author.html#74">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-25 12:46:04 +0100 (Wed, 25 Jan 2006)
+New Revision: 75
+
+Added:
+   trunk/Search/OpenSearchParser.cpp
+   trunk/Search/OpenSearchParser.h
+   trunk/Search/PluginParsers.h
+Modified:
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/PluginWebEngine.h
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/SearchPluginProperties.cpp
+   trunk/Search/SearchPluginProperties.h
+   trunk/Search/SherlockParser.cpp
+   trunk/Search/SherlockParser.h
+   trunk/Search/plugintest.cpp
+Log:
+PluginWebEngine can now handle Sherlock and OpenSearch plugins (.src and .xml)
+and their respective response. The OpenSearch Response parser doesn't do
+anything useful just yet.
+
+
+Added: trunk/Search/OpenSearchParser.cpp
+===================================================================
+--- trunk/Search/OpenSearchParser.cpp	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/OpenSearchParser.cpp	2006-01-25 11:46:04 UTC (rev 75)
+@@ -0,0 +1,345 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;iostream&gt;
++#include &lt;glibmm/thread.h&gt;
++#include &lt;glibmm/convert.h&gt;
++#include &lt;libxml++/parsers/domparser.h&gt;
++#include &lt;libxml++/nodes/node.h&gt;
++#include &lt;libxml++/nodes/textnode.h&gt;
++
++#include &quot;StringManip.h&quot;
++#include &quot;OpenSearchParser.h&quot;
++
++using namespace std;
++using namespace Glib;
++using namespace xmlpp;
++
++static ustring getElementContent(const Element *pElem)
++{
++	if (pElem == NULL)
++	{
++		return &quot;&quot;;
++	}
++
++#ifdef HAS_LIBXMLPP026
++	const TextNode *pText = pElem-&gt;get_child_content();
++#else
++	const TextNode *pText = pElem-&gt;get_child_text();
++#endif
++	if (pText == NULL)
++	{
++		return &quot;&quot;;
++	}
++
++	return pText-&gt;get_content();
++}
++
++OpenSearchResponseParser::OpenSearchResponseParser() :
++	ResponseParserInterface()
++{
++}
++
++OpenSearchResponseParser::~OpenSearchResponseParser()
++{
++}
++
++bool OpenSearchResponseParser::parse(const ::Document *pResponseDoc, vector&lt;Result&gt; &amp;resultsList,
++	unsigned int maxResultsCount) const
++{
++}
++
++OpenSearchParser::OpenSearchParser(const string &amp;fileName) :
++	PluginParserInterface(fileName)
++{
++}
++
++OpenSearchParser::~OpenSearchParser()
++{
++}
++
++ResponseParserInterface *OpenSearchParser::parse(SearchPluginProperties &amp;properties,
++	bool extractSearchParams)
++{
++	struct stat fileStat;
++	bool success = true;
++
++	if ((m_fileName.empty() == true) ||
++		(stat(m_fileName.c_str(), &amp;fileStat) != 0) ||
++		(!S_ISREG(fileStat.st_mode)))
++	{
++		return NULL;
++	}
++
++	try
++	{
++		// Parse the configuration file
++		DomParser parser;
++		parser.set_substitute_entities(true);
++		parser.parse_file(m_fileName);
++		xmlpp::Document *pDocument = parser.get_document();
++		if (pDocument == NULL)
++		{
++			return NULL;
++		}
++
++		Node *pNode = pDocument-&gt;get_root_node();
++		Element *pRootElem = dynamic_cast&lt;Element *&gt;(pNode);
++		if (pRootElem == NULL)
++		{
++			return NULL;
++		}
++		// Check the top-level element is what we expect
++		ustring rootNodeName = pRootElem-&gt;get_name();
++		if (rootNodeName != &quot;OpenSearchDescription&quot;)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;OpenSearchParser::parse: wrong root node &quot; &lt;&lt; rootNodeName &lt;&lt; endl;
++#endif
++			return NULL;
++		}
++
++		// Go through the subnodes
++		const Node::NodeList childNodes = pRootElem-&gt;get_children();
++		if (childNodes.empty() == false)
++		{
++			for (Node::NodeList::const_iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++			{
++				Node *pNode = (*iter);
++				// All nodes should be elements
++				Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++				if (pElem == NULL)
++				{
++					continue;
++				}
++
++				ustring nodeName = pElem-&gt;get_name();
++				ustring nodeContent = getElementContent(pElem);
++				if (nodeName == &quot;ShortName&quot;)
++				{
++					properties.m_name = nodeContent;
++				}
++				else if (nodeName == &quot;Description&quot;)
++				{
++					properties.m_description = nodeContent;
++				}
++				else if (nodeName == &quot;Url&quot;)
++				{
++					ustring url, type;
++					bool xmlResponse = false, getMethod = true;
++
++					// Parse Query Syntax
++					Element::AttributeList attributes = pElem-&gt;get_attributes();
++					for (Element::AttributeList::const_iterator iter = attributes.begin();
++						iter != attributes.end(); ++iter)
++					{
++						Attribute *pAttr = (*iter);
++
++						if (pAttr != NULL)
++						{
++							ustring attrName = pAttr-&gt;get_name();
++							ustring attrContent = pAttr-&gt;get_value();
++
++							if (attrName == &quot;template&quot;)
++							{
++								url = attrContent;
++							}
++							else if (attrName == &quot;type&quot;)
++							{
++								type = attrContent;
++							}
++							else if (attrName == &quot;method&quot;)
++							{
++								// GET is the default method
++								if (StringManip::toLowerCase(attrContent) != &quot;get&quot;)
++								{
++									getMethod = false;
++								}
++							}
++						}
++					}
++
++					if (getMethod == true)
++					{
++						string::size_type startPos = 0, pos = url.find(&quot;?&quot;);
++
++						// Determine if this Url is better than previous ones
++						if ((type == &quot;application/rss+xml&quot;) ||
++							(type == &quot;application/atom+xml&quot;))
++						{
++							// We prefer OpenSearch Response
++							xmlResponse = true;
++#ifdef DEBUG
++							cout &lt;&lt; &quot;OpenSearchParser::parse: XML response type&quot; &lt;&lt; endl;
++#endif
++						}
++						else if (type == &quot;text/html&quot;)
++						{
++							// HTML is second best
++#ifdef DEBUG
++							cout &lt;&lt; &quot;OpenSearchParser::parse: HTML response type&quot; &lt;&lt; endl;
++#endif
++							if (xmlResponse == true)
++							{
++								continue;
++							}
++						}
++						else
++						{
++#ifdef DEBUG
++							cout &lt;&lt; &quot;OpenSearchParser::parse: unsupported response type &quot;
++								&lt;&lt; type &lt;&lt; endl;
++#endif
++							continue;
++						}
++	
++						// Break the URL down into base and parameters
++						if (pos != string::npos)
++						{
++							string params(url.substr(pos + 1));
++
++							// URL
++							properties.m_baseUrl = url.substr(0, pos);
++#ifdef DEBUG
++							cout &lt;&lt; &quot;OpenSearchParser::parse: URL is &quot; &lt;&lt; url &lt;&lt; endl;
++#endif
++
++							// Split this into the actual parameters
++							params += &quot;&amp;&quot;;
++							pos = params.find(&quot;&amp;&quot;);
++							while (pos != string::npos)
++							{
++								string parameter(params.substr(startPos, pos - startPos));
++
++								string::size_type equalPos = parameter.find(&quot;=&quot;);
++								if (equalPos != string::npos)
++								{
++									string paramName(parameter.substr(0, equalPos));
++									string paramValue(parameter.substr(equalPos + 1));
++									SearchPluginProperties::Parameter param = SearchPluginProperties::UNKNOWN_PARAM;
++
++									if (paramValue == &quot;{searchTerms}&quot;)
++									{
++										param = SearchPluginProperties::SEARCH_TERMS_PARAM;
++									}
++									else if (paramValue == &quot;{count}&quot;)
++									{
++										param = SearchPluginProperties::COUNT_PARAM;
++									}
++									else if (paramValue == &quot;{startIndex}&quot;)
++									{
++										param = SearchPluginProperties::START_INDEX_PARAM;
++									}
++									else if (paramValue == &quot;{startPage}&quot;)
++									{
++										param = SearchPluginProperties::START_PAGE_PARAM;
++									}
++									else if (paramValue == &quot;{language}&quot;)
++									{
++										param = SearchPluginProperties::LANGUAGE_PARAM;
++									}
++									else if (paramValue == &quot;{outputEncoding}&quot;)
++									{
++										param = SearchPluginProperties::OUTPUT_ENCODING_PARAM;
++									}
++									else if (paramValue == &quot;{inputEncoding}&quot;)
++									{
++										param = SearchPluginProperties::INPUT_ENCODING_PARAM;
++									}
++
++									if (param != SearchPluginProperties::UNKNOWN_PARAM)
++									{
++										properties.m_parameters[param] = paramName;
++									}
++									else
++									{
++										// Append to the remainder
++										if (properties.m_parametersRemainder.empty() == false)
++										{
++											properties.m_parametersRemainder += &quot;&amp;&quot;;
++										}
++										properties.m_parametersRemainder += paramName;
++										properties.m_parametersRemainder += &quot;=&quot;;
++										properties.m_parametersRemainder += paramValue;
++									}
++								}
++
++								// Next
++								startPos = pos + 5;
++								pos = params.find_first_of(&quot;&amp;\n&quot;, startPos);
++							}
++						}
++
++						// Method
++						properties.m_method = SearchPluginProperties::GET_METHOD;
++						// Output type
++						properties.m_outputType = type;
++						// Response
++						if (xmlResponse == true)
++						{
++							properties.m_response = SearchPluginProperties::XML_RESPONSE;
++						}
++						else
++						{
++							properties.m_response = SearchPluginProperties::HTML_RESPONSE;
++						}
++					}
++
++					// We ignore Param as we only support GET
++				}
++				else if (nodeName == &quot;Tags&quot;)
++				{
++					// This is a space-delimited list, pick the first tag
++					string::size_type pos = nodeContent.find(&quot; &quot;);
++					properties.m_channel = nodeContent.substr(0, pos);
++				}
++				else if (nodeName == &quot;LongName&quot;)
++				{
++					properties.m_longName = nodeContent;
++				}
++				else if (nodeName == &quot;Language&quot;)
++				{
++					properties.m_languages.insert(nodeContent);
++				}
++				else if (nodeName == &quot;OutputEncoding&quot;)
++				{
++					properties.m_outputEncodings.insert(nodeContent);
++				}
++				else if (nodeName == &quot;InputEncoding&quot;)
++				{
++					properties.m_inputEncodings.insert(nodeContent);
++				}
++			}
++		}
++	}
++	catch (const std::exception&amp; ex)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;OpenSearchParser::parse: caught exception: &quot; &lt;&lt; ex.what() &lt;&lt; endl;
++#endif
++		success = false;
++	}
++
++	if (success == false)
++	{
++		return NULL;
++	}
++
++	return new OpenSearchResponseParser();
++}
+
+Added: trunk/Search/OpenSearchParser.h
+===================================================================
+--- trunk/Search/OpenSearchParser.h	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/OpenSearchParser.h	2006-01-25 11:46:04 UTC (rev 75)
+@@ -0,0 +1,62 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _OPENSEARCH_PARSER_H
++#define _OPENSEARCH_PARSER_H
++
++#include &lt;string&gt;
++
++#include &quot;Document.h&quot;
++#include &quot;PluginParsers.h&quot;
++
++class OpenSearchResponseParser : public ResponseParserInterface
++{
++	public:
++		OpenSearchResponseParser();
++		virtual ~OpenSearchResponseParser();
++
++		/// Parses the response; false if not all could be parsed.
++		virtual bool parse(const Document *pResponseDoc, std::vector&lt;Result&gt; &amp;resultsList,
++			unsigned int maxResultsCount) const;
++
++	private:
++		OpenSearchResponseParser(const OpenSearchResponseParser &amp;other);
++		OpenSearchResponseParser&amp; operator=(const OpenSearchResponseParser&amp; other);
++
++};
++
++/**
++  * A parser for OpenSearch Description and Query Syntax, version 1.1.
++  * See <A HREF="http://opensearch.a9.com/spec/1.1/description/">http://opensearch.a9.com/spec/1.1/description/</A>
++  * and <A HREF="http://opensearch.a9.com/spec/1.1/querysyntax/">http://opensearch.a9.com/spec/1.1/querysyntax/</A>
++  */
++class OpenSearchParser : public PluginParserInterface
++{
++	public:
++		OpenSearchParser(const std::string &amp;fileName);
++		virtual ~OpenSearchParser();
++
++		/// Parses the plugin and returns a response parser.
++		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
++			bool extractSearchParams = false);
++
++	private:
++		OpenSearchParser(const OpenSearchParser &amp;other);
++		OpenSearchParser&amp; operator=(const OpenSearchParser&amp; other);
++
++};
++
++#endif // _OPENSEARCH_PARSER_H
+
+Added: trunk/Search/PluginParsers.h
+===================================================================
+--- trunk/Search/PluginParsers.h	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/PluginParsers.h	2006-01-25 11:46:04 UTC (rev 75)
+@@ -0,0 +1,72 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _PLUGIN_PARSERS_H
++#define _PLUGIN_PARSERS_H
++
++#include &lt;string&gt;
++#include &lt;vector&gt;
++
++#include &quot;Document.h&quot;
++#include &quot;Result.h&quot;
++#include &quot;SearchPluginProperties.h&quot;
++
++/**
++  * Interface implemented by response parsers.
++  */
++class ResponseParserInterface
++{
++	public:
++		virtual ~ResponseParserInterface()
++		{
++		}
++
++		/// Parses the response; false if not all could be parsed.
++		virtual bool parse(const Document *pResponseDoc, std::vector&lt;Result&gt; &amp;resultsList,
++			unsigned int maxResultsCount) const = 0;
++
++	protected:
++		ResponseParserInterface()
++		{
++		}
++		
++};
++	
++/**
++  * Interface implemented by plugin parsers.
++  */
++class PluginParserInterface
++{
++	public:
++		virtual ~PluginParserInterface()
++		{
++		}
++
++		/// Parses the plugin and returns a response parser.
++		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
++			bool extractSearchParams = false) = 0;
++
++	protected:
++		std::string m_fileName;
++
++		PluginParserInterface(const std::string &amp;fileName) :
++			m_fileName(fileName)
++		{
++		}
++
++};
++
++#endif // _PLUGIN_PARSERS_H
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/PluginWebEngine.cpp	2006-01-25 11:46:04 UTC (rev 75)
+@@ -19,263 +19,140 @@
+ #include &lt;iostream&gt;
+ 
+ #include &quot;Document.h&quot;
+-#include &quot;HtmlTokenizer.h&quot;
+ #include &quot;StringManip.h&quot;
+-#include &quot;Url.h&quot;
+-#include &quot;FileCollector.h&quot;
++#include &quot;OpenSearchParser.h&quot;
+ #include &quot;SherlockParser.h&quot;
+ #include &quot;PluginWebEngine.h&quot;
+ 
+ PluginWebEngine::PluginWebEngine(const string &amp;fileName) :
+-	WebEngine()
++	WebEngine(),
++	m_pResponseParser(NULL)
+ {
+ 	load(fileName);
+ }
+ 
+ PluginWebEngine::~PluginWebEngine()
+ {
++	if (m_pResponseParser != NULL)
++	{
++		delete m_pResponseParser;
++	}
+ }
+ 
+-bool PluginWebEngine::load(const string &amp;fileName)
++void PluginWebEngine::load(const string &amp;fileName)
+ {
+ 	if (fileName.empty() == true)
+ 	{
+-		return false;
++		return;
+ 	}
+ 
+-	// Get the definition file
+-	FileCollector fileCollect;
+-	DocumentInfo docInfo(&quot;Plugin&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + fileName,
+-		&quot;text/plain&quot;, &quot;&quot;);
+-	Document *pPluginDoc = fileCollect.retrieveUrl(docInfo);
+-	if (pPluginDoc == NULL)
++	PluginParserInterface *pParser = getPluginParser(fileName);
++	if (pParser == NULL)
+ 	{
+-#ifdef DEBUG
+-		cerr &lt;&lt; &quot;PluginWebEngine::load: couldn't load &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-		return false;
++		return;
+ 	}
+ 
+-	SherlockParser parser(pPluginDoc);
+-	if (parser.parse() == false)
+-	{
+-		delete pPluginDoc;
+-
+-		return false;
+-	}
+-
+-	// Get a copy of the properties
+-	m_properties = parser.getProperties();
+-
+-	delete pPluginDoc;
+-
+-	return true;
++	m_pResponseParser = pParser-&gt;parse(m_properties);
++	delete pParser;
+ }
+ 
+ bool PluginWebEngine::getPage(const string &amp;formattedQuery)
+ {
+-	bool foundResult = false;
++	if ((m_pResponseParser == NULL) ||
++		(formattedQuery.empty() == true))
++	{
++		return false;
++	}
+ 
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;PluginWebEngine::getPage: getting &quot; &lt;&lt; formattedQuery &lt;&lt; endl;
+-#endif
+ 	DocumentInfo docInfo(&quot;Results Page&quot;, formattedQuery,
+ 		&quot;text/html&quot;, &quot;&quot;);
+-	Document *pUrlDoc = downloadPage(docInfo);
+-	if (pUrlDoc == NULL)
++	Document *pResponseDoc = downloadPage(docInfo);
++	if (pResponseDoc == NULL)
+ 	{
+ #ifdef DEBUG
+-		cerr &lt;&lt; &quot;PluginWebEngine::getPage: couldn't download page &quot; &lt;&lt; formattedQuery &lt;&lt; endl;
++		cerr &lt;&lt; &quot;PluginWebEngine::getPage: couldn't download page &quot;
++			&lt;&lt; formattedQuery &lt;&lt; endl;
+ #endif
+ 		return false;
+ 	}
+ 
+-	float pseudoScore = 100;
+-	unsigned int urlContentLen;
+-	const char *urlContent = pUrlDoc-&gt;getData(urlContentLen);
+-	if ((urlContent == NULL) ||
+-		(urlContentLen == 0))
++	unsigned int contentLen;
++	const char *pContent = pResponseDoc-&gt;getData(contentLen);
++	if ((pContent == NULL) ||
++		(contentLen == 0))
+ 	{
+ #ifdef DEBUG
+ 		cerr &lt;&lt; &quot;PluginWebEngine::getPage: downloaded empty page&quot; &lt;&lt; endl;
+ #endif
+-		delete pUrlDoc;
++		delete pResponseDoc;
+ 		return false;
+ 	}
+ #ifdef DEBUG
+ 	ofstream pageBackup(&quot;PluginWebEngine.html&quot;);
+-	pageBackup.write(urlContent, urlContentLen);
++	pageBackup.write(pContent, contentLen);
+ 	pageBackup.close();
+ #endif
+ 
+-	// Extract the results list
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;PluginWebEngine::getPage: getting results list (&quot;
+-		&lt;&lt; m_properties.m_resultListStart &lt;&lt; &quot;, &quot; &lt;&lt; m_properties.m_resultListEnd &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-	string resultList = StringManip::extractField(urlContent,
+-		m_properties.m_resultListStart, m_properties.m_resultListEnd);
+-	if (resultList.empty() == true)
++	bool success = m_pResponseParser-&gt;parse(pResponseDoc, m_resultsList, m_maxResultsCount);
++	vector&lt;Result&gt;::iterator resultIter = m_resultsList.begin();
++	while (resultIter != m_resultsList.end())
+ 	{
+-		resultList = string(urlContent, urlContentLen);
+-	}
++		string url(resultIter-&gt;getLocation());
+ 
+-	// Extract results
+-	string::size_type endPos = 0;
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;PluginWebEngine::getPage: getting first result (&quot;
+-		&lt;&lt; m_properties.m_resultItemStart &lt;&lt; &quot;, &quot; &lt;&lt; m_properties.m_resultItemEnd &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-	string resultItem = StringManip::extractField(resultList,
+-		m_properties.m_resultItemStart, m_properties.m_resultItemEnd, endPos);
+-	while ((resultItem.empty() == false) &amp;&amp;
+-		(m_resultsList.size() &lt;= m_maxResultsCount))
+-	{
+-		string contentType, url, name, extract;
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;PluginWebEngine::getPage: candidate chunk \&quot;&quot; &lt;&lt; resultItem &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
+-#endif
+-		contentType = pUrlDoc-&gt;getType();
+-		if (strncasecmp(contentType.c_str(), &quot;text/html&quot;, 9) == 0)
++		if (processResult(url) == false)
+ 		{
+-			Document chunkDoc(&quot;&quot;, &quot;&quot;, contentType, &quot;&quot;);
+-			chunkDoc.setData(resultItem.c_str(), resultItem.length());
+-			HtmlTokenizer chunkTokens(&amp;chunkDoc);
+-			set&lt;Link&gt; &amp;chunkLinks = chunkTokens.getLinks();
+-			unsigned int endOfFirstLink = 0, startOfSecondLink = 0, endOfSecondLink = 0, startOfThirdLink = 0;
+-
+-			// The result's URL and title should be given by the first link
+-			for (set&lt;Link&gt;::iterator linkIter = chunkLinks.begin(); linkIter != chunkLinks.end(); ++linkIter)
++			// Remove this result
++			if (resultIter == m_resultsList.begin())
+ 			{
+-				if (linkIter-&gt;m_pos == 0)
+-				{
+-					url = linkIter-&gt;m_url;
+-					name = linkIter-&gt;m_name;
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;PluginWebEngine::getPage: first link in chunk is &quot; &lt;&lt; url &lt;&lt; endl;
+-#endif
+-					endOfFirstLink = linkIter-&gt;m_close;
+-				}
+-				else if (linkIter-&gt;m_pos == 1)
+-				{
+-					startOfSecondLink = linkIter-&gt;m_open;
+-					endOfSecondLink = linkIter-&gt;m_close;
+-				}
+-				else if (linkIter-&gt;m_pos == 2)
+-				{
+-					startOfThirdLink = linkIter-&gt;m_open;
+-				}
++				m_resultsList.erase(resultIter);
++				resultIter = m_resultsList.begin();
+ 			}
+-
+-			// Chances are the extract is between the first two links
+-			if (endOfFirstLink &gt; 0)
++			else
+ 			{
+-				string extractWithMarkup1, extractWithMarkup2;
+-				string extractCandidate1, extractCandidate2;
+-
+-				if (startOfSecondLink &gt; 0)
+-				{
+-					extractWithMarkup1 = resultItem.substr(endOfFirstLink, startOfSecondLink - endOfFirstLink);
+-				}
+-				else
+-				{
+-					extractWithMarkup1 = resultItem.substr(endOfFirstLink);
+-				}
+-				extractCandidate1 = HtmlTokenizer::stripTags(extractWithMarkup1);
+-
+-				// ... or between the second and third link :-)
+-				if (endOfSecondLink &gt; 0)
+-				{
+-					if (startOfThirdLink &gt; 0)
+-					{
+-						extractWithMarkup2 = resultItem.substr(endOfSecondLink, startOfThirdLink - endOfSecondLink);
+-					}
+-					else
+-					{
+-						extractWithMarkup2 = resultItem.substr(endOfSecondLink);
+-					}
+-				}
+-				extractCandidate2 = HtmlTokenizer::stripTags(extractWithMarkup2);
+-
+-				// It seems we can rely on length to determine which is the right one
+-				if (extractCandidate1.length() &gt; extractCandidate2.length())
+-				{
+-					extract = extractCandidate1;
+-				}
+-				else
+-				{
+-					extract = extractCandidate2;
+-				}
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;PluginWebEngine::getPage: extract is \&quot;&quot; &lt;&lt; extract &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
+-#endif
++				vector&lt;Result&gt;::iterator badResultIter = resultIter;
++				--resultIter;
++				m_resultsList.erase(badResultIter);
+ 			}
+ 		}
+ 		else
+ 		{
+-			// This is not HTML
+-			// Use extended attributes
+-			if ((m_properties.m_resultTitleStart.empty() == false) &amp;&amp;
+-				(m_properties.m_resultTitleEnd.empty() == false))
+-			{
+-				name = StringManip::extractField(resultItem,
+-					m_properties.m_resultTitleStart, m_properties.m_resultTitleEnd);
+-			}
+-
+-			if ((m_properties.m_resultLinkStart.empty() == false) &amp;&amp;
+-				(m_properties.m_resultLinkEnd.empty() == false))
+-			{
+-				url = StringManip::extractField(resultItem,
+-					m_properties.m_resultLinkStart, m_properties.m_resultLinkEnd);
+-			}
+-
+-			if ((m_properties.m_resultExtractStart.empty() == false) &amp;&amp;
+-				(m_properties.m_resultExtractEnd.empty() == false))
+-			{
+-				extract = StringManip::extractField(resultItem,
+-					m_properties.m_resultExtractStart, m_properties.m_resultExtractEnd);
+-			}
++			// Next
++			++resultIter;
+ 		}
++	}
+ 
+-		if (url.empty() == false)
+-		{
+-			Url urlObj(url);
++	delete pResponseDoc;
+ 
+-			// Is this URL relative to the search engine's domain ?
+-			// FIXME: look for a interpret/baseurl tag, see <A HREF="https://bugzilla.mozilla.org/show_bug.cgi?id=65453">https://bugzilla.mozilla.org/show_bug.cgi?id=65453</A>
+-			// FIXME: obey m_skipLocal
+-			if (urlObj.getHost().empty() == true)
+-			{
+-				Url baseUrlObj(formattedQuery);
++	return success;
++}
+ 
+-				string tmpUrl = baseUrlObj.getProtocol();
+-				tmpUrl += &quot;://&quot;;
+-				tmpUrl += baseUrlObj.getHost();
+-				if (url[0] != '/')
+-				{
+-					tmpUrl += &quot;/&quot;;
+-				}
+-				tmpUrl += url;
+-				url = tmpUrl;
+-			}
++PluginParserInterface *PluginWebEngine::getPluginParser(const string &amp;fileName)
++{
++	if (fileName.empty() == true)
++	{
++		return NULL;
++	}
+ 
+-			if (processResult(url) == true)
+-			{
+-				m_resultsList.push_back(Result(url, name, extract, &quot;&quot;, pseudoScore));
+-			}
+-			--pseudoScore;
+-			foundResult = true;
+-		}
++	// What type of plugin is it ?
++	// Look at the file extension
++	string::size_type pos = fileName.find_last_of(&quot;.&quot;);
++	if (pos == string::npos)
++	{
++		// No way to tell
++		return NULL;
++	}
+ 
+-		// Next
+-		endPos += m_properties.m_resultItemEnd.length();
+-		resultItem = StringManip::extractField(resultList,
+-			m_properties.m_resultItemStart, m_properties.m_resultItemEnd, endPos);
++	string extension(fileName.substr(pos + 1));
++	if (strncasecmp(extension.c_str(), &quot;src&quot;, 3) == 0)
++	{
++		return new SherlockParser(fileName);
+ 	}
+-	delete pUrlDoc;
++	else if (strncasecmp(extension.c_str(), &quot;xml&quot;, 3) == 0)
++	{
++		return new OpenSearchParser(fileName);
++	}
+ 
+-	return foundResult;
++	return NULL;
+ }
+ 
+ bool PluginWebEngine::getDetails(const string &amp;fileName, string &amp;name, string &amp;channel)
+@@ -285,36 +162,27 @@
+ 		return false;
+ 	}
+ 
+-	// Get the definition file
+-	FileCollector fileCollect;
+-	DocumentInfo docInfo(name, string(&quot;<A HREF="file://">file://</A>&quot;) + fileName,
+-		&quot;text/plain&quot;, &quot;&quot;);
+-	Document *pPluginDoc = fileCollect.retrieveUrl(docInfo);
+-	if (pPluginDoc == NULL)
++	PluginParserInterface *pParser = getPluginParser(fileName);
++	if (pParser == NULL)
+ 	{
+-#ifdef DEBUG
+-		cerr &lt;&lt; &quot;PluginWebEngine::getDetails: couldn't load &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+ 		return false;
+ 	}
+ 
+-	SherlockParser parser(pPluginDoc);
+-	if (parser.parse(true) == false)
++	SearchPluginProperties properties;
++	if (pParser-&gt;parse(properties, true) == false)
+ 	{
+ #ifdef DEBUG
+ 		cerr &lt;&lt; &quot;PluginWebEngine::getDetails: couldn't parse &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
+-		delete pPluginDoc;
++		delete pParser;
+ 
+ 		return false;
+ 	}
++	delete pParser;
+ 
+-	const SearchPluginProperties &amp;properties = parser.getProperties();
+ 	name = properties.m_name;
+ 	channel = properties.m_channel;
+ 
+-	delete pPluginDoc;
+-
+ 	return true;
+ }
+ 
+
+Modified: trunk/Search/PluginWebEngine.h
+===================================================================
+--- trunk/Search/PluginWebEngine.h	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/PluginWebEngine.h	2006-01-25 11:46:04 UTC (rev 75)
+@@ -19,6 +19,7 @@
+ 
+ #include &lt;string&gt;
+ 
++#include &quot;PluginParsers.h&quot;
+ #include &quot;SearchPluginProperties.h&quot;
+ #include &quot;WebEngine.h&quot;
+ 
+@@ -41,11 +42,14 @@
+ 
+ 	protected:
+ 		SearchPluginProperties m_properties;
++		ResponseParserInterface *m_pResponseParser;
+ 
+-		bool load(const std::string &amp;fileName);
++		void load(const std::string &amp;fileName);
+ 
+ 		bool getPage(const std::string &amp;formattedQuery);
+ 
++		static PluginParserInterface *getPluginParser(const std::string &amp;fileName);
++
+ 	private:
+ 		PluginWebEngine(const PluginWebEngine &amp;other);
+ 		PluginWebEngine &amp;operator=(const PluginWebEngine &amp;other);
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/SearchEngineInterface.h	2006-01-25 11:46:04 UTC (rev 75)
+@@ -14,8 +14,8 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#ifndef _SEARCHENGINE_INTERFACE_H
+-#define _SEARCHENGINE_INTERFACE_H
++#ifndef _SEARCH_ENGINE_INTERFACE_H
++#define _SEARCH_ENGINE_INTERFACE_H
+ 
+ #include &lt;time.h&gt;
+ #include &lt;string&gt;
+@@ -75,4 +75,4 @@
+ 
+ };
+ 
+-#endif // _SEARCHENGINE_INTERFACE_H
++#endif // _SEARCH_ENGINE_INTERFACE_H
+
+Modified: trunk/Search/SearchPluginProperties.cpp
+===================================================================
+--- trunk/Search/SearchPluginProperties.cpp	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/SearchPluginProperties.cpp	2006-01-25 11:46:04 UTC (rev 75)
+@@ -24,8 +24,7 @@
+ 	m_method(GET_METHOD),
+ 	m_nextFactor(10),
+ 	m_nextBase(0),
+-	m_response(UNKNOWN_RESPONSE),
+-	m_skipLocal(true)
++	m_response(UNKNOWN_RESPONSE)
+ {
+ }
+ 
+@@ -41,17 +40,7 @@
+ 	m_nextTag(other.m_nextTag),
+ 	m_nextFactor(other.m_nextFactor),
+ 	m_nextBase(other.m_nextBase),
+-	m_resultListStart(other.m_resultListStart),
+-	m_resultListEnd(other.m_resultListEnd),
+-	m_resultItemStart(other.m_resultItemStart),
+-	m_resultItemEnd(other.m_resultItemEnd),
+-	m_resultTitleStart(other.m_resultTitleStart),
+-	m_resultTitleEnd(other.m_resultTitleEnd),
+-	m_resultLinkStart(other.m_resultLinkStart),
+-	m_resultLinkEnd(other.m_resultLinkEnd),
+-	m_resultExtractStart(other.m_resultExtractStart),
+-	m_resultExtractEnd(other.m_resultExtractEnd),
+-	m_skipLocal(other.m_skipLocal)
++	m_response(other.m_response)
+ {
+ 	copy(other.m_languages.begin(), other.m_languages.end(),
+ 		inserter(m_languages, m_languages.begin()));
+@@ -80,17 +69,7 @@
+ 	m_nextTag = other.m_nextTag;
+ 	m_nextFactor = other.m_nextFactor;
+ 	m_nextBase = other.m_nextBase;
+-	m_resultListStart = other.m_resultListStart;
+-	m_resultListEnd = other.m_resultListEnd;
+-	m_resultItemStart = other.m_resultItemStart;
+-	m_resultItemEnd = other.m_resultItemEnd;
+-	m_resultTitleStart = other.m_resultTitleStart;
+-	m_resultTitleEnd = other.m_resultTitleEnd;
+-	m_resultLinkStart = other.m_resultLinkStart;
+-	m_resultLinkEnd = other.m_resultLinkEnd;
+-	m_resultExtractStart = other.m_resultExtractStart;
+-	m_resultExtractEnd = other.m_resultExtractEnd;
+-	m_skipLocal = other.m_skipLocal;
++	m_response = other.m_response;
+ 
+ 	copy(other.m_languages.begin(), other.m_languages.end(),
+ 		inserter(m_languages, m_languages.begin()));
+
+Modified: trunk/Search/SearchPluginProperties.h
+===================================================================
+--- trunk/Search/SearchPluginProperties.h	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/SearchPluginProperties.h	2006-01-25 11:46:04 UTC (rev 75)
+@@ -61,17 +61,6 @@
+ 		unsigned int m_nextBase;
+ 		// Response
+ 		Response m_response;
+-		std::string m_resultListStart;
+-		std::string m_resultListEnd;
+-		std::string m_resultItemStart;
+-		std::string m_resultItemEnd;
+-		std::string m_resultTitleStart;
+-		std::string m_resultTitleEnd;
+-		std::string m_resultLinkStart;
+-		std::string m_resultLinkEnd;
+-		std::string m_resultExtractStart;
+-		std::string m_resultExtractEnd;
+-		bool m_skipLocal;
+ 
+ };
+ 
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/SherlockParser.cpp	2006-01-25 11:46:04 UTC (rev 75)
+@@ -22,6 +22,9 @@
+ #include &lt;boost/spirit/utility/confix.hpp&gt;
+ 
+ #include &quot;StringManip.h&quot;
++#include &quot;Url.h&quot;
++#include &quot;HtmlTokenizer.h&quot;
++#include &quot;FileCollector.h&quot;
+ #include &quot;SherlockParser.h&quot;
+ 
+ using std::cout;
+@@ -249,28 +252,242 @@
+ 
+ };
+ 
+-SherlockParser::SherlockParser(const Document *pDocument) :
+-	m_pDocument(pDocument)
++SherlockResponseParser::SherlockResponseParser() :
++	ResponseParserInterface(),
++	m_skipLocal(true)
+ {
+ }
+ 
+-SherlockParser::~SherlockParser()
++SherlockResponseParser::~SherlockResponseParser()
+ {
+ }
+ 
+-bool SherlockParser::parse(bool extractSearchParams)
++bool SherlockResponseParser::parse(const Document *pResponseDoc, vector&lt;Result&gt; &amp;resultsList,
++	unsigned int maxResultsCount) const
+ {
+-	if (m_pDocument == NULL)
++	float pseudoScore = 100;
++	unsigned int contentLen;
++	bool foundResult = false;
++
++	if ((pResponseDoc == NULL) ||
++		(pResponseDoc-&gt;getData(contentLen) == NULL) ||
++		(contentLen == 0))
+ 	{
+ 		return false;
+ 	}
+ 
++	// These two are the minimum we need
++	if ((m_resultItemStart.empty() == true) ||
++		(m_resultItemEnd.empty() == true))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;SherlockResponseParser::parse: incomplete properties&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	// Extract the results list
++#ifdef DEBUG
++	cout &lt;&lt; &quot;SherlockResponseParser::parse: getting results list (&quot;
++		&lt;&lt; m_resultListStart &lt;&lt; &quot;, &quot; &lt;&lt; m_resultListEnd &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++	const char *pContent = pResponseDoc-&gt;getData(contentLen);
++	string resultList = StringManip::extractField(pContent, m_resultListStart, m_resultListEnd);
++	if (resultList.empty() == true)
++	{
++		resultList = string(pContent, contentLen);
++	}
++
++	// Extract results
++	string::size_type endPos = 0;
++#ifdef DEBUG
++	cout &lt;&lt; &quot;SherlockResponseParser::parse: getting first result (&quot;
++		&lt;&lt; m_resultItemStart &lt;&lt; &quot;, &quot; &lt;&lt; m_resultItemEnd &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++	string resultItem = StringManip::extractField(resultList,
++		m_resultItemStart, m_resultItemEnd, endPos);
++	while ((resultItem.empty() == false) &amp;&amp;
++		(resultsList.size() &lt;= maxResultsCount))
++	{
++		string contentType, url, name, extract;
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;SherlockResponseParser::parse: candidate chunk \&quot;&quot;
++			&lt;&lt; resultItem &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
++#endif
++		contentType = pResponseDoc-&gt;getType();
++		if (strncasecmp(contentType.c_str(), &quot;text/html&quot;, 9) == 0)
++		{
++			Document chunkDoc(&quot;&quot;, &quot;&quot;, contentType, &quot;&quot;);
++			chunkDoc.setData(resultItem.c_str(), resultItem.length());
++			HtmlTokenizer chunkTokens(&amp;chunkDoc);
++			set&lt;Link&gt; &amp;chunkLinks = chunkTokens.getLinks();
++			unsigned int endOfFirstLink = 0, startOfSecondLink = 0, endOfSecondLink = 0, startOfThirdLink = 0;
++
++			// The result's URL and title should be given by the first link
++			for (set&lt;Link&gt;::iterator linkIter = chunkLinks.begin(); linkIter != chunkLinks.end(); ++linkIter)
++			{
++				if (linkIter-&gt;m_pos == 0)
++				{
++					url = linkIter-&gt;m_url;
++					name = linkIter-&gt;m_name;
++#ifdef DEBUG
++					cout &lt;&lt; &quot;SherlockResponseParser::parse: first link in chunk is &quot;
++						&lt;&lt; url &lt;&lt; endl;
++#endif
++					endOfFirstLink = linkIter-&gt;m_close;
++				}
++				else if (linkIter-&gt;m_pos == 1)
++				{
++					startOfSecondLink = linkIter-&gt;m_open;
++					endOfSecondLink = linkIter-&gt;m_close;
++				}
++				else if (linkIter-&gt;m_pos == 2)
++				{
++					startOfThirdLink = linkIter-&gt;m_open;
++				}
++			}
++
++			// Chances are the extract is between the first two links
++			if (endOfFirstLink &gt; 0)
++			{
++				string extractWithMarkup1, extractWithMarkup2;
++				string extractCandidate1, extractCandidate2;
++
++				if (startOfSecondLink &gt; 0)
++				{
++					extractWithMarkup1 = resultItem.substr(endOfFirstLink, startOfSecondLink - endOfFirstLink);
++				}
++				else
++				{
++					extractWithMarkup1 = resultItem.substr(endOfFirstLink);
++				}
++				extractCandidate1 = HtmlTokenizer::stripTags(extractWithMarkup1);
++
++				// ... or between the second and third link :-)
++				if (endOfSecondLink &gt; 0)
++				{
++					if (startOfThirdLink &gt; 0)
++					{
++						extractWithMarkup2 = resultItem.substr(endOfSecondLink, startOfThirdLink - endOfSecondLink);
++					}
++					else
++					{
++						extractWithMarkup2 = resultItem.substr(endOfSecondLink);
++					}
++				}
++				extractCandidate2 = HtmlTokenizer::stripTags(extractWithMarkup2);
++
++				// It seems we can rely on length to determine which is the right one
++				if (extractCandidate1.length() &gt; extractCandidate2.length())
++				{
++					extract = extractCandidate1;
++				}
++				else
++				{
++					extract = extractCandidate2;
++				}
++#ifdef DEBUG
++				cout &lt;&lt; &quot;SherlockResponseParser::parse: extract is \&quot;&quot;
++					&lt;&lt; extract &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
++#endif
++			}
++		}
++		else
++		{
++			// This is not HTML
++			// Use extended attributes
++			if ((m_resultTitleStart.empty() == false) &amp;&amp;
++				(m_resultTitleEnd.empty() == false))
++			{
++				name = StringManip::extractField(resultItem,
++					m_resultTitleStart, m_resultTitleEnd);
++			}
++
++			if ((m_resultLinkStart.empty() == false) &amp;&amp;
++				(m_resultLinkEnd.empty() == false))
++			{
++				url = StringManip::extractField(resultItem,
++					m_resultLinkStart, m_resultLinkEnd);
++			}
++
++			if ((m_resultExtractStart.empty() == false) &amp;&amp;
++				(m_resultExtractEnd.empty() == false))
++			{
++				extract = StringManip::extractField(resultItem,
++					m_resultExtractStart, m_resultExtractEnd);
++			}
++		}
++
++		if (url.empty() == false)
++		{
++			Url urlObj(url);
++
++			// Is this URL relative to the search engine's domain ?
++			// FIXME: look for a interpret/baseurl tag, see <A HREF="https://bugzilla.mozilla.org/show_bug.cgi?id=65453">https://bugzilla.mozilla.org/show_bug.cgi?id=65453</A>
++			// FIXME: obey m_skipLocal
++			if (urlObj.getHost().empty() == true)
++			{
++				Url baseUrlObj(pResponseDoc-&gt;getLocation());
++
++				string tmpUrl = baseUrlObj.getProtocol();
++				tmpUrl += &quot;://&quot;;
++				tmpUrl += baseUrlObj.getHost();
++				if (url[0] != '/')
++				{
++					tmpUrl += &quot;/&quot;;
++				}
++				tmpUrl += url;
++				url = tmpUrl;
++			}
++
++			resultsList.push_back(Result(url, name, extract, &quot;&quot;, pseudoScore));
++			--pseudoScore;
++			foundResult = true;
++		}
++
++		// Next
++		endPos += m_resultItemEnd.length();
++		resultItem = StringManip::extractField(resultList,
++			m_resultItemStart, m_resultItemEnd, endPos);
++	}
++
++	return foundResult;
++}
++
++SherlockParser::SherlockParser(const string &amp;fileName) :
++	PluginParserInterface(fileName)
++{
++}
++
++SherlockParser::~SherlockParser()
++{
++}
++
++ResponseParserInterface *SherlockParser::parse(SearchPluginProperties &amp;properties,
++	bool extractSearchParams)
++{
++	FileCollector fileCollect;
++	DocumentInfo docInfo(&quot;Sherlock Source&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + m_fileName,
++		&quot;text/plain&quot;, &quot;&quot;);
++
++	// Get the definition file
++	Document *pPluginDoc = fileCollect.retrieveUrl(docInfo);
++	if (pPluginDoc == NULL)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;SherlockParser::parse: couldn't load &quot; &lt;&lt; m_fileName &lt;&lt; endl;
++#endif
++		return NULL;
++	}
++
+ 	unsigned int dataLength;
+-	const char *pData = m_pDocument-&gt;getData(dataLength);
++	const char *pData = pPluginDoc-&gt;getData(dataLength);
+ 	if ((pData == NULL) ||
+ 		(dataLength == 0))
+ 	{
+-		return false;
++		delete pPluginDoc;
++		return NULL;
+ 	}
+ 
+ 	map&lt;string, string&gt; searchParams, interpretParams, inputItems;
+@@ -292,6 +509,11 @@
+ 		parseInfo = boost::spirit::parse(pData, plugin, skip);
+ 	}
+ 
++	// We are done with the document
++	delete pPluginDoc;
++
++	SherlockResponseParser *pResponseParser = new SherlockResponseParser();
++
+ 	if (parseInfo.full == true)
+ 	{
+ 		map&lt;string, string&gt; lowSearchParams, lowInterpretParams, lowInputItems;
+@@ -304,22 +526,22 @@
+ 		for_each(inputItems.begin(), inputItems.end(), lowCopy3);
+ 
+ 		// Response
+-		m_properties.m_response = SearchPluginProperties::HTML_RESPONSE;
++		properties.m_response = SearchPluginProperties::HTML_RESPONSE;
+ 		// Method
+-		m_properties.m_method = SearchPluginProperties::GET_METHOD;
++		properties.m_method = SearchPluginProperties::GET_METHOD;
+ 
+ 		// Name
+ 		map&lt;string, string&gt;::iterator mapIter = lowSearchParams.find(&quot;name&quot;);
+ 		if (mapIter != lowSearchParams.end())
+ 		{
+-			m_properties.m_name = mapIter-&gt;second;
++			properties.m_name = mapIter-&gt;second;
+ 		}
+ 
+ 		// Channel
+ 		mapIter = lowSearchParams.find(&quot;routetype&quot;);
+ 		if (mapIter != lowSearchParams.end())
+ 		{
+-			m_properties.m_channel = mapIter-&gt;second;
++			properties.m_channel = mapIter-&gt;second;
+ 		}
+ 
+ 		if (extractSearchParams == false)
+@@ -333,87 +555,87 @@
+ 					lowInputItems.erase(mapIter);
+ 				}
+ 
+-				m_properties.m_parameters[SearchPluginProperties::SEARCH_TERMS_PARAM] = userInput;
++				properties.m_parameters[SearchPluginProperties::SEARCH_TERMS_PARAM] = userInput;
+ 			}
+ 			for (map&lt;string, string&gt;::iterator iter = lowInputItems.begin();
+ 				iter != lowInputItems.end(); ++iter)
+ 			{
+ 				// Append to the remainder
+-				if (m_properties.m_parametersRemainder.empty() == false)
++				if (properties.m_parametersRemainder.empty() == false)
+ 				{
+-					m_properties.m_parametersRemainder += &quot;&amp;&quot;;
++					properties.m_parametersRemainder += &quot;&amp;&quot;;
+ 				}
+-				m_properties.m_parametersRemainder += iter-&gt;first;
+-				m_properties.m_parametersRemainder += &quot;=&quot;;
+-				m_properties.m_parametersRemainder += iter-&gt;second;
++				properties.m_parametersRemainder += iter-&gt;first;
++				properties.m_parametersRemainder += &quot;=&quot;;
++				properties.m_parametersRemainder += iter-&gt;second;
+ 			}
+ 
+ 			// URL
+ 			mapIter = lowSearchParams.find(&quot;action&quot;);
+ 			if (mapIter != lowSearchParams.end())
+ 			{
+-				m_properties.m_baseUrl = mapIter-&gt;second;
++				properties.m_baseUrl = mapIter-&gt;second;
+ 			}
+ 
+ 			// Response
+ 			mapIter = lowInterpretParams.find(&quot;resultliststart&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultListStart = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
++				pResponseParser-&gt;m_resultListStart = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultlistend&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultListEnd = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
++				pResponseParser-&gt;m_resultListEnd = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultitemstart&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultItemStart = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
++				pResponseParser-&gt;m_resultItemStart = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultitemend&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultItemEnd = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
++				pResponseParser-&gt;m_resultItemEnd = StringManip::replaceSubString(mapIter-&gt;second, &quot;\\n&quot;, &quot;\n&quot;);
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resulttitlestart&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultTitleStart = mapIter-&gt;second;
++				pResponseParser-&gt;m_resultTitleStart = mapIter-&gt;second;
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resulttitleend&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultTitleEnd = mapIter-&gt;second;
++				pResponseParser-&gt;m_resultTitleEnd = mapIter-&gt;second;
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultlinkstart&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultLinkStart = mapIter-&gt;second;
++				pResponseParser-&gt;m_resultLinkStart = mapIter-&gt;second;
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultlinkend&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultLinkEnd = mapIter-&gt;second;
++				pResponseParser-&gt;m_resultLinkEnd = mapIter-&gt;second;
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultextractstart&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultExtractStart = mapIter-&gt;second;
++				pResponseParser-&gt;m_resultExtractStart = mapIter-&gt;second;
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;resultextractend&quot;);
+ 			if (mapIter != lowInterpretParams.end())
+ 			{
+-				m_properties.m_resultExtractEnd = mapIter-&gt;second;
++				pResponseParser-&gt;m_resultExtractEnd = mapIter-&gt;second;
+ 			}
+ 
+ 			mapIter = lowInterpretParams.find(&quot;skiplocal&quot;);
+@@ -421,21 +643,21 @@
+ 			{
+ 				if (mapIter-&gt;second == &quot;false&quot;)
+ 				{
+-					m_properties.m_skipLocal = false;
++					pResponseParser-&gt;m_skipLocal = false;
+ 				}
+ 			}
+ 
+-			m_properties.m_nextTag = nextInput;
++			properties.m_nextTag = nextInput;
+ 			// Here we differ from how Mozilla uses these parameters
+ 			// Normally, either factor or value is used, but we use value
+ 			// as the parameter's initial value
+ 			if (nextFactor.empty() == false)
+ 			{
+-				m_properties.m_nextFactor = (unsigned int)atoi(nextFactor.c_str());
++				properties.m_nextFactor = (unsigned int)atoi(nextFactor.c_str());
+ 			}
+ 			if (nextValue.empty() == false)
+ 			{
+-				m_properties.m_nextBase = (unsigned int)atoi(nextValue.c_str());
++				properties.m_nextBase = (unsigned int)atoi(nextValue.c_str());
+ 			}
+ 		}
+ 	}
+@@ -443,11 +665,5 @@
+ 	else cout &lt;&lt; &quot;SherlockParser::parse: syntax error near &quot; &lt;&lt; parseInfo.stop &lt;&lt; endl;
+ #endif
+ 
+-	return parseInfo.hit;
++	return pResponseParser;
+ }
+-
+-/// Returns the plugin's properties.
+-const SearchPluginProperties &amp;SherlockParser::getProperties(void)
+-{
+-	return m_properties;
+-}
+
+Modified: trunk/Search/SherlockParser.h
+===================================================================
+--- trunk/Search/SherlockParser.h	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/SherlockParser.h	2006-01-25 11:46:04 UTC (rev 75)
+@@ -18,32 +18,53 @@
+ #define _SHERLOCK_PARSER_H
+ 
+ #include &lt;string&gt;
+-#include &lt;map&gt;
+ 
+ #include &quot;Document.h&quot;
+-#include &quot;SearchPluginProperties.h&quot;
++#include &quot;PluginParsers.h&quot;
+ 
++class SherlockResponseParser : public ResponseParserInterface
++{
++	public:
++		SherlockResponseParser();
++		virtual ~SherlockResponseParser();
++
++		/// Parses the response; false if not all could be parsed.
++		virtual bool parse(const Document *pResponseDoc, std::vector&lt;Result&gt; &amp;resultsList,
++			unsigned int maxResultsCount) const;
++
++		std::string m_resultListStart;
++		std::string m_resultListEnd;
++		std::string m_resultItemStart;
++		std::string m_resultItemEnd;
++		std::string m_resultTitleStart;
++		std::string m_resultTitleEnd;
++		std::string m_resultLinkStart;
++		std::string m_resultLinkEnd;
++		std::string m_resultExtractStart;
++		std::string m_resultExtractEnd;
++		bool m_skipLocal;
++
++	private:
++		SherlockResponseParser(const SherlockResponseParser &amp;other);
++		SherlockResponseParser&amp; operator=(const SherlockResponseParser&amp; other);
++
++};
++
+ /**
+   * A parser for Sherlock plugin files.
+   * See <A HREF="http://developer.apple.com/technotes/tn/tn1141.html">http://developer.apple.com/technotes/tn/tn1141.html</A>
+   * and <A HREF="http://mycroft.mozdev.org/deepdocs/deepdocs.html">http://mycroft.mozdev.org/deepdocs/deepdocs.html</A>
+   */
+-class SherlockParser
++class SherlockParser : public PluginParserInterface
+ {
+ 	public:
+-		SherlockParser(const Document *pDocument);
++		SherlockParser(const std::string &amp;fileName);
+ 		virtual ~SherlockParser();
+ 
+-		/// Parses the plugin; false if not all could be parsed.
+-		bool parse(bool extractSearchParams = false);
++		/// Parses the plugin and returns a response parser.
++		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
++			bool extractSearchParams = false);
+ 
+-		/// Returns the plugin's properties.
+-		virtual const SearchPluginProperties &amp;getProperties(void);
+-
+-	protected:
+-		const Document *m_pDocument;
+-		SearchPluginProperties m_properties;
+-
+ 	private:
+ 		SherlockParser(const SherlockParser &amp;other);
+ 		SherlockParser&amp; operator=(const SherlockParser&amp; other);
+
+Modified: trunk/Search/plugintest.cpp
+===================================================================
+--- trunk/Search/plugintest.cpp	2006-01-22 13:37:53 UTC (rev 74)
++++ trunk/Search/plugintest.cpp	2006-01-25 11:46:04 UTC (rev 75)
+@@ -31,7 +31,7 @@
+ {
+ 	if (argc &lt; 3)
+ 	{
+-		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; SHERLOCK|OPENSEARCH &lt;file name&gt; [MIN]&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; sherlock|opensearch &lt;file name&gt; [MIN]&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
+ 
+@@ -39,6 +39,7 @@
+ 	if ((stat(argv[2], &amp;fileStat) == 0) &amp;&amp;
+ 		(S_ISREG(fileStat.st_mode)))
+ 	{
++		PluginParserInterface *pParser = NULL;
+ 		SearchPluginProperties properties;
+ 		bool minParser = false;
+ 
+@@ -48,43 +49,22 @@
+ 			minParser = true;
+ 		}
+ 
+-		if (strncasecmp(argv[1], &quot;SHERLOCK&quot;, 8) == 0)
++		if (strncasecmp(argv[1], &quot;sherlock&quot;, 8) == 0)
+ 		{
+-			char *buffer = new char[fileStat.st_size + 1];
+-			int fd = open(argv[2], O_RDONLY);
+-
+-			// Read the file
+-			ssize_t readBytes = read(fd, buffer, fileStat.st_size);
+-			if (readBytes == -1)
+-			{
+-				cerr &lt;&lt; &quot;Couldn't read &quot; &lt;&lt; argv[2] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-				return EXIT_FAILURE;
+-			}
+-
+-			// Put that data into a document
+-			Document doc;
+-			doc.setData(buffer, readBytes);
+-			delete[] buffer;
+-
+-			SherlockParser parser(&amp;doc);
+-			if (parser.parse(minParser) == true)
+-			{
+-				cout &lt;&lt; &quot;Successfully parsed &quot; &lt;&lt; argv[2] &lt;&lt; endl;
+-			}
+-
+-			properties = parser.getProperties();
++			pParser = new SherlockParser(argv[2]);
+ 		}
+-		else if (strncasecmp(argv[1], &quot;OPENSEARCH&quot;, 10) == 0)
++		else if (strncasecmp(argv[1], &quot;opensearch&quot;, 10) == 0)
+ 		{
+-			OpenSearchParser parser(argv[2]);
++			pParser = new OpenSearchParser(argv[2]);
++		}
+ 
+-			if (parser.parse(minParser) == true)
+-			{
+-				cout &lt;&lt; &quot;Successfully parsed &quot; &lt;&lt; argv[2] &lt;&lt; endl;
+-			}
+-
+-			properties = parser.getProperties();
++		// Parse the document
++		if (pParser-&gt;parse(minParser) == true)
++		{
++			cout &lt;&lt; &quot;Successfully parsed &quot; &lt;&lt; argv[2] &lt;&lt; endl;
+ 		}
++		properties = pParser-&gt;getProperties();
++		delete pParser;
+ 
+ 		cout &lt;&lt; &quot;Plugin &quot; &lt;&lt; properties.m_name &lt;&lt; &quot;: &quot; &lt;&lt; properties.m_description &lt;&lt; endl;
+ 		cout &lt;&lt; &quot;Channel: &quot; &lt;&lt; properties.m_channel &lt;&lt; endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000073.html">[Pinot-svn] r74 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000075.html">[Pinot-svn] r76 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#74">[ date ]</a>
+              <a href="thread.html#74">[ thread ]</a>
+              <a href="subject.html#74">[ subject ]</a>
+              <a href="author.html#74">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

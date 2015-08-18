@@ -1,0 +1,284 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1139 - in trunk: IndexSearch/Xapian UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1139%20-%20in%20trunk%3A%20IndexSearch/Xapian%20UI/GTK2/src&In-Reply-To=%3C200712031548.lB3FmRMb023418%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001132.html">
+   <LINK REL="Next"  HREF="001134.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1139 - in trunk: IndexSearch/Xapian UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1139%20-%20in%20trunk%3A%20IndexSearch/Xapian%20UI/GTK2/src&In-Reply-To=%3C200712031548.lB3FmRMb023418%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1139 - in trunk: IndexSearch/Xapian UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec  3 16:48:27 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001132.html">[Pinot-svn] r1138 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001134.html">[Pinot-svn] r1140 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1133">[ date ]</a>
+              <a href="thread.html#1133">[ thread ]</a>
+              <a href="subject.html#1133">[ subject ]</a>
+              <a href="author.html#1133">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-03 16:48:26 +0100 (Mon, 03 Dec 2007)
+New Revision: 1139
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.h
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/propertiesDialog.cc
+Log:
+Removed superfluous includes, replaced instances of XapianIndex with an object
+obtained from PinotSettings::getIndex().
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.h	2007-12-01 14:52:21 UTC (rev 1138)
++++ trunk/IndexSearch/Xapian/XapianEngine.h	2007-12-03 15:48:26 UTC (rev 1139)
+@@ -27,7 +27,6 @@
+ 
+ #include &quot;config.h&quot;
+ #include &quot;SearchEngineInterface.h&quot;
+-#include &quot;DownloaderFactory.h&quot;
+ 
+ #if !ENABLE_XAPIAN_SPELLING_CORRECTION
+ // Spelling correction in Xapian 1.0.2 may cause a crash
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-12-01 14:52:21 UTC (rev 1138)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-12-03 15:48:26 UTC (rev 1139)
+@@ -37,7 +37,7 @@
+ OnDiskHandler::OnDiskHandler() :
+ 	MonitorHandler(),
+ 	m_history(PinotSettings::getInstance().getHistoryDatabaseName()),
+-	m_index(PinotSettings::getInstance().m_daemonIndexLocation)
++	m_pIndex(PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation))
+ {
+ 	pthread_mutex_init(&amp;m_mutex, NULL);
+ }
+@@ -57,6 +57,11 @@
+ 			slotIter-&gt;disconnect();
+ 		}
+ 	}
++
++	if (m_pIndex != NULL)
++	{
++		delete m_pIndex;
++	}
+ }
+ 
+ bool OnDiskHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName,
+@@ -68,18 +73,23 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileMoved: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	if (m_pIndex == NULL)
++	{
++		return false;
++	}
++
+ 	pthread_mutex_lock(&amp;m_mutex);
+ 	// Get a list of documents in that directory/file
+ 	if (type == IndexInterface::BY_FILE)
+ 	{
+-		m_index.listDocuments(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName, docIdList, type);
++		m_pIndex-&gt;listDocuments(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName, docIdList, type);
+ 	}
+ 	else
+ 	{
+-		m_index.listDocuments(previousFileName, docIdList, type);
++		m_pIndex-&gt;listDocuments(previousFileName, docIdList, type);
+ 	}
+ 	// ...and the directory/file itself
+-	unsigned int baseDocId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName);
++	unsigned int baseDocId = m_pIndex-&gt;hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName);
+ 	if (baseDocId &gt; 0)
+ 	{
+ 		docIdList.insert(baseDocId);
+@@ -94,7 +104,7 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;OnDiskHandler::fileMoved: moving &quot; &lt;&lt; *iter &lt;&lt; endl;
+ #endif
+-			if (m_index.getDocumentInfo(*iter, docInfo) == true)
++			if (m_pIndex-&gt;getDocumentInfo(*iter, docInfo) == true)
+ 			{
+ 				string newLocation(docInfo.getLocation());
+ 
+@@ -145,20 +155,25 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileDeleted: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	if (m_pIndex == NULL)
++	{
++		return false;
++	}
++
+ 	pthread_mutex_lock(&amp;m_mutex);
+ 	// Unindex all of the directory/file's documents
+ 	if (type == IndexInterface::BY_FILE)
+ 	{
+-		unindexedDocs = m_index.unindexDocuments(location, type);
++		unindexedDocs = m_pIndex-&gt;unindexDocuments(location, type);
+ 	}
+ 	else
+ 	{
+-		unindexedDocs = m_index.unindexDocuments(fileName, type);
++		unindexedDocs = m_pIndex-&gt;unindexDocuments(fileName, type);
+ 	}
+ 	if (unindexedDocs == true)
+ 	{
+ 		// ...as well as the actual directory/file
+-		m_index.unindexDocument(location);
++		m_pIndex-&gt;unindexDocument(location);
+ 
+ 		m_history.deleteItems(location);
+ 		handledEvent = true;
+@@ -215,13 +230,17 @@
+ 
+ bool OnDiskHandler::replaceFile(unsigned int docId, DocumentInfo &amp;docInfo)
+ {
+-	FilterWrapper wrapFilter(&amp;m_index);
++	if (m_pIndex == NULL)
++	{
++		return false;
++	}
+ 
+ 	// Unindex the destination file
++	FilterWrapper wrapFilter(m_pIndex);
+ 	wrapFilter.unindexDocument(docInfo.getLocation());
+ 
+ 	// Update the document info
+-	return m_index.updateDocumentInfo(docId, docInfo);
++	return m_pIndex-&gt;updateDocumentInfo(docId, docInfo);
+ }
+ 
+ void OnDiskHandler::initialize(void)
+@@ -262,7 +281,8 @@
+ 					&lt;&lt; &quot;, source &quot; &lt;&lt; sourceId &lt;&lt; &quot; was removed&quot; &lt;&lt; endl;
+ #endif
+ 				// All documents with this label will be unindexed
+-				if (m_index.unindexDocuments(labelStr, IndexInterface::BY_LABEL) == true)
++				if ((m_pIndex != NULL) &amp;&amp;
++					(m_pIndex-&gt;unindexDocuments(labelStr, IndexInterface::BY_LABEL) == true))
+ 				{
+ 					// Delete the source itself and all its items
+ 					m_history.deleteSource(sourceId);
+@@ -280,7 +300,10 @@
+ void OnDiskHandler::flushIndex(void)
+ {
+ 	pthread_mutex_lock(&amp;m_mutex);
+-	m_index.flush();
++	if (m_pIndex != NULL)
++	{
++		m_pIndex-&gt;flush();
++	}
+ 	pthread_mutex_unlock(&amp;m_mutex);
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2007-12-01 14:52:21 UTC (rev 1138)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2007-12-03 15:48:26 UTC (rev 1139)
+@@ -26,8 +26,8 @@
+ #include &lt;sigc++/sigc++.h&gt;
+ 
+ #include &quot;CrawlHistory.h&quot;
++#include &quot;IndexInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+-#include &quot;XapianIndex.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+ class OnDiskHandler : public MonitorHandler
+@@ -75,7 +75,7 @@
+ 		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
+ 		std::map&lt;unsigned int, std::string&gt; m_fileSources;
+ 		CrawlHistory m_history;
+-		XapianIndex m_index;
++		IndexInterface *m_pIndex;
+ 
+ 		bool fileMoved(const std::string &amp;fileName,
+ 			const std::string &amp;previousFileName,
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-12-01 14:52:21 UTC (rev 1138)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-12-03 15:48:26 UTC (rev 1139)
+@@ -36,6 +36,8 @@
+ #include &lt;gtkmm/recentmanager.h&gt;
+ #include &lt;gtkmm/main.h&gt;
+ 
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
+ #include &quot;CommandLine.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+@@ -44,10 +46,6 @@
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+-#include &quot;DownloaderFactory.h&quot;
+-#include &quot;SearchEngineFactory.h&quot;
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;mainWindow.hh&quot;
+ #include &quot;importDialog.hh&quot;
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2007-12-01 14:52:21 UTC (rev 1138)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2007-12-03 15:48:26 UTC (rev 1139)
+@@ -25,7 +25,6 @@
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;NLS.h&quot;
+-#include &quot;XapianIndex.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;propertiesDialog.hh&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001132.html">[Pinot-svn] r1138 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001134.html">[Pinot-svn] r1140 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1133">[ date ]</a>
+              <a href="thread.html#1133">[ thread ]</a>
+              <a href="subject.html#1133">[ subject ]</a>
+              <a href="author.html#1133">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,218 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r454 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r454%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200609020758.k827wPdR021231%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000446.html">
+   <LINK REL="Next"  HREF="000448.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r454 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r454%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200609020758.k827wPdR021231%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r454 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep  2 09:58:25 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000446.html">[Pinot-svn] r453 - in trunk: Index Search UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000448.html">[Pinot-svn] r455 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#447">[ date ]</a>
+              <a href="thread.html#447">[ thread ]</a>
+              <a href="subject.html#447">[ subject ]</a>
+              <a href="author.html#447">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-02 09:58:22 +0200 (Sat, 02 Sep 2006)
+New Revision: 454
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Removed obsolete cache stuff from DownloadingThread.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-09-02 07:55:12 UTC (rev 453)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-09-02 07:58:22 UTC (rev 454)
+@@ -41,9 +41,6 @@
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+-#ifdef HAS_GOOGLEAPI
+-#include &quot;GoogleAPIEngine.h&quot;
+-#endif
+ #include &quot;IndexFactory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -950,10 +947,9 @@
+ 	delete pDocsIndex;
+ }
+ 
+-DownloadingThread::DownloadingThread(const DocumentInfo &amp;docInfo, bool fromCache) :
++DownloadingThread::DownloadingThread(const DocumentInfo &amp;docInfo) :
+ 	WorkerThread(),
+ 	m_docInfo(docInfo),
+-	m_fromCache(fromCache),
+ 	m_pDoc(NULL),
+ 	m_pDownloader(NULL)
+ {
+@@ -1006,31 +1002,17 @@
+ 
+ 	Url thisUrl(m_docInfo.getLocation());
+ 
+-	if (m_fromCache == true)
++	// Get a Downloader, the default one will do
++	m_pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
++	if (m_pDownloader == NULL)
+ 	{
+-#ifdef HAS_GOOGLEAPI
+-		GoogleAPIEngine googleApiEngine;
+-		googleApiEngine.setKey(PinotSettings::getInstance().m_googleAPIKey);
+-		m_pDoc = googleApiEngine.retrieveCachedUrl(m_docInfo.getLocation());
+-#endif
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DownloadingThread::doWork: got cached page&quot; &lt;&lt; endl;
+-#endif
++		m_status = _(&quot;Couldn't obtain downloader for protocol&quot;);
++		m_status += &quot; &quot;;
++		m_status += thisUrl.getProtocol();
+ 	}
+-	else
++	else if (m_done == false)
+ 	{
+-		// Get a Downloader, the default one will do
+-		m_pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+-		if (m_pDownloader == NULL)
+-		{
+-			m_status = _(&quot;Couldn't obtain downloader for protocol&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += thisUrl.getProtocol();
+-		}
+-		else if (m_done == false)
+-		{
+-			m_pDoc = m_pDownloader-&gt;retrieveUrl(m_docInfo);
+-		}
++		m_pDoc = m_pDownloader-&gt;retrieveUrl(m_docInfo);
+ 	}
+ 
+ 	if (m_pDoc == NULL)
+@@ -1043,7 +1025,7 @@
+ 
+ IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId,
+ 	const string &amp;indexLocation, bool allowAllMIMETypes) :
+-	DownloadingThread(docInfo, false),
++	DownloadingThread(docInfo),
+ 	m_docInfo(docInfo),
+ 	m_docId(docId),
+ 	m_indexLocation(indexLocation),
+@@ -1126,7 +1108,7 @@
+ 
+ 	DownloadingThread::doWork();
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;IndexingThread::doWork: downloaded !&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;IndexingThread::doWork: downloaded &quot; &lt;&lt; m_docInfo.getLocation() &lt;&lt; endl;
+ #endif
+ 
+ 	if (m_pDoc != NULL)
+@@ -1529,7 +1511,8 @@
+ {
+ 	queue&lt;MonitorEvent&gt; events;
+ 
+-	if (m_pMonitor-&gt;retrievePendingEvents(events) == false)
++	if ((m_pMonitor == NULL) ||
++		(m_pMonitor-&gt;retrievePendingEvents(events) == false))
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;MonitorThread::processEvents: failed to retrieve pending events&quot; &lt;&lt; endl;
+@@ -1831,8 +1814,11 @@
+ 				&lt;&lt; dirName &lt;&lt; endl;
+ #endif
+ 
+-			// Monitor first so that we don't miss events
+-			m_pMonitor-&gt;addLocation(dirName, true);
++			if (m_pMonitor != NULL)
++			{
++				// Monitor first so that we don't miss events
++				m_pMonitor-&gt;addLocation(dirName, true);
++			}
+ 
+ 			// Iterate through this directory's entries
+ 			struct dirent *pDirEntry = readdir(pDir);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-09-02 07:55:12 UTC (rev 453)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-09-02 07:58:22 UTC (rev 454)
+@@ -277,7 +277,7 @@
+ class DownloadingThread : public WorkerThread
+ {
+ 	public:
+-		DownloadingThread(const DocumentInfo &amp;docInfo, bool fromCache);
++		DownloadingThread(const DocumentInfo &amp;docInfo);
+ 		virtual ~DownloadingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -290,7 +290,6 @@
+ 
+ 	protected:
+ 		DocumentInfo m_docInfo;
+-		bool m_fromCache;
+ 		Document *m_pDoc;
+ 		DownloaderInterface *m_pDownloader;
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-09-02 07:55:12 UTC (rev 453)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-09-02 07:58:22 UTC (rev 454)
+@@ -2921,7 +2921,7 @@
+ 			DocumentInfo docInfo(&quot;&quot;, url, &quot;&quot;, &quot;&quot;);
+ 
+ 			// Get that message
+-			start_thread(new DownloadingThread(docInfo, false));
++			start_thread(new DownloadingThread(docInfo));
+ 
+ 			// Record this into the history now, even though it may fail
+ 			if (viewHistory.hasItem(url) == false)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000446.html">[Pinot-svn] r453 - in trunk: Index Search UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000448.html">[Pinot-svn] r455 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#447">[ date ]</a>
+              <a href="thread.html#447">[ thread ]</a>
+              <a href="subject.html#447">[ subject ]</a>
+              <a href="author.html#447">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

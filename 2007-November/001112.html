@@ -1,0 +1,613 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1118 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1118%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200711221129.lAMBTGIs011700%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001111.html">
+   <LINK REL="Next"  HREF="001113.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1118 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1118%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200711221129.lAMBTGIs011700%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1118 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov 22 12:29:16 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001111.html">[Pinot-svn] r1117 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="001113.html">[Pinot-svn] r1119 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1112">[ date ]</a>
+              <a href="thread.html#1112">[ thread ]</a>
+              <a href="subject.html#1112">[ subject ]</a>
+              <a href="author.html#1112">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-11-22 12:29:14 +0100 (Thu, 22 Nov 2007)
+New Revision: 1118
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Locations to crawl are queued and only popped from the queue if the crawler
+wasn't stopped. This allows restarting crawling more or less where it stopped
+when the system went on battery.
+The battery state is queried at startup (through D-Bus) and crawling is
+restarted when the system goes on AC.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -24,14 +24,26 @@
+ #include &lt;unistd.h&gt;
+ #include &lt;stdlib.h&gt;
+ #ifdef HAVE_STATFS
+-#include &lt;sys/vfs.h&gt;
+-#define CHECK_DISK_SPACE 1
++  #ifdef HAVE_SYS_VFS_H
++  #include &lt;sys/vfs.h&gt;
++  #define CHECK_DISK_SPACE 1
++  #else
++    #ifdef HAVE_SYS_STATFS_H
++      #include &lt;sys/statfs.h&gt;
++      #define CHECK_DISK_SPACE 1
++    #else
++      #ifdef HAVE_SYS_MOUNT_H
++        #include &lt;sys/mount.h&gt;
++        #define CHECK_DISK_SPACE 1
++      #endif
++    #endif
++  #endif
+ #else
+-#ifdef HAVE_STATVFS
+-#include &lt;sys/statvfs.h&gt;
+-#define CHECK_DISK_SPACE 1
++  #ifdef HAVE_STATVFS
++  #include &lt;sys/statvfs.h&gt;
++  #define CHECK_DISK_SPACE 1
++  #endif
+ #endif
+-#endif
+ #ifdef __FreeBSD__
+ #ifdef HAVE_SYSCTLBYNAME
+ #include &lt;sys/sysctl.h&gt;
+@@ -119,7 +131,8 @@
+ 	m_fullScan(false),
+ 	m_reload(false),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+-	m_pDiskHandler(NULL)
++	m_pDiskHandler(NULL),
++	m_crawlers(0)
+ {
+ 	FD_ZERO(&amp;m_flagsSet);
+ 
+@@ -220,15 +233,19 @@
+ #endif
+ }
+ 
+-bool DaemonState::crawl_location(const string &amp;locationToCrawl, bool isSource, bool doMonitoring)
++bool DaemonState::crawl_location(const PinotSettings::IndexableLocation &amp;location)
+ {
++	string locationToCrawl(location.m_name);
++	bool doMonitoring = location.m_monitor;
++	bool isSource = location.m_isSource;
+ 	DirectoryScannerThread *pScannerThread = NULL;
+ 
++	// Can we go ahead and crawl ?
+ 	if ((is_flag_set(LOW_DISK_SPACE) == true) ||
+ 		(is_flag_set(ON_BATTERY) == true))
+ 	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::crawl_location: stopped crawling&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;DaemonState::crawl_location: crawling was stopped&quot; &lt;&lt; endl;
+ #endif
+ 		return true;
+ 	}
+@@ -252,7 +269,14 @@
+ 	}
+ 	pScannerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
+ 
+-	return start_thread(pScannerThread);
++	if (start_thread(pScannerThread) == true)
++	{
++		++m_crawlers;
++
++		return true;
++	}
++
++	return false;
+ }
+ 
+ void DaemonState::start(bool forceFullScan)
+@@ -291,12 +315,22 @@
+ 	MonitorThread *pDiskMonitorThread = new MonitorThread(m_pDiskMonitor, m_pDiskHandler);
+ 	start_thread(pDiskMonitorThread, true);
+ 
+-	set&lt;PinotSettings::IndexableLocation&gt;::const_iterator locationIter = PinotSettings::getInstance().m_indexableLocations.begin();
+-	if (locationIter != PinotSettings::getInstance().m_indexableLocations.end())
++	for (set&lt;PinotSettings::IndexableLocation&gt;::const_iterator locationIter = PinotSettings::getInstance().m_indexableLocations.begin();
++		locationIter != PinotSettings::getInstance().m_indexableLocations.end(); ++locationIter)
+ 	{
+-		// Crawl this now
+-		crawl_location(locationIter-&gt;m_name, true, locationIter-&gt;m_monitor);
++		m_crawlQueue.push(*locationIter);
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DaemonState::start: &quot; &lt;&lt; m_crawlQueue.size() &lt;&lt; &quot; locations to crawl&quot; &lt;&lt; endl;
++#endif
++
++	// Initiate crawling
++	if (m_crawlQueue.empty() == false)
++	{
++		PinotSettings::IndexableLocation firstLocation(m_crawlQueue.front());
++
++		crawl_location(firstLocation);
++	}
+ }
+ 
+ void DaemonState::reload(void)
+@@ -305,17 +339,39 @@
+ 	m_reload = true;
+ }
+ 
++void DaemonState::start_crawling(void)
++{
++	if (write_lock_lists() == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DaemonState::start_crawling: &quot; &lt;&lt; m_crawlQueue.size() &lt;&lt; &quot; locations to crawl, &quot;
++			&lt;&lt; m_crawlers &lt;&lt; &quot; crawlers&quot; &lt;&lt; endl;
++#endif
++		// Get the next location, unless something is still being crawled
++		if ((m_crawlers == 0) &amp;&amp;
++			(m_crawlQueue.empty() == false))
++		{
++			PinotSettings::IndexableLocation nextLocation(m_crawlQueue.front());
++
++			crawl_location(nextLocation);
++		}
++
++		unlock_lists();
++	}
++
++}
++
+ void DaemonState::stop_crawling(void)
+ {
+-	if (m_threads.empty() == false)
++	if (write_lock_threads() == true)
+ 	{
+-		if (write_lock_threads() == true)
++		if (m_threads.empty() == false)
+ 		{
+ 			// Stop all DirectoryScanner threads
+ 			for_each(m_threads.begin(), m_threads.end(), StopScannerThreadFunc());
++		}
+ 
+-			unlock_threads();
+-		}
++		unlock_threads();
+ 	}
+ }
+ 
+@@ -341,41 +397,23 @@
+ 			delete pThread;
+ 			return;
+ 		}
++		--m_crawlers;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DaemonState::on_thread_end: done crawling &quot; &lt;&lt; pScannerThread-&gt;getDirectory() &lt;&lt; endl;
++#endif
+ 
+-		string crawledLocation(pScannerThread-&gt;getDirectory());
+-
+ 		// Explicitely flush the index once a directory has been crawled
+ 		XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+ 		index.flush();
+ 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::on_thread_end: done crawling &quot; &lt;&lt; crawledLocation &lt;&lt; endl;
+-#endif
+-		// Another location to crawl ?
+-		if (write_lock_lists() == true)
++		if (pScannerThread-&gt;isStopped() == false)
+ 		{
+-			PinotSettings::IndexableLocation currentLocation;
+-			currentLocation.m_name = crawledLocation;
++			// Pop the queue
++			m_crawlQueue.pop();
++		}
++		// Else, the directory wasn't fully crawled so better leave it in the queue
+ 
+-			set&lt;PinotSettings::IndexableLocation&gt;::const_iterator locationIter = PinotSettings::getInstance().m_indexableLocations.find(currentLocation);
+-			if (locationIter != PinotSettings::getInstance().m_indexableLocations.end())
+-			{
+-				// Get the next location
+-				++locationIter;
+-				if (locationIter != PinotSettings::getInstance().m_indexableLocations.end())
+-				{
+-					crawl_location(locationIter-&gt;m_name, true, locationIter-&gt;m_monitor);
+-				}
+-			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;DaemonState::on_thread_end: nothing else to crawl&quot; &lt;&lt; endl;
+-#endif
+-
+-			unlock_lists();
+-		}
+-#ifdef DEBUG
+-		else cout &lt;&lt; &quot;DaemonState::on_thread_end: nothing else to crawl&quot; &lt;&lt; endl;
+-#endif
++		start_crawling();
+ 	}
+ 	else if (type == &quot;IndexingThread&quot;)
+ 	{
+@@ -388,6 +426,17 @@
+ 
+ 		// Get the URL we have just indexed
+ 		indexedUrl = pIndexThread-&gt;getURL();
++
++		// Did it fail ?
++		int errorNum = pThread-&gt;getErrorNum();
++		if ((errorNum &gt; 0) &amp;&amp;
++			(indexedUrl.empty() == false))
++		{
++			CrawlHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
++
++			// An entry should already exist for this
++			history.updateItem(indexedUrl, CrawlHistory::ERROR, time(NULL), errorNum);
++		}
+ 	}
+ 	else if (type == &quot;UnindexingThread&quot;)
+ 	{
+@@ -418,17 +467,6 @@
+ 		}
+ 	}
+ 
+-	// Did it fail ?
+-	int errorNum = pThread-&gt;getErrorNum();
+-	if ((errorNum &gt; 0) &amp;&amp;
+-		(indexedUrl.empty() == false))
+-	{
+-		CrawlHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
+-
+-		// An entry should already exist for this
+-		history.updateItem(indexedUrl, CrawlHistory::ERROR, time(NULL), errorNum);
+-	}
+-
+ 	// Delete the thread
+ 	delete pThread;
+ 
+@@ -482,11 +520,16 @@
+ 	}
+ 	else
+ 	{
+-		string location(docInfo.getLocation());
++		PinotSettings::IndexableLocation newLocation;
+ 
+-		crawl_location(location.substr(7), false, true);
++		newLocation.m_monitor = true;
++		newLocation.m_name = docInfo.getLocation().substr(7);
++		newLocation.m_isSource = false;
++
++		// Queue for later crawling
++		m_crawlQueue.push(newLocation);
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::on_message_filefound: new directory &quot; &lt;&lt; location.substr(7) &lt;&lt; endl;
++		cout &lt;&lt; &quot;DaemonState::on_message_filefound: new directory &quot; &lt;&lt; newLocation.m_name &lt;&lt; endl;
+ #endif
+ 	}
+ }
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/DaemonState.h	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -27,6 +27,7 @@
+ 
+ #include &quot;MonitorInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
++#include &quot;PinotSettings.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ 
+ class DaemonState : public ThreadsManager
+@@ -41,6 +42,8 @@
+ 
+ 		void reload(void);
+ 
++		void start_crawling(void);
++
+ 		void stop_crawling(void);
+ 
+ 		void on_thread_end(WorkerThread *pThread);
+@@ -64,12 +67,14 @@
+ 		MonitorHandler *m_pDiskHandler;
+ 		sigc::connection m_timeoutConnection;
+ 		sigc::signal1&lt;void, int&gt; m_signalQuit;
++		unsigned int m_crawlers;
++		std::queue&lt;PinotSettings::IndexableLocation&gt; m_crawlQueue;
+ 
+ 		bool on_activity_timeout(void);
+ 
+ 		void check_battery_state(void);
+ 
+-		bool crawl_location(const std::string &amp;locationToCrawl, bool isSource, bool doMonitoring);
++		bool crawl_location(const PinotSettings::IndexableLocation &amp;location);
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -1823,13 +1823,15 @@
+ }
+ 
+ PinotSettings::IndexableLocation::IndexableLocation() :
+-	m_monitor(false)
++	m_monitor(false),
++	m_isSource(true)
+ {
+ }
+ 
+ PinotSettings::IndexableLocation::IndexableLocation(const IndexableLocation &amp;other) :
+ 	m_monitor(other.m_monitor),
+-	m_name(other.m_name)
++	m_name(other.m_name),
++	m_isSource(other.m_isSource)
+ {
+ }
+ 
+@@ -1843,6 +1845,7 @@
+ 	{
+ 		m_monitor = other.m_monitor;
+ 		m_name = other.m_name;
++		m_isSource = other.m_isSource;
+ 	}
+ 
+ 	return *this;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/PinotSettings.h	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -164,6 +164,7 @@
+ 
+ 				bool m_monitor;
+ 				Glib::ustring m_name;
++				bool m_isSource;
+ 
+ 		};
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -137,6 +137,7 @@
+ WorkerThread::WorkerThread() :
+ 	m_id(0),
+ 	m_background(false),
++	m_stopped(false),
+ 	m_done(false),
+ 	m_errorNum(0)
+ {
+@@ -182,11 +183,16 @@
+ 
+ bool WorkerThread::stop(void)
+ {
+-	m_done = true;
++	m_stopped = m_done = true;
+ 
+ 	return true;
+ }
+ 
++bool WorkerThread::isStopped(void) const
++{
++	return m_stopped;
++}
++
+ bool WorkerThread::isDone(void) const
+ {
+ 	return m_done;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -70,6 +70,8 @@
+ 
+ 		virtual bool stop(void);
+ 
++		bool isStopped(void) const;
++
+ 		bool isDone(void) const;
+ 
+ 		int getErrorNum(void) const;
+@@ -83,6 +85,7 @@
+ 		static bool m_immediateFlush;
+ 		unsigned int m_id;
+ 		bool m_background;
++		bool m_stopped;
+ 		bool m_done;
+ 		int m_errorNum;
+ 		std::string m_errorParam;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-11-22 11:20:31 UTC (rev 1117)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-11-22 11:29:14 UTC (rev 1118)
+@@ -158,26 +158,31 @@
+ 			if (dbus_message_is_signal(pMessage, &quot;org.gnome.PowerManager&quot;, &quot;OnAcChanged&quot;) == TRUE)
+ 			{
+ 				// This tells us if we are on AC, not on battery
+-				if (onBattery == true)
++				if (onBattery == TRUE)
+ 				{
+-					onBattery = false;
++					onBattery = FALSE;
+ 				}
+ 				else
+ 				{
+-					onBattery = true;
++					onBattery = TRUE;
+ 				}
+ 			}
+ 
+-			if (onBattery == true)
++			if (onBattery == TRUE)
+ 			{
+ 				// We are now on battery
+ 				pServer-&gt;set_flag(DaemonState::ON_BATTERY);
+ 				pServer-&gt;stop_crawling();
++
++				cout &lt;&lt; &quot;System is now on battery&quot; &lt;&lt; endl;
+ 			}
+ 			else
+ 			{
+ 				// Back on-line
+ 				pServer-&gt;reset_flag(DaemonState::ON_BATTERY);
++				pServer-&gt;start_crawling();
++
++				cout &lt;&lt; &quot;System is now on AC&quot; &lt;&lt; endl;
+ 			}
+ 		}
+ 		dbus_error_free(&amp;error);
+@@ -214,6 +219,46 @@
+ 	return DBUS_HANDLER_RESULT_HANDLED;
+ }
+ 
++static bool getBatteryState(DBusGConnection *pBus, const string &amp;name, const string &amp;path,
++	const string &amp;method, gboolean &amp;result)
++{
++	bool callSuccess = true;
++
++	if ((pBus == NULL) ||
++		(name.empty() == true) ||
++		(path.empty() == true) ||
++		(method.empty() == true))
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = dbus_g_proxy_new_for_name(pBus, name.c_str(),
++		path.c_str(), name.c_str());
++	if (pBusProxy == NULL)
++	{
++		return false;
++	}
++
++	GError *pError = NULL;
++	if (dbus_g_proxy_call(pBusProxy, method.c_str(), &amp;pError,
++		G_TYPE_INVALID,
++		G_TYPE_BOOLEAN, &amp;result,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;Couldn't get battery state: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++
++		callSuccess = false;
++	}
++
++	g_object_unref(pBusProxy);
++
++	return callSuccess;
++}
++
+ int main(int argc, char **argv)
+ {
+ 	string prefixDir(PREFIX);
+@@ -501,6 +546,7 @@
+ 			set&lt;string&gt; labels;
+ 			string indexVersion(index.getVersion());
+ 			bool gotLabels = index.getLabels(labels);
++			bool onBattery = false;
+ 
+ 			// What version is the index at ?
+ 			if (indexVersion &lt; PINOT_INDEX_MIN_VERSION)
+@@ -560,6 +606,35 @@
+ 			// Connect to threads' finished signal
+ 			server.connect();
+ 
++			// Try and get the battery state
++			gboolean result = FALSE;
++			if ((getBatteryState(pBus, &quot;org.freedesktop.PowerManagement&quot;,
++				&quot;/org/freedesktop/PowerManagement&quot;, &quot;GetOnBattery&quot;, result) == true) ||
++				(getBatteryState(pBus, &quot;org.freedesktop.PowerManagement&quot;,
++				&quot;/org/freedesktop/PowerManagement&quot;, &quot;GetBatteryState&quot;, result) == true))
++			{
++				if (result == TRUE)
++				{
++					onBattery = true;
++				}
++			}
++			else if (getBatteryState(pBus, &quot;org.gnome.PowerManager&quot;,
++				&quot;/org/gnome/PowerManager&quot;, &quot;GetOnAc&quot;, result) == true)
++			{
++				if (result == FALSE)
++				{
++					onBattery = true;
++				}
++			}
++			if (onBattery == true)
++			{
++				// We are on battery
++				server.set_flag(DaemonState::ON_BATTERY);
++				server.stop_crawling();
++
++				cout &lt;&lt; &quot;System is on battery&quot; &lt;&lt; endl;
++			}
++
+ 			server.start(fullScan);
+ 
+ 			// Run the main loop
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001111.html">[Pinot-svn] r1117 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="001113.html">[Pinot-svn] r1119 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1112">[ date ]</a>
+              <a href="thread.html#1112">[ thread ]</a>
+              <a href="subject.html#1112">[ subject ]</a>
+              <a href="author.html#1112">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

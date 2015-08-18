@@ -1,0 +1,275 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r160 - in trunk: Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r160%20-%20in%20trunk%3A%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200603191353.k2JDr30j017141%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000158.html">
+   <LINK REL="Next"  HREF="000160.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r160 - in trunk: Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r160%20-%20in%20trunk%3A%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200603191353.k2JDr30j017141%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r160 - in trunk: Search UI/GTK2/src Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun Mar 19 14:53:03 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000158.html">[Pinot-svn] r159 - in trunk: Search Search/Google Search/ObjectsSearch Utils
+</A></li>
+        <LI>Next message: <A HREF="000160.html">[Pinot-svn] r161 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#159">[ date ]</a>
+              <a href="thread.html#159">[ thread ]</a>
+              <a href="subject.html#159">[ subject ]</a>
+              <a href="author.html#159">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-19 14:52:50 +0100 (Sun, 19 Mar 2006)
+New Revision: 160
+
+Modified:
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/Utils/Url.cpp
+Log:
+Some fixes for the last couple of check-ins.
+
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2006-03-19 05:34:05 UTC (rev 159)
++++ trunk/Search/SearchEngineInterface.cpp	2006-03-19 13:52:50 UTC (rev 160)
+@@ -84,6 +84,7 @@
+ {
+ 	Url queryUrlObj(queryUrl);
+ 	Url resultUrlObj(resultUrl);
++	string queryHost(Url::reduceHost(queryUrlObj.getHost(), 2));
+ 
+ 	if ((m_hostFilter.empty() == false) &amp;&amp;
+ 		(resultUrlObj.getHost() != m_hostFilter))
+@@ -105,7 +106,7 @@
+ 
+ 	// Is the result's host name the same as the search engine's ?
+ 	// FIXME: not all TLDs have leafs at level 2
+-	if (Url::reduceHost(queryUrlObj.getHost(), 2) == Url::reduceHost(resultUrlObj.getHost(), 2))
++	if (queryHost == Url::reduceHost(resultUrlObj.getHost(), 2))
+ 	{
+ 		string protocol(resultUrlObj.getProtocol());
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-03-19 05:34:05 UTC (rev 159)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-03-19 13:52:50 UTC (rev 160)
+@@ -45,7 +45,6 @@
+ #include &quot;XapianEngine.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+-#include &quot;IndexPage.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;mainWindow.hh&quot;
+ #include &quot;importDialog.hh&quot;
+@@ -1048,25 +1047,23 @@
+ 				m_state.unlock_lists();
+ 			}
+ 
+-			if (pIndexTree != NULL)
++			unsigned int rowsCount = pIndexTree-&gt;getRowsCount();
++
++			// Ensure the last page is being displayed and is not full
++			if ((pIndexPage-&gt;getFirstDocument() + rowsCount == pIndexPage-&gt;getDocumentsCount()) &amp;&amp;
++				(rowsCount &lt; m_maxDocsCount))
+ 			{
+-				unsigned int rowsCount = pIndexTree-&gt;getRowsCount();
++				// Add a row to the index tree
++				IndexedDocument indexedDoc(docInfo.getTitle(),
++					XapianEngine::buildUrl(m_settings.m_indexLocation, docId),
++					docInfo.getLocation(), docInfo.getType(),
++					docInfo.getLanguage());
++				indexedDoc.setTimestamp(docInfo.getTimestamp());
+ 
+-				// Ensure the last page is being displayed and is not full
+-				if ((pIndexPage-&gt;getFirstDocument() + rowsCount == pIndexPage-&gt;getDocumentsCount()) &amp;&amp;
+-					(rowsCount &lt; m_maxDocsCount))
+-				{
+-					// Add a row to the index tree
+-					IndexedDocument indexedDoc(docInfo.getTitle(),
+-						XapianEngine::buildUrl(m_settings.m_indexLocation, docId),
+-						docInfo.getLocation(), docInfo.getType(),
+-						docInfo.getLanguage());
+-					indexedDoc.setTimestamp(docInfo.getTimestamp());
+-					pIndexTree-&gt;appendDocument(indexedDoc);
+-				}
+-				pIndexPage-&gt;setDocumentsCount(pIndexPage-&gt;getDocumentsCount() + 1);
+-				pIndexPage-&gt;updateButtonsState(m_maxDocsCount);
++				append_document(pIndexPage, _(&quot;My Documents&quot;), indexedDoc);
+ 			}
++			pIndexPage-&gt;setDocumentsCount(pIndexPage-&gt;getDocumentsCount() + 1);
++			pIndexPage-&gt;updateButtonsState(m_maxDocsCount);
+ 		}
+ 
+ 		set_status(status);
+@@ -1230,12 +1227,8 @@
+ //
+ void mainWindow::on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, string indexName)
+ {
+-	IndexPage *pIndexPage = NULL;
+-	IndexTree *pIndexTree = NULL;
+-	bool hasLabel = false;
+-
+ 	// Find the page for this index
+-	pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(to_utf8(indexName), NotebookPageBox::INDEX_PAGE));
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(to_utf8(indexName), NotebookPageBox::INDEX_PAGE));
+ 	if (pIndexPage == NULL)
+ 	{
+ 		// It's probably been closed by the user
+@@ -1244,15 +1237,8 @@
+ #endif
+ 		return;
+ 	}
+-	pIndexTree = pIndexPage-&gt;getTree();
+-	if (pIndexTree == NULL)
+-	{
+-		return;
+-	}
+-	unsigned int rowsCount = pIndexTree-&gt;getRowsCount();
+ 
+-	// Add a row
+-	pIndexTree-&gt;appendDocument(docInfo);
++	append_document(pIndexPage, to_utf8(indexName), docInfo);
+ }
+ 
+ //
+@@ -2937,6 +2923,52 @@
+ }
+ 
+ //
++// Append a document to the index tree.
++//
++bool mainWindow::append_document(IndexPage *pIndexPage, const ustring &amp;indexName, const IndexedDocument &amp;docInfo)
++{
++	bool appendToList = true;
++
++	if (pIndexPage == NULL)
++	{
++		return false;
++	}
++
++	IndexTree *pIndexTree = pIndexPage-&gt;getTree();
++	if (pIndexTree == NULL)
++	{
++		return false;
++	}
++
++	// Does that document have the current label ?
++	ustring labelName = pIndexPage-&gt;getLabelName();
++	if (labelName.empty() == false)
++	{
++		const std::map&lt;string, string&gt; &amp;indexesMap = PinotSettings::getInstance().getIndexes();
++		std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
++		if (mapIter != indexesMap.end())
++		{
++			XapianIndex index(mapIter-&gt;second);
++	
++			if (index.isGood() == true)
++			{
++				appendToList = index.hasLabel(docInfo.getID(), from_utf8(labelName));
++			}
++		}
++	}
++
++	if (appendToList == true)
++	{
++		// Add a row
++		pIndexTree-&gt;appendDocument(docInfo);
++
++		return true;
++	}
++
++	return false;
++}
++
++//
+ // Start of worker thread
+ //
+ bool mainWindow::start_thread(WorkerThread *pNewThread, bool inBackground)
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-03-19 05:34:05 UTC (rev 159)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-03-19 13:52:50 UTC (rev 160)
+@@ -39,6 +39,7 @@
+ #include &quot;QueryProperties.h&quot;
+ #include &quot;EnginesTree.h&quot;
+ #include &quot;HtmlView.h&quot;
++#include &quot;IndexPage.h&quot;
+ #include &quot;ModelColumns.h&quot;
+ #include &quot;Notebook.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -131,6 +132,8 @@
+ 	void index_document(const DocumentInfo &amp;docInfo, const std::string &amp;labelName,
+ 		unsigned int docId = 0);
+ 	bool view_document(const std::string &amp;url, bool internalViewerOnly = false);
++	bool append_document(IndexPage *pIndexPage, const Glib::ustring &amp;indexName,
++		const IndexedDocument &amp;docInfo);
+ 	bool start_thread(WorkerThread *pNewThread, bool inBackground = false);
+ 	bool check_queue(void);
+ 
+
+Modified: trunk/Utils/Url.cpp
+===================================================================
+--- trunk/Utils/Url.cpp	2006-03-19 05:34:05 UTC (rev 159)
++++ trunk/Utils/Url.cpp	2006-03-19 13:52:50 UTC (rev 160)
+@@ -131,8 +131,12 @@
+ 		}
+ 		else
+ 		{
+-			m_host = url.substr(pos1);
+-			return;
++			if (url.find_first_of(&quot;?&quot;, pos1) == string::npos)
++			{
++				m_host = url.substr(pos1);
++				return;
++			}
++			pos2 = 0;
+ 		}
+ 		// FIXME: what about the port number ?
+ 	}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000158.html">[Pinot-svn] r159 - in trunk: Search Search/Google Search/ObjectsSearch Utils
+</A></li>
+	<LI>Next message: <A HREF="000160.html">[Pinot-svn] r161 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#159">[ date ]</a>
+              <a href="thread.html#159">[ thread ]</a>
+              <a href="subject.html#159">[ subject ]</a>
+              <a href="author.html#159">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,287 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r778 - in trunk: Collect UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r778%20-%20in%20trunk%3A%20Collect%20UI/GTK2/src%20Utils&In-Reply-To=%3C200703221056.l2MAuwfJ015452%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000771.html">
+   <LINK REL="Next"  HREF="000773.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r778 - in trunk: Collect UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r778%20-%20in%20trunk%3A%20Collect%20UI/GTK2/src%20Utils&In-Reply-To=%3C200703221056.l2MAuwfJ015452%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r778 - in trunk: Collect UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 22 11:56:58 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000771.html">[Pinot-svn] r777 - in trunk: UI/GTK2/src scripts/python
+</A></li>
+        <LI>Next message: <A HREF="000773.html">[Pinot-svn] r779 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#772">[ date ]</a>
+              <a href="thread.html#772">[ thread ]</a>
+              <a href="subject.html#772">[ subject ]</a>
+              <a href="author.html#772">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-22 11:56:57 +0100 (Thu, 22 Mar 2007)
+New Revision: 778
+
+Modified:
+   trunk/Collect/FileCollector.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/Utils/Document.cpp
+Log:
+Directories are indexed as separate documents.
+
+
+Modified: trunk/Collect/FileCollector.cpp
+===================================================================
+--- trunk/Collect/FileCollector.cpp	2007-03-21 17:15:31 UTC (rev 777)
++++ trunk/Collect/FileCollector.cpp	2007-03-22 10:56:57 UTC (rev 778)
+@@ -58,8 +58,11 @@
+ 
+ 	Document *pDocument = new Document(docInfo);
+ 
+-	// Determine the file type
+-	pDocument-&gt;setType(MIMEScanner::scanFile(fileLocation));
++	if (pDocument-&gt;getType().empty() == true)
++	{
++		// Determine the file type
++		pDocument-&gt;setType(MIMEScanner::scanFile(fileLocation));
++	}
+ 	if (pDocument-&gt;setDataFromFile(fileLocation) == false)
+ 	{
+ 		delete pDocument;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-03-21 17:15:31 UTC (rev 777)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-03-22 10:56:57 UTC (rev 778)
+@@ -449,10 +449,11 @@
+ bool DirectoryScannerThread::scanEntry(const string &amp;entryName, CrawlHistory &amp;history)
+ {
+ 	CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
++	string location(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+ 	time_t itemDate;
+ 	struct stat fileStat;
+ 	int statSuccess = 0;
+-	bool scanSuccess = true;
++	bool scanSuccess = true, reportFile = false;
+ 
+ 	if (entryName.empty() == true)
+ 	{
+@@ -463,7 +464,7 @@
+ 	}
+ 
+ 	// Skip . .. and dotfiles
+-	Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + entryName);
++	Url urlObj(location);
+ 	if (urlObj.getFile()[0] == '.')
+ 	{
+ #ifdef DEBUG
+@@ -483,7 +484,7 @@
+ 	}
+ 
+ 	// Is this item in the database already ?
+-	bool itemExists = history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, status, itemDate);
++	bool itemExists = history.hasItem(location, status, itemDate);
+ 
+ 	if (statSuccess == -1)
+ 	{
+@@ -503,52 +504,13 @@
+ 	}
+ 	else if (S_ISREG(fileStat.st_mode))
+ 	{
+-		DocumentInfo docInfo;
+-		bool reportFile = false;
+-
+-		docInfo.setLocation(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+-
+ 		// Is this file blacklisted ?
+ 		// We have to check early so that if necessary the file's status stays at CRAWLING 
+ 		// and it is removed from the index at the end of this crawl
+ 		if (PinotSettings::getInstance().isBlackListed(entryName) == false)
+ 		{
+-			if (itemExists == false)
+-			{
+-				// Record it
+-				history.insertItem(docInfo.getLocation(), CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-				reportFile = true;
+-			}
+-			else
+-			{
+-				// Update the record
+-				history.updateItem(docInfo.getLocation(), CrawlHistory::CRAWLED, fileStat.st_mtime);
+-
+-				// Was it last crawled after it was modified ?
+-				if (itemDate &lt; fileStat.st_mtime)
+-				{
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-					// No, crawl and index it again
+-					reportFile = true;
+-				}
+-			}
++			reportFile = true;
+ 		}
+-
+-		if (reportFile == true)
+-		{
+-			Url urlObj(docInfo.getLocation());
+-
+-			docInfo.setTitle(urlObj.getFile());
+-			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
+-			docInfo.setSize(fileStat.st_size);
+-
+-			foundFile(docInfo);
+-		}
+ 	}
+ 	else if (S_ISDIR(fileStat.st_mode))
+ 	{
+@@ -611,6 +573,7 @@
+ 				// Close the directory
+ 				closedir(pDir);
+ 				--m_currentLevel;
++				reportFile = true;
+ 			}
+ 			else
+ 			{
+@@ -629,6 +592,7 @@
+ 		scanSuccess = false;
+ 	}
+ 
++	// Did an error occur ?
+ 	if (scanSuccess == false)
+ 	{
+ 		time_t timeNow = time(NULL);
+@@ -636,14 +600,56 @@
+ 		// Record this error
+ 		if (itemExists == false)
+ 		{
+-			history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::ERROR, m_sourceId, timeNow);
++			history.insertItem(location, CrawlHistory::ERROR, m_sourceId, timeNow);
+ 		}
+ 		else
+ 		{
+-			history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::ERROR, timeNow);
++			history.updateItem(location, CrawlHistory::ERROR, timeNow);
+ 		}
+ 	}
++	else if (reportFile == true)
++	{
++		if (itemExists == false)
++		{
++			// Record it
++			history.insertItem(location, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++		}
++		else
++		{
++			// Update the record
++			history.updateItem(location, CrawlHistory::CRAWLED, fileStat.st_mtime);
+ 
++			// Was it last crawled after it was modified ?
++			if (itemDate &gt;= fileStat.st_mtime)
++			{
++				// Yes, it was
++				reportFile = false;
++			}
++#ifdef DEBUG
++			else cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++		}
++
++		if (reportFile == true)
++		{
++			DocumentInfo docInfo;
++
++			docInfo.setLocation(location);
++			docInfo.setTitle(urlObj.getFile());
++			if (S_ISDIR(fileStat.st_mode))
++			{
++				docInfo.setType(&quot;x-directory/normal&quot;);
++			}
++			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
++			docInfo.setSize(fileStat.st_size);
++
++			foundFile(docInfo);
++		}
++	}
++
+ 	return scanSuccess;
+ }
+ 
+
+Modified: trunk/Utils/Document.cpp
+===================================================================
+--- trunk/Utils/Document.cpp	2007-03-21 17:15:31 UTC (rev 777)
++++ trunk/Utils/Document.cpp	2007-03-22 10:56:57 UTC (rev 778)
+@@ -138,16 +138,19 @@
+ 	}
+ 
+ 	// Make sure the file exists
+-	if ((stat(fileName.c_str(), &amp;fileStat) != 0) ||
++	if (stat(fileName.c_str(), &amp;fileStat) != 0)
++	{
++		return false;
++	}
++
++	if ((!S_ISDIR(fileStat.st_mode)) &amp;&amp; 
+ 		(!S_ISREG(fileStat.st_mode)))
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;Document::setDataFromFile: &quot; &lt;&lt; fileName &lt;&lt; &quot; is not a file&quot; &lt;&lt; endl;
+-#endif
+ 		return false;
+ 	}
+ 
+-	if (fileStat.st_size == 0)
++	if ((S_ISDIR(fileStat.st_mode)) ||
++		(fileStat.st_size == 0))
+ 	{
+ 		// The file is empty
+ 		resetData();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000771.html">[Pinot-svn] r777 - in trunk: UI/GTK2/src scripts/python
+</A></li>
+	<LI>Next message: <A HREF="000773.html">[Pinot-svn] r779 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#772">[ date ]</a>
+              <a href="thread.html#772">[ thread ]</a>
+              <a href="subject.html#772">[ subject ]</a>
+              <a href="author.html#772">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,226 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1594 - in trunk: IndexSearch Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1594%20-%20in%20trunk%3A%20IndexSearch%20Tokenize&In-Reply-To=%3C200903221404.n2ME4WdN010004%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001583.html">
+   <LINK REL="Next"  HREF="001585.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1594 - in trunk: IndexSearch Tokenize</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1594%20-%20in%20trunk%3A%20IndexSearch%20Tokenize&In-Reply-To=%3C200903221404.n2ME4WdN010004%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1594 - in trunk: IndexSearch Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Mar 22 15:04:32 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001583.html">[Pinot-svn] r1593 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="001585.html">[Pinot-svn] r1595 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1584">[ date ]</a>
+              <a href="thread.html#1584">[ thread ]</a>
+              <a href="subject.html#1584">[ subject ]</a>
+              <a href="author.html#1584">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-22 15:04:23 +0100 (Sun, 22 Mar 2009)
+New Revision: 1594
+
+Modified:
+   trunk/IndexSearch/FilterWrapper.cpp
+   trunk/Tokenize/FilterUtils.cpp
+Log:
+Retrieve content out with Filter::get_content().
+Don't set dummy documents when the file is empty or of an unsupported type, just
+go ahead and index its metadata.
+
+
+Modified: trunk/IndexSearch/FilterWrapper.cpp
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.cpp	2009-03-22 14:01:54 UTC (rev 1593)
++++ trunk/IndexSearch/FilterWrapper.cpp	2009-03-22 14:04:23 UTC (rev 1594)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007-2008 Fabrice Colin
++ *  Copyright 2007-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -32,16 +32,6 @@
+ using std::set;
+ using namespace Dijon;
+ 
+-static string convertToUTF8(const char *pData, unsigned int dataLen, const string &amp;charset)
+-{
+-	TextConverter converter(20);
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;FilterWrapper::filterDocument: filter requested conversion from &quot; &lt;&lt; charset &lt;&lt; endl;
+-#endif
+-	return converter.toUTF8(pData, dataLen, charset);
+-}
+-
+ ReducedAction::ReducedAction()
+ {
+ }
+@@ -183,35 +173,25 @@
+ 
+ 	if (pFilter != NULL)
+ 	{
+-		// The filter may have to convert the content to UTF-8 itself
+-    		pFilter-&gt;set_utf8_converter(convertToUTF8);
+-
+ 		fedFilter = FilterUtils::feedFilter(doc, pFilter);
+ 	}
+-	else
++
++	if (fedFilter == false)
+ 	{
+-		// Chances are this type is not supported
+-		pFilter = new TextFilter(&quot;text/plain&quot;);
++		Document docCopy(doc);
+ 
+-		Document emptyDoc(doc.getTitle(), doc.getLocation(), doc.getType(), doc.getLanguage());
++		// Take the appropriate action now
++		finalSuccess = action.takeAction(docCopy, false);
+ 
+-		emptyDoc.setTimestamp(doc.getTimestamp());
+-		emptyDoc.setSize(doc.getSize());
+-		emptyDoc.setData(&quot; &quot;, 1);
++		if (pFilter != NULL)
++		{
++			delete pFilter;
++		}
+ 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterWrapper::filterDocument: unsupported type &quot; &lt;&lt; doc.getType() &lt;&lt; endl;
+-#endif
+-		fedFilter = FilterUtils::feedFilter(emptyDoc, pFilter);
++		return finalSuccess;
+ 	}
+ 
+-	if (fedFilter == false)
+-	{
+-		delete pFilter;
+-
+-		return false;
+-	}
+-
++	// At this point, pFilter cannot be NULL
+ 	bool hasDocs = pFilter-&gt;has_documents();
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;FilterWrapper::filterDocument: has documents &quot; &lt;&lt; hasDocs &lt;&lt; endl;
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2009-03-22 14:01:54 UTC (rev 1593)
++++ trunk/Tokenize/FilterUtils.cpp	2009-03-22 14:04:23 UTC (rev 1594)
+@@ -258,11 +258,7 @@
+ 			{
+ 				fedInput = pFilter-&gt;set_document_data(pData, dataLength);
+ 			}
+-			else
+-			{
+-				// The file may be empty
+-				fedInput = pFilter-&gt;set_document_data(&quot; &quot;, 1);
+-			}
++			// Else, the file may be empty
+ 		}
+ 	}
+ 
+@@ -361,17 +357,17 @@
+ 	TextConverter converter(20);
+ 
+ 	// Content and title may have to be converted
+-	map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;content&quot;);
+-	if (contentIter != metaData.end())
++	const dstring &amp;content = pFilter-&gt;get_content();
++	if (content.empty() == false)
+ 	{
+ 		if (checkType == true)
+ 		{
+-			doc.setType(MIMEScanner::scanData(contentIter-&gt;second.c_str(), contentIter-&gt;second.length()));
++			doc.setType(MIMEScanner::scanData(content.c_str(), content.length()));
+ 		}
+ 
+ 		if (doc.getType().substr(0, 10) == &quot;text/plain&quot;)
+ 		{
+-			string utf8Data(converter.toUTF8(contentIter-&gt;second, charset));
++			string utf8Data(converter.toUTF8(content.c_str(), content.length(), charset));
+ 
+ 			if (converter.getErrorsCount() &gt; 0)
+ 			{
+@@ -381,13 +377,16 @@
+ 		}
+ 		else
+ 		{
+-			doc.setData(contentIter-&gt;second.c_str(), contentIter-&gt;second.length());
++			doc.setData(content.c_str(), content.length());
+ 		}
+ 	}
+-	contentIter = metaData.find(&quot;title&quot;);
+-	if (contentIter != metaData.end())
++	map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;title&quot;);
++	if ((contentIter != metaData.end()) &amp;&amp;
++		(contentIter-&gt;second.empty() == false))
+ 	{
+-		doc.setTitle(converter.toUTF8(contentIter-&gt;second, charset));
++		string utf8Data(converter.toUTF8(contentIter-&gt;second, charset));
++
++		doc.setTitle(utf8Data);
+ 	}
+ 
+ 	return true;
+@@ -414,11 +413,10 @@
+ 	if ((feedFilter(doc, pFilter) == true) &amp;&amp;
+ 		(pFilter-&gt;next_document() == true))
+ 	{
+-		const map&lt;string, string&gt; &amp;metaData = pFilter-&gt;get_meta_data();
+-		map&lt;string, string&gt;::const_iterator contentIter = metaData.find(&quot;content&quot;);
+-		if (contentIter != metaData.end())
++		const dstring &amp;content = pFilter-&gt;get_content();
++		if (content.empty() == false)
+ 		{
+-			strippedText = contentIter-&gt;second;
++			strippedText = string(content.c_str(), content.length());
+ 		}
+ 	}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001583.html">[Pinot-svn] r1593 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="001585.html">[Pinot-svn] r1595 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1584">[ date ]</a>
+              <a href="thread.html#1584">[ thread ]</a>
+              <a href="subject.html#1584">[ subject ]</a>
+              <a href="author.html#1584">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

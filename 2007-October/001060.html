@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1066 - in trunk: Index Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1066%20-%20in%20trunk%3A%20Index%20Search&In-Reply-To=%3C200710231439.l9NEd9xI014490%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001059.html">
+   <LINK REL="Next"  HREF="001061.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1066 - in trunk: Index Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1066%20-%20in%20trunk%3A%20Index%20Search&In-Reply-To=%3C200710231439.l9NEd9xI014490%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1066 - in trunk: Index Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 23 16:39:09 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001059.html">[Pinot-svn] r1065 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="001061.html">[Pinot-svn] r1067 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1060">[ date ]</a>
+              <a href="thread.html#1060">[ thread ]</a>
+              <a href="subject.html#1060">[ subject ]</a>
+              <a href="author.html#1060">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-23 16:39:08 +0200 (Tue, 23 Oct 2007)
+New Revision: 1066
+
+Modified:
+   trunk/Index/XapianDatabase.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+Log:
+The language stored by XapianDatabase::propsToRecord() is in English, so make
+sure both XapianIndex and XapianEngine convert to locale after calling
+recordToProps().
+Dropped code about pre-0.60 timestamps; those indexes will be upgraded.
+
+
+Modified: trunk/Index/XapianDatabase.cpp
+===================================================================
+--- trunk/Index/XapianDatabase.cpp	2007-10-23 14:35:08 UTC (rev 1065)
++++ trunk/Index/XapianDatabase.cpp	2007-10-23 14:39:08 UTC (rev 1066)
+@@ -539,7 +539,7 @@
+ 	record += tmpStr;
+ 	// ...and the language
+ 	record += &quot;\nlanguage=&quot;;
+-	record += StringManip::toLowerCase(pDoc-&gt;getLanguage());
++	record += pDoc-&gt;getLanguage();
+ 	// ...and the file size
+ 	record += &quot;\nsize=&quot;;
+ 	snprintf(tmpStr, 64, &quot;%ld&quot;, pDoc-&gt;getSize());
+@@ -573,13 +573,12 @@
+ 	// ... the language, if available
+ 	pDoc-&gt;setLanguage(StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;));
+ 	// ... and the timestamp
+-	string timestamp, modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
++	string modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
+ 	if (modTime.empty() == false)
+ 	{
+ 		time_t timeT = (time_t )atol(modTime.c_str());
+-		timestamp = TimeConverter::toTimestamp(timeT);
++		pDoc-&gt;setTimestamp(TimeConverter::toTimestamp(timeT));
+ 	}
+-	pDoc-&gt;setTimestamp(timestamp);
+ 	string bytesSize(StringManip::extractField(record, &quot;size=&quot;, &quot;&quot;));
+ 	if (bytesSize.empty() == false)
+ 	{
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-10-23 14:35:08 UTC (rev 1065)
++++ trunk/Index/XapianIndex.cpp	2007-10-23 14:39:08 UTC (rev 1066)
+@@ -474,23 +474,17 @@
+ 	}
+ 
+ 	string language(StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;));
+-	string timestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
+ 
+ 	docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
+ 		StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
+ 		StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
+ 		Languages::toLocale(language));
+-	// We used to use timestamp prior to 0.60
+-	if (timestamp.empty() == true)
++	string modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
++	if (modTime.empty() == false)
+ 	{
+-		string modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
+-		if (modTime.empty() == false)
+-		{
+-			time_t timeT = (time_t )atol(modTime.c_str());
+-			timestamp = TimeConverter::toTimestamp(timeT);
+-		}
++		time_t timeT = (time_t )atol(modTime.c_str());
++		docInfo.setTimestamp(TimeConverter::toTimestamp(timeT));
+ 	}
+-	docInfo.setTimestamp(timestamp);
+ 	string bytesSize(StringManip::extractField(record, &quot;size=&quot;, &quot;&quot;));
+ 	if (bytesSize.empty() == false)
+ 	{
+@@ -656,6 +650,7 @@
+ 	doc.add_value(4, yyyymmdd + hhmmss);
+ 
+ 	DocumentInfo docCopy(info);
++	// XapianDatabase expects the language in English, which is okay here
+ 	docCopy.setLanguage(language);
+ 	doc.set_data(XapianDatabase::propsToRecord(&amp;docCopy));
+ }
+@@ -849,35 +844,14 @@
+ 		if (pIndex != NULL)
+ 		{
+ 			Xapian::Document doc = pIndex-&gt;get_document(docId);
++			string record(doc.get_data());
+ 
+ 			// Get the current document data
+-			string record = doc.get_data();
+ 			if (record.empty() == false)
+ 			{
+-				string language(Languages::toLocale(StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;)));
+-				// We used to use timestamp prior to 0.60
+-				string timestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
+-
+-				docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
+-					StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
+-					StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
+-					language);
+-				if (timestamp.empty() == true)
+-				{
+-					// This is the format used by Omega
+-					string modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
+-					if (modTime.empty() == false)
+-					{
+-						time_t timeT = (time_t )atol(modTime.c_str());
+-						timestamp = TimeConverter::toTimestamp(timeT);
+-					}
+-				}
+-				docInfo.setTimestamp(timestamp);
+-				string bytesSize(StringManip::extractField(record, &quot;size=&quot;, &quot;&quot;));
+-				if (bytesSize.empty() == false)
+-				{
+-					docInfo.setSize((off_t )atol(bytesSize.c_str()));
+-				}
++				XapianDatabase::recordToProps(record, &amp;docInfo);
++				// XapianDatabase stored the language in English
++				docInfo.setLanguage(Languages::toLocale(docInfo.getLanguage()));
+ 				foundDocument = true;
+ 			}
+ 		}
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-10-23 14:35:08 UTC (rev 1065)
++++ trunk/Search/XapianEngine.cpp	2007-10-23 14:39:08 UTC (rev 1066)
+@@ -449,6 +449,8 @@
+ 				cout &lt;&lt; &quot;XapianEngine::queryDatabase: found document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+ 				XapianDatabase::recordToProps(doc.get_data(), &amp;thisResult);
++				// XapianDatabase stored the language in English
++				thisResult.setLanguage(Languages::toLocale(thisResult.getLanguage()));
+ 
+ 				string url(thisResult.getLocation());
+ 				if (url.empty() == true)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001059.html">[Pinot-svn] r1065 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="001061.html">[Pinot-svn] r1067 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1060">[ date ]</a>
+              <a href="thread.html#1060">[ thread ]</a>
+              <a href="subject.html#1060">[ subject ]</a>
+              <a href="author.html#1060">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

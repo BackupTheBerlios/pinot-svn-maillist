@@ -1,0 +1,873 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r61 - in trunk: . Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r61%20-%20in%20trunk%3A%20.%20Tokenize&In-Reply-To=%3C200601150416.k0F4Glex017064%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000059.html">
+   <LINK REL="Next"  HREF="000061.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r61 - in trunk: . Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r61%20-%20in%20trunk%3A%20.%20Tokenize&In-Reply-To=%3C200601150416.k0F4Glex017064%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r61 - in trunk: . Tokenize">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun Jan 15 05:16:47 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000059.html">[Pinot-svn] r60 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000061.html">[Pinot-svn] r62 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#60">[ date ]</a>
+              <a href="thread.html#60">[ thread ]</a>
+              <a href="subject.html#60">[ subject ]</a>
+              <a href="author.html#60">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-15 05:16:46 +0100 (Sun, 15 Jan 2006)
+New Revision: 61
+
+Added:
+   trunk/Tokenize/RtfTokenizer.cpp
+   trunk/Tokenize/RtfTokenizer.h
+Modified:
+   trunk/Tokenize/Makefile
+   trunk/Tokenize/PdfTokenizer.cpp
+   trunk/Tokenize/PdfTokenizer.h
+   trunk/Tokenize/Tokenizer.cpp
+   trunk/Tokenize/Tokenizer.h
+   trunk/Tokenize/TokenizerFactory.cpp
+   trunk/Tokenize/TokenizerFactory.h
+   trunk/Tokenize/UnknownTypeTokenizer.cpp
+   trunk/Tokenize/WordTokenizer.cpp
+   trunk/Tokenize/WordTokenizer.h
+   trunk/pinot.spec
+Log:
+New RTF tokenizer based on unrtf. Streamlined running helper programs. New
+package pinot-text-docs includes all tokenizers and replaces -pdf and -word.
+
+
+Modified: trunk/Tokenize/Makefile
+===================================================================
+--- trunk/Tokenize/Makefile	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/Makefile	2006-01-15 04:16:46 UTC (rev 61)
+@@ -10,9 +10,11 @@
+ TOKENIZER_TEST = ${BIN_DIR}/tokenizertest
+ PDF_TOKENIZER_DL = ${LIB_DIR}/pdf_tokenizer.so
+ WORD_TOKENIZER_DL = ${LIB_DIR}/word_tokenizer.so
++RTF_TOKENIZER_DL = ${LIB_DIR}/rtf_tokenizer.so
+ 
+ targets : dirs ${TOKENIZE_LIB} ${TOKENIZER_TEST} \
+-	${PDF_TOKENIZER_DL} ${WORD_TOKENIZER_DL}
++	${PDF_TOKENIZER_DL} ${WORD_TOKENIZER_DL} \
++	${RTF_TOKENIZER_DL}
+ 
+ clean :
+ 	@rm -f ${OBJ_DIR}/* ${TOKENIZE_LIB} ${TOKENIZER_TEST} \
+@@ -40,3 +42,6 @@
+ 	@echo Building ${WORD_TOKENIZER_DL}
+ 	${LINK} -shared -o ${WORD_TOKENIZER_DL} ${OBJ_DIR}/WordTokenizer.o ${TOKENIZE_LIB} ${UTILS_LIB} ${LIBS} -ldl
+ 
++${RTF_TOKENIZER_DL} : ${OBJ_DIR}/RtfTokenizer.o
++	@echo Building ${RTF_TOKENIZER_DL}
++	${LINK} -shared -o ${RTF_TOKENIZER_DL} ${OBJ_DIR}/RtfTokenizer.o ${TOKENIZE_LIB} ${UTILS_LIB} ${LIBS} -ldl
+
+Modified: trunk/Tokenize/PdfTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/PdfTokenizer.cpp	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/PdfTokenizer.cpp	2006-01-15 04:16:46 UTC (rev 61)
+@@ -14,10 +14,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;stdlib.h&gt;
+-#include &lt;unistd.h&gt;
++#include &lt;string.h&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;PdfTokenizer.h&quot;
+@@ -26,14 +23,17 @@
+   * This returns the MIME type supported by the library's tokenizer.
+   * The character string is allocated with new[].
+   */
+-char *getTokenizerType(void)
++char *getTokenizerType(unsigned int typeNum)
+ {
+-	char *pType = new char[16];
++	if (typeNum == 0)
++	{
++		char *pType = new char[16];
++		strncpy(pType, &quot;application/pdf&quot;, 15);
++		pType[15] = '\0';
++		return pType;
++	}
+ 
+-	strncpy(pType, &quot;application/pdf&quot;, 15);
+-	pType[15] = '\0';
+-
+-	return pType;
++	return NULL;
+ }
+ 
+ /// This returns a pointer to a Tokenizer, allocated with new.
+@@ -45,72 +45,15 @@
+ PdfTokenizer::PdfTokenizer(const Document *pDocument) :
+ 	HtmlTokenizer(NULL)
+ {
+-	char inTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
+-	char outTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
++	string cmdLine(&quot;pdftohtml -stdout&quot;);
+ 
+-	int inFd = mkstemp(inTemplate);
+-	int outFd = mkstemp(outTemplate);
+-	if ((inFd != -1) &amp;&amp;
+-		(outFd != -1))
++	// Run antiword
++	Document *pOutputDocument = runHelperProgram(pDocument, cmdLine);
++	if (pOutputDocument != NULL)
+ 	{
+-		unsigned int dataLength = 0;
+-		const char *pData = pDocument-&gt;getData(dataLength);
+-
+-		// Save the data into a temporary file
+-		if (write(inFd, (const void*)pData, dataLength) != -1)
+-		{
+-			// Run pdftohtml to convert it
+-			string cmdLine = &quot;pdftohtml -stdout &quot;;
+-			cmdLine += inTemplate;
+-			cmdLine += &quot; &gt;&quot;;
+-			cmdLine += outTemplate;
+-			cmdLine += &quot; 2&gt;/dev/null&quot;;
+-
+-			if (system(cmdLine.c_str()) != -1)
+-			{
+-				struct stat fileStat;
+-
+-				// Read the output
+-				if ((stat(outTemplate, &amp;fileStat) != -1) &amp;&amp;
+-					(S_ISREG(fileStat.st_mode)))
+-				{
+-					unsigned int total, bytes;
+-					char *content = new char[fileStat.st_size + 1];
+-
+-					total = bytes = read(outFd, (void*)content, fileStat.st_size);
+-					while ((bytes &gt; 0) &amp;&amp;
+-						(total &lt; fileStat.st_size))
+-					{
+-						bytes = read(outFd, (void*)content, fileStat.st_size - total);
+-						total += bytes;
+-					}
+-
+-					// Pass the result to the parent class
+-					Document *pHtmlDoc = new Document(pDocument-&gt;getTitle(),
+-						pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-						pDocument-&gt;getLanguage());
+-					pHtmlDoc-&gt;setData(content, bytes);
+-					initialize(pHtmlDoc);
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;PdfTokenizer::ctor: set &quot; &lt;&lt; bytes &lt;&lt; &quot; bytes of data&quot; &lt;&lt; endl;
+-#endif
+-
+-					delete[] content;
+-				}
+-			}
+-		}
++		// Give the result to the parent class
++		initialize(pOutputDocument);
+ 	}
+-
+-	close(outFd);
+-	close(inFd);
+-
+-	if ((unlink(outTemplate) != 0) ||
+-		(unlink(inTemplate) != 0))
+-	{
+-#ifdef DEBUG
+-		cerr &lt;&lt; &quot;PdfTokenizer::ctor: couldn't delete temporary files&quot; &lt;&lt; endl;
+-#endif
+-	}
+ }
+ 
+ PdfTokenizer::PdfTokenizer() :
+
+Modified: trunk/Tokenize/PdfTokenizer.h
+===================================================================
+--- trunk/Tokenize/PdfTokenizer.h	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/PdfTokenizer.h	2006-01-15 04:16:46 UTC (rev 61)
+@@ -31,7 +31,7 @@
+   * This returns the MIME type supported by the library's tokenizer.
+   * The character string is allocated with new[].
+   */
+-char *getTokenizerType(void);
++char *getTokenizerType(unsigned int typeNum);
+ /// This returns a pointer to a Tokenizer, allocated with new.
+ Tokenizer *getTokenizer(const Document *pDocument);
+ 
+
+Added: trunk/Tokenize/RtfTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/RtfTokenizer.cpp	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/RtfTokenizer.cpp	2006-01-15 04:16:46 UTC (rev 61)
+@@ -0,0 +1,73 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;string.h&gt;
++#include &lt;iostream&gt;
++
++#include &quot;RtfTokenizer.h&quot;
++
++/**
++  * This returns the MIME type supported by the library's tokenizer.
++  * The character string is allocated with new[].
++  */
++char *getTokenizerType(unsigned int typeNum)
++{
++	if (typeNum == 0)
++	{
++		char *pType = new char[9];
++		strncpy(pType, &quot;text/rtf&quot;, 8);
++		pType[8] = '\0';
++		return pType;
++	}
++	else if (typeNum == 1)
++	{
++		char *pType = new char[16];
++		strncpy(pType, &quot;application/rtf&quot;, 15);
++		pType[15] = '\0';
++		return pType;
++	}
++
++	return NULL;
++}
++
++/// This returns a pointer to a Tokenizer, allocated with new.
++Tokenizer *getTokenizer(const Document *pDocument)
++{
++	return new RtfTokenizer(pDocument);
++}
++
++RtfTokenizer::RtfTokenizer(const Document *pDocument) :
++	HtmlTokenizer(NULL)
++{
++	string cmdLine(&quot;unrtf --nopict --html&quot;);
++
++	// Run antiword
++	Document *pOutputDocument = runHelperProgram(pDocument, cmdLine);
++	if (pOutputDocument != NULL)
++	{
++		// Give the result to the parent class
++		initialize(pOutputDocument);
++	}
++}
++
++RtfTokenizer::RtfTokenizer() :
++	HtmlTokenizer()
++{
++}
++
++RtfTokenizer::~RtfTokenizer()
++{
++}
+
+Added: trunk/Tokenize/RtfTokenizer.h
+===================================================================
+--- trunk/Tokenize/RtfTokenizer.h	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/RtfTokenizer.h	2006-01-15 04:16:46 UTC (rev 61)
+@@ -0,0 +1,53 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _RTF_TOKENIZER_H
++#define _RTF_TOKENIZER_H
++
++#include &lt;string&gt;
++#include &lt;map&gt;
++#include &lt;utility&gt;
++#include &lt;set&gt;
++
++#include &quot;Document.h&quot;
++#include &quot;HtmlTokenizer.h&quot;
++
++using namespace std;
++
++/**
++  * This returns the MIME type supported by the library's tokenizer.
++  * The character string is allocated with new[].
++  */
++char *getTokenizerType(unsigned int typeNum);
++/// This returns a pointer to a Tokenizer, allocated with new.
++Tokenizer *getTokenizer(const Document *pDocument);
++
++class RtfTokenizer : public HtmlTokenizer
++{
++	public:
++		RtfTokenizer(const Document *pDocument);
++		virtual ~RtfTokenizer();
++
++	protected:
++		RtfTokenizer();
++
++	private:
++		RtfTokenizer(const RtfTokenizer &amp;other);
++		RtfTokenizer&amp; operator=(const RtfTokenizer&amp; other);
++
++};
++
++#endif // _RTF_TOKENIZER_H
+
+Modified: trunk/Tokenize/Tokenizer.cpp
+===================================================================
+--- trunk/Tokenize/Tokenizer.cpp	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/Tokenizer.cpp	2006-01-15 04:16:46 UTC (rev 61)
+@@ -14,8 +14,11 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
+ #include &lt;ctype.h&gt;
+ #include &lt;stdlib.h&gt;
++#include &lt;unistd.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ 
+@@ -33,6 +36,89 @@
+ {
+ }
+ 
++Document *Tokenizer::runHelperProgram(const Document *pDocument, const string &amp;cmdLine)
++{
++	Document *pOutputDocument = NULL;
++	char inTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
++	char outTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
++
++	if (cmdLine.empty() == true)
++	{
++		return NULL;
++	}
++
++	int inFd = mkstemp(inTemplate);
++	int outFd = mkstemp(outTemplate);
++	if ((inFd != -1) &amp;&amp;
++		(outFd != -1))
++	{
++		unsigned int dataLength = 0;
++		const char *pData = pDocument-&gt;getData(dataLength);
++
++		// Save the data into a temporary file
++		if (write(inFd, (const void*)pData, dataLength) != -1)
++		{
++			string cmdLineRedir(cmdLine);
++			cmdLineRedir += &quot; &quot;;
++			cmdLineRedir += inTemplate;
++			cmdLineRedir += &quot; &gt;&quot;;
++			cmdLineRedir += outTemplate;
++			cmdLineRedir += &quot; 2&gt;/dev/null&quot;;
++
++			// Run the helper program
++			if (system(cmdLineRedir.c_str()) != -1)
++			{
++				struct stat fileStat;
++
++				// Read the output
++				if ((stat(outTemplate, &amp;fileStat) != -1) &amp;&amp;
++					(S_ISREG(fileStat.st_mode)))
++				{
++					unsigned int total, bytes;
++					char *content = new char[fileStat.st_size + 1];
++
++					total = bytes = read(outFd, (void*)content, fileStat.st_size);
++					while ((bytes &gt; 0) &amp;&amp;
++						(total &lt; fileStat.st_size))
++					{
++						bytes = read(outFd, (void*)content, fileStat.st_size - total);
++						total += bytes;
++					}
++
++					// Pass the result to the parent class
++					pOutputDocument = new Document(pDocument-&gt;getTitle(),
++						pDocument-&gt;getLocation(), pDocument-&gt;getType(),
++						pDocument-&gt;getLanguage());
++					pOutputDocument-&gt;setData(content, bytes);
++#ifdef DEBUG
++					cout &lt;&lt; &quot;Tokenizer::runHelperProgram: set &quot; &lt;&lt; bytes
++						&lt;&lt; &quot; bytes of data&quot; &lt;&lt; endl;
++#endif
++
++					delete[] content;
++				}
++#ifdef DEBUG
++				else cerr &lt;&lt; &quot;Tokenizer::runHelperProgram: &quot;
++					&lt;&lt; cmdLineRedir &lt;&lt; &quot; failed&quot; &lt;&lt; endl;
++#endif
++			}
++		}
++	}
++
++	close(outFd);
++	close(inFd);
++
++	if ((unlink(outTemplate) != 0) ||
++		(unlink(inTemplate) != 0))
++	{
++#ifdef DEBUG
++		cerr &lt;&lt; &quot;Tokenizer::runHelperProgram: couldn't delete temporary files&quot; &lt;&lt; endl;
++#endif
++	}
++
++	return pOutputDocument;
++}
++
+ void Tokenizer::setDocument(const Document *pDocument)
+ {
+ 	m_pDocument = pDocument;
+@@ -122,4 +208,3 @@
+ {
+ 	m_currentPos = 0;
+ }
+-
+
+Modified: trunk/Tokenize/Tokenizer.h
+===================================================================
+--- trunk/Tokenize/Tokenizer.h	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/Tokenizer.h	2006-01-15 04:16:46 UTC (rev 61)
+@@ -29,6 +29,9 @@
+ 		Tokenizer(const Document *pDocument);
+ 		virtual ~Tokenizer();
+ 
++		/// Converts a document using an helper program.
++		static Document *runHelperProgram(const Document *pDocument, const string &amp;cmdLine);
++
+ 		/// Returns a pointer to the document being tokenized.
+ 		virtual const Document *getDocument(void);
+ 
+
+Modified: trunk/Tokenize/TokenizerFactory.cpp
+===================================================================
+--- trunk/Tokenize/TokenizerFactory.cpp	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/TokenizerFactory.cpp	2006-01-15 04:16:46 UTC (rev 61)
+@@ -32,7 +32,7 @@
+ #include &quot;TokenizerFactory.h&quot;
+ 
+ #define GETTOKENIZER		&quot;_Z12getTokenizerPK8Document&quot;
+-#define GETTOKENIZERTYPE	&quot;_Z16getTokenizerTypev&quot;
++#define GETTOKENIZERTYPE	&quot;_Z16getTokenizerTypej&quot;
+ 
+ using std::cout;
+ using std::endl;
+@@ -151,27 +151,39 @@
+ 					void *pHandle = dlopen(fileName.c_str(), RTLD_LAZY|RTLD_LOCAL);
+ 					if (pHandle != NULL)
+ 					{
+-						// What type does this support ?
++						// What type(s) does this support ?
+ 						getTokenizerTypeFunc *pFunc = (getTokenizerTypeFunc *)dlsym(pHandle,
+ 								GETTOKENIZERTYPE);
+ 						if (pFunc != NULL)
+ 						{
+-							char *pSupportedType = (*pFunc)();
+-							if (pSupportedType != NULL)
++							unsigned int typeNum = 0;
++
++							while (1)
+ 							{
+-								// Add records for this tokenizer
++								char *pSupportedType = (*pFunc)(typeNum);
++								if (pSupportedType == NULL)
++								{
++									break;
++								}
++
++								// Add a record for this tokenizer
+ 								m_types[pSupportedType] = fileName;
+-								m_handles[fileName] = pHandle;
+-								++count;
+-
+ #ifdef DEBUG
+ 								cout &lt;&lt; &quot;TokenizerFactory::loadTokenizers: type &quot;
+ 									&lt;&lt; pSupportedType &lt;&lt; &quot; supported by &quot; &lt;&lt; pEntryName &lt;&lt; endl;
+ #endif
+-
+ 								// It's supposed to have been allocated with new[]
+ 								delete[] pSupportedType;
++
++								// Next
++								++count;
++								++typeNum;
+ 							}
++
++							if (typeNum &gt; 0)
++							{
++								m_handles[fileName] = pHandle;
++							}
+ 						}
+ #ifdef DEBUG
+ 						else cout &lt;&lt; &quot;TokenizerFactory::loadTokenizers: couldn't find export getTokenizerType&quot; &lt;&lt; endl;
+
+Modified: trunk/Tokenize/TokenizerFactory.h
+===================================================================
+--- trunk/Tokenize/TokenizerFactory.h	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/TokenizerFactory.h	2006-01-15 04:16:46 UTC (rev 61)
+@@ -35,7 +35,7 @@
+ 		  * This returns the MIME type supported by the library's tokenizer.
+ 		  * The character string is allocated with new[].
+ 		  */
+-		typedef char *(getTokenizerTypeFunc)(void);
++		typedef char *(getTokenizerTypeFunc)(unsigned int typeNum);
+ 		/// This returns a pointer to a Tokenizer, allocated with new.
+ 		typedef Tokenizer *(getTokenizerFunc)(const Document *);
+ 
+
+Modified: trunk/Tokenize/UnknownTypeTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/UnknownTypeTokenizer.cpp	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/UnknownTypeTokenizer.cpp	2006-01-15 04:16:46 UTC (rev 61)
+@@ -14,10 +14,6 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;stdlib.h&gt;
+-#include &lt;unistd.h&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;UnknownTypeTokenizer.h&quot;
+@@ -27,71 +23,15 @@
+ UnknownTypeTokenizer::UnknownTypeTokenizer(const Document *pDocument) :
+ 	Tokenizer(NULL)
+ {
+-	char inTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
+-	char outTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
++	string cmdLine(&quot;strings --bytes=6&quot;);
+ 
+-	int inFd = mkstemp(inTemplate);
+-	int outFd = mkstemp(outTemplate);
+-	if ((inFd != -1) &amp;&amp;
+-		(outFd != -1))
++	// Run strings
++	Document *pOutputDocument = runHelperProgram(pDocument, cmdLine);
++	if (pOutputDocument != NULL)
+ 	{
+-		unsigned int dataLength = 0;
+-		const char *pData = pDocument-&gt;getData(dataLength);
+-
+-		// Save the data into a temporary file
+-		if (write(inFd, (const void*)pData, dataLength) != -1)
+-		{
+-			// Run strings against it to extract printable characters
+-			string cmdLine = &quot;strings --bytes=6 &quot;;
+-			cmdLine += inTemplate;
+-			cmdLine += &quot;&gt;&quot;;
+-			cmdLine += outTemplate;
+-			
+-			if (system(cmdLine.c_str()) != -1)
+-			{
+-				struct stat fileStat;
+-
+-				// Read the output
+-				if ((stat(outTemplate, &amp;fileStat) != -1) &amp;&amp;
+-					(S_ISREG(fileStat.st_mode)))
+-				{
+-					unsigned int total, bytes;
+-					char *content = new char[fileStat.st_size + 1];
+-
+-					total = bytes = read(outFd, (void*)content, fileStat.st_size);
+-					while ((bytes &gt; 0) &amp;&amp;
+-						(total &lt; fileStat.st_size))
+-					{
+-						bytes = read(outFd, (void*)content, fileStat.st_size - total);
+-						total += bytes;
+-					}
+-
+-					// Pass the result to the parent class
+-					Document *pStrippedDoc = new Document(pDocument-&gt;getTitle(),
+-						pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-						pDocument-&gt;getLanguage());
+-					pStrippedDoc-&gt;setData(content, bytes);
+-					setDocument(pStrippedDoc);
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;UnknownTypeTokenizer::ctor: set &quot; &lt;&lt; bytes &lt;&lt; &quot; bytes of data&quot; &lt;&lt; endl;
+-#endif
+-
+-					delete[] content;
+-				}
+-			}
+-		}
++		// Give the result to the parent class
++		setDocument(pOutputDocument);
+ 	}
+-
+-	close(outFd);
+-	close(inFd);
+-
+-	if ((unlink(outTemplate) != 0) ||
+-		(unlink(inTemplate) != 0))
+-	{
+-#ifdef DEBUG
+-		cerr &lt;&lt; &quot;UnknownTypeTokenizer::ctor: couldn't delete temporary files&quot; &lt;&lt; endl;
+-#endif
+-	}
+ }
+ 
+ UnknownTypeTokenizer::~UnknownTypeTokenizer()
+@@ -99,7 +39,6 @@
+ 	if (m_pDocument != NULL)
+ 	{
+ 		// This should have been set by setDocument(),
+-		// called by the constructor
+ 		delete m_pDocument;
+ 	}
+ }
+
+Modified: trunk/Tokenize/WordTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/WordTokenizer.cpp	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/WordTokenizer.cpp	2006-01-15 04:16:46 UTC (rev 61)
+@@ -14,10 +14,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;stdlib.h&gt;
+-#include &lt;unistd.h&gt;
++#include &lt;string.h&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;WordTokenizer.h&quot;
+@@ -26,14 +23,17 @@
+   * This returns the MIME type supported by the library's tokenizer.
+   * The character string is allocated with new[].
+   */
+-char *getTokenizerType(void)
++char *getTokenizerType(unsigned int typeNum)
+ {
+-	char *pType = new char[16];
++	if (typeNum == 0)
++	{
++		char *pType = new char[16];
++		strncpy(pType, &quot;application/msword&quot;, 18);
++		pType[18] = '\0';
++		return pType;
++	}
+ 
+-	strncpy(pType, &quot;application/msword&quot;, 18);
+-	pType[18] = '\0';
+-
+-	return pType;
++	return NULL;
+ }
+ 
+ /// This returns a pointer to a Tokenizer, allocated with new.
+@@ -45,72 +45,15 @@
+ WordTokenizer::WordTokenizer(const Document *pDocument) :
+ 	Tokenizer(NULL)
+ {
+-	char inTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
+-	char outTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
++	string cmdLine(&quot;antiword&quot;);
+ 
+-	int inFd = mkstemp(inTemplate);
+-	int outFd = mkstemp(outTemplate);
+-	if ((inFd != -1) &amp;&amp;
+-		(outFd != -1))
++	// Run antiword
++	Document *pOutputDocument = runHelperProgram(pDocument, cmdLine);
++	if (pOutputDocument != NULL)
+ 	{
+-		unsigned int dataLength = 0;
+-		const char *pData = pDocument-&gt;getData(dataLength);
+-
+-		// Save the data into a temporary file
+-		if (write(inFd, (const void*)pData, dataLength) != -1)
+-		{
+-			// Run antiword to convert it
+-			string cmdLine = &quot;antiword &quot;;
+-			cmdLine += inTemplate;
+-			cmdLine += &quot; &gt;&quot;;
+-			cmdLine += outTemplate;
+-			cmdLine += &quot; 2&gt;/dev/null&quot;;
+-			
+-			if (system(cmdLine.c_str()) != -1)
+-			{
+-				struct stat fileStat;
+-
+-				// Read the output
+-				if ((stat(outTemplate, &amp;fileStat) != -1) &amp;&amp;
+-					(S_ISREG(fileStat.st_mode)))
+-				{
+-					unsigned int total, bytes;
+-					char *content = new char[fileStat.st_size + 1];
+-
+-					total = bytes = read(outFd, (void*)content, fileStat.st_size);
+-					while ((bytes &gt; 0) &amp;&amp;
+-						(total &lt; fileStat.st_size))
+-					{
+-						bytes = read(outFd, (void*)content, fileStat.st_size - total);
+-						total += bytes;
+-					}
+-
+-					// Pass the result to the parent class
+-					Document *pDoc = new Document(pDocument-&gt;getTitle(),
+-						pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-						pDocument-&gt;getLanguage());
+-					pDoc-&gt;setData(content, bytes);
+-					setDocument(pDoc);
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;WordTokenizer::ctor: set &quot; &lt;&lt; bytes &lt;&lt; &quot; bytes of data&quot; &lt;&lt; endl;
+-#endif
+-
+-					delete[] content;
+-				}
+-			}
+-		}
++		// Give the result to the parent class
++		setDocument(pOutputDocument);
+ 	}
+-
+-	close(outFd);
+-	close(inFd);
+-
+-	if ((unlink(outTemplate) != 0) ||
+-		(unlink(inTemplate) != 0))
+-	{
+-#ifdef DEBUG
+-		cerr &lt;&lt; &quot;WordTokenizer::ctor: couldn't delete temporary files&quot; &lt;&lt; endl;
+-#endif
+-	}
+ }
+ 
+ WordTokenizer::~WordTokenizer()
+
+Modified: trunk/Tokenize/WordTokenizer.h
+===================================================================
+--- trunk/Tokenize/WordTokenizer.h	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/Tokenize/WordTokenizer.h	2006-01-15 04:16:46 UTC (rev 61)
+@@ -31,7 +31,7 @@
+   * This returns the MIME type supported by the library's tokenizer.
+   * The character string is allocated with new[].
+   */
+-char *getTokenizerType(void);
++char *getTokenizerType(unsigned int typeNum);
+ /// This returns a pointer to a Tokenizer, allocated with new.
+ Tokenizer *getTokenizer(const Document *pDocument);
+ 
+
+Modified: trunk/pinot.spec
+===================================================================
+--- trunk/pinot.spec	2006-01-14 08:59:50 UTC (rev 60)
++++ trunk/pinot.spec	2006-01-15 04:16:46 UTC (rev 61)
+@@ -26,24 +26,16 @@
+ sources, display as well as analyze and locally index the returned results.
+ It may also be used as a lightweight personal space search tool.
+ 
+-%package pdf
+-Summary: PDF tokenizer for Pinot that uses pdftohtml
++%package text-docs 
++Summary: Tokenizers for Pinot that handle various text document formats
+ Group: Applications/Internet
+ Requires: %{name} = %{version}
+-Requires: pdftohtml
++Requires: pdftohtml, antiword, unrtf
++Obsoletes: pinot-pdf, pinot-word
+ 
+-%description pdf
+-The included tokenizer enables Pinot to index PDF documents.
++%description text-docs 
++The included tokenizers add support for PDF, MS Word and RTF documents.
+ 
+-%package word 
+-Summary: MS Word tokenizer for Pinot that uses antiword
+-Group: Applications/Internet
+-Requires: %{name} = %{version}
+-Requires: antiword
+-
+-%description word
+-The included tokenizer enables Pinot to index MS Word documents.
+-
+ %package omega 
+ Summary: Xapian Omega plugin for Pinot
+ Group: Applications/Internet
+@@ -124,13 +116,11 @@
+ %{_datadir}/icons/hicolor/48x48/apps/pinot.png
+ %{_datadir}/applications/Amra-%{name}.desktop
+ 
+-%files pdf
++%files text-docs 
+ %defattr(-, root, root, -)
+ %dir %{_datadir}/pinot/tokenizers/pdf_tokenizer.so
+-
+-%files word
+-%defattr(-, root, root, -)
+ %dir %{_datadir}/pinot/tokenizers/word_tokenizer.so
++%dir %{_datadir}/pinot/tokenizers/rtf_tokenizer.so
+ 
+ %files omega
+ %defattr(-, root, root, -)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000059.html">[Pinot-svn] r60 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000061.html">[Pinot-svn] r62 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#60">[ date ]</a>
+              <a href="thread.html#60">[ thread ]</a>
+              <a href="subject.html#60">[ subject ]</a>
+              <a href="author.html#60">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,688 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r428 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r428%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608260338.k7Q3c94S029590%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000420.html">
+   <LINK REL="Next"  HREF="000422.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r428 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r428%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608260338.k7Q3c94S029590%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r428 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 26 05:38:09 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000420.html">[Pinot-svn] r427 - trunk/UI/GTK2
+</A></li>
+        <LI>Next message: <A HREF="000422.html">[Pinot-svn] r429 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#421">[ date ]</a>
+              <a href="thread.html#421">[ thread ]</a>
+              <a href="subject.html#421">[ subject ]</a>
+              <a href="author.html#421">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-26 05:38:08 +0200 (Sat, 26 Aug 2006)
+New Revision: 428
+
+Modified:
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/importDialog_glade.cc
+   trunk/UI/GTK2/src/importDialog_glade.hh
+Log:
+Simplified importing. Since the daemon takes care of local files, only URLs
+can be imported into the index.
+
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-08-26 03:36:20 UTC (rev 427)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-08-26 03:38:08 UTC (rev 428)
+@@ -37,8 +37,6 @@
+ using namespace Glib;
+ using namespace Gtk;
+ 
+-string importDialog::InternalState::m_defaultDirectory = &quot;&quot;;
+-
+ importDialog::InternalState::InternalState(unsigned int maxIndexThreads, importDialog *pWindow) :
+ 	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
+ 	m_importing(false)
+@@ -50,42 +48,18 @@
+ {
+ }
+ 
+-importDialog::importDialog(const Glib::ustring &amp;title) :
++importDialog::importDialog() :
+ 	importDialog_glade(),
+-	m_pMonitor(MonitorFactory::getMonitor()),
+ 	m_docsCount(0),
+-	m_importDirectory(false),
+-	m_pScannerThread(NULL),
+ 	m_state(10, this)
+ {
+-	set_title(title);
+-
+-	// Initialize the default directory
+-	if (m_state.m_defaultDirectory.empty() == true)
+-	{
+-		char *homeDir = getenv(&quot;HOME&quot;);
+-		if (homeDir != NULL)
+-		{
+-			m_state.m_defaultDirectory = homeDir + string(&quot;/&quot;);
+-		}
+-	}
+-
+ 	// Associate the columns model to the label combo
+ 	m_refLabelNameTree = ListStore::create(m_labelNameColumns);
+ 	labelNameCombobox-&gt;set_model(m_refLabelNameTree);
+ 	labelNameCombobox-&gt;pack_start(m_labelNameColumns.m_name);
+-	// ...and to the type combo
+-	m_refTypeList = ListStore::create(m_typeColumns);
+-	typeCombobox-&gt;set_model(m_refTypeList);
+-	typeCombobox-&gt;pack_start(m_typeColumns.m_name);
+ 	// Populate
+-	populate_comboboxes(false);
++	populate_comboboxes();
+ 
+-	// The default type is not directory
+-	// FIXME: this could also apply to URLs !
+-	depthSpinbutton-&gt;set_sensitive(false);
+-	depthSpinbutton-&gt;set_value(1);
+-
+ 	// Connect to threads' finished signal
+ 	m_state.connect();
+ 
+@@ -98,32 +72,12 @@
+ importDialog::~importDialog()
+ {
+ 	m_state.disconnect();
+-	if (m_pMonitor != NULL)
+-	{
+-		delete m_pMonitor;
+-	}
+ }
+ 
+-void importDialog::populate_comboboxes(bool localOnly)
++void importDialog::populate_comboboxes(void)
+ {
+-	bool foundLanguage = false;
+-
+-	TreeModel::iterator iter = m_refTypeList-&gt;append();
++	TreeModel::iterator iter = m_refLabelNameTree-&gt;append();
+ 	TreeModel::Row row = *iter;
+-	row[m_typeColumns.m_name] = _(&quot;File&quot;);
+-	iter = m_refTypeList-&gt;append();
+-	row = *iter;
+-	row[m_typeColumns.m_name] = _(&quot;Directory&quot;);
+-	if (localOnly == false)
+-	{
+-		iter = m_refTypeList-&gt;append();
+-		row = *iter;
+-		row[m_typeColumns.m_name] = _(&quot;URL&quot;);
+-	}
+-	typeCombobox-&gt;set_active(0);
+-
+-	iter = m_refLabelNameTree-&gt;append();
+-	row = *iter;
+ 	row[m_labelNameColumns.m_name] = _(&quot;None&quot;);
+ 	labelNameCombobox-&gt;set_active(0);
+ 	// Add all labels
+@@ -139,17 +93,6 @@
+ 	}
+ }
+ 
+-void importDialog::signal_scanner(void)
+-{
+-	// Ask the scanner for another file
+-	m_state.m_scanMutex.lock();
+-	m_state.m_scanCondVar.signal();
+-	m_state.m_scanMutex.unlock();
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;importDialog::signal_scanner: signaled&quot; &lt;&lt; endl;
+-#endif
+-}
+-
+ bool importDialog::on_activity_timeout(void)
+ {
+ 	importProgressbar-&gt;pulse();
+@@ -157,41 +100,14 @@
+ 	return true;
+ }
+ 
+-bool importDialog::on_import_url(const string &amp;location, const string &amp;sourceLabel)
++void importDialog::import_url(const string &amp;location)
+ {
+-	WritableIndexInterface *pIndex = PinotSettings::getInstance().getRWIndex(PinotSettings::getInstance().m_docsIndexLocation);
+ 	Url urlObj(location);
+ 	set&lt;string&gt; labels;
+ 	string title(from_utf8(m_title));
+ 
+-	if (pIndex != NULL)
+-	{
+-		unsigned int docId = pIndex-&gt;hasDocument(location);
+-
+-		// if the document exists, get its labels list
+-		if (docId &gt; 0)
+-		{
+-			pIndex-&gt;getDocumentLabels(docId, labels);
+-		}
+-	}
+-	labels.insert(m_labelName);
+-	labels.insert(sourceLabel);
+-
+-	if (m_importDirectory == true)
+-	{
+-		if (title.empty() == false)
+-		{
+-			title += &quot; &quot;;
+-		}
+-		title += urlObj.getFile();
+-	}
+-
+-	DocumentInfo docInfo(title, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+-	docInfo.setLabels(labels);
+-
++   DocumentInfo docInfo(title, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+ 	m_state.queue_index(docInfo);
+-
+-	return false;
+ }
+ 
+ void importDialog::on_thread_end(WorkerThread *pThread)
+@@ -225,29 +141,14 @@
+ 
+ 	// What type of thread was it ?
+ 	string type = pThread-&gt;getType();
+-	if (type == &quot;DirectoryScannerThread&quot;)
++	if (type == &quot;IndexingThread&quot;)
+ 	{
+-		if (m_pScannerThread == dynamic_cast&lt;DirectoryScannerThread *&gt;(pThread))
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;importDialog::on_thread_end: reset scanner&quot; &lt;&lt; endl;
+-#endif
+-			m_pScannerThread = NULL;
+-		}
+-	}
+-	else if (type == &quot;IndexingThread&quot;)
+-	{
+ 		// Did it succeed ?
+ 		if (success == true)
+ 		{
+ 			// Yes, it did
+ 			++m_docsCount;
+ 		}
+-
+-		if (m_state.m_importing == true)
+-		{
+-			signal_scanner();
+-		}
+ 	}
+ 
+ 	// Delete the thread
+@@ -278,59 +179,21 @@
+ 	return m_docsCount;
+ }
+ 
+-void importDialog::on_typeCombobox_changed()
+-{
+-	unsigned int type = typeCombobox-&gt;get_active_row_number();
+-	bool selectLocation = true;
+-
+-	m_importDirectory = false;
+-	if (type == 1)
+-	{
+-		m_importDirectory = true;
+-	}
+-	else if (type &gt; 1)
+-	{
+-		// Disable the select button only if type is URL
+-		selectLocation = false;
+-	}
+-
+-	// See whether import should be enabled
+-	on_locationEntry_changed();
+-
+-	// FIXME: this could also apply to URLs !
+-	depthSpinbutton-&gt;set_sensitive(m_importDirectory);
+-	locationButton-&gt;set_sensitive(selectLocation);
+-	linksCheckbutton-&gt;set_sensitive(selectLocation);
+-}
+-
+ void importDialog::on_locationEntry_changed()
+ {
+-	ustring fileName = locationEntry-&gt;get_text();
++	ustring fileName = from_utf8(locationEntry-&gt;get_text());
+ 	bool enableImport = true;
+ 
+ 	if (fileName.empty() == false)
+ 	{
+-		unsigned int type = typeCombobox-&gt;get_active_row_number();
++		Url urlObj(fileName);
+ 
+-		// Check the entry makes sense
+-		if (type &lt;= 1)
++		// Check the URL is valid
++		if (urlObj.getProtocol().empty() == true)
+ 		{
+-			if (fileName[0] != '/')
+-			{
+-				enableImport = false;
+-			}
++			enableImport = false;
+ 		}
+-		else
+-		{
+-			Url urlObj(from_utf8(fileName));
+-
+-			// Check the URL is valid
+-			if (urlObj.getProtocol().empty() == true)
+-			{
+-				enableImport = false;
+-			}
+-			// FIXME: be more thorough
+-		}
++		// FIXME: be more thorough
+ 	}
+ 	else
+ 	{
+@@ -345,30 +208,6 @@
+ 	importButton-&gt;set_sensitive(enableImport);
+ }
+ 
+-void importDialog::on_locationButton_clicked()
+-{
+-	ustring fileName = to_utf8(m_state.m_defaultDirectory);
+-
+-	if (select_file_name(*this, _(&quot;Document To Import&quot;), fileName, true, m_importDirectory) == true)
+-	{
+-		// Update the location
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;importDialog::on_locationButton_clicked: location is &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-		locationEntry-&gt;set_text(fileName);
+-		ustring::size_type pos = fileName.find_last_of(&quot;/&quot;);
+-		if (pos != string::npos)
+-		{
+-			// Update the default directory
+-			m_state.m_defaultDirectory = from_utf8(fileName.substr(0, pos + 1));
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;importDialog::on_locationButton_clicked: directory now &quot;
+-				&lt;&lt; m_state.m_defaultDirectory &lt;&lt; endl;
+-#endif
+-		}
+-	}
+-}
+-
+ void importDialog::on_importButton_clicked()
+ {
+ 	string location = from_utf8(locationEntry-&gt;get_text());
+@@ -399,31 +238,9 @@
+ 		TreeModel::Row row = *iter;
+ 		m_labelName = from_utf8(row[m_labelNameColumns.m_name]);
+ 	}
+-	// Type
+-	if (typeCombobox-&gt;get_active_row_number() &lt;= 1)
+-	{
+-		// Maximum depth
+-		unsigned int maxDirLevel = (unsigned int)depthSpinbutton-&gt;get_value();
+ 
+-		// Scan the directory and import all its files
+-		m_pScannerThread = new DirectoryScannerThread(m_pMonitor,
+-			location, maxDirLevel, linksCheckbutton-&gt;get_active(),
+-			&amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
+-		m_pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;importDialog::on_import_url));
+-		m_state.start_thread(m_pScannerThread);
+-	}
+-	else
+-	{
+-		if (on_import_url(location, &quot;&quot;) == true)
+-		{
+-			// It's asking for another file, so this one couldn't be indexed
+-			m_timeoutConnection.block();
+-			m_timeoutConnection.disconnect();
++	import_url(location);
+ 
+-			importProgressbar-&gt;set_fraction(0.0);
+-			importButton-&gt;set_sensitive(true);
+-		}
+-	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;importDialog::on_importButton_clicked: done&quot; &lt;&lt; endl;
+ #endif
+@@ -439,10 +256,5 @@
+ 
+ 	// Closing the window should stop everything
+ 	m_state.disconnect();
+-	if (m_pScannerThread != NULL)
+-	{
+-		m_pScannerThread-&gt;stop();
+-		signal_scanner();
+-	}
+ 	m_state.stop_threads();
+ }
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-08-26 03:36:20 UTC (rev 427)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-08-26 03:38:08 UTC (rev 428)
+@@ -35,8 +35,7 @@
+ class importDialog : public importDialog_glade
+ {  
+ public:
+-	/// Open the dialog box in import mode.
+-	importDialog(const Glib::ustring &amp;title);
++	importDialog();
+ 	virtual ~importDialog();
+ 
+ 	void setHeight(int maxHeight);
+@@ -44,27 +43,19 @@
+ 	unsigned int getDocumentsCount(void);
+ 
+ protected:
+-	void populate_comboboxes(bool localOnly);
+-	void signal_scanner(void);
++	void populate_comboboxes(void);
+ 
+ 	bool on_activity_timeout(void);
+-	bool on_import_url(const std::string &amp;location, const std::string &amp;sourceLabel);
++	void import_url(const std::string &amp;location);
+ 	void on_thread_end(WorkerThread *pThread);
+ 
+ private:
+-	MonitorInterface *m_pMonitor;
+-	// Type
+-	ComboModelColumns m_typeColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refTypeList;
+ 	// Label
+ 	ComboModelColumns m_labelNameColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelNameTree;
+ 	Glib::ustring m_title;
+ 	std::string m_labelName;
+ 	unsigned int m_docsCount;
+-	bool m_importDirectory;
+-	// Directory scanner
+-	DirectoryScannerThread *m_pScannerThread;
+ 	// Activity timeout
+ 	SigC::Connection m_timeoutConnection;
+ 	// Internal state
+@@ -74,18 +65,11 @@
+ 			InternalState(unsigned int maxIndexThreads, importDialog *pWindow);
+ 			~InternalState();
+ 
+-			// Directory scanning
+ 			bool m_importing;
+-			Glib::Mutex m_scanMutex;
+-			Glib::Cond m_scanCondVar;
+-			// The default directory
+-			static std::string m_defaultDirectory;
+ 
+ 	} m_state;
+ 
+-	virtual void on_typeCombobox_changed();
+ 	virtual void on_locationEntry_changed();
+-	virtual void on_locationButton_clicked();
+ 	virtual void on_importButton_clicked();
+ 	virtual void on_importDialog_response(int response_id);
+ 
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.cc	2006-08-26 03:36:20 UTC (rev 427)
++++ trunk/UI/GTK2/src/importDialog_glade.cc	2006-08-26 03:38:08 UTC (rev 428)
+@@ -1,9 +1,9 @@
+-// generated 2006/5/27 14:34:17 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2006/8/20 15:34:18 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.8.17 and gtkmm 2.8.3
++// for gtk 2.8.20 and gtkmm 2.8.8
+ //
+ // Please modify the corresponding derived classes in ./src/importDialog.cc
+ 
+@@ -40,9 +40,8 @@
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/buttonbox.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+-#include &lt;gtkmm/box.h&gt;
+-#include &lt;gtkmm/adjustment.h&gt;
+ #include &lt;gtkmm/image.h&gt;
++#include &lt;gtkmm/box.h&gt;
+ #include &lt;gtkmm/alignment.h&gt;
+ #ifndef ENABLE_NLS
+ #  define textdomain(String) (String)
+@@ -67,22 +66,10 @@
+    
+    Gtk::Label *locationLabel = Gtk::manage(new class Gtk::Label(_(&quot;Location:&quot;)));
+    titleLabel = Gtk::manage(new class Gtk::Label(_(&quot;Title:&quot;)));
+-   typeCombobox = Gtk::manage(new class Gtk::ComboBox());
+-   
+-   Gtk::Label *typeLabel = Gtk::manage(new class Gtk::Label(_(&quot;Type:&quot;)));
+-   locationEntry = Gtk::manage(new class Gtk::Entry());
+-   locationButton = Gtk::manage(new class Gtk::Button(_(&quot;...&quot;)));
+-   
+-   Gtk::HBox *locationHbox = Gtk::manage(new class Gtk::HBox(false, 4));
+-   Gtk::Adjustment *depthSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(0, 0, 100, 1, 5, 5));
+-   depthSpinbutton = Gtk::manage(new class Gtk::SpinButton(*depthSpinbutton_adj, 1, 0));
+-   
+-   Gtk::Label *depthLabel = Gtk::manage(new class Gtk::Label(_(&quot;Depth:&quot;)));
+-   Gtk::Label *linksLabel = Gtk::manage(new class Gtk::Label(_(&quot;Symlinks:&quot;)));
+-   linksCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Follow symlinks&quot;)));
+    labelNameCombobox = Gtk::manage(new class Gtk::ComboBox());
+    
+    Gtk::Label *labelNameLabel = Gtk::manage(new class Gtk::Label(_(&quot;Apply label:&quot;)));
++   locationEntry = Gtk::manage(new class Gtk::Entry());
+    docTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    importProgressbar = Gtk::manage(new class Gtk::ProgressBar());
+    
+@@ -116,64 +103,26 @@
+    titleLabel-&gt;set_line_wrap(false);
+    titleLabel-&gt;set_use_markup(false);
+    titleLabel-&gt;set_selectable(false);
+-   typeLabel-&gt;set_alignment(0,0.5);
+-   typeLabel-&gt;set_padding(4,4);
+-   typeLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   typeLabel-&gt;set_line_wrap(false);
+-   typeLabel-&gt;set_use_markup(false);
+-   typeLabel-&gt;set_selectable(false);
+-   locationEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   locationEntry-&gt;set_visibility(true);
+-   locationEntry-&gt;set_editable(true);
+-   locationEntry-&gt;set_max_length(0);
+-   locationEntry-&gt;set_has_frame(true);
+-   locationEntry-&gt;set_activates_default(false);
+-   locationButton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   locationButton-&gt;set_flags(Gtk::CAN_DEFAULT);
+-   locationButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   locationHbox-&gt;pack_start(*locationEntry);
+-   locationHbox-&gt;pack_start(*locationButton, Gtk::PACK_SHRINK, 0);
+-   depthSpinbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   depthSpinbutton-&gt;set_update_policy(Gtk::UPDATE_ALWAYS);
+-   depthSpinbutton-&gt;set_numeric(false);
+-   depthSpinbutton-&gt;set_digits(0);
+-   depthSpinbutton-&gt;set_wrap(false);
+-   depthLabel-&gt;set_alignment(0,0.5);
+-   depthLabel-&gt;set_padding(4,4);
+-   depthLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   depthLabel-&gt;set_line_wrap(false);
+-   depthLabel-&gt;set_use_markup(false);
+-   depthLabel-&gt;set_selectable(false);
+-   linksLabel-&gt;set_alignment(0,0.5);
+-   linksLabel-&gt;set_padding(4,4);
+-   linksLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   linksLabel-&gt;set_line_wrap(false);
+-   linksLabel-&gt;set_use_markup(false);
+-   linksLabel-&gt;set_selectable(false);
+-   linksCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   linksCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   linksCheckbutton-&gt;set_mode(true);
+-   linksCheckbutton-&gt;set_active(false);
+    labelNameLabel-&gt;set_alignment(0,0.5);
+    labelNameLabel-&gt;set_padding(4,4);
+    labelNameLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+    labelNameLabel-&gt;set_line_wrap(false);
+    labelNameLabel-&gt;set_use_markup(false);
+    labelNameLabel-&gt;set_selectable(false);
++   locationEntry-&gt;set_flags(Gtk::CAN_FOCUS);
++   locationEntry-&gt;set_visibility(true);
++   locationEntry-&gt;set_editable(true);
++   locationEntry-&gt;set_max_length(0);
++   locationEntry-&gt;set_has_frame(true);
++   locationEntry-&gt;set_activates_default(false);
+    docTable-&gt;set_row_spacings(0);
+    docTable-&gt;set_col_spacings(0);
+-   docTable-&gt;attach(*titleEntry, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*locationLabel, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 0, 0);
+-   docTable-&gt;attach(*titleLabel, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 0, 0);
+-   docTable-&gt;attach(*typeCombobox, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*typeLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 0, 0);
+-   docTable-&gt;attach(*locationHbox, 1, 2, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*depthSpinbutton, 1, 2, 3, 4, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*depthLabel, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 0, 0);
+-   docTable-&gt;attach(*linksLabel, 0, 1, 4, 5, Gtk::FILL, Gtk::FILL, 0, 0);
+-   docTable-&gt;attach(*linksCheckbutton, 1, 2, 4, 5, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*labelNameCombobox, 1, 2, 5, 6, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*labelNameLabel, 0, 1, 5, 6, Gtk::FILL, Gtk::AttachOptions(), 0, 0);
++   docTable-&gt;attach(*titleEntry, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   docTable-&gt;attach(*locationLabel, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 0, 0);
++   docTable-&gt;attach(*titleLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 0, 0);
++   docTable-&gt;attach(*labelNameCombobox, 1, 2, 2, 3, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   docTable-&gt;attach(*labelNameLabel, 0, 1, 2, 3, Gtk::FILL, Gtk::AttachOptions(), 0, 0);
++   docTable-&gt;attach(*locationEntry, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    image575-&gt;set_alignment(0.5,0.5);
+    image575-&gt;set_padding(0,0);
+    label55-&gt;set_alignment(0.5,0.5);
+@@ -196,7 +145,7 @@
+    importDialog-&gt;get_vbox()-&gt;set_homogeneous(false);
+    importDialog-&gt;get_vbox()-&gt;set_spacing(0);
+    importDialog-&gt;get_vbox()-&gt;pack_start(*importVbox);
+-   importDialog-&gt;set_title(_(&quot;Import document&quot;));
++   importDialog-&gt;set_title(_(&quot;Import URL&quot;));
+    importDialog-&gt;set_modal(false);
+    importDialog-&gt;property_window_position().set_value(Gtk::WIN_POS_NONE);
+    importDialog-&gt;set_resizable(true);
+@@ -207,17 +156,9 @@
+    titleEntry-&gt;show();
+    locationLabel-&gt;show();
+    titleLabel-&gt;show();
+-   typeCombobox-&gt;show();
+-   typeLabel-&gt;show();
+-   locationEntry-&gt;show();
+-   locationButton-&gt;show();
+-   locationHbox-&gt;show();
+-   depthSpinbutton-&gt;show();
+-   depthLabel-&gt;show();
+-   linksLabel-&gt;show();
+-   linksCheckbutton-&gt;show();
+    labelNameCombobox-&gt;show();
+    labelNameLabel-&gt;show();
++   locationEntry-&gt;show();
+    docTable-&gt;show();
+    importProgressbar-&gt;show();
+    image575-&gt;show();
+@@ -227,9 +168,7 @@
+    importButton-&gt;show();
+    importHbox-&gt;show();
+    importVbox-&gt;show();
+-   typeCombobox-&gt;signal_changed().connect(SigC::slot(*this, &amp;importDialog_glade::on_typeCombobox_changed), false);
+    locationEntry-&gt;signal_changed().connect(SigC::slot(*this, &amp;importDialog_glade::on_locationEntry_changed), false);
+-   locationButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;importDialog_glade::on_locationButton_clicked), false);
+    importButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;importDialog_glade::on_importButton_clicked), false);
+    importDialog-&gt;signal_response().connect(SigC::slot(*this, &amp;importDialog_glade::on_importDialog_response), false);
+ }
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.hh	2006-08-26 03:36:20 UTC (rev 427)
++++ trunk/UI/GTK2/src/importDialog_glade.hh	2006-08-26 03:38:08 UTC (rev 428)
+@@ -1,9 +1,9 @@
+-// generated 2006/5/27 14:34:17 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2006/8/20 15:32:26 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.8.17 and gtkmm 2.8.3
++// for gtk 2.8.20 and gtkmm 2.8.8
+ //
+ // Please modify the corresponding derived classes in ./src/importDialog.hh and./src/importDialog.cc
+ 
+@@ -35,11 +35,9 @@
+ #include &lt;gtkmm/entry.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/combobox.h&gt;
+-#include &lt;gtkmm/button.h&gt;
+-#include &lt;gtkmm/spinbutton.h&gt;
+-#include &lt;gtkmm/checkbutton.h&gt;
+ #include &lt;gtkmm/table.h&gt;
+ #include &lt;gtkmm/progressbar.h&gt;
++#include &lt;gtkmm/button.h&gt;
+ 
+ class importDialog_glade : public Gtk::Dialog
+ {  
+@@ -48,12 +46,8 @@
+ protected:
+         class Gtk::Entry * titleEntry;
+         class Gtk::Label * titleLabel;
+-        class Gtk::ComboBox * typeCombobox;
+-        class Gtk::Entry * locationEntry;
+-        class Gtk::Button * locationButton;
+-        class Gtk::SpinButton * depthSpinbutton;
+-        class Gtk::CheckButton * linksCheckbutton;
+         class Gtk::ComboBox * labelNameCombobox;
++        class Gtk::Entry * locationEntry;
+         class Gtk::Table * docTable;
+         class Gtk::ProgressBar * importProgressbar;
+         class Gtk::Button * importButton;
+@@ -62,9 +56,7 @@
+         
+         ~importDialog_glade();
+ private:
+-        virtual void on_typeCombobox_changed() = 0;
+         virtual void on_locationEntry_changed() = 0;
+-        virtual void on_locationButton_clicked() = 0;
+         virtual void on_importButton_clicked() = 0;
+         virtual void on_importDialog_response(int response_id) = 0;
+ };
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000420.html">[Pinot-svn] r427 - trunk/UI/GTK2
+</A></li>
+	<LI>Next message: <A HREF="000422.html">[Pinot-svn] r429 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#421">[ date ]</a>
+              <a href="thread.html#421">[ thread ]</a>
+              <a href="subject.html#421">[ subject ]</a>
+              <a href="author.html#421">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

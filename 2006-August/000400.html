@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r407 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r407%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608191129.k7JBTVkg016555%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000399.html">
+   <LINK REL="Next"  HREF="000401.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r407 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r407%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608191129.k7JBTVkg016555%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r407 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 19 13:29:31 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000399.html">[Pinot-svn] r406 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000401.html">[Pinot-svn] r408 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#400">[ date ]</a>
+              <a href="thread.html#400">[ thread ]</a>
+              <a href="subject.html#400">[ subject ]</a>
+              <a href="author.html#400">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-19 13:29:25 +0200 (Sat, 19 Aug 2006)
+New Revision: 407
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+Log:
+Index factory methods return an Index onject of the right type depending on
+where the index is located and whether DBus usage is enabled.
+Dropped mail index.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-08-19 11:26:26 UTC (rev 406)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-08-19 11:29:25 UTC (rev 407)
+@@ -33,6 +33,7 @@
+ #include &quot;Languages.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;StringManip.h&quot;
++#include &quot;IndexFactory.h&quot;
+ #include &quot;PluginWebEngine.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+@@ -81,6 +82,7 @@
+ }
+ 
+ PinotSettings PinotSettings::m_instance;
++bool PinotSettings::m_enableDBus = false;
+ 
+ PinotSettings::PinotSettings() :
+ 	m_xPos(0),
+@@ -116,8 +118,6 @@
+ 	// This is where the internal indices live
+ 	m_docsIndexLocation = directoryName;
+ 	m_docsIndexLocation += &quot;/index&quot;;
+-	m_mailIndexLocation = directoryName;
+-	m_mailIndexLocation += &quot;/mail&quot;;
+ 	m_daemonIndexLocation = directoryName;
+ 	m_daemonIndexLocation += &quot;/daemon&quot;;
+ 
+@@ -135,6 +135,15 @@
+ 	return m_instance;
+ }
+ 
++bool PinotSettings::enableDBus(bool enable)
++{
++	bool isEnabled = m_enableDBus;
++
++	m_enableDBus = enable;
++
++	return isEnabled;
++}
++
+ string PinotSettings::getConfigurationDirectory(void)
+ {
+ 	struct passwd *pPasswd = getpwuid(geteuid());
+@@ -219,7 +228,6 @@
+ 
+ 	// Internal indices
+ 	addIndex(_(&quot;My Documents&quot;), m_docsIndexLocation);
+-	addIndex(_(&quot;My Email&quot;), m_mailIndexLocation);
+ 	addIndex(_(&quot;My Computer&quot;), m_daemonIndexLocation);
+ 
+ 	// Add default labels on the first run
+@@ -1062,11 +1070,10 @@
+ }
+ 
+ /// Returns true if the given index is internal.
+-bool PinotSettings::isInternalIndex(const string &amp;indexName) const
++bool PinotSettings::isInternalIndex(const string &amp;name) const
+ {
+-	if ((indexName == _(&quot;My Documents&quot;)) ||
+-		(indexName == _(&quot;My Email&quot;)) ||
+-		(indexName == _(&quot;My Computer&quot;)))
++	if ((name == _(&quot;My Documents&quot;)) ||
++		(name == _(&quot;My Computer&quot;)))
+ 	{
+ 		return true;
+ 	}
+@@ -1122,7 +1129,6 @@
+ 	m_indexNames.clear();
+ 	m_indexIds.clear();
+ 	addIndex(_(&quot;My Documents&quot;), m_docsIndexLocation);
+-	addIndex(_(&quot;My Email&quot;), m_mailIndexLocation);
+ 	addIndex(_(&quot;My Computer&quot;), m_daemonIndexLocation);
+ }
+ 
+@@ -1171,6 +1177,38 @@
+ 	} while (indexId &gt; 0);
+ }
+ 
++/// Returns a IndexInterface for the given index location.
++IndexInterface *PinotSettings::getROIndex(const string &amp;location)
++{
++	if (location == m_docsIndexLocation)
++	{
++		return IndexFactory::getROIndex(&quot;xapian&quot;, m_docsIndexLocation);
++	}
++	else if ((m_enableDBus == true) &amp;&amp;
++		(location == m_daemonIndexLocation))
++	{
++		return IndexFactory::getROIndex(&quot;dbus&quot;, m_daemonIndexLocation);
++	}
++
++	return IndexFactory::getROIndex(&quot;xapian&quot;, location);
++}
++
++/// Returns a WritableIndexInterface for the given index location.
++WritableIndexInterface *PinotSettings::getRWIndex(const string &amp;location)
++{
++	if (location == m_docsIndexLocation)
++	{
++		return IndexFactory::getRWIndex(&quot;xapian&quot;, m_docsIndexLocation);
++	}
++	else if ((m_enableDBus == true) &amp;&amp;
++		(location == m_daemonIndexLocation))
++	{
++		return IndexFactory::getRWIndex(&quot;dbus&quot;, m_daemonIndexLocation);
++	}
++
++	return IndexFactory::getRWIndex(&quot;xapian&quot;, location);
++}
++
+ /// Returns the search engines set.
+ bool PinotSettings::getSearchEngines(set&lt;PinotSettings::Engine&gt; &amp;engines, string channelName) const
+ {
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-08-19 11:26:26 UTC (rev 406)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-08-19 11:29:25 UTC (rev 407)
+@@ -26,6 +26,7 @@
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;libxml++/nodes/element.h&gt;
+ 
++#include &quot;IndexInterface.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ class PinotSettings
+@@ -35,6 +36,8 @@
+ 
+ 		static PinotSettings &amp;getInstance(void);
+ 
++		static bool enableDBus(bool enable);
++
+ 		static std::string getConfigurationDirectory(void);
+ 
+ 		static std::string getConfigurationFileName(void);
+@@ -55,7 +58,7 @@
+ 		const std::map&lt;std::string, std::string&gt; &amp;getIndexes(void) const;
+ 
+ 		/// Returns true if the given index is internal.
+-		bool isInternalIndex(const string &amp;indexName) const;
++		bool isInternalIndex(const string &amp;name) const;
+ 
+ 		/// Adds a new index.
+ 		bool addIndex(const std::string &amp;name, const std::string &amp;location);
+@@ -72,6 +75,12 @@
+ 		/// Returns the name(s) for the given ID.
+ 		void getIndexNames(unsigned int id, std::set&lt;std::string&gt; &amp;names);
+ 
++		/// Returns a IndexInterface for the given index location.
++		IndexInterface *getROIndex(const std::string &amp;location);
++
++		/// Returns a WritableIndexInterface for the given index location.
++		WritableIndexInterface *getRWIndex(const std::string &amp;location);
++
+ 		class Engine
+ 		{
+ 			public:
+@@ -157,7 +166,6 @@
+ 
+ 		Glib::ustring m_googleAPIKey;
+ 		Glib::ustring m_docsIndexLocation;
+-		Glib::ustring m_mailIndexLocation;
+ 		Glib::ustring m_daemonIndexLocation;
+ 		Glib::ustring m_historyDatabase;
+ 		int m_xPos;
+@@ -178,6 +186,7 @@
+ 
+ 	protected:
+ 		static PinotSettings m_instance;
++		static bool m_enableDBus;
+ 		bool m_firstRun;
+ 		std::map&lt;std::string, std::string&gt; m_indexNames;
+ 		std::map&lt;unsigned int, std::string&gt; m_indexIds;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000399.html">[Pinot-svn] r406 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000401.html">[Pinot-svn] r408 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#400">[ date ]</a>
+              <a href="thread.html#400">[ thread ]</a>
+              <a href="subject.html#400">[ subject ]</a>
+              <a href="author.html#400">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

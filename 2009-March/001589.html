@@ -1,0 +1,235 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1599 - trunk/Collect
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1599%20-%20trunk/Collect&In-Reply-To=%3C200903280236.n2S2aiuv018513%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001588.html">
+   <LINK REL="Next"  HREF="001590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1599 - trunk/Collect</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1599%20-%20trunk/Collect&In-Reply-To=%3C200903280236.n2S2aiuv018513%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1599 - trunk/Collect">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 28 03:36:44 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001588.html">[Pinot-svn] r1598 - in trunk: IndexSearch Tokenize
+</A></li>
+        <LI>Next message: <A HREF="001590.html">[Pinot-svn] r1600 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1589">[ date ]</a>
+              <a href="thread.html#1589">[ thread ]</a>
+              <a href="subject.html#1589">[ subject ]</a>
+              <a href="author.html#1589">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-28 03:36:40 +0100 (Sat, 28 Mar 2009)
+New Revision: 1599
+
+Modified:
+   trunk/Collect/FileCollector.cpp
+Log:
+If ipath isn't empty, drill down with FilterUtils::reduceDocument(). 
+
+
+Modified: trunk/Collect/FileCollector.cpp
+===================================================================
+--- trunk/Collect/FileCollector.cpp	2009-03-28 02:33:16 UTC (rev 1598)
++++ trunk/Collect/FileCollector.cpp	2009-03-28 02:36:40 UTC (rev 1599)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -21,10 +21,98 @@
+ 
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;FileCollector.h&quot;
+ 
+ using namespace std;
+ 
++class LastIPathAction : public ReducedAction
++{
++	public:
++		LastIPathAction(const string &amp;ipath) :
++			ReducedAction(),
++			m_ipath(ipath),
++			m_pDocument(NULL)
++		{
++		}
++		virtual ~LastIPathAction()
++		{
++		}
++
++		virtual bool positionFilter(const Document &amp;doc, Dijon::Filter *pFilter)
++		{
++			string::size_type nextPos = m_ipath.find(&quot;&amp;next&amp;&quot;);
++			string thisIPath(m_ipath);
++
++			if (nextPos != string::npos)
++			{
++				thisIPath = m_ipath.substr(0, nextPos);
++			}
++
++			if (pFilter != NULL)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;LastIPathAction::positionFilter: moving filter for &quot;
++					&lt;&lt; pFilter-&gt;get_mime_type() &lt;&lt; &quot; to &quot; &lt;&lt; thisIPath &lt;&lt; endl;
++#endif
++				// Skip forward
++				pFilter-&gt;skip_to_document(thisIPath);
++			}
++
++			if (nextPos != string::npos)
++			{
++				 m_ipath.erase(0, nextPos + 6);
++			}
++			else
++			{
++				m_ipath.clear();
++			}
++
++			return true;
++		}
++
++		virtual bool isReduced(const Document &amp;doc)
++		{
++			if (m_ipath.empty() == false)
++			{
++				// Go one level deeper
++#ifdef DEBUG
++				cout &lt;&lt; &quot;LastIPathAction::isReduced: not final&quot; &lt;&lt; endl;
++#endif
++				return false;
++			}
++
++			return true;
++		}
++
++		virtual bool takeAction(Document &amp;doc, bool isNested)
++		{
++			if (m_ipath.empty() == true)
++			{
++				m_pDocument = new Document(doc);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;LastIPathAction::takeAction: &quot; &lt;&lt; doc.getInternalPath() &lt;&lt; &quot; final&quot; &lt;&lt; endl;
++#endif
++			}
++
++			return true;
++		}
++
++		Document *getDocument(void)
++		{
++			return m_pDocument;
++		}
++
++	protected:
++		string m_ipath;
++		Document *m_pDocument;
++
++	private:
++		LastIPathAction(const LastIPathAction &amp;other);
++		LastIPathAction &amp;operator=(const LastIPathAction &amp;other);
++
++};
++
+ FileCollector::FileCollector() :
+ 	DownloaderInterface()
+ {
+@@ -42,7 +130,8 @@
+ Document *FileCollector::retrieveUrl(const DocumentInfo &amp;docInfo)
+ {
+ 	Url thisUrl(docInfo.getLocation());
+-	string protocol = thisUrl.getProtocol();
++	string protocol(thisUrl.getProtocol());
++	string ipath(docInfo.getInternalPath());
+ 
+ 	if (protocol != &quot;file&quot;)
+ 	{
+@@ -61,12 +150,39 @@
+ 		delete pDocument;
+ 		return NULL;
+ 	}
+-	if (pDocument-&gt;getType().empty() == true)
++
++	// Determine the file type
++	string type(MIMEScanner::scanFile(fileLocation));
++
++	// Stop here ?
++	if (ipath.empty() == true)
+ 	{
+-		// Determine the file type
+-		pDocument-&gt;setType(MIMEScanner::scanFile(fileLocation));
++		if (pDocument-&gt;getType().empty() == true)
++		{
++			pDocument-&gt;setType(type);
++		}
++
++		return pDocument;
+ 	}
+ 
++	// Reset these to avoid confusing the filters
++	pDocument-&gt;setInternalPath(&quot;&quot;);
++	pDocument-&gt;setType(type);
++
++	LastIPathAction action(ipath);
++	bool reduced = FilterUtils::reduceDocument(*pDocument, action);
++	if (reduced == true)
++	{
++		Document *pBottomMostDocument = action.getDocument();
++
++		if (pBottomMostDocument != NULL)
++		{
++			delete pDocument;
++
++			return pBottomMostDocument;
++		}
++	}
++
+ 	return pDocument;
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001588.html">[Pinot-svn] r1598 - in trunk: IndexSearch Tokenize
+</A></li>
+	<LI>Next message: <A HREF="001590.html">[Pinot-svn] r1600 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1589">[ date ]</a>
+              <a href="thread.html#1589">[ thread ]</a>
+              <a href="subject.html#1589">[ subject ]</a>
+              <a href="author.html#1589">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

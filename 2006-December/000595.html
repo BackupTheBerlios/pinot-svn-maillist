@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r602 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r602%20-%20trunk/Index&In-Reply-To=%3C200612011108.kB1B8Ghx032191%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000596.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r602 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r602%20-%20trunk/Index&In-Reply-To=%3C200612011108.kB1B8Ghx032191%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r602 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Dec  1 12:08:16 CET 2006</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000596.html">[Pinot-svn] r603 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#595">[ date ]</a>
+              <a href="thread.html#595">[ thread ]</a>
+              <a href="subject.html#595">[ subject ]</a>
+              <a href="author.html#595">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-12-01 12:08:16 +0100 (Fri, 01 Dec 2006)
+New Revision: 602
+
+Modified:
+   trunk/Index/XapianDatabase.cpp
+   trunk/Index/XapianDatabase.h
+Log:
+Contrary to what I thought, simultaneous read accesses on the same Database
+object are not safe ! Of course, it's only on SMP systems that weird problems
+cropped up.
+
+
+Modified: trunk/Index/XapianDatabase.cpp
+===================================================================
+--- trunk/Index/XapianDatabase.cpp	2006-11-27 14:25:46 UTC (rev 601)
++++ trunk/Index/XapianDatabase.cpp	2006-12-01 11:08:16 UTC (rev 602)
+@@ -39,7 +39,7 @@
+ 	m_pFirst(NULL),
+ 	m_pSecond(NULL)
+ {
+-	pthread_rwlock_init(&amp;m_rwLock, NULL);
++	pthread_mutex_init(&amp;m_rwLock, NULL);
+ 	openDatabase();
+ }
+ 
+@@ -53,7 +53,7 @@
+ 	m_pFirst(pFirst),
+ 	m_pSecond(pSecond)
+ {
+-	pthread_rwlock_init(&amp;m_rwLock, NULL);
++	pthread_mutex_init(&amp;m_rwLock, NULL);
+ }
+ 
+ XapianDatabase::XapianDatabase(const XapianDatabase &amp;other) :
+@@ -65,7 +65,7 @@
+ 	m_pFirst(other.m_pFirst),
+ 	m_pSecond(other.m_pSecond)
+ {
+-	pthread_rwlock_init(&amp;m_rwLock, NULL);
++	pthread_mutex_init(&amp;m_rwLock, NULL);
+ 	if (other.m_pDatabase != NULL)
+ 	{
+ 		m_pDatabase = new Xapian::Database(*other.m_pDatabase);
+@@ -78,7 +78,7 @@
+ 	{
+ 		delete m_pDatabase;
+ 	}
+-	pthread_rwlock_destroy(&amp;m_rwLock);
++	pthread_mutex_destroy(&amp;m_rwLock);
+ }
+ 
+ XapianDatabase &amp;XapianDatabase::operator=(const XapianDatabase &amp;other)
+@@ -215,8 +215,6 @@
+ 		cerr &lt;&lt; &quot;XapianDatabase::openDatabase: couldn't open database: &quot;
+ 			&lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+-
+-	return;
+ }
+ 
+ /// Returns false if the database couldn't be opened.
+@@ -230,14 +228,14 @@
+ {
+ 	// This is provided by Xapian::Database
+ 	// FIXME: get the write lock to make sure read operations are not in progress ?
+-	if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++	if (pthread_mutex_lock(&amp;m_rwLock) == 0)
+ 	{
+ 		if (m_pDatabase != NULL)
+ 		{
+ 			m_pDatabase-&gt;reopen();
+ 		}
+ 
+-		pthread_rwlock_unlock(&amp;m_rwLock);
++		pthread_mutex_unlock(&amp;m_rwLock);
+ 	}
+ }
+ 
+@@ -246,8 +244,11 @@
+ {
+ 	if (m_merge == false)
+ 	{
+-		if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++		if (pthread_mutex_lock(&amp;m_rwLock) == 0)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianDatabase::readLock: thread &quot; &lt;&lt; pthread_self() &lt;&lt; endl;
++#endif
+ 			if (m_pDatabase == NULL)
+ 			{
+ 				// Try again
+@@ -266,8 +267,11 @@
+ 			return NULL;
+ 		}
+ 
+-		if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++		if (pthread_mutex_lock(&amp;m_rwLock) == 0)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianDatabase::readLock: thread &quot; &lt;&lt; pthread_self() &lt;&lt; endl;
++#endif
+ 			// Reopen the second index
+ 			m_pSecond-&gt;reopen();
+ 
+@@ -301,13 +305,16 @@
+ 		return NULL;
+ 	}
+ 
+-	if (pthread_rwlock_wrlock(&amp;m_rwLock) == 0)
++	if (pthread_mutex_lock(&amp;m_rwLock) == 0)
+ 	{
+ 		if (m_pDatabase == NULL)
+ 		{
+ 			// Try again
+ 			openDatabase();
+ 		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianDatabase::writeLock: thread &quot; &lt;&lt; pthread_self() &lt;&lt; endl;
++#endif
+ 		return dynamic_cast&lt;Xapian::WritableDatabase *&gt;(m_pDatabase);
+ 	}
+ 
+@@ -317,7 +324,10 @@
+ /// Unlocks the database.
+ void XapianDatabase::unlock(void)
+ {
+-	pthread_rwlock_unlock(&amp;m_rwLock);
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianDatabase::unlock: thread &quot; &lt;&lt; pthread_self() &lt;&lt; endl;
++#endif
++	pthread_mutex_unlock(&amp;m_rwLock);
+ 
+ 	if (m_merge == true)
+ 	{
+
+Modified: trunk/Index/XapianDatabase.h
+===================================================================
+--- trunk/Index/XapianDatabase.h	2006-11-27 14:25:46 UTC (rev 601)
++++ trunk/Index/XapianDatabase.h	2006-12-01 11:08:16 UTC (rev 602)
+@@ -57,7 +57,7 @@
+ 	protected:
+ 		std::string m_databaseName;
+ 		bool m_readOnly;
+-		pthread_rwlock_t m_rwLock;
++		pthread_mutex_t m_rwLock;
+ 		Xapian::Database *m_pDatabase;
+ 		bool m_isOpen;
+ 		bool m_merge;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000596.html">[Pinot-svn] r603 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#595">[ date ]</a>
+              <a href="thread.html#595">[ thread ]</a>
+              <a href="subject.html#595">[ subject ]</a>
+              <a href="author.html#595">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

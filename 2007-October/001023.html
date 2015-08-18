@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1029 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1029%20-%20trunk/SQL&In-Reply-To=%3C200710130511.l9D5BVAE020122%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001022.html">
+   <LINK REL="Next"  HREF="001024.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1029 - trunk/SQL</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1029%20-%20trunk/SQL&In-Reply-To=%3C200710130511.l9D5BVAE020122%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1029 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 13 07:11:31 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001022.html">[Pinot-svn] r1028 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="001024.html">[Pinot-svn] r1030 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1023">[ date ]</a>
+              <a href="thread.html#1023">[ thread ]</a>
+              <a href="subject.html#1023">[ subject ]</a>
+              <a href="author.html#1023">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-13 07:11:30 +0200 (Sat, 13 Oct 2007)
+New Revision: 1029
+
+Modified:
+   trunk/SQL/ActionQueue.cpp
+Log:
+Serialize labels too.
+
+
+Modified: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2007-10-13 03:02:26 UTC (rev 1028)
++++ trunk/SQL/ActionQueue.cpp	2007-10-13 05:11:30 UTC (rev 1029)
+@@ -21,6 +21,7 @@
+ #include &lt;stdio.h&gt;
+ #include &lt;stdlib.h&gt;
+ #include &lt;unistd.h&gt;
++#include &lt;set&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;Url.h&quot;
+@@ -29,6 +30,7 @@
+ #include &quot;ActionQueue.h&quot;
+ 
+ using std::string;
++using std::set;
+ using std::cout;
+ using std::endl;
+ 
+@@ -134,23 +136,25 @@
+ 
+ 	// Serialize DocumentInfo
+ 	info += docInfo.getTitle();
+-	info += &quot;\n&quot;;
+-	info += &quot;url=&quot;;
++	info += &quot;\nurl=&quot;;
+ 	info += url;
+-	info += &quot;\n&quot;;
+-	info += &quot;type=&quot;;
++	info += &quot;\ntype=&quot;;
+ 	info += docInfo.getType();
+-	info += &quot;\n&quot;;
+-	info += &quot;language=&quot;;
++	info += &quot;\nlanguage=&quot;;
+ 	info += docInfo.getLanguage();
+-	info += &quot;\n&quot;;
+-	info += &quot;modtime=&quot;;
++	info += &quot;\nmodtime=&quot;;
+ 	info += docInfo.getTimestamp();
+-	info += &quot;\n&quot;;
+-	info += &quot;size=&quot;;
++	info += &quot;\nsize=&quot;;
+ 	char sizeStr[64];
+ 	snprintf(sizeStr, 64, &quot;%ld&quot;, docInfo.getSize());
+ 	info += sizeStr;
++	info += &quot;\nlabels=&quot;;
++	const set&lt;string&gt; &amp;labels = docInfo.getLabels();
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		info += &quot;[&quot; + Url::escapeUrl(*labelIter) + &quot;]&quot;;
++	}
+ 	info += &quot;\n&quot;;
+ 
+ 	if (update == false)
+@@ -239,7 +243,28 @@
+ 			{
+ 				docInfo.setSize((off_t )atol(bytesSize.c_str()));
+ 			}
++			string labelsString(StringManip::extractField(info, &quot;labels=&quot;, &quot;\n&quot;));
++			if (labelsString.empty() == false)
++			{
++				string::size_type endPos = 0;
++				string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
++				set&lt;string&gt; labels;
+ 
++				// Parse labels
++				while (label.empty() == false)
++				{
++					labels.insert(Url::unescapeUrl(label));
++
++					if (endPos == string::npos)
++					{
++						break;
++					}
++					label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
++				}
++
++				docInfo.setLabels(labels);
++			}
++
+ 			delete row;
+ 		}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001022.html">[Pinot-svn] r1028 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="001024.html">[Pinot-svn] r1030 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1023">[ date ]</a>
+              <a href="thread.html#1023">[ thread ]</a>
+              <a href="subject.html#1023">[ subject ]</a>
+              <a href="author.html#1023">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

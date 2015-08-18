@@ -1,0 +1,252 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1104 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1104%20-%20trunk/Index&In-Reply-To=%3C200711131536.lADFaMkG013226%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001097.html">
+   <LINK REL="Next"  HREF="001099.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1104 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1104%20-%20trunk/Index&In-Reply-To=%3C200711131536.lADFaMkG013226%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1104 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Nov 13 16:36:22 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001097.html">[Pinot-svn] r1103 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001099.html">[Pinot-svn] r1105 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1098">[ date ]</a>
+              <a href="thread.html#1098">[ thread ]</a>
+              <a href="subject.html#1098">[ subject ]</a>
+              <a href="author.html#1098">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-11-13 16:36:22 +0100 (Tue, 13 Nov 2007)
+New Revision: 1104
+
+Modified:
+   trunk/Index/XapianDatabase.cpp
+   trunk/Index/XapianDatabase.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+When opened, XapianDatabase checks whether the env var PINOT_SPELLING_DB is set
+to NO. If it is, spelling support is disabled.
+
+
+Modified: trunk/Index/XapianDatabase.cpp
+===================================================================
+--- trunk/Index/XapianDatabase.cpp	2007-11-13 15:18:37 UTC (rev 1103)
++++ trunk/Index/XapianDatabase.cpp	2007-11-13 15:36:22 UTC (rev 1104)
+@@ -21,6 +21,7 @@
+ #include &lt;fcntl.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;stdlib.h&gt;
++#include &lt;strings.h&gt;
+ #include &lt;regex.h&gt;
+ #include &lt;stdio.h&gt;
+ #include &lt;iostream&gt;
+@@ -41,6 +42,7 @@
+ XapianDatabase::XapianDatabase(const string &amp;databaseName,
+ 	bool readOnly, bool overwrite) :
+ 	m_databaseName(databaseName),
++	m_withSpelling(true),
+ 	m_readOnly(readOnly),
+ 	m_overwrite(overwrite),
+ 	m_obsoleteFormat(false),
+@@ -57,6 +59,7 @@
+ XapianDatabase::XapianDatabase(const string &amp;databaseName, 
+ 	XapianDatabase *pFirst, XapianDatabase *pSecond) :
+ 	m_databaseName(databaseName),
++	m_withSpelling(true),
+ 	m_readOnly(true),
+ 	m_overwrite(false),
+ 	m_obsoleteFormat(false),
+@@ -71,6 +74,7 @@
+ 
+ XapianDatabase::XapianDatabase(const XapianDatabase &amp;other) :
+ 	m_databaseName(other.m_databaseName),
++	m_withSpelling(other.m_withSpelling),
+ 	m_readOnly(other.m_readOnly),
+ 	m_overwrite(other.m_overwrite),
+ 	m_obsoleteFormat(other.m_obsoleteFormat),
+@@ -104,6 +108,7 @@
+ 	if (this != &amp;other)
+ 	{
+ 		m_databaseName = other.m_databaseName;
++		m_withSpelling = other.m_withSpelling;
+ 		m_readOnly = other.m_readOnly;
+ 		m_overwrite = other.m_overwrite;
+ 		m_obsoleteFormat = other.m_obsoleteFormat;
+@@ -147,6 +152,20 @@
+ 		return;
+ 	}
+ 
++	// Should we build the spelling database ?
++	char *pEnvVar = getenv(&quot;PINOT_SPELLING_DB&quot;);
++	if ((pEnvVar != NULL) &amp;&amp;
++		(strncasecmp(pEnvVar, &quot;no&quot;, 2) == 0))
++	{
++		// No
++		m_withSpelling = false;
++	}
++	else
++	{
++		// Yes
++		m_withSpelling = true;
++	}
++
+ 	// Assume things will fail
+ 	m_isOpen = false;
+ 
+@@ -334,6 +353,12 @@
+ 	}
+ }
+ 
++/// Returns true if the database supports spelling.
++bool XapianDatabase::withSpelling(void)
++{
++	return m_withSpelling;
++}
++
+ /// Returns false if the database couldn't be opened.
+ bool XapianDatabase::isOpen(void) const
+ {
+
+Modified: trunk/Index/XapianDatabase.h
+===================================================================
+--- trunk/Index/XapianDatabase.h	2007-11-13 15:18:37 UTC (rev 1103)
++++ trunk/Index/XapianDatabase.h	2007-11-13 15:36:22 UTC (rev 1104)
+@@ -42,6 +42,9 @@
+ 		/// Returns false if the database couldn't be opened.
+ 		bool isOpen(void) const;
+ 
++		/// Returns true if the database supports spelling.
++		bool withSpelling(void);
++
+ 		/// Returns false if the database was of an obsolete format.
+ 		bool wasObsoleteFormat(void) const;
+ 
+@@ -72,6 +75,7 @@
+ 	protected:
+ 		static const unsigned int m_maxTermLength;
+ 		std::string m_databaseName;
++		bool m_withSpelling;
+ 		bool m_readOnly;
+ 		bool m_overwrite;
+ 		bool m_obsoleteFormat;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-11-13 15:18:37 UTC (rev 1103)
++++ trunk/Index/XapianIndex.cpp	2007-11-13 15:36:22 UTC (rev 1104)
+@@ -91,7 +91,7 @@
+ 	IndexInterface(),
+ 	m_databaseName(indexName),
+ 	m_goodIndex(false),
+-	m_supportSpellingCorrection(true)
++	m_doSpelling(true)
+ {
+ 	// Open in read-only mode
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+@@ -99,6 +99,7 @@
+ 		(pDatabase-&gt;isOpen() == true))
+ 	{
+ 		m_goodIndex = true;
++		m_doSpelling = pDatabase-&gt;withSpelling();
+ 	}
+ }
+ 
+@@ -106,7 +107,7 @@
+ 	IndexInterface(other),
+ 	m_databaseName(other.m_databaseName),
+ 	m_goodIndex(other .m_goodIndex),
+-	m_supportSpellingCorrection(other.m_supportSpellingCorrection),
++	m_doSpelling(other.m_doSpelling),
+ 	m_stemLanguage(other.m_stemLanguage)
+ {
+ }
+@@ -122,7 +123,7 @@
+ 		IndexInterface::operator=(other);
+ 		m_databaseName = other.m_databaseName;
+ 		m_goodIndex = other .m_goodIndex;
+-		m_supportSpellingCorrection = other.m_supportSpellingCorrection;
++		m_doSpelling = other.m_doSpelling;
+ 		m_stemLanguage = other.m_stemLanguage;
+ 	}
+ 
+@@ -208,7 +209,7 @@
+ 	try
+ 	{
+ 		// Older Xapian backends don't support spelling correction
+-		if (m_supportSpellingCorrection == true)
++		if (m_doSpelling == true)
+ 		{
+ 			// The database is required for the spelling dictionary
+ 			generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING);
+@@ -221,9 +222,9 @@
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't index with spelling correction: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 
+-		if (m_supportSpellingCorrection == true)
++		if (m_doSpelling == true)
+ 		{
+-			m_supportSpellingCorrection = false;
++			m_doSpelling = false;
+ 
+ 			// Try again without spelling correction
+ 			// Let the caller catch the exception
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-11-13 15:18:37 UTC (rev 1103)
++++ trunk/Index/XapianIndex.h	2007-11-13 15:36:22 UTC (rev 1104)
+@@ -149,7 +149,7 @@
+ 		static const std::string MAGIC_TERM;
+ 		std::string m_databaseName;
+ 		bool m_goodIndex;
+-		bool m_supportSpellingCorrection;
++		bool m_doSpelling;
+ 		std::string m_stemLanguage;
+ 
+ 		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001097.html">[Pinot-svn] r1103 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001099.html">[Pinot-svn] r1105 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1098">[ date ]</a>
+              <a href="thread.html#1098">[ thread ]</a>
+              <a href="subject.html#1098">[ subject ]</a>
+              <a href="author.html#1098">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

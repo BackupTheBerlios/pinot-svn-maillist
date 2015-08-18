@@ -1,0 +1,702 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r394 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r394%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608120747.k7C7lNnY019189%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000386.html">
+   <LINK REL="Next"  HREF="000388.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r394 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r394%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608120747.k7C7lNnY019189%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r394 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 12 09:47:24 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000386.html">[Pinot-svn] r393 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000388.html">[Pinot-svn] r395 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#387">[ date ]</a>
+              <a href="thread.html#387">[ thread ]</a>
+              <a href="subject.html#387">[ subject ]</a>
+              <a href="author.html#387">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-12 09:47:23 +0200 (Sat, 12 Aug 2006)
+New Revision: 394
+
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+All methods of WritableIndexInterface have DBus equivalents now, even though most
+don't actually do anything useful just yet...
+Both Pinot and the daemon set XAPIAN_PREFER_FLINT in the environment so that the
+new indices will be created with the Flint backend, instead of Quartz.
+
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-08-11 15:20:29 UTC (rev 393)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-08-12 07:47:23 UTC (rev 394)
+@@ -121,8 +121,11 @@
+ 
+ static DBusHandlerResult messageBusFilter(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
++	XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+ 	DaemonState *pServer = NULL;
+ 	DBusMessage *pReply = NULL;
++	DBusError error;
++	const char *pSender = dbus_message_get_sender(pMessage);
+ 	bool processedMessage = false, quitLoop = false;
+ 
+ 	if (pData != NULL)
+@@ -130,31 +133,62 @@
+ 		pServer = (DaemonState *)pData;
+ 	}
+ 
++	dbus_error_init(&amp;error);
++
++#ifdef DEBUG
++	if (pSender != NULL)
++	{
++		cout &lt;&lt; &quot;messageBusFilter: called from &quot; &lt;&lt; pSender &lt;&lt; endl;
++	}
++#endif
++
+ 	// Are we about to be disconnected ?
+ 	if (dbus_message_is_signal(pMessage, DBUS_INTERFACE_LOCAL, &quot;Disconnected&quot;) == TRUE)
+ 	{
+ 		quitLoop = true;
+ 		processedMessage = true;
+ 	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;GetDocumentInfo&quot;) == TRUE)
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;DeleteLabel&quot;) == TRUE)
+ 	{
+-		const char *pSender = dbus_message_get_sender(pMessage);
+-		DBusError error;
+-		dbus_uint32_t docId = 0;
++		char *pLabel = NULL;
+ 
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_STRING, &amp;pLabel,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
+ #ifdef DEBUG
+-		if (pSender != NULL)
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; pLabel &lt;&lt; endl;
++#endif
++			// FIXME: delete the label
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_STRING, &amp;pLabel,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
+ 		{
+-			cout &lt;&lt; &quot;messageBusFilter: called from &quot; &lt;&lt; pSender &lt;&lt; endl;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
+ 		}
+-#endif
+-		// Simple types are returned as const references and don't need to be freed
+-		dbus_error_init(&amp;error);
++
++		processedMessage = true;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;GetDocumentInfo&quot;) == TRUE)
++	{
++		unsigned int docId = 0;
++
+ 		if (dbus_message_get_args(pMessage, &amp;error,
+ 			DBUS_TYPE_UINT32, &amp;docId,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+-			XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+ 			DocumentInfo docInfo;
+ 
+ #ifdef DEBUG
+@@ -169,7 +203,7 @@
+ 					const char *pTitle = docInfo.getTitle().c_str();
+ 					const char *pLocation = docInfo.getLocation().c_str();
+ 					const char *pType = docInfo.getType().c_str();
+-					const char *pLanguage = docInfo.getLanguage().c_str();
++					const char *pLanguage = Languages::toEnglish(docInfo.getLanguage()).c_str();
+ 
+ 					dbus_message_append_args(pReply,
+ 						DBUS_TYPE_STRING, &amp;pTitle,
+@@ -194,26 +228,15 @@
+ 			// Use the error message as reply
+ 			pReply = dbus_message_new_error(pMessage, error.name, error.message);
+ 		}
+-		dbus_error_free(&amp;error);
+ 
+ 		processedMessage = true;
+ 	}
+ 	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;GetStatistics&quot;) == TRUE)
+ 	{
+-		const char *pSender = dbus_message_get_sender(pMessage);
+-		DBusError error;
+-		dbus_uint32_t docId = 0;
+-
+-#ifdef DEBUG
+-		if (pSender != NULL)
+-		{
+-			cout &lt;&lt; &quot;messageBusFilter: called from &quot; &lt;&lt; pSender &lt;&lt; endl;
+-		}
+-#endif
+-		XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+ 		CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++		unsigned int docId = 0;
+ 
+-		unsigned int crawledDirsCount = history.getItemsCount();
++		unsigned int crawledFilesCount = history.getItemsCount();
+ 		unsigned int docsCount = index.getDocumentsCount();
+ 
+ 		// Prepare the reply
+@@ -221,33 +244,23 @@
+ 		if (pReply != NULL)
+ 		{
+ 			dbus_message_append_args(pReply,
+-				DBUS_TYPE_UINT32, &amp;crawledDirsCount,
++				DBUS_TYPE_UINT32, &amp;crawledFilesCount,
+ 				DBUS_TYPE_UINT32, &amp;docsCount,
+ 				DBUS_TYPE_INVALID);
+ 		}
+ 
+ 		processedMessage = true;
+ 	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;Index&quot;) == TRUE)
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;IndexDocument&quot;) == TRUE)
+ 	{
+-		const char *pSender = dbus_message_get_sender(pMessage);
+-		DBusError error;
+ 		char *pTitle = NULL;
+ 		char *pLocation = NULL;
+ 		char *pType = NULL;
+ 		char *pLanguage = NULL;
+ 		char **ppLabels = NULL;
+ 		dbus_uint32_t labelsCount = 0;
+-		dbus_uint32_t docId = 0;
++		unsigned int docId = 0;
+ 
+-#ifdef DEBUG
+-		if (pSender != NULL)
+-		{
+-			cout &lt;&lt; &quot;messageBusFilter: called from &quot; &lt;&lt; pSender &lt;&lt; endl;
+-		}
+-#endif
+-		// Simple types are returned as const references and don't need to be freed
+-		dbus_error_init(&amp;error);
+ 		if (dbus_message_get_args(pMessage, &amp;error,
+ 			DBUS_TYPE_STRING, &amp;pTitle,
+ 			DBUS_TYPE_STRING, &amp;pLocation,
+@@ -257,16 +270,18 @@
+ 			DBUS_TYPE_UINT32, &amp;labelsCount,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+-			DocumentInfo docInfo(pTitle, pLocation, pType, pLanguage);
++			DocumentInfo docInfo(pTitle, pLocation, pType,
++				((pLanguage != NULL) ? Languages::toLocale(pLanguage) : &quot;&quot;));
+ 
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; pTitle &lt;&lt; &quot;, &quot; &lt;&lt; pLocation
+-				&lt;&lt; &quot;, &quot; &lt;&lt; pType &lt;&lt; &quot;, &quot; &lt;&lt; pLanguage &lt;&lt; &quot;, &quot; &lt;&lt; docId
++				&lt;&lt; &quot;, &quot; &lt;&lt; pType &lt;&lt; &quot;, &quot; &lt;&lt; pLanguage
+ 				&lt;&lt; &quot; with &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+ #endif
+ 			// FIXME: set labels on docInfo
+ 
+ 			pServer-&gt;queue_index(docInfo);
++			// FIXME: we can't provide a document ID at the moment
+ 
+ 			// Free container types
+ 			g_strfreev(ppLabels);
+@@ -288,27 +303,139 @@
+ 			// Use the error message as reply
+ 			pReply = dbus_message_new_error(pMessage, error.name, error.message);
+ 		}
+-		dbus_error_free(&amp;error);
+ 
+ 		processedMessage = true;
+ 	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SimpleQuery&quot;) == TRUE)
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;RenameLabel&quot;) == TRUE)
+ 	{
+-		const char *pSender = dbus_message_get_sender(pMessage);
+-		DBusError error;
+-		char *pSearchText = NULL;
+-		dbus_uint32_t maxHits = 0;
+-		dbus_uint32_t docId = 0;
++		char *pOldLabel = NULL;
++		char *pNewLabel = NULL;
+ 
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_STRING, &amp;pOldLabel,
++			DBUS_TYPE_STRING, &amp;pNewLabel,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
+ #ifdef DEBUG
+-		if (pSender != NULL)
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; pOldLabel
++				&lt;&lt; &quot; &quot; &lt;&lt; pNewLabel &lt;&lt; endl;
++#endif
++			// FIXME: rename the label
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_STRING, &amp;pNewLabel,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
+ 		{
+-			cout &lt;&lt; &quot;messageBusFilter: called from &quot; &lt;&lt; pSender &lt;&lt; endl;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
+ 		}
++
++		processedMessage = true;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SetDocumentInfo&quot;) == TRUE)
++	{
++		char *pTitle = NULL;
++		char *pLocation = NULL;
++		char *pType = NULL;
++		char *pLanguage = NULL;
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_STRING, &amp;pTitle,
++			DBUS_TYPE_STRING, &amp;pLocation,
++			DBUS_TYPE_STRING, &amp;pType,
++			DBUS_TYPE_STRING, &amp;pLanguage,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			DocumentInfo docInfo(pTitle, pLocation, pType,
++				((pLanguage != NULL) ? Languages::toLocale(pLanguage) : &quot;&quot;));
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; pTitle &lt;&lt; &quot;, &quot; &lt;&lt; pLocation
++				&lt;&lt; &quot;, &quot; &lt;&lt; pType &lt;&lt; &quot;, &quot; &lt;&lt; pLanguage &lt;&lt; &quot;, &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+-		// Simple types are returned as const references and don't need to be freed
+-		dbus_error_init(&amp;error);
++
++			// FIXME: update the document info
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
++		}
++
++		processedMessage = true;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SetDocumentLabels&quot;) == TRUE)
++	{
++		char **ppLabels = NULL;
++		dbus_uint32_t labelsCount = 0;
++		unsigned int docId = 0;
++
+ 		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_ARRAY, &amp;ppLabels,
++			DBUS_TYPE_UINT32, &amp;labelsCount,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; docId
++				&lt;&lt; &quot; with &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
++			// FIXME: set labels
++
++			// Free container types
++			g_strfreev(ppLabels);
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
++		}
++
++		processedMessage = true;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SimpleQuery&quot;) == TRUE)
++	{
++		char *pSearchText = NULL;
++		dbus_uint32_t maxHits = 0;
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(pMessage, &amp;error,
+ 			DBUS_TYPE_STRING, &amp;pSearchText,
+ 			DBUS_TYPE_UINT32, &amp;maxHits,
+ 			DBUS_TYPE_INVALID) == TRUE)
+@@ -333,7 +460,6 @@
+ 
+ 					if (docIdsCount &gt; 0)
+ 					{
+-						XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+ 						char *pDocIds[docIdsCount];
+ 						unsigned int resultIndex = 0;
+ 
+@@ -391,15 +517,11 @@
+ 			// Use the error message as reply
+ 			pReply = dbus_message_new_error(pMessage, error.name, error.message);
+ 		}
+-		dbus_error_free(&amp;error);
+ 
+ 		processedMessage = true;
+ 	}
+ 	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;Stop&quot;) == TRUE)
+ 	{
+-		DBusError error;
+-
+-		dbus_error_init(&amp;error);
+ 		if (dbus_message_get_args(pMessage, &amp;error,
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+@@ -417,11 +539,110 @@
+ 			quitLoop = true;
+ 			processedMessage = true;
+ 		}
+-		dbus_error_free(&amp;error);
+ 	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;UnindexDocument&quot;) == TRUE)
++	{
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
+ #ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			// FIXME: unindex document
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
++		}
++
++		processedMessage = true;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;UnindexDocuments&quot;) == TRUE)
++	{
++		char *pLabel = NULL;
++
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_STRING, &amp;pLabel,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; pLabel &lt;&lt; endl;
++#endif
++			// FIXME: unindex documents
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_STRING, &amp;pLabel,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
++		}
++
++		processedMessage = true;
++	}
++	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;UpdateDocument&quot;) == TRUE)
++	{
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(pMessage, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: received &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			// FIXME: update document
++
++			// Prepare the reply
++			pReply = dbus_message_new_method_return(pMessage);
++			if (pReply != NULL)
++			{
++				dbus_message_append_args(pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++		else
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;messageBusFilter: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++			// Use the error message as reply
++			pReply = dbus_message_new_error(pMessage, error.name, error.message);
++		}
++
++		processedMessage = true;
++	}
++#ifdef DEBUG
+ 	else cout &lt;&lt; &quot;messageBusFilter: message for foreign object&quot; &lt;&lt; endl;
+ #endif
++	dbus_error_free(&amp;error);
+ 
+ 	// Send a reply ?
+ 	if (pReply != NULL)
+@@ -488,6 +709,9 @@
+ 	textdomain(GETTEXT_PACKAGE);
+ #endif //ENABLE_NLS
+ 
++	// This should make Xapian use Flint rather than Quartz
++	setenv(&quot;XAPIAN_PREFER_FLINT&quot;, &quot;1&quot;, 1);
++
+ 	MIMEScanner::initialize();
+ 	DownloaderInterface::initialize();
+ 	Glib::thread_init();
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2006-08-11 15:20:29 UTC (rev 393)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2006-08-12 07:47:23 UTC (rev 394)
+@@ -2,6 +2,15 @@
+ &lt;node name=&quot;/de/berlios/Pinot&quot;&gt;
+   &lt;interface name=&quot;de.berlios.Pinot&quot;&gt;
+     &lt;!--
++	Deletes a label.
++	 label: the name of the label to delete
++	--&gt;
++    &lt;method name=&quot;DeleteLabel&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.DeleteLabel&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;label&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;label&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
+ 	Retrieves information about a document.
+ 	 docId: the document's ID
+ 	 title : title of the document (automatically extracted from document if possible
+@@ -20,13 +29,12 @@
+     &lt;/method&gt;
+     &lt;!--
+ 	Retrieves statistics.
+-	 crawledDirsCount: the number of directories that have been crawled prior
+-	                   to entering monitoring mode
++	 crawledCount: the number of documents crawled
+ 	 docsCount: the number of documents in the index
+ 	--&gt;
+     &lt;method name=&quot;GetStatistics&quot;&gt;
+       &lt;annotation name=&quot;de.berlios.Pinot.GetStatistics&quot; value=&quot;pinotDBus&quot;/&gt;
+-      &lt;arg type=&quot;u&quot; name=&quot;crawledDirsCount&quot; direction=&quot;out&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;crawledCount&quot; direction=&quot;out&quot;/&gt;
+       &lt;arg type=&quot;u&quot; name=&quot;docsCount&quot; direction=&quot;out&quot;/&gt;
+     &lt;/method&gt;
+     &lt;!--
+@@ -37,14 +45,55 @@
+ 	 language: the document's language in English
+ 	 labels: array of labels to apply to the document
+ 	 labelsCount: the number of labels in the array
++	 docId: the document's ID (always 0 for now)
++	--&gt;
++    &lt;method name=&quot;IndexDocument&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.IndexDocument&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;title&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;location&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;type&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;language&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;as&quot; name=&quot;labels&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;labelsCount&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
++	Renames a label.
++	 oldLabel: the label to rename
++	 newLabel: the new label name
++	--&gt;
++    &lt;method name=&quot;RenameLabel&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.RenameLabel&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;oldLabel&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;newLabel&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;newLabel&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
++	Sets information about a document.
+ 	 docId: the document's ID
++	 title : title of the document
++	 location: the document's URL (eg &quot;<A HREF="file:///home/fabrice/Documents/SomeFile.txt">file:///home/fabrice/Documents/SomeFile.txt</A>&quot;)
++	 type: the document's MIME type
++	 language: the document's language in English
+ 	--&gt;
+-    &lt;method name=&quot;Index&quot;&gt;
+-      &lt;annotation name=&quot;de.berlios.Pinot.Index&quot; value=&quot;pinotDBus&quot;/&gt;
++    &lt;method name=&quot;SetDocumentInfo&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.SetDocumentInfo&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;s&quot; name=&quot;title&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;s&quot; name=&quot;location&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;s&quot; name=&quot;type&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;s&quot; name=&quot;language&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
++	Sets a document's labels.
++	 docId: the document's ID
++	 labels: array of labels to apply to the document
++	 labelsCount: the number of labels in the array
++	--&gt;
++    &lt;method name=&quot;SetDocumentLabels&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.SetDocumentLabels&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;as&quot; name=&quot;labels&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;u&quot; name=&quot;labelsCount&quot; direction=&quot;in&quot;/&gt;
+       &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
+@@ -71,5 +120,32 @@
+       &lt;annotation name=&quot;de.berlios.Pinot.Stop&quot; value=&quot;pinotDBus&quot;/&gt;
+       &lt;arg type=&quot;i&quot; name=&quot;exitStatus&quot; direction=&quot;out&quot; /&gt;
+     &lt;/method&gt;
++    &lt;!--
++	Unindexes a document.
++	 docId: the document's ID
++	--&gt;
++    &lt;method name=&quot;UnindexDocument&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.UnindexDocument&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
++	Unindexes documents that match the given label.
++	 label: the name of the label to match
++	--&gt;
++    &lt;method name=&quot;UnindexDocuments&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.UnindexDocuments&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;label&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;label&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
++	Updates a document
++	 docId: the document's ID
++	--&gt;
++    &lt;method name=&quot;UpdateDocument&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.UpdateDocument&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
+   &lt;/interface&gt;
+ &lt;/node&gt;
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-08-11 15:20:29 UTC (rev 393)
++++ trunk/UI/GTK2/src/pinot.cc	2006-08-12 07:47:23 UTC (rev 394)
+@@ -132,6 +132,9 @@
+ 	textdomain(GETTEXT_PACKAGE);
+ #endif //ENABLE_NLS
+ 
++	// This should make Xapian use Flint rather than Quartz
++	setenv(&quot;XAPIAN_PREFER_FLINT&quot;, &quot;1&quot;, 1);
++
+ 	MIMEScanner::initialize();
+ 	DownloaderInterface::initialize();
+ 	Glib::thread_init();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000386.html">[Pinot-svn] r393 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000388.html">[Pinot-svn] r395 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#387">[ date ]</a>
+              <a href="thread.html#387">[ thread ]</a>
+              <a href="subject.html#387">[ subject ]</a>
+              <a href="author.html#387">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

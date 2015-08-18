@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1458 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1458%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200812311327.mBVDRqIV003297%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001447.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1458 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1458%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200812311327.mBVDRqIV003297%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1458 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Dec 31 14:27:52 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001447.html">[Pinot-svn] r1457 - trunk/UI/GTK2
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1448">[ date ]</a>
+              <a href="thread.html#1448">[ thread ]</a>
+              <a href="subject.html#1448">[ subject ]</a>
+              <a href="author.html#1448">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-31 14:27:49 +0100 (Wed, 31 Dec 2008)
+New Revision: 1458
+
+Modified:
+   trunk/SQL/MetaDataBackup.cpp
+   trunk/SQL/MetaDataBackup.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+Log:
+Fixed use of LIKE in MetaDataBackup. The getItems() method didn't unescape URLs.
+In DirectoryScannerThread::doWork(), restore metadata only for documents in the
+directory being crawled.
+
+
+Modified: trunk/SQL/MetaDataBackup.cpp
+===================================================================
+--- trunk/SQL/MetaDataBackup.cpp	2008-12-30 14:08:09 UTC (rev 1457)
++++ trunk/SQL/MetaDataBackup.cpp	2008-12-31 13:27:49 UTC (rev 1458)
+@@ -232,7 +232,7 @@
+ #endif
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Value FROM MetaDataBackup \
+-		WHERE Url='%q' AND Name LIKE '%q%';&quot;,
++		WHERE Url='%q' AND Name LIKE '%q%%';&quot;,
+ 		Url::escapeUrl(url).c_str(), name.c_str());
+ 	if (results != NULL)
+ 	{
+@@ -299,7 +299,7 @@
+ 		else
+ 		{
+ 			results = executeStatement(&quot;DELETE FROM MetaDataBackup \
+-				WHERE Url='%q' AND NAME LIKE '%q%';&quot;,
++				WHERE Url='%q' AND NAME LIKE '%q%%';&quot;,
+ 				Url::escapeUrl(url).c_str(), name.c_str());
+ 		}
+ 	}
+@@ -428,14 +428,14 @@
+ }
+ 
+ /// Gets items.
+-bool MetaDataBackup::getItems(const string &amp;protocol, set&lt;string&gt; &amp;urls,
++bool MetaDataBackup::getItems(const string &amp;likeUrl, set&lt;string&gt; &amp;urls,
+ 	unsigned long min, unsigned long max)
+ {
+ 	SQLResults *results = NULL;
+ 	bool success = false;
+ 
+ 	// Even when attributes are used, an entry is always added to the table
+-	if (protocol.empty() == true)
++	if (likeUrl.empty() == true)
+ 	{
+ 		results = executeStatement(&quot;SELECT Url FROM MetaDataBackup \
+ 			LIMIT %u OFFSET %u;&quot;,
+@@ -444,8 +444,8 @@
+ 	else
+ 	{
+ 		results = executeStatement(&quot;SELECT Url FROM MetaDataBackup \
+-			WHERE Url LIKE '%q%' LIMIT %u OFFSET %u;&quot;,
+-			protocol.c_str(), max - min, min);
++			WHERE Url LIKE '%q%%' LIMIT %u OFFSET %u;&quot;,
++			likeUrl.c_str(), max - min, min);
+ 	}
+ 	if (results != NULL)
+ 	{
+@@ -457,7 +457,7 @@
+ 				continue;
+ 			}
+ 
+-			urls.insert(row-&gt;getColumn(0));
++			urls.insert(Url::unescapeUrl(row-&gt;getColumn(0)));
+ 			success = true;
+ 
+ 			delete row;
+
+Modified: trunk/SQL/MetaDataBackup.h
+===================================================================
+--- trunk/SQL/MetaDataBackup.h	2008-12-30 14:08:09 UTC (rev 1457)
++++ trunk/SQL/MetaDataBackup.h	2008-12-31 13:27:49 UTC (rev 1458)
+@@ -43,7 +43,7 @@
+ 		bool getItem(DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent);
+ 
+ 		/// Gets items.
+-		bool getItems(const std::string &amp;protocol,
++		bool getItems(const std::string &amp;likeUrl,
+ 			std::set&lt;std::string&gt; &amp;urls,
+ 			unsigned long min, unsigned long max);
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-12-30 14:08:09 UTC (rev 1457)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-12-31 13:27:49 UTC (rev 1458)
+@@ -589,23 +589,23 @@
+ 		// Restore user-set metadata, if any
+ 		while ((pIndex != NULL) &amp;&amp;
+ 			(pIndex-&gt;isGood() == true) &amp;&amp;
+-			(metaData.getItems(&quot;<A HREF="file://">file://</A>&quot;, urls,
++			(metaData.getItems(string(&quot;<A HREF="file://">file://</A>&quot;) + m_dirName, urls,
+ 				currentOffset, currentOffset + 100) == true))
+ 		{
+ 			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
+ 				urlIter != urls.end(); ++urlIter)
+ 			{
+ 				unsigned int docId = pIndex-&gt;hasDocument(*urlIter);
++				if (docId == 0)
++				{
++					continue;
++				}
+ 
+-				if (docId &gt; 0)
++				DocumentInfo docInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;);
++				if (metaData.getItem(docInfo, DocumentInfo::SERIAL_ALL) == true)
+ 				{
+-					DocumentInfo docInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;);
+-
+-					if (metaData.getItem(docInfo, DocumentInfo::SERIAL_ALL) == true)
+-					{
+-						pIndex-&gt;updateDocumentInfo(docId, docInfo);
+-						pIndex-&gt;setDocumentLabels(docId, docInfo.getLabels(), true);
+-					}
++					pIndex-&gt;updateDocumentInfo(docId, docInfo);
++					pIndex-&gt;setDocumentLabels(docId, docInfo.getLabels(), true);
+ 				}
+ 			}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001447.html">[Pinot-svn] r1457 - trunk/UI/GTK2
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1448">[ date ]</a>
+              <a href="thread.html#1448">[ thread ]</a>
+              <a href="subject.html#1448">[ subject ]</a>
+              <a href="author.html#1448">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

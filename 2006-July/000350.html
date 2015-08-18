@@ -1,0 +1,2251 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r357 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r357%20-%20trunk/Index&In-Reply-To=%3C200607181309.k6ID9Vdf030079%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000349.html">
+   <LINK REL="Next"  HREF="000351.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r357 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r357%20-%20trunk/Index&In-Reply-To=%3C200607181309.k6ID9Vdf030079%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r357 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jul 18 15:09:31 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000349.html">[Pinot-svn] r356 - trunk/Utils/xdgmime
+</A></li>
+        <LI>Next message: <A HREF="000351.html">[Pinot-svn] r358 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#350">[ date ]</a>
+              <a href="thread.html#350">[ thread ]</a>
+              <a href="subject.html#350">[ subject ]</a>
+              <a href="author.html#350">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-18 15:08:51 +0200 (Tue, 18 Jul 2006)
+New Revision: 357
+
+Added:
+   trunk/Index/WritableXapianIndex.cpp
+   trunk/Index/WritableXapianIndex.h
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/Makefile.am
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/Index/pinot-index.cpp
+Log:
+Moved everything that requires a writable index to WritableIndexInterface
+and WritableXapianIndex.
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/IndexInterface.h	2006-07-18 13:08:51 UTC (rev 357)
+@@ -23,27 +23,18 @@
+ #include &quot;Tokenizer.h&quot;
+ #include &quot;DocumentInfo.h&quot;
+ 
+-/// Interface implemented by indexes.
++/// Interface implemented by read-only indexes.
+ class IndexInterface
+ {
+ 	public:
+ 		virtual ~IndexInterface() {};
+ 
+ 		/// Returns false if the index couldn't be opened.
+-		bool isGood(void) const { return m_goodIndex; }
++		virtual bool isGood(void) const = 0;
+ 
+-		typedef enum { STORE_UNSTEM = 0, STORE_STEM, STORE_BOTH } StemmingMode;
+-
+-		/// Sets the stemming mode.
+-		virtual void setStemmingMode(StemmingMode mode) { m_stemMode = mode; }
+-
+ 		/// Gets the index location.
+ 		virtual std::string getLocation(void) const = 0;
+ 
+-		/// Indexes the given data.
+-		virtual bool indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
+-			unsigned int &amp;docId) = 0;
+-
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const = 0;
+ 
+@@ -53,6 +44,47 @@
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const = 0;
+ 
++		/// Checks whether the given URL is in the index.
++		virtual unsigned int hasDocument(const std::string &amp;url) const = 0;
++
++		/// Gets terms with the same root.
++		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions) = 0;
++
++		/// Returns the number of documents.
++		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const = 0;
++
++		/// Lists document IDs.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
++
++		/// Lists documents that have a label.
++		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
++
++	protected:
++		IndexInterface() { };
++
++	private:
++		IndexInterface(const IndexInterface &amp;other);
++		IndexInterface &amp;operator=(const IndexInterface &amp;other);
++
++};
++
++/// Interface implemented by read-write indexes.
++class WritableIndexInterface : public IndexInterface
++{
++	public:
++		virtual ~WritableIndexInterface() {};
++
++		typedef enum { STORE_UNSTEM = 0, STORE_STEM, STORE_BOTH } StemmingMode;
++
++		/// Sets the stemming mode.
++		virtual void setStemmingMode(StemmingMode mode) { m_stemMode = mode; }
++
++		/// Indexes the given data.
++		virtual bool indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId) = 0;
++
+ 		/// Updates the given document.
+ 		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens) = 0;
+ 
+@@ -63,18 +95,12 @@
+ 		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+ 			bool resetLabels = true) = 0;
+ 
+-		/// Checks whether the given URL is in the index.
+-		virtual unsigned int hasDocument(const std::string &amp;url) const = 0;
+-
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId) = 0;
+ 
+ 		/// Unindexes documents with the given label.
+ 		virtual bool unindexDocuments(const std::string &amp;labelName) = 0;
+ 
+-		/// Gets terms with the same root.
+-		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions) = 0;
+-
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
+ 
+@@ -84,26 +110,14 @@
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void) = 0;
+ 
+-		/// Returns the number of documents.
+-		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const = 0;
+-
+-		/// Lists document IDs.
+-		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+-
+-		/// Lists documents that have a label.
+-		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+-
+ 	protected:
+ 		StemmingMode m_stemMode;
+-		bool m_goodIndex;
+ 
+-		IndexInterface() { m_stemMode = STORE_UNSTEM; m_goodIndex = false; };
++		WritableIndexInterface() : IndexInterface(), m_stemMode(STORE_UNSTEM) { };
+ 
+ 	private:
+-		IndexInterface(const IndexInterface &amp;other);
+-		IndexInterface &amp;operator=(const IndexInterface &amp;other);
++		WritableIndexInterface(const WritableIndexInterface &amp;other);
++		WritableIndexInterface &amp;operator=(const WritableIndexInterface &amp;other);
+ 
+ };
+ 
+
+Modified: trunk/Index/Makefile.am
+===================================================================
+--- trunk/Index/Makefile.am	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/Makefile.am	2006-07-18 13:08:51 UTC (rev 357)
+@@ -3,13 +3,25 @@
+ noinst_HEADERS = \
+ 	IndexInterface.h \
+ 	LanguageDetector.h \
++	WritableXapianIndex.h \
+ 	XapianIndex.h
+ 
+ noinst_LTLIBRARIES = libIndex.la
+ 
++bin_PROGRAMS = pinot-index
++
+ libIndex_la_SOURCES = \
+ 	LanguageDetector.cpp \
++	WritableXapianIndex.cpp \
+ 	XapianIndex.cpp
+ 
+-AM_CXXFLAGS = -I../Utils -I../Tokenize @INDEX_CFLAGS@ 
++pinot_index_SOURCES = \
++	pinot-index.cpp
+ 
++pinot_index_LDADD = -L../Utils -L../Tokenize -L../Collect -L../Index \
++	-lIndex -lCollect -lTokenize -lUtils \
++	@GLIBMM_LIBS@ @INDEX_LIBS@ @DBUS_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
++
++AM_CXXFLAGS = -I../Utils -I../Tokenize -I../Collect -I../Index \
++	@HTTP_CFLAGS@ @MIME_CFLAGS@ @XML_CFLAGS@ @DBUS_CFLAGS@ @INDEX_CFLAGS@
++
+
+Added: trunk/Index/WritableXapianIndex.cpp
+===================================================================
+--- trunk/Index/WritableXapianIndex.cpp	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/WritableXapianIndex.cpp	2006-07-18 13:08:51 UTC (rev 357)
+@@ -0,0 +1,894 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;fcntl.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;stdio.h&gt;
++#include &lt;stdarg.h&gt;
++#include &lt;strings.h&gt;
++#include &lt;time.h&gt;
++#include &lt;ctype.h&gt;
++#include &lt;regex.h&gt;
++#include &lt;iostream&gt;
++#include &lt;fstream&gt;
++#include &lt;algorithm&gt;
++#include &lt;utility&gt;
++
++#include &quot;Languages.h&quot;
++#include &quot;StringManip.h&quot;
++#include &quot;TimeConverter.h&quot;
++#include &quot;Url.h&quot;
++#include &quot;LanguageDetector.h&quot;
++#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;WritableXapianIndex.h&quot;
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::string;
++using std::set;
++using std::min;
++
++WritableXapianIndex::WritableXapianIndex(const string &amp;indexName) :
++	WritableIndexInterface(),
++	XapianIndex(indexName)
++{
++	// Open in read/write mode
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if ((pDatabase != NULL) &amp;&amp;
++		(pDatabase-&gt;isOpen() == true))
++	{
++		m_goodIndex = true;
++	}
++}
++
++WritableXapianIndex::~WritableXapianIndex()
++{
++}
++
++bool WritableXapianIndex::badField(const string &amp;field)
++{
++	regex_t fieldRegex;
++	regmatch_t pFieldMatches[1];
++	bool isBadField = false;
++
++	// A bad field is one that includes one of our field delimiters
++	if (regcomp(&amp;fieldRegex,
++		&quot;(url|sample|caption|type|timestamp|language)=&quot;,
++		REG_EXTENDED|REG_ICASE) == 0)
++	{
++		if (regexec(&amp;fieldRegex, field.c_str(), 1,
++			pFieldMatches, REG_NOTBOL|REG_NOTEOL) == 0)
++		{
++			isBadField = true;
++		}
++	}
++	regfree(&amp;fieldRegex);
++
++	return isBadField;
++}
++
++void WritableXapianIndex::addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++	const string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const
++{
++	Xapian::Stem *pStemmer = NULL;
++	string term;
++
++	// Do we know what language to use for stemming ?
++	if (m_stemLanguage.empty() == false)
++	{
++		pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
++	}
++
++	// Get the terms
++	while (tokens.nextToken(term) == true)
++	{
++		if (term.empty() == true)
++		{
++			continue;
++		}
++		// Does it start with a capital letter ?
++		if (isupper((int)term[0]) != 0)
++		{
++			// R-prefix the raw term
++			doc.add_posting(string(&quot;R&quot;) + term, termPos);
++		}
++		// Lower case the term
++		term = StringManip::toLowerCase(term);
++
++		// Stem the term ?
++		if ((mode == STORE_UNSTEM) ||
++			(pStemmer == NULL))
++		{
++			doc.add_posting(limitTermLength(prefix + term), termPos++);
++		}
++		else if (mode == STORE_STEM)
++		{
++			string stemmedTerm = pStemmer-&gt;stem_word(term);
++
++			doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos++);
++		}
++		else if (mode == STORE_BOTH)
++		{
++			string stemmedTerm = pStemmer-&gt;stem_word(term);
++
++			// Add both
++			doc.add_posting(limitTermLength(prefix + term), termPos);
++			// ...at the same position
++			doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos++);
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;WritableXapianIndex::addTermsToDocument: added &quot; &lt;&lt; termPos &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
++#endif
++
++	if (pStemmer != NULL)
++	{
++		delete pStemmer;
++	}
++}
++
++bool WritableXapianIndex::prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
++	Xapian::termcount &amp;termPos) const
++{
++	string title(info.getTitle());
++	string location(info.getLocation());
++	Url urlObj(location);
++
++	// Add a magic term :-)
++	doc.add_term(MAGIC_TERM);
++
++	// Index the title with and without prefix S
++	if (title.empty() == false)
++	{
++		Document titleDoc;
++		titleDoc.setData(title.c_str(), title.length());
++		Tokenizer titleTokens(&amp;titleDoc);
++		addTermsToDocument(titleTokens, doc, &quot;S&quot;, termPos, STORE_UNSTEM);
++		titleTokens.rewind();
++		addTermsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
++	}
++
++	// Index the full URL with prefix U
++	doc.add_term(limitTermLength(string(&quot;U&quot;) + location, true));
++	// ...the host name and included domains with prefix H
++	string hostName(StringManip::toLowerCase(urlObj.getHost()));
++	if (hostName.empty() == false)
++	{
++		doc.add_term(limitTermLength(string(&quot;H&quot;) + hostName, true));
++		string::size_type dotPos = hostName.find('.');
++		while (dotPos != string::npos)
++		{
++			doc.add_term(limitTermLength(string(&quot;H&quot;) + hostName.substr(dotPos + 1), true));
++
++			// Next
++			dotPos = hostName.find('.', dotPos + 1);
++		}
++	}
++	// ...and the file name with prefix P
++	string fileName(urlObj.getFile());
++	if (fileName.empty() == false)
++	{
++		doc.add_term(limitTermLength(string(&quot;P&quot;) + StringManip::toLowerCase(fileName), true));
++	}
++	// Finally, add the language code with prefix L
++	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
++
++	setDocumentData(doc, info, m_stemLanguage);
++
++	return true;
++}
++
++string WritableXapianIndex::scanDocument(const char *pData, unsigned int dataLength,
++	DocumentInfo &amp;info)
++{
++	vector&lt;string&gt; candidates;
++	string language;
++
++	// Try to determine the document's language
++	LanguageDetector lang;
++	lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
++
++	// See which of these languages is suitable for stemming
++	for (vector&lt;string&gt;::iterator langIter = candidates.begin(); langIter != candidates.end(); ++langIter)
++	{
++		if (*langIter == &quot;unknown&quot;)
++		{
++			continue;
++		}
++
++		try
++		{
++			Xapian::Stem stemmer(*langIter);
++		}
++		catch (const Xapian::Error &amp;error)
++		{
++			cerr &lt;&lt; &quot;WritableXapianIndex::scanDocument: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			continue;
++		}
++
++		language = *langIter;
++		break;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;WritableXapianIndex::scanDocument: language &quot; &lt;&lt; language &lt;&lt; endl;
++#endif
++
++	// Update the document's properties
++	info.setLanguage(language);
++
++	return language;
++}
++
++void WritableXapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
++	const string &amp;language) const
++{
++	string title(info.getTitle());
++	string timestamp(info.getTimestamp());
++	char timeStr[64];
++
++	// Set the document data omindex-style
++	string record = &quot;url=&quot;;
++	record += info.getLocation();
++	// The sample will be generated at query time
++	record += &quot;\nsample=&quot;;
++	record += &quot;\ncaption=&quot;;
++	if (badField(title) == true)
++	{
++		// Modify the title if necessary
++		string::size_type pos = title.find(&quot;=&quot;);
++		while (pos != string::npos)
++		{
++			title[pos] = ' ';
++			pos = title.find(&quot;=&quot;, pos + 1);
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;WritableXapianIndex::setDocumentData: modified title&quot; &lt;&lt; endl;
++#endif
++	}
++	record += title;
++	record += &quot;\ntype=&quot;;
++	record += info.getType();
++	// Append a timestamp
++	record += &quot;\ntimestamp=&quot;;
++	record += timestamp;
++	// ...and the language
++	record += &quot;\nlanguage=&quot;;
++	record += language;
++#ifdef DEBUG
++	cout &lt;&lt; &quot;WritableXapianIndex::setDocumentData: document data is &quot; &lt;&lt; record &lt;&lt; endl;
++#endif
++	doc.set_data(record);
++
++	// Add this value to allow sorting by date
++	snprintf(timeStr, 64, &quot;%d&quot;, TimeConverter::fromTimestamp(timestamp));
++	doc.add_value(0, timeStr);
++}
++
++bool WritableXapianIndex::listDocumentsWithTerm(const string &amp;term, set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	unsigned int docCount = 0;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return 0;
++	}
++
++	docIds.clear();
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;WritableXapianIndex::listDocumentsWithTerm: term &quot; &lt;&lt; term &lt;&lt; endl;
++#endif
++			// Get a list of documents that have the term
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				(postingIter != pIndex-&gt;postlist_end(term)) &amp;&amp;
++					((maxDocsCount == 0) || (docIds.size() &lt; maxDocsCount));
++				++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// We cannot use postingIter-&gt;skip_to() because startDoc isn't an ID
++				if (docCount &gt;= startDoc)
++				{
++					docIds.insert(docId);
++				}
++				++docCount;
++			}
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document list: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document list, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return docIds.size();
++}
++
++//
++// Implementation of IndexInterface
++//
++
++/// Returns false if the index couldn't be opened.
++bool WritableXapianIndex::isGood(void) const
++{
++	return m_goodIndex;
++}
++
++/// Gets the index location.
++string WritableXapianIndex::getLocation(void) const
++{
++	return m_databaseName;
++}
++
++/// Returns a document's properties.
++bool WritableXapianIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
++{
++	return XapianIndex::getDocumentInfo(docId, docInfo);
++}
++
++/// Determines whether a document has a label.
++bool WritableXapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
++{
++	return XapianIndex::hasLabel(docId, name);
++}
++
++/// Returns a document's labels.
++bool WritableXapianIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
++{
++	return XapianIndex::getDocumentLabels(docId, labels);
++}
++
++/// Checks whether the given URL is in the index.
++unsigned int WritableXapianIndex::hasDocument(const string &amp;url) const
++{
++	return XapianIndex::hasDocument(url);
++}
++
++/// Gets terms with the same root.
++unsigned int WritableXapianIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
++{
++	return XapianIndex::getCloseTerms(term, suggestions);
++}
++
++/// Returns the number of documents.
++unsigned int WritableXapianIndex::getDocumentsCount(const string &amp;labelName) const
++{
++	return XapianIndex::getDocumentsCount(labelName);
++}
++
++/// Lists document IDs.
++unsigned int WritableXapianIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	return XapianIndex::listDocuments(docIds, maxDocsCount, startDoc);
++}
++
++/// Lists documents that have a label.
++bool WritableXapianIndex::listDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	return XapianIndex::listDocumentsWithLabel(name, docIds, maxDocsCount, startDoc);
++}
++//
++// Implementation of WritableIndexInterface
++//
++
++/// Indexes the given data.
++bool WritableXapianIndex::indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
++	unsigned int &amp;docId)
++{
++	unsigned int dataLength = 0;
++	bool indexed = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		// Get the document
++		const Document *pDocument = tokens.getDocument();
++		if (pDocument == NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;WritableXapianIndex::indexDocument: no document&quot; &lt;&lt; endl;
++#endif
++			return false;
++		}
++
++		const char *pData = pDocument-&gt;getData(dataLength);
++		if (pData == NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;WritableXapianIndex::indexDocument: empty document&quot; &lt;&lt; endl;
++#endif
++			return false;
++		}
++		// Cache the document's properties
++		DocumentInfo docInfo(pDocument-&gt;getTitle(), pDocument-&gt;getLocation(),
++			pDocument-&gt;getType(), pDocument-&gt;getLanguage());
++		docInfo.setTimestamp(pDocument-&gt;getTimestamp());
++		docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
++
++		m_stemLanguage = scanDocument(pData, dataLength, docInfo);
++
++		Xapian::Document doc;
++		Xapian::termcount termPos = 0;
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;WritableXapianIndex::indexDocument: adding terms&quot; &lt;&lt; endl;
++#endif
++		// Add the tokenizer's terms to the Xapian document
++		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
++		// Add labels
++		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++			++labelIter)
++		{
++			doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++		}
++		if (prepareDocument(docInfo, doc, termPos) == true)
++		{
++			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++			if (pIndex != NULL)
++			{
++				// Add this document to the Xapian index
++				docId = pIndex-&gt;add_document(doc);
++				indexed = true;
++			}
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't index document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't index document, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return indexed;
++}
++
++/// Updates the given document; true if success.
++bool WritableXapianIndex::updateDocument(unsigned int docId, Tokenizer &amp;tokens)
++{
++	unsigned int dataLength = 0;
++	bool updated = false;
++
++	const Document *pDocument = tokens.getDocument();
++	if (pDocument == NULL)
++	{
++		return false;
++	}
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	const char *pData = pDocument-&gt;getData(dataLength);
++	if (pData == NULL)
++	{
++		return false;
++	}
++
++	// Cache the document's properties
++	DocumentInfo docInfo(pDocument-&gt;getTitle(), pDocument-&gt;getLocation(),
++		pDocument-&gt;getType(), pDocument-&gt;getLanguage());
++	docInfo.setTimestamp(pDocument-&gt;getTimestamp());
++	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
++
++	// Don't scan the document if a language is specified
++	m_stemLanguage = Languages::toEnglish(pDocument-&gt;getLanguage());
++	if (m_stemLanguage.empty() == true)
++	{
++		m_stemLanguage = scanDocument(pData, dataLength, docInfo);
++	}
++
++	try
++	{
++		set&lt;string&gt; labels;
++		Xapian::Document doc;
++		Xapian::termcount termPos = 0;
++
++		// Add the tokenizer's terms to the document
++		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
++		// Get the document's labels
++		if (getDocumentLabels(docId, labels) == true)
++		{
++			// Add labels
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++				++labelIter)
++			{
++				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++			}
++		}
++		if (prepareDocument(docInfo, doc, termPos) == true)
++		{
++			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++			if (pIndex != NULL)
++			{
++				// Update the document in the database
++				pIndex-&gt;replace_document(docId, doc);
++				updated = true;
++			}
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return updated;
++}
++
++/// Updates a document's properties.
++bool WritableXapianIndex::updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo)
++{
++	bool updated = false;
++
++	if (docId == 0)
++	{
++		return false;
++	}
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			Xapian::Document doc = pIndex-&gt;get_document(docId);
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;WritableXapianIndex::updateDocumentInfo: language is &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
++#endif
++			// Update the document data with the current language
++			setDocumentData(doc, docInfo, docInfo.getLanguage());
++			pIndex-&gt;replace_document(docId, doc);
++			updated = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document properties: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document properties, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return updated;
++}
++
++/// Sets a document's labels.
++bool WritableXapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
++	bool resetLabels)
++{
++	bool updatedLabels = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			Xapian::Document doc = pIndex-&gt;get_document(docId);
++
++			// Reset existing labels ?
++			if (resetLabels == true)
++			{
++				Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
++				if (termIter != pIndex-&gt;termlist_end(docId))
++				{
++					for (termIter.skip_to(&quot;XLABEL:&quot;);
++						termIter != pIndex-&gt;termlist_end(docId); ++termIter)
++					{
++						// Is this a label ?
++						if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
++						{
++							doc.remove_term(*termIter);
++						}
++					}
++				}
++			}
++
++			// Set new labels
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++				++labelIter)
++			{
++				if (labelIter-&gt;empty() == false)
++				{
++					doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++				}
++			}
++
++			pIndex-&gt;replace_document(docId, doc);
++			updatedLabels = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return updatedLabels;
++}
++
++/// Unindexes the given document; true if success.
++bool WritableXapianIndex::unindexDocument(unsigned int docId)
++{
++	bool unindexed = false;
++
++	if (docId == 0)
++	{
++		return false;
++	}
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			// Delete the document from the index
++			pIndex-&gt;delete_document(docId);
++			unindexed = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't unindex document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't unindex document, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return unindexed;
++}
++
++/// Unindexes documents with the given label.
++bool WritableXapianIndex::unindexDocuments(const string &amp;labelName)
++{
++	bool unindexed = false;
++
++	if (labelName.empty() == true)
++	{
++		return false;
++	}
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;XLABEL:&quot;);
++
++			// Delete documents from the index
++			term += labelName;
++			pIndex-&gt;delete_document(term);
++			unindexed = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't unindex documents: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't unindex documents, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return unindexed;
++}
++
++/// Renames a label.
++bool WritableXapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
++{
++	bool renamedLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;XLABEL:&quot;);
++
++			// Get documents that have this label
++			term += name;
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// Get the document
++				Xapian::Document doc = pIndex-&gt;get_document(docId);
++				// Remove the term
++				doc.remove_term(term);
++				// ...add the new one
++				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + newName));
++				// ...and update the document
++				pIndex-&gt;replace_document(docId, doc);
++			}
++
++			renamedLabel = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return renamedLabel;
++}
++
++/// Deletes all references to a label.
++bool WritableXapianIndex::deleteLabel(const string &amp;name)
++{
++	bool deletedLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;XLABEL:&quot;);
++
++			// Get documents that have this label
++			term += name;
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// Get the document
++				Xapian::Document doc = pIndex-&gt;get_document(docId);
++				// Remove the term
++				doc.remove_term(term);
++				// ...and update the document
++				pIndex-&gt;replace_document(docId, doc);
++			}
++			deletedLabel = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return deletedLabel;
++}
++
++/// Flushes recent changes to the disk.
++bool WritableXapianIndex::flush(void)
++{
++	bool flushed = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;WritableXapianIndex::flush: called&quot; &lt;&lt; endl;
++#endif
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			pIndex-&gt;flush();
++			flushed = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't flush database: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't flush database, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return flushed;
++}
++
+
+
+Property changes on: trunk/Index/WritableXapianIndex.cpp
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/Index/WritableXapianIndex.h
+===================================================================
+--- trunk/Index/WritableXapianIndex.h	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/WritableXapianIndex.h	2006-07-18 13:08:51 UTC (rev 357)
+@@ -0,0 +1,121 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _WRITABLE_XAPIAN_INDEX_H
++#define _WRITABLE_XAPIAN_INDEX_H
++
++#include &lt;string&gt;
++#include &lt;set&gt;
++
++#include &lt;xapian.h&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;XapianIndex.h&quot;
++
++class WritableXapianIndex : public WritableIndexInterface, private XapianIndex
++{
++	public:
++		WritableXapianIndex(const std::string &amp;indexName);
++		virtual ~WritableXapianIndex();
++
++		/// Returns false if the index couldn't be opened.
++		virtual bool isGood(void) const;
++
++		/// Gets the index location.
++		virtual std::string getLocation(void) const;
++
++		/// Returns a document's properties.
++		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
++
++		/// Determines whether a document has a label.
++		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
++
++		/// Returns a document's labels.
++		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
++
++		/// Checks whether the given URL is in the index.
++		virtual unsigned int hasDocument(const std::string &amp;url) const;
++
++		/// Gets terms with the same root.
++		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions);
++
++		/// Returns the number of documents.
++		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
++
++		/// Lists document IDs.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++
++		/// Lists documents that have a label.
++		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++
++		/// Indexes the given data.
++		virtual bool indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId);
++
++		/// Updates the given document.
++		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens);
++
++		/// Updates a document's properties.
++		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
++
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true);
++
++		/// Unindexes the given document.
++		virtual bool unindexDocument(unsigned int docId);
++
++		/// Unindexes documents with the given label.
++		virtual bool unindexDocuments(const std::string &amp;labelName);
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name);
++
++		/// Flushes recent changes to the disk.
++		virtual bool flush(void);
++
++	protected:
++		std::string m_stemLanguage;
++
++		static bool badField(const std::string &amp;field);
++
++		void addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
++			const std::string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const;
++
++		bool prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
++			Xapian::termcount &amp;termPos) const;
++
++		std::string scanDocument(const char *pData, unsigned int dataLength,
++			DocumentInfo &amp;info);
++
++		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
++			const std::string &amp;language) const;
++
++		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount, unsigned int startDoc) const;
++
++	private:
++		WritableXapianIndex(const WritableXapianIndex &amp;other);
++		WritableXapianIndex &amp;operator=(const WritableXapianIndex &amp;other);
++
++};
++
++#endif // _WRITABLE_XAPIAN_INDEX_H
+
+
+Property changes on: trunk/Index/WritableXapianIndex.h
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/XapianIndex.cpp	2006-07-18 13:08:51 UTC (rev 357)
+@@ -50,9 +50,11 @@
+ 
+ XapianIndex::XapianIndex(const string &amp;indexName) :
+ 	IndexInterface(),
+-	m_databaseName(indexName)
++	m_databaseName(indexName),
++	m_goodIndex(false)
+ {
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	// Open in read-only mode
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if ((pDatabase != NULL) &amp;&amp;
+ 		(pDatabase-&gt;isOpen() == true))
+ 	{
+@@ -82,231 +84,12 @@
+ 	return term;
+ }
+ 
+-bool XapianIndex::badField(const string &amp;field)
+-{
+-	regex_t fieldRegex;
+-	regmatch_t pFieldMatches[1];
+-	bool isBadField = false;
+-
+-	// A bad field is one that includes one of our field delimiters
+-	if (regcomp(&amp;fieldRegex,
+-		&quot;(url|sample|caption|type|timestamp|language)=&quot;,
+-		REG_EXTENDED|REG_ICASE) == 0)
+-	{
+-		if (regexec(&amp;fieldRegex, field.c_str(), 1,
+-			pFieldMatches, REG_NOTBOL|REG_NOTEOL) == 0)
+-		{
+-			isBadField = true;
+-		}
+-	}
+-	regfree(&amp;fieldRegex);
+-
+-	return isBadField;
+-}
+-
+-void XapianIndex::addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+-	const string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const
+-{
+-	Xapian::Stem *pStemmer = NULL;
+-	string term;
+-
+-	// Do we know what language to use for stemming ?
+-	if (m_stemLanguage.empty() == false)
+-	{
+-		pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
+-	}
+-
+-	// Get the terms
+-	while (tokens.nextToken(term) == true)
+-	{
+-		if (term.empty() == true)
+-		{
+-			continue;
+-		}
+-		// Does it start with a capital letter ?
+-		if (isupper((int)term[0]) != 0)
+-		{
+-			// R-prefix the raw term
+-			doc.add_posting(string(&quot;R&quot;) + term, termPos);
+-		}
+-		// Lower case the term
+-		term = StringManip::toLowerCase(term);
+-
+-		// Stem the term ?
+-		if ((mode == STORE_UNSTEM) ||
+-			(pStemmer == NULL))
+-		{
+-			doc.add_posting(limitTermLength(prefix + term), termPos++);
+-		}
+-		else if (mode == STORE_STEM)
+-		{
+-			string stemmedTerm = pStemmer-&gt;stem_word(term);
+-
+-			doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos++);
+-		}
+-		else if (mode == STORE_BOTH)
+-		{
+-			string stemmedTerm = pStemmer-&gt;stem_word(term);
+-
+-			// Add both
+-			doc.add_posting(limitTermLength(prefix + term), termPos);
+-			// ...at the same position
+-			doc.add_posting(limitTermLength(prefix + stemmedTerm), termPos++);
+-		}
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianIndex::addTermsToDocument: added &quot; &lt;&lt; termPos &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
+-#endif
+-
+-	if (pStemmer != NULL)
+-	{
+-		delete pStemmer;
+-	}
+-}
+-
+-bool XapianIndex::prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-	Xapian::termcount &amp;termPos) const
+-{
+-	string title(info.getTitle());
+-	string location(info.getLocation());
+-	Url urlObj(location);
+-
+-	// Add a magic term :-)
+-	doc.add_term(MAGIC_TERM);
+-
+-	// Index the title with and without prefix S
+-	if (title.empty() == false)
+-	{
+-		Document titleDoc;
+-		titleDoc.setData(title.c_str(), title.length());
+-		Tokenizer titleTokens(&amp;titleDoc);
+-		addTermsToDocument(titleTokens, doc, &quot;S&quot;, termPos, STORE_UNSTEM);
+-		titleTokens.rewind();
+-		addTermsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
+-	}
+-
+-	// Index the full URL with prefix U
+-	doc.add_term(limitTermLength(string(&quot;U&quot;) + location, true));
+-	// ...the host name and included domains with prefix H
+-	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+-	if (hostName.empty() == false)
+-	{
+-		doc.add_term(limitTermLength(string(&quot;H&quot;) + hostName, true));
+-		string::size_type dotPos = hostName.find('.');
+-		while (dotPos != string::npos)
+-		{
+-			doc.add_term(limitTermLength(string(&quot;H&quot;) + hostName.substr(dotPos + 1), true));
+-
+-			// Next
+-			dotPos = hostName.find('.', dotPos + 1);
+-		}
+-	}
+-	// ...and the file name with prefix P
+-	string fileName(urlObj.getFile());
+-	if (fileName.empty() == false)
+-	{
+-		doc.add_term(limitTermLength(string(&quot;P&quot;) + StringManip::toLowerCase(fileName), true));
+-	}
+-	// Finally, add the language code with prefix L
+-	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
+-
+-	setDocumentData(doc, info, m_stemLanguage);
+-
+-	return true;
+-}
+-
+-string XapianIndex::scanDocument(const char *pData, unsigned int dataLength,
+-	DocumentInfo &amp;info)
+-{
+-	vector&lt;string&gt; candidates;
+-	string language;
+-
+-	// Try to determine the document's language
+-	LanguageDetector lang;
+-	lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
+-
+-	// See which of these languages is suitable for stemming
+-	for (vector&lt;string&gt;::iterator langIter = candidates.begin(); langIter != candidates.end(); ++langIter)
+-	{
+-		if (*langIter == &quot;unknown&quot;)
+-		{
+-			continue;
+-		}
+-
+-		try
+-		{
+-			Xapian::Stem stemmer(*langIter);
+-		}
+-		catch (const Xapian::Error &amp;error)
+-		{
+-			cerr &lt;&lt; &quot;XapianIndex::scanDocument: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-			continue;
+-		}
+-
+-		language = *langIter;
+-		break;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianIndex::scanDocument: language &quot; &lt;&lt; language &lt;&lt; endl;
+-#endif
+-
+-	// Update the document's properties
+-	info.setLanguage(language);
+-
+-	return language;
+-}
+-
+-void XapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+-	const string &amp;language) const
+-{
+-	string title(info.getTitle());
+-	string timestamp(info.getTimestamp());
+-	char timeStr[64];
+-
+-	// Set the document data omindex-style
+-	string record = &quot;url=&quot;;
+-	record += info.getLocation();
+-	// The sample will be generated at query time
+-	record += &quot;\nsample=&quot;;
+-	record += &quot;\ncaption=&quot;;
+-	if (badField(title) == true)
+-	{
+-		// Modify the title if necessary
+-		string::size_type pos = title.find(&quot;=&quot;);
+-		while (pos != string::npos)
+-		{
+-			title[pos] = ' ';
+-			pos = title.find(&quot;=&quot;, pos + 1);
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianIndex::setDocumentData: modified title&quot; &lt;&lt; endl;
+-#endif
+-	}
+-	record += title;
+-	record += &quot;\ntype=&quot;;
+-	record += info.getType();
+-	// Append a timestamp
+-	record += &quot;\ntimestamp=&quot;;
+-	record += timestamp;
+-	// ...and the language
+-	record += &quot;\nlanguage=&quot;;
+-	record += language;
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianIndex::setDocumentData: document data is &quot; &lt;&lt; record &lt;&lt; endl;
+-#endif
+-	doc.set_data(record);
+-
+-	// Add this value to allow sorting by date
+-	snprintf(timeStr, 64, &quot;%d&quot;, TimeConverter::fromTimestamp(timestamp));
+-	doc.add_value(0, timeStr);
+-}
+-
+ bool XapianIndex::listDocumentsWithTerm(const string &amp;term, set&lt;unsigned int&gt; &amp;docIds,
+ 	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
+ 	unsigned int docCount = 0;
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -356,92 +139,18 @@
+ // Implementation of IndexInterface
+ //
+ 
++/// Returns false if the index couldn't be opened.
++bool XapianIndex::isGood(void) const
++{
++	return m_goodIndex;
++}
++
+ /// Gets the index location.
+ string XapianIndex::getLocation(void) const
+ {
+ 	return m_databaseName;
+ }
+ 
+-/// Indexes the given data.
+-bool XapianIndex::indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
+-	unsigned int &amp;docId)
+-{
+-	unsigned int dataLength = 0;
+-	bool indexed = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		// Get the document
+-		const Document *pDocument = tokens.getDocument();
+-		if (pDocument == NULL)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::indexDocument: no document&quot; &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-
+-		const char *pData = pDocument-&gt;getData(dataLength);
+-		if (pData == NULL)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::indexDocument: empty document&quot; &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-		// Cache the document's properties
+-		DocumentInfo docInfo(pDocument-&gt;getTitle(), pDocument-&gt;getLocation(),
+-			pDocument-&gt;getType(), pDocument-&gt;getLanguage());
+-		docInfo.setTimestamp(pDocument-&gt;getTimestamp());
+-		docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+-
+-		m_stemLanguage = scanDocument(pData, dataLength, docInfo);
+-
+-		Xapian::Document doc;
+-		Xapian::termcount termPos = 0;
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianIndex::indexDocument: adding terms&quot; &lt;&lt; endl;
+-#endif
+-		// Add the tokenizer's terms to the Xapian document
+-		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
+-		// Add labels
+-		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-			++labelIter)
+-		{
+-			doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+-		}
+-		if (prepareDocument(docInfo, doc, termPos) == true)
+-		{
+-			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-			if (pIndex != NULL)
+-			{
+-				// Add this document to the Xapian index
+-				docId = pIndex-&gt;add_document(doc);
+-				indexed = true;
+-			}
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't index document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't index document, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return indexed;
+-}
+-
+ /// Returns a document's properties.
+ bool XapianIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
+ {
+@@ -452,7 +161,7 @@
+ 		return false;
+ 	}
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -503,7 +212,7 @@
+ {
+ 	bool foundLabel = false;
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -551,7 +260,7 @@
+ {
+ 	bool gotLabels = false;
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -598,203 +307,12 @@
+ 	return gotLabels;
+ }
+ 
+-/// Updates the given document; true if success.
+-bool XapianIndex::updateDocument(unsigned int docId, Tokenizer &amp;tokens)
+-{
+-	unsigned int dataLength = 0;
+-	bool updated = false;
+-
+-	const Document *pDocument = tokens.getDocument();
+-	if (pDocument == NULL)
+-	{
+-		return false;
+-	}
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	const char *pData = pDocument-&gt;getData(dataLength);
+-	if (pData == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// Cache the document's properties
+-	DocumentInfo docInfo(pDocument-&gt;getTitle(), pDocument-&gt;getLocation(),
+-		pDocument-&gt;getType(), pDocument-&gt;getLanguage());
+-	docInfo.setTimestamp(pDocument-&gt;getTimestamp());
+-	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+-
+-	// Don't scan the document if a language is specified
+-	m_stemLanguage = Languages::toEnglish(pDocument-&gt;getLanguage());
+-	if (m_stemLanguage.empty() == true)
+-	{
+-		m_stemLanguage = scanDocument(pData, dataLength, docInfo);
+-	}
+-
+-	try
+-	{
+-		set&lt;string&gt; labels;
+-		Xapian::Document doc;
+-		Xapian::termcount termPos = 0;
+-
+-		// Add the tokenizer's terms to the document
+-		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
+-		// Get the document's labels
+-		if (getDocumentLabels(docId, labels) == true)
+-		{
+-			// Add labels
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
+-			{
+-				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+-			}
+-		}
+-		if (prepareDocument(docInfo, doc, termPos) == true)
+-		{
+-			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-			if (pIndex != NULL)
+-			{
+-				// Update the document in the database
+-				pIndex-&gt;replace_document(docId, doc);
+-				updated = true;
+-			}
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return updated;
+-}
+-
+-/// Updates a document's properties.
+-bool XapianIndex::updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo)
+-{
+-	bool updated = false;
+-
+-	if (docId == 0)
+-	{
+-		return false;
+-	}
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			Xapian::Document doc = pIndex-&gt;get_document(docId);
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::updateDocumentInfo: language is &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
+-#endif
+-			// Update the document data with the current language
+-			setDocumentData(doc, docInfo, docInfo.getLanguage());
+-			pIndex-&gt;replace_document(docId, doc);
+-			updated = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document properties: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document properties, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return updated;
+-}
+-
+-/// Sets a document's labels.
+-bool XapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
+-	bool resetLabels)
+-{
+-	bool updatedLabels = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			Xapian::Document doc = pIndex-&gt;get_document(docId);
+-
+-			// Reset existing labels ?
+-			if (resetLabels == true)
+-			{
+-				Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
+-				if (termIter != pIndex-&gt;termlist_end(docId))
+-				{
+-					for (termIter.skip_to(&quot;XLABEL:&quot;);
+-						termIter != pIndex-&gt;termlist_end(docId); ++termIter)
+-					{
+-						// Is this a label ?
+-						if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
+-						{
+-							doc.remove_term(*termIter);
+-						}
+-					}
+-				}
+-			}
+-
+-			// Set new labels
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
+-			{
+-				if (labelIter-&gt;empty() == false)
+-				{
+-					doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+-				}
+-			}
+-
+-			pIndex-&gt;replace_document(docId, doc);
+-			updatedLabels = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return updatedLabels;
+-}
+-
+ /// Checks whether the given URL is in the index.
+ unsigned int XapianIndex::hasDocument(const string &amp;url) const
+ {
+ 	unsigned int docId = 0;
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -835,93 +353,10 @@
+ 	return docId;
+ }
+ 
+-/// Unindexes the given document; true if success.
+-bool XapianIndex::unindexDocument(unsigned int docId)
+-{
+-	bool unindexed = false;
+-
+-	if (docId == 0)
+-	{
+-		return false;
+-	}
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			// Delete the document from the index
+-			pIndex-&gt;delete_document(docId);
+-			unindexed = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't unindex document: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't unindex document, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return unindexed;
+-}
+-
+-/// Unindexes documents with the given label.
+-bool XapianIndex::unindexDocuments(const string &amp;labelName)
+-{
+-	bool unindexed = false;
+-
+-	if (labelName.empty() == true)
+-	{
+-		return false;
+-	}
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term(&quot;XLABEL:&quot;);
+-
+-			// Delete documents from the index
+-			term += labelName;
+-			pIndex-&gt;delete_document(term);
+-			unindexed = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't unindex documents: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't unindex documents, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return unindexed;
+-}
+-
+ /// Gets terms with the same root.
+ unsigned int XapianIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
+ {
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -971,150 +406,12 @@
+ 	return suggestions.size();
+ }
+ 
+-/// Renames a label.
+-bool XapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+-{
+-	bool renamedLabel = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term(&quot;XLABEL:&quot;);
+-
+-			// Get documents that have this label
+-			term += name;
+-			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+-				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				// Get the document
+-				Xapian::Document doc = pIndex-&gt;get_document(docId);
+-				// Remove the term
+-				doc.remove_term(term);
+-				// ...add the new one
+-				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + newName));
+-				// ...and update the document
+-				pIndex-&gt;replace_document(docId, doc);
+-			}
+-
+-			renamedLabel = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return renamedLabel;
+-}
+-
+-/// Deletes all references to a label.
+-bool XapianIndex::deleteLabel(const string &amp;name)
+-{
+-	bool deletedLabel = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term(&quot;XLABEL:&quot;);
+-
+-			// Get documents that have this label
+-			term += name;
+-			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+-				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				// Get the document
+-				Xapian::Document doc = pIndex-&gt;get_document(docId);
+-				// Remove the term
+-				doc.remove_term(term);
+-				// ...and update the document
+-				pIndex-&gt;replace_document(docId, doc);
+-			}
+-			deletedLabel = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return deletedLabel;
+-}
+-
+-/// Flushes recent changes to the disk.
+-bool XapianIndex::flush(void)
+-{
+-	bool flushed = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianIndex::flush: called&quot; &lt;&lt; endl;
+-#endif
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			pIndex-&gt;flush();
+-			flushed = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't flush database: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't flush database, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return flushed;
+-}
+-
+ /// Returns the number of documents.
+ unsigned int XapianIndex::getDocumentsCount(const string &amp;labelName) const
+ {
+ 	unsigned int docCount = 0;
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -1171,3 +468,4 @@
+ 	term += name;
+ 	return listDocumentsWithTerm(term, docIds, maxDocsCount, startDoc);
+ }
++
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/XapianIndex.h	2006-07-18 13:08:51 UTC (rev 357)
+@@ -31,13 +31,12 @@
+ 		XapianIndex(const std::string &amp;indexName);
+ 		virtual ~XapianIndex();
+ 
++		/// Returns false if the index couldn't be opened.
++		virtual bool isGood(void) const;
++
+ 		/// Gets the index location.
+ 		virtual std::string getLocation(void) const;
+ 
+-		/// Indexes the given data.
+-		virtual bool indexDocument(Tokenizer &amp;tokens, const std::set&lt;std::string&gt; &amp;labels,
+-			unsigned int &amp;docId);
+-
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+ 
+@@ -47,37 +46,12 @@
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+ 
+-		/// Updates the given document.
+-		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens);
+-
+-		/// Updates a document's properties.
+-		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+-
+-		/// Sets a document's labels.
+-		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+-			bool resetLabels = true);
+-
+ 		/// Checks whether the given URL is in the index.
+ 		virtual unsigned int hasDocument(const std::string &amp;url) const;
+ 
+-		/// Unindexes the given document.
+-		virtual bool unindexDocument(unsigned int docId);
+-
+-		/// Unindexes documents with the given label.
+-		virtual bool unindexDocuments(const std::string &amp;labelName);
+-
+ 		/// Gets terms with the same root.
+ 		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions);
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+-
+-		/// Deletes all references to a label.
+-		virtual bool deleteLabel(const std::string &amp;name);
+-
+-		/// Flushes recent changes to the disk.
+-		virtual bool flush(void);
+-
+ 		/// Returns the number of documents.
+ 		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
+ 
+@@ -93,24 +67,10 @@
+ 		static const unsigned int m_maxTermLength;
+ 		static const std::string MAGIC_TERM;
+ 		std::string m_databaseName;
+-		std::string m_stemLanguage;
++		bool m_goodIndex;
+ 
+ 		static std::string limitTermLength(const std::string &amp;term, bool makeUnique = false);
+ 
+-		static bool badField(const std::string &amp;field);
+-
+-		void addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+-			const std::string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const;
+-
+-		bool prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-			Xapian::termcount &amp;termPos) const;
+-
+-		std::string scanDocument(const char *pData, unsigned int dataLength,
+-			DocumentInfo &amp;info);
+-
+-		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+-			const std::string &amp;language) const;
+-
+ 		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2006-07-16 10:11:27 UTC (rev 356)
++++ trunk/Index/pinot-index.cpp	2006-07-18 13:08:51 UTC (rev 357)
+@@ -26,7 +26,7 @@
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+-#include &quot;XapianIndex.h&quot;
++#include &quot;WritableXapianIndex.h&quot;
+ #include &quot;config.h&quot;
+ 
+ using namespace std;
+@@ -70,7 +70,7 @@
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+ 					&lt;&lt; &quot;  -i, --index		index the given URL\n&quot;
+ 					&lt;&lt; &quot;  -v, --version		output version information and exit\n\n&quot;;
+-				cout &lt;&lt; &quot;\n\nExamples:\n&quot;
++				cout &lt;&lt; &quot;Examples:\n&quot;
+ 					&lt;&lt; &quot;pinot-index --check <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A> xapian ~/.pinot/index\n\n&quot;
+ 					&lt;&lt; &quot;pinot-index --index <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A> xapian ~/.pinot/index\n\n&quot;
+ 					&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+@@ -110,10 +110,10 @@
+ 
+ 	// FIXME: don't ignore the index type
+ 
+-	XapianIndex index(argv[optind + 1]);
+-
+ 	if (checkDocument == true)
+ 	{
++		XapianIndex index(argv[optind + 1]);
++
+ 		if (index.isGood() == true)
+ 		{
+ 			unsigned int docId = index.hasDocument(urlToCheck);
+@@ -153,9 +153,10 @@
+ 			Tokenizer *pTokens = TokenizerFactory::getTokenizerByType(docInfo.getType(), pDoc);
+ 			if (pTokens != NULL)
+ 			{
++				WritableXapianIndex index(argv[optind + 1]);
+ 				set&lt;string&gt; labels;
+ 
+-				index.setStemmingMode(IndexInterface::STORE_BOTH);
++				index.setStemmingMode(WritableIndexInterface::STORE_BOTH);
+ 
+ 				// Update an existing document or add to the index ?
+ 				unsigned int docId = index.hasDocument(urlToIndex);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000349.html">[Pinot-svn] r356 - trunk/Utils/xdgmime
+</A></li>
+	<LI>Next message: <A HREF="000351.html">[Pinot-svn] r358 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#350">[ date ]</a>
+              <a href="thread.html#350">[ thread ]</a>
+              <a href="subject.html#350">[ subject ]</a>
+              <a href="author.html#350">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

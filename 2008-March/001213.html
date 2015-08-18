@@ -1,0 +1,135 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1219 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1219%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200803260611.m2Q6BHm9002254%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001212.html">
+   <LINK REL="Next"  HREF="001214.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1219 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1219%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200803260611.m2Q6BHm9002254%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1219 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 26 07:11:17 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001212.html">[Pinot-svn] r1218 - in trunk: IndexSearch UI/GTK2 UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001214.html">[Pinot-svn] r1220 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1213">[ date ]</a>
+              <a href="thread.html#1213">[ thread ]</a>
+              <a href="subject.html#1213">[ subject ]</a>
+              <a href="author.html#1213">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-03-26 07:11:14 +0100 (Wed, 26 Mar 2008)
+New Revision: 1219
+
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Ignore the index version number, i.e. don't force an upgrade if it's lower than
+what was expected, if -i/--ignore-version is passed as parameter.
+This is useful when ~/.pinot/daemon was compacted with xapian-compact 1.0.6,
+which unlike previous releases, doesn't bail out on index metadata, but fails
+to carry metadata over to the compacted database.
+
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-03-26 03:05:37 UTC (rev 1218)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-03-26 06:11:14 UTC (rev 1219)
+@@ -58,6 +58,7 @@
+ static struct option g_longOptions[] = {
+ 	{&quot;fullscan&quot;, 0, 0, 'f'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
++	{&quot;ignore-version&quot;, 0, 0, 'i'},
+ 	{&quot;priority&quot;, 1, 0, 'p'},
+ 	{&quot;reindex&quot;, 0, 0, 'r'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+@@ -271,9 +272,10 @@
+ 	bool resetLabels = false;
+ 	bool fullScan = false;
+ 	bool reindex = false;
++	bool ignoreVersion = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;fhp:rv&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;fhip:rv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -288,11 +290,15 @@
+ 					&lt;&lt; &quot;Options:\n&quot;
+ 					&lt;&lt; &quot;  -f, --fullscan	force a full scan\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
++					&lt;&lt; &quot;  -i, --ignore-version	ignore the index version number\n&quot;
+ 					&lt;&lt; &quot;  -p, --priority	set the daemon's priority (default 15)\n&quot;
+ 					&lt;&lt; &quot;  -r, --reindex		force a reindex\n&quot;
+ 					&lt;&lt; &quot;  -v, --version		output version information and exit\n&quot;
+ 					&lt;&lt; &quot;\nReport bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ 				return EXIT_SUCCESS;
++			case 'i':
++				ignoreVersion = true;
++				break;
+ 			case 'p':
+ 				if (optarg != NULL)
+ 				{
+@@ -318,7 +324,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;fhp:rv&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;fhip:rv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ #if defined(ENABLE_NLS)
+@@ -574,7 +580,8 @@
+ 				{
+ 					indexVersion = &quot;0.0&quot;;
+ 				}
+-				if (indexVersion &lt; PINOT_INDEX_MIN_VERSION)
++				if ((ignoreVersion == false) &amp;&amp;
++					(indexVersion &lt; PINOT_INDEX_MIN_VERSION))
+ 				{
+ 					cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; VERSION &lt;&lt; endl;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001212.html">[Pinot-svn] r1218 - in trunk: IndexSearch UI/GTK2 UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001214.html">[Pinot-svn] r1220 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1213">[ date ]</a>
+              <a href="thread.html#1213">[ thread ]</a>
+              <a href="subject.html#1213">[ subject ]</a>
+              <a href="author.html#1213">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

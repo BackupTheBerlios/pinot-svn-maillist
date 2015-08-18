@@ -1,0 +1,517 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r521 - in trunk/Search: . Google
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r521%20-%20in%20trunk/Search%3A%20.%20Google&In-Reply-To=%3C200610150310.k9F3AOYF028797%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000513.html">
+   <LINK REL="Next"  HREF="000515.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r521 - in trunk/Search: . Google</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r521%20-%20in%20trunk/Search%3A%20.%20Google&In-Reply-To=%3C200610150310.k9F3AOYF028797%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r521 - in trunk/Search: . Google">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Oct 15 05:10:24 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000513.html">[Pinot-svn] r520 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000515.html">[Pinot-svn] r522 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#514">[ date ]</a>
+              <a href="thread.html#514">[ thread ]</a>
+              <a href="subject.html#514">[ subject ]</a>
+              <a href="author.html#514">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-15 05:10:24 +0200 (Sun, 15 Oct 2006)
+New Revision: 521
+
+Modified:
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+Log:
+Run queries through the QueryParser, remove filters and only keep non-prefixed
+terms when querying a Web engine, or generating an abstract.
+
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2006-10-15 00:40:43 UTC (rev 520)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2006-10-15 03:10:24 UTC (rev 521)
+@@ -85,7 +85,7 @@
+ /// Runs a query; true if success.
+ bool GoogleAPIEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+-	string queryString(queryProps.getFreeQuery());
++	string queryString(queryProps.getFreeQuery(true));
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
+ 
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-10-15 00:40:43 UTC (rev 520)
++++ trunk/Search/PluginWebEngine.cpp	2006-10-15 03:10:24 UTC (rev 521)
+@@ -214,7 +214,7 @@
+ /// Runs a query; true if success.
+ bool PluginWebEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+-	string queryString(queryProps.getFreeQuery());
++	string queryString(queryProps.getFreeQuery(true));
+ 	char countStr[64];
+ 	unsigned int currentIncrement = 0, count = 0;
+ 
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2006-10-15 00:40:43 UTC (rev 520)
++++ trunk/Search/QueryProperties.cpp	2006-10-15 03:10:24 UTC (rev 521)
+@@ -14,13 +14,13 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;ctype.h&gt;
++#include &lt;set&gt;
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
+ 
+-#include &quot;Document.h&quot;
+-#include &quot;Languages.h&quot;
+-#include &quot;StringManip.h&quot;
+ #include &quot;Tokenizer.h&quot;
++#include &quot;XapianEngine.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ QueryProperties::QueryProperties() :
+@@ -35,12 +35,13 @@
+ 	m_resultsCount(10),
+ 	m_indexResults(false)
+ {
+-	extractFilters();
++	removeFilters();
+ }
+ 
+ QueryProperties::QueryProperties(const QueryProperties &amp;other) :
+ 	m_name(other.m_name),
+ 	m_freeQuery(other.m_freeQuery),
++	m_freeQueryWithoutFilters(other.m_freeQueryWithoutFilters),
+ 	m_language(other.m_language),
+ 	m_hostFilter(other.m_hostFilter),
+ 	m_fileFilter(other.m_fileFilter),
+@@ -48,7 +49,6 @@
+ 	m_indexResults(other.m_indexResults),
+ 	m_labelName(other.m_labelName)
+ {
+-	extractFilters();
+ }
+ 
+ QueryProperties::~QueryProperties()
+@@ -61,13 +61,13 @@
+ 	{
+ 		m_name = other.m_name;
+ 		m_freeQuery = other.m_freeQuery;
++		m_freeQueryWithoutFilters = other.m_freeQueryWithoutFilters;
+ 		m_language = other.m_language;
+ 		m_hostFilter = other.m_hostFilter;
+ 		m_fileFilter = other.m_fileFilter;
+ 		m_resultsCount = other.m_resultsCount;
+ 		m_indexResults = other.m_indexResults;
+ 		m_labelName = other.m_labelName;
+-		extractFilters();
+ 	}
+ 
+ 	return *this;
+@@ -93,24 +93,61 @@
+ 	return false;
+ }
+ 
+-void QueryProperties::extractFilters(void)
++void QueryProperties::removeFilters(void)
+ {
++	m_freeQueryWithoutFilters.clear();
++	m_language.clear();
++	m_hostFilter.clear();
++	m_fileFilter.clear();
++
+ 	if (m_freeQuery.empty() == true)
+ 	{
+-		m_language.clear();
+-		m_hostFilter.clear();
+-		m_fileFilter.clear();
+ 		return;
+ 	}
+ 
+-	string freeQuery = StringManip::replaceSubString(m_freeQuery, &quot;\n&quot;, &quot; &quot;);
++	set&lt;string&gt; terms;
++	if (XapianEngine::validateQuery(*this, true, terms) == true)
++	{
++		for (set&lt;string&gt;::const_iterator termIter = terms.begin();
++			termIter != terms.end(); ++termIter)
++		{
++			string term(*termIter);
+ 
+-	m_language = StringManip::extractField(freeQuery, &quot;language:&quot;, &quot; )&quot;, true);
+-	if (m_language.empty() == true)
+-	{
+-		m_language = StringManip::extractField(freeQuery, &quot;language:&quot;, &quot;&quot;);
++			if (term.empty() == true)
++			{
++				continue;
++			}
++
++			// is this a prefixed term ?
++			// The query shouldn't have the same filter twice
++			if (isupper((int)((*termIter)[0])) == 0)
++			{
++				// FIXME: operators have been lost !
++				if (m_freeQueryWithoutFilters.empty() == false)
++				{
++					m_freeQueryWithoutFilters += &quot; &quot;;
++				}
++				m_freeQueryWithoutFilters += term;
++			}
++			else
++			{
++				switch (term[0])
++				{
++					case 'L':
++						m_language = term.substr(1);
++						break;
++					case 'H':
++						m_hostFilter = term.substr(1);
++						break;
++					case 'P':
++						m_fileFilter = term.substr(1);
++						break;
++					default:
++						break;
++				}
++			}
++		}
+ 	}
+-	// FIXME: do the same for host and file at the very least
+ }
+ 
+ /// Sets the name.
+@@ -129,12 +166,21 @@
+ void QueryProperties::setFreeQuery(const string &amp;freeQuery)
+ {
+ 	m_freeQuery = freeQuery;
++	removeFilters();
+ }
+ 
+ /// Gets the query string.
+-string QueryProperties::getFreeQuery(void) const
++string QueryProperties::getFreeQuery(bool withoutFilters) const
+ {
+-	return m_freeQuery;
++	if (withoutFilters == false)
++	{
++		return m_freeQuery;
++	}
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;QueryProperties::getFreeQuery: &quot; &lt;&lt; m_freeQueryWithoutFilters &lt;&lt; endl;
++#endif
++	return m_freeQueryWithoutFilters;
+ }
+ 
+ /// Gets the query's language.
+@@ -196,7 +242,7 @@
+ {
+ 	Document doc;
+ 
+-	doc.setData(m_freeQuery.c_str(), m_freeQuery.length());
++	doc.setData(m_freeQueryWithoutFilters.c_str(), m_freeQueryWithoutFilters.length());
+ 	Tokenizer tokens(&amp;doc);
+ 
+ 	terms.clear();
+@@ -207,3 +253,4 @@
+ 		terms.insert(token);
+ 	}
+ }
++
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2006-10-15 00:40:43 UTC (rev 520)
++++ trunk/Search/QueryProperties.h	2006-10-15 03:10:24 UTC (rev 521)
+@@ -45,7 +45,7 @@
+ 		/// Sets the query string.
+ 		void setFreeQuery(const string &amp;freeQuery);
+ 		/// Gets the query string.
+-		string getFreeQuery(void) const;
++		string getFreeQuery(bool withoutFilters = false) const;
+ 
+ 		/// Gets the query's language.
+ 		string getLanguage(void) const;
+@@ -72,11 +72,12 @@
+ 		string getLabelName(void) const;
+ 
+ 		/// Returns the query's terms.
+-		void getTerms(std::set&lt;std::string&gt; &amp;terms) const;
++		void getTerms(set&lt;string&gt; &amp;terms) const;
+ 
+ 	protected:
+ 		string m_name;
+ 		string m_freeQuery;
++		string m_freeQueryWithoutFilters;
+ 		string m_language;
+ 		string m_hostFilter;
+ 		string m_fileFilter;
+@@ -84,7 +85,7 @@
+ 		bool m_indexResults;
+ 		string m_labelName;
+ 
+-		void extractFilters(void);
++		void removeFilters(void);
+ 
+ };
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-10-15 00:40:43 UTC (rev 520)
++++ trunk/Search/XapianEngine.cpp	2006-10-15 03:10:24 UTC (rev 521)
+@@ -33,7 +33,6 @@
+ using std::string;
+ using std::multimap;
+ using std::vector;
+-using std::stack;
+ using std::cout;
+ using std::cerr;
+ using std::endl;
+@@ -107,6 +106,81 @@
+ 	m_resultsList.clear();
+ }
+ 
++Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
++	const string &amp;stemLanguage, bool followOperators)
++{
++	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
++	Xapian::QueryParser parser;
++	Xapian::Stem stemmer;
++
++	if (stemLanguage.empty() == false)
++	{
++		stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
++	}
++
++	// Set things up
++	parser.set_stemmer(stemmer);
++	if (followOperators == true)
++	{
++		parser.set_default_op(Xapian::Query::OP_AND);
++	}
++	else
++	{
++		parser.set_default_op(Xapian::Query::OP_OR);
++	}
++	if (pIndex != NULL)
++	{
++		// The database is required for wildcards
++		parser.set_database(*pIndex);
++	}
++	// ...including prefixes
++	parser.add_boolean_prefix(&quot;site&quot;, &quot;H&quot;);
++	parser.add_boolean_prefix(&quot;file&quot;, &quot;P&quot;);
++	parser.add_boolean_prefix(&quot;title&quot;, &quot;S&quot;);
++	parser.add_boolean_prefix(&quot;url&quot;, &quot;U&quot;);
++	parser.add_boolean_prefix(&quot;dir&quot;, &quot;XDIR&quot;);
++	parser.add_boolean_prefix(&quot;lang&quot;, &quot;L&quot;);
++	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
++	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL&quot;);
++
++	// Activate all options and parse
++	return parser.parse_query(freeQuery,
++		Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|Xapian::QueryParser::FLAG_WILDCARD);
++}
++
++/// Validates a query and extracts its terms.
++bool XapianEngine::validateQuery(QueryProperties&amp; queryProps, bool includePrefixed,
++	set&lt;string&gt; &amp;terms)
++{
++	bool goodQuery = false;
++
++	try
++	{
++		Xapian::Query freeQuery = parseQuery(NULL, queryProps, &quot;&quot;, true);
++		if (freeQuery.empty() == false)
++		{
++			for (Xapian::TermIterator termIter = freeQuery.get_terms_begin();
++				termIter != freeQuery.get_terms_end(); ++termIter)
++			{
++				// Skip prefixed terms unless instructed otherwise
++				if ((includePrefixed == true) ||
++					(isupper((int)((*termIter)[0])) == 0))
++				{
++					terms.insert(*termIter);
++				}
++			}
++
++			goodQuery = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;XapianEngine::validateQuery: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++
++	return goodQuery;
++}
++
+ bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query)
+ {
+ 	bool bStatus = false;
+@@ -239,48 +313,6 @@
+ 	return bStatus;
+ }
+ 
+-Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+-	const string &amp;stemLanguage, bool followOperators)
+-{
+-	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+-	Xapian::QueryParser parser;
+-	Xapian::Stem stemmer;
+-
+-	if (stemLanguage.empty() == false)
+-	{
+-		stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
+-	}
+-
+-	// Set things up
+-	parser.set_stemmer(stemmer);
+-	if (followOperators == true)
+-	{
+-		parser.set_default_op(Xapian::Query::OP_AND);
+-	}
+-	else
+-	{
+-		parser.set_default_op(Xapian::Query::OP_OR);
+-	}
+-	if (pIndex != NULL)
+-	{
+-		// The database is required for wildcards
+-		parser.set_database(*pIndex);
+-	}
+-	// ...including prefixes
+-	parser.add_boolean_prefix(&quot;site&quot;, &quot;H&quot;);
+-	parser.add_boolean_prefix(&quot;file&quot;, &quot;P&quot;);
+-	parser.add_boolean_prefix(&quot;title&quot;, &quot;S&quot;);
+-	parser.add_boolean_prefix(&quot;url&quot;, &quot;U&quot;);
+-	parser.add_boolean_prefix(&quot;dir&quot;, &quot;XDIR&quot;);
+-	parser.add_boolean_prefix(&quot;lang&quot;, &quot;L&quot;);
+-	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
+-	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL&quot;);
+-
+-	// Activate all options and parse
+-	return parser.parse_query(freeQuery,
+-		Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|Xapian::QueryParser::FLAG_WILDCARD);
+-}
+-
+ //
+ // Implementation of SearchEngineInterface
+ //
+@@ -311,7 +343,6 @@
+ 	Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 	try
+ 	{
+-		stack&lt;Xapian::Query&gt; queryStack;
+ 		string stemLanguage;
+ 		unsigned int searchStep = 1;
+ 		bool followOperators = true;
+@@ -325,6 +356,14 @@
+ 		Xapian::Query freeQuery = parseQuery(pIndex, queryProps, &quot;&quot;, followOperators);
+ 		while (freeQuery.empty() == false)
+ 		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianEngine::runQuery: query terms are &quot; &lt;&lt; endl;
++			for (Xapian::TermIterator termIter = freeQuery.get_terms_begin();
++				termIter != freeQuery.get_terms_end(); ++termIter)
++			{
++				cout &lt;&lt; &quot; &quot; &lt;&lt; *termIter &lt;&lt; endl;
++			}
++#endif
+ 			// Query the database
+ 			if (queryDatabase(pIndex, freeQuery) == false)
+ 			{
+@@ -388,3 +427,4 @@
+ {
+ 	return m_resultsList;
+ }
++
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2006-10-15 00:40:43 UTC (rev 520)
++++ trunk/Search/XapianEngine.h	2006-10-15 03:10:24 UTC (rev 521)
+@@ -20,7 +20,6 @@
+ #include &lt;string&gt;
+ #include &lt;set&gt;
+ #include &lt;vector&gt;
+-#include &lt;stack&gt;
+ 
+ #include &lt;xapian.h&gt;
+ 
+@@ -33,6 +32,10 @@
+ 		XapianEngine(const std::string &amp;database);
+ 		virtual ~XapianEngine();
+ 
++		/// Validates a query and extracts its terms.
++		static bool validateQuery(QueryProperties&amp; queryProps, bool includePrefixed,
++			std::set&lt;std::string&gt; &amp;terms);
++
+ 		/// Sets whether the query should be expanded.
+ 		bool setQueryExpansion(std::set&lt;unsigned int&gt; &amp;relevantDocuments);
+ 
+@@ -48,7 +51,7 @@
+ 
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query);
+ 
+-		Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
++		static Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, bool followOperators);
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000513.html">[Pinot-svn] r520 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000515.html">[Pinot-svn] r522 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#514">[ date ]</a>
+              <a href="thread.html#514">[ thread ]</a>
+              <a href="subject.html#514">[ subject ]</a>
+              <a href="author.html#514">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

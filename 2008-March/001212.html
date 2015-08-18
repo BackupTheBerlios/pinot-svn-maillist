@@ -1,0 +1,661 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1218 - in trunk: IndexSearch UI/GTK2 UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1218%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2%20UI/GTK2/src&In-Reply-To=%3C200803260305.m2Q35fvT012655%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001211.html">
+   <LINK REL="Next"  HREF="001213.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1218 - in trunk: IndexSearch UI/GTK2 UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1218%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2%20UI/GTK2/src&In-Reply-To=%3C200803260305.m2Q35fvT012655%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1218 - in trunk: IndexSearch UI/GTK2 UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 26 04:05:41 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001211.html">[Pinot-svn] r1217 - trunk/IndexSearch/Plugins
+</A></li>
+        <LI>Next message: <A HREF="001213.html">[Pinot-svn] r1219 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1212">[ date ]</a>
+              <a href="thread.html#1212">[ thread ]</a>
+              <a href="subject.html#1212">[ subject ]</a>
+              <a href="author.html#1212">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-03-26 04:05:37 +0100 (Wed, 26 Mar 2008)
+New Revision: 1218
+
+Modified:
+   trunk/IndexSearch/QueryProperties.cpp
+   trunk/IndexSearch/QueryProperties.h
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/queryDialog.cc
+   trunk/UI/GTK2/src/queryDialog.hh
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+   trunk/UI/GTK2/src/queryDialog_glade.hh
+Log:
+Queries can now index only new results.
+
+
+Modified: trunk/IndexSearch/QueryProperties.cpp
+===================================================================
+--- trunk/IndexSearch/QueryProperties.cpp	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/IndexSearch/QueryProperties.cpp	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -29,7 +29,7 @@
+ 	m_type(XAPIAN_QP),
+ 	m_order(RELEVANCE),
+ 	m_resultsCount(10),
+-	m_indexResults(false),
++	m_indexResults(NOTHING),
+ 	m_modified(false)
+ {
+ }
+@@ -41,7 +41,7 @@
+ 	m_order(RELEVANCE),
+ 	m_freeQuery(freeQuery),
+ 	m_resultsCount(10),
+-	m_indexResults(false),
++	m_indexResults(NOTHING),
+ 	m_modified(false)
+ {
+ 	removeFilters();
+@@ -224,13 +224,13 @@
+ }
+ 
+ /// Sets whether results should be indexed.
+-void QueryProperties::setIndexResults(bool index)
++void QueryProperties::setIndexResults(IndexWhat indexResults)
+ {
+-	m_indexResults = index;
++	m_indexResults = indexResults;
+ }
+ 
+ /// Gets whether results should be indexed
+-bool QueryProperties::getIndexResults(void) const
++QueryProperties::IndexWhat QueryProperties::getIndexResults(void) const
+ {
+ 	return m_indexResults;
+ }
+
+Modified: trunk/IndexSearch/QueryProperties.h
+===================================================================
+--- trunk/IndexSearch/QueryProperties.h	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/IndexSearch/QueryProperties.h	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -30,6 +30,7 @@
+ 	public:
+ 		typedef enum { XAPIAN_QP = 0, XESAM_QL, XESAM_UL } QueryType;
+ 		typedef enum { RELEVANCE = 0, DATE } SortOrder;
++		typedef enum { NOTHING = 0, ALL_RESULTS, NEW_RESULTS } IndexWhat;
+ 
+ 		QueryProperties();
+ 		QueryProperties(const string &amp;name, const string &amp;freeQuery,
+@@ -72,9 +73,9 @@
+ 		unsigned int getMaximumResultsCount(void) const;
+ 
+ 		/// Sets whether results should be indexed.
+-		void setIndexResults(bool index);
++		void setIndexResults(IndexWhat indexResults);
+ 		/// Gets whether results should be indexed
+-		bool getIndexResults(void) const;
++		IndexWhat getIndexResults(void) const;
+ 
+ 		/// Sets the name of the label to use for indexed documents.
+ 		void setLabelName(const string &amp;labelName);
+@@ -100,7 +101,7 @@
+ 		string m_freeQuery;
+ 		string m_freeQueryWithoutFilters;
+ 		unsigned int m_resultsCount;
+-		bool m_indexResults;
++		IndexWhat m_indexResults;
+ 		string m_labelName;
+ 		bool m_modified;
+ 
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/metase-gtk2.glade	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -2505,7 +2505,7 @@
+ 	  &lt;child&gt;
+ 	    &lt;widget class=&quot;GtkTable&quot; id=&quot;actionsTable&quot;&gt;
+ 	      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-	      &lt;property name=&quot;n_rows&quot;&gt;4&lt;/property&gt;
++	      &lt;property name=&quot;n_rows&quot;&gt;5&lt;/property&gt;
+ 	      &lt;property name=&quot;n_columns&quot;&gt;2&lt;/property&gt;
+ 	      &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+ 	      &lt;property name=&quot;row_spacing&quot;&gt;0&lt;/property&gt;
+@@ -2523,6 +2523,7 @@
+ 		  &lt;property name=&quot;active&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;inconsistent&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;draw_indicator&quot;&gt;True&lt;/property&gt;
++		  &lt;signal name=&quot;toggled&quot; handler=&quot;on_indexCheckbutton_toggled&quot; last_modification_time=&quot;Tue, 25 Mar 2008 14:32:48 GMT&quot;/&gt;
+ 		&lt;/widget&gt;
+ 		&lt;packing&gt;
+ 		  &lt;property name=&quot;left_attach&quot;&gt;0&lt;/property&gt;
+@@ -2703,6 +2704,31 @@
+ 		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
+ 		&lt;/packing&gt;
+ 	      &lt;/child&gt;
++
++	      &lt;child&gt;
++		&lt;widget class=&quot;GtkCheckButton&quot; id=&quot;indexNewCheckbutton&quot;&gt;
++		  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
++		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Only index new results&lt;/property&gt;
++		  &lt;property name=&quot;use_underline&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;relief&quot;&gt;GTK_RELIEF_NORMAL&lt;/property&gt;
++		  &lt;property name=&quot;focus_on_click&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;active&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;inconsistent&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;draw_indicator&quot;&gt;True&lt;/property&gt;
++		&lt;/widget&gt;
++		&lt;packing&gt;
++		  &lt;property name=&quot;left_attach&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;right_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;5&lt;/property&gt;
++		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;x_options&quot;&gt;fill&lt;/property&gt;
++		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
++		&lt;/packing&gt;
++	      &lt;/child&gt;
+ 	    &lt;/widget&gt;
+ 	    &lt;packing&gt;
+ 	      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -856,13 +856,17 @@
+ 		}
+ 		else if (nodeName == &quot;index&quot;)
+ 		{
+-			if (nodeContent == &quot;ALL&quot;)
++			if (nodeContent == &quot;NEW&quot;)
+ 			{
+-				queryProps.setIndexResults(true);
++				queryProps.setIndexResults(QueryProperties::NEW_RESULTS);
+ 			}
++			else if (nodeContent == &quot;ALL&quot;)
++			{
++				queryProps.setIndexResults(QueryProperties::ALL_RESULTS);
++			}
+ 			else
+ 			{
+-				queryProps.setIndexResults(false);
++				queryProps.setIndexResults(QueryProperties::NOTHING);
+ 			}
+ 		}
+ 		else if (nodeName == &quot;label&quot;)
+@@ -1363,7 +1367,19 @@
+ 			addChildElement(pElem, &quot;stemlanguage&quot;, Languages::toEnglish(queryIter-&gt;second.getStemmingLanguage()));
+ 			snprintf(numStr, 64, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
+ 			addChildElement(pElem, &quot;maxresults&quot;, numStr);
+-			addChildElement(pElem, &quot;index&quot;, (queryIter-&gt;second.getIndexResults() ? &quot;ALL&quot; : &quot;NONE&quot;));
++			QueryProperties::IndexWhat indexResults = queryIter-&gt;second.getIndexResults();
++			if (indexResults == QueryProperties::NEW_RESULTS)
++			{
++				addChildElement(pElem, &quot;index&quot;, &quot;NEW&quot;);
++			}
++			else if (indexResults == QueryProperties::ALL_RESULTS)
++			{
++				addChildElement(pElem, &quot;index&quot;, &quot;ALL&quot;);
++			}
++			else
++			{
++				addChildElement(pElem, &quot;index&quot;, &quot;NONE&quot;);
++			}
+ 			addChildElement(pElem, &quot;label&quot;, queryIter-&gt;second.getLabelName());
+ 			addChildElement(pElem, &quot;modified&quot;, (queryIter-&gt;second.getModified() ? &quot;YES&quot; : &quot;NO&quot;));
+ 		}
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -1122,6 +1122,15 @@
+ 		{
+ 			m_state.m_browsingIndex = false;
+ 		}
++		else if (type == &quot;IndexingThread&quot;)
++		{
++			IndexingThread *pIndexThread = dynamic_cast&lt;IndexingThread *&gt;(pThread);
++			if (pIndexThread != NULL)
++			{
++				// Get the URL we failed to index
++				indexedUrl = pIndexThread-&gt;getURL();
++			}
++		}
+ 	}
+ 	// Based on type, take the appropriate action...
+ 	else if (type == &quot;ListerThread&quot;)
+@@ -1182,7 +1191,7 @@
+ 	}
+ 	else if (type == &quot;QueryingThread&quot;)
+ 	{
+-		std::map&lt;string, TreeModel::iterator&gt; updatedGroups;
++		set&lt;DocumentInfo&gt; docsToIndex;
+ 		int pageNum = -1;
+ 
+ 		QueryingThread *pQueryThread = dynamic_cast&lt;QueryingThread *&gt;(pThread);
+@@ -1192,13 +1201,21 @@
+ 			return;
+ 		}
+ 
+-		bool wasCorrected;
++		bool wasCorrected = false;
+ 		QueryProperties queryProps(pQueryThread-&gt;getQuery(wasCorrected));
+ 		ustring queryName(queryProps.getName());
++		string labelName(queryProps.getLabelName());
+ 		ustring engineName(to_utf8(pQueryThread-&gt;getEngineName()));
+ 		string resultsCharset(pQueryThread-&gt;getCharset());
++		set&lt;string&gt; labels;
+ 		const vector&lt;DocumentInfo&gt; &amp;resultsList = pQueryThread-&gt;getDocuments();
+ 
++		// These are the labels that need to be applied to results
++		if (labelName.empty() == false)
++		{
++			labels.insert(labelName);
++		}
++
+ 		status = _(&quot;Query&quot;);
+ 		status += &quot; &quot;;
+ 		status += queryName;
+@@ -1210,6 +1227,78 @@
+ 		status += _(&quot;ended&quot;);
+ 		set_status(status);
+ 
++		// Suggest the correction to the user
++		if (wasCorrected == true)
++		{
++			ustring correctedQueryName(_(&quot;Corrected&quot;));
++
++			if (queryName.empty() == true)
++			{
++				correctedQueryName += &quot;...&quot;;
++			}
++			else
++			{
++				correctedQueryName += &quot; &quot;;
++				correctedQueryName += queryName;
++			}
++			queryProps.setName(correctedQueryName);
++			queryProps.setModified(true);
++
++			add_query(queryProps, true);
++		}
++
++		// Index results ?
++		QueryProperties::IndexWhat indexResults = queryProps.getIndexResults();
++		if ((indexResults != QueryProperties::NOTHING) &amp;&amp;
++			(resultsList.empty() == false))
++		{
++			QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
++			set&lt;unsigned int&gt; docsIds, daemonIds;
++
++			for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
++				resultIter != resultsList.end(); ++resultIter)
++			{
++				unsigned int indexId = 0;
++				unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
++				float oldestScore = 0;
++				bool isNewResult = false;
++
++				// Is this a new result or a new query's result ?
++				if (queryHistory.hasItem(queryName, engineName, resultIter-&gt;getLocation(), oldestScore) &lt;= 0)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;mainWindow::on_thread_end: new result &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
++#endif
++					isNewResult = true;
++				}
++				
++				if ((docId == 0) &amp;&amp;
++					((indexResults == QueryProperties::ALL_RESULTS) || (isNewResult == true)))
++				{
++					// This document is not in either index
++					docsToIndex.insert(*resultIter);
++				}
++				else if (labels.empty() == false)
++				{
++					if (indexId == m_settings.getIndexIdByName(_(&quot;My Web Pages&quot;)))
++					{
++						docsIds.insert(docId);
++					}
++					else if (indexId == m_settings.getIndexIdByName(_(&quot;My Documents&quot;)))
++					{
++						daemonIds.insert(docId);
++					}
++				}
++			}
++
++			if ((docsIds.empty() == false) ||
++				(daemonIds.empty() == false))
++			{
++				// Apply the new label to existing documents
++				start_thread(new LabelUpdateThread(labels, docsIds, daemonIds, false));
++			}
++		}
++
+ 		// Find the page for this query
+ 		ResultsTree *pResultsTree = NULL;
+ 		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(get_page(queryName, NotebookPageBox::RESULTS_PAGE));
+@@ -1270,85 +1359,18 @@
+ 				resultsCharset, pQueryThread-&gt;isLive());
+ 		}
+ 
+-		// Suggest the correction to the user
+-		if (wasCorrected == true)
++		// Now that results are displayed, go ahead and index documents
++		for (set&lt;DocumentInfo&gt;::const_iterator docIter = docsToIndex.begin();
++			docIter != docsToIndex.end(); ++docIter)
+ 		{
+-			ustring correctedQueryName(_(&quot;Corrected&quot;));
++			DocumentInfo docInfo(*docIter);
+ 
+-			if (queryName.empty() == true)
+-			{
+-				correctedQueryName += &quot;...&quot;;
+-			}
+-			else
+-			{
+-				correctedQueryName += &quot; &quot;;
+-				correctedQueryName += queryName;
+-			}
+-			queryProps.setName(correctedQueryName);
+-			queryProps.setModified(true);
+-
+-			add_query(queryProps, true);
+-		}
+-
+-		// Index results ?
+-		if ((queryProps.getIndexResults() == true) &amp;&amp;
+-			(resultsList.empty() == false))
+-		{
+-			set&lt;string&gt; labels;
+-			set&lt;unsigned int&gt; docsIds, daemonIds;
+-			string labelName(queryProps.getLabelName());
+-
+-			// Set the list of labels
+-			if (labelName.empty() == false)
+-			{
+-				labels.insert(labelName);
+-			}
+-
++			// Set/reset labels
++			docInfo.setLabels(labels);
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_thread_end: indexing results, with label &quot; &lt;&lt; labelName &lt;&lt; endl;
++			cout &lt;&lt; &quot;mainWindow::on_thread_end: indexing results with label &quot; &lt;&lt; labelName &lt;&lt; endl;
+ #endif
+-			for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+-				resultIter != resultsList.end(); ++resultIter)
+-			{
+-				unsigned int indexId;
+-				unsigned int docId = resultIter-&gt;getIsIndexed(indexId);
+-
+-				if (docId == 0)
+-				{
+-					DocumentInfo docInfo(*resultIter);
+-
+-					// Set/reset labels
+-					docInfo.setLabels(labels);
+-
+-					// This document is not in either index
+-					m_state.queue_index(docInfo);
+-				}
+-				else if (indexId == m_settings.getIndexIdByName(_(&quot;My Web Pages&quot;)))
+-				{
+-					if (labelName.empty() == false)
+-					{
+-						docsIds.insert(docId);
+-					}
+-				}
+-				else if (indexId == m_settings.getIndexIdByName(_(&quot;My Documents&quot;)))
+-				{
+-					if (labelName.empty() == false)
+-					{
+-						daemonIds.insert(docId);
+-					}
+-				}
+-			}
+-
+-			if ((labelName.empty() == false) &amp;&amp;
+-				((docsIds.empty() == false) ||
+-				(daemonIds.empty() == false)))
+-			{
+-				set&lt;string&gt; labels;
+-
+-				// Apply the new label to existing documents
+-				labels.insert(labelName);
+-				start_thread(new LabelUpdateThread(labels, docsIds, daemonIds, false));
+-			}
++			m_state.queue_index(docInfo);
+ 		}
+ 	}
+ 	else if (type == &quot;ExpandQueryThread&quot;)
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/src/queryDialog.cc	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -55,8 +55,24 @@
+ 	}
+ 	// Maximum number of results
+ 	resultsCountSpinbutton-&gt;set_value((double)m_properties.getMaximumResultsCount());
+-	// Index all results
+-	indexCheckbutton-&gt;set_active(m_properties.getIndexResults());
++	// Index results
++	QueryProperties::IndexWhat indexResults = m_properties.getIndexResults();
++	if (indexResults == QueryProperties::NEW_RESULTS)
++	{
++		indexCheckbutton-&gt;set_active(true);
++		indexNewCheckbutton-&gt;set_active(true);
++	}
++	else if (indexResults == QueryProperties::ALL_RESULTS)
++	{
++		indexCheckbutton-&gt;set_active(true);
++		indexNewCheckbutton-&gt;set_active(false);
++	}
++	else
++	{
++		indexCheckbutton-&gt;set_active(false);
++		indexNewCheckbutton-&gt;set_active(false);
++		indexNewCheckbutton-&gt;set_sensitive(false);
++	}
+ 
+ 	// Populate
+ 	populate_comboboxes();
+@@ -209,8 +225,24 @@
+ 		languageName.clear();
+ 	}
+ 	m_properties.setStemmingLanguage(languageName);
+-	// Index all results
+-	m_properties.setIndexResults(indexCheckbutton-&gt;get_active());
++	// Index results
++	bool indexResults = indexCheckbutton-&gt;get_active();
++	bool indexNewResults = indexNewCheckbutton-&gt;get_active();
++	if ((indexResults == true) &amp;&amp;
++		(indexNewResults == true))
++	{
++		m_properties.setIndexResults(QueryProperties::NEW_RESULTS);
++	}
++	else if ((indexResults == true) &amp;&amp;
++		(indexNewResults == false))
++	{
++		m_properties.setIndexResults(QueryProperties::ALL_RESULTS);
++	}
++	else
++	{
++		m_properties.setIndexResults(QueryProperties::NOTHING);
++	}
++
+ 	// Index label
+ 	m_properties.setLabelName(&quot;&quot;);
+ 	int chosenLabel = labelNameCombobox-&gt;get_active_row_number();
+@@ -302,3 +334,16 @@
+ 	}
+ }
+ 
++void queryDialog::on_indexCheckbutton_toggled()
++{
++	if (indexCheckbutton-&gt;get_active() == false)
++	{
++		indexNewCheckbutton-&gt;set_active(false);
++		indexNewCheckbutton-&gt;set_sensitive(false);
++	}
++	else
++	{
++		indexNewCheckbutton-&gt;set_sensitive(true);
++	}
++}
++
+
+Modified: trunk/UI/GTK2/src/queryDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.hh	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/src/queryDialog.hh	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -47,6 +47,7 @@
+ 	virtual void on_queryOkbutton_clicked();
+ 	virtual void on_nameEntry_changed();
+ 	virtual void on_addFilterButton_clicked();
++	virtual void on_indexCheckbutton_toggled();
+ 
+ };
+ #endif
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -1,9 +1,9 @@
+-// generated 2007/12/23 10:48:41 CET by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
++// generated 2008/3/25 22:20:46 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.12.3 and gtkmm 2.12.3
++// for gtk 2.12.5 and gtkmm 2.12.3
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.cc
+ 
+@@ -91,6 +91,8 @@
+    stemmingCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
+    Gtk::Label *stemmingLabel = Gtk::manage(new class Gtk::Label(_(&quot;Stemming:&quot;)));
++   indexNewCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Only index new results&quot;)));
++   
+    Gtk::Table *actionsTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    Gtk::VBox *queryVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    queryCancelbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+@@ -181,6 +183,10 @@
+    stemmingLabel-&gt;set_line_wrap(false);
+    stemmingLabel-&gt;set_use_markup(false);
+    stemmingLabel-&gt;set_selectable(false);
++   indexNewCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
++   indexNewCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   indexNewCheckbutton-&gt;set_mode(true);
++   indexNewCheckbutton-&gt;set_active(false);
+    actionsTable-&gt;set_row_spacings(0);
+    actionsTable-&gt;set_col_spacings(0);
+    actionsTable-&gt;attach(*indexCheckbutton, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 4, 4);
+@@ -191,6 +197,7 @@
+    actionsTable-&gt;attach(*sortOrderCombobox, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*stemmingCombobox, 1, 2, 2, 3, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    actionsTable-&gt;attach(*stemmingLabel, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
++   actionsTable-&gt;attach(*indexNewCheckbutton, 0, 1, 4, 5, Gtk::FILL, Gtk::FILL, 4, 4);
+    queryVbox-&gt;pack_start(*nameTable, Gtk::PACK_SHRINK, 0);
+    queryVbox-&gt;pack_start(*queryHbox, Gtk::PACK_SHRINK, 0);
+    queryVbox-&gt;pack_start(*queryFrame, Gtk::PACK_EXPAND_WIDGET, 4);
+@@ -228,12 +235,14 @@
+    sortOrderCombobox-&gt;show();
+    stemmingCombobox-&gt;show();
+    stemmingLabel-&gt;show();
++   indexNewCheckbutton-&gt;show();
+    actionsTable-&gt;show();
+    queryVbox-&gt;show();
+    queryDialog-&gt;show();
+    queryOkbutton-&gt;signal_clicked().connect(sigc::mem_fun(*this, &amp;queryDialog_glade::on_queryOkbutton_clicked), false);
+    nameEntry-&gt;signal_changed().connect(sigc::mem_fun(*this, &amp;queryDialog_glade::on_nameEntry_changed), false);
+    addFilterButton-&gt;signal_clicked().connect(sigc::mem_fun(*this, &amp;queryDialog_glade::on_addFilterButton_clicked), false);
++   indexCheckbutton-&gt;signal_toggled().connect(sigc::mem_fun(*this, &amp;queryDialog_glade::on_indexCheckbutton_toggled), false);
+ }
+ 
+ queryDialog_glade::~queryDialog_glade()
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.hh	2008-03-24 08:08:36 UTC (rev 1217)
++++ trunk/UI/GTK2/src/queryDialog_glade.hh	2008-03-26 03:05:37 UTC (rev 1218)
+@@ -1,9 +1,9 @@
+-// generated 2007/12/23 10:48:41 CET by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
++// generated 2008/3/25 22:20:46 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.12.3 and gtkmm 2.12.3
++// for gtk 2.12.5 and gtkmm 2.12.3
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.hh and./src/queryDialog.cc
+ 
+@@ -55,6 +55,7 @@
+         class Gtk::SpinButton * resultsCountSpinbutton;
+         class Gtk::ComboBoxText * sortOrderCombobox;
+         class Gtk::ComboBoxText * stemmingCombobox;
++        class Gtk::CheckButton * indexNewCheckbutton;
+         
+         queryDialog_glade();
+         
+@@ -63,5 +64,6 @@
+         virtual void on_queryOkbutton_clicked() = 0;
+         virtual void on_nameEntry_changed() = 0;
+         virtual void on_addFilterButton_clicked() = 0;
++        virtual void on_indexCheckbutton_toggled() = 0;
+ };
+ #endif
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001211.html">[Pinot-svn] r1217 - trunk/IndexSearch/Plugins
+</A></li>
+	<LI>Next message: <A HREF="001213.html">[Pinot-svn] r1219 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1212">[ date ]</a>
+              <a href="thread.html#1212">[ thread ]</a>
+              <a href="subject.html#1212">[ subject ]</a>
+              <a href="author.html#1212">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

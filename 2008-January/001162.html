@@ -1,0 +1,343 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1168 - in trunk: IndexSearch UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1168%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200801201201.m0KC1nYJ012946%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001161.html">
+   <LINK REL="Next"  HREF="001163.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1168 - in trunk: IndexSearch UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1168%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200801201201.m0KC1nYJ012946%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1168 - in trunk: IndexSearch UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jan 20 13:01:49 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001161.html">[Pinot-svn] r1167 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001163.html">[Pinot-svn] r1169 - in trunk: . IndexSearch IndexSearch/Xapian	UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1162">[ date ]</a>
+              <a href="thread.html#1162">[ thread ]</a>
+              <a href="subject.html#1162">[ subject ]</a>
+              <a href="author.html#1162">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-01-20 13:01:45 +0100 (Sun, 20 Jan 2008)
+New Revision: 1168
+
+Modified:
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/pinot-index.cpp
+   trunk/IndexSearch/pinot-search.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+Log:
+HasDocument is now exported over D-Bus. As a result, pinot-label doesn't have
+to open the index.
+Added a -b/--backend option to pinot-index (defaults to &quot;xapian&quot;).
+Minor changes to pinot-search.
+
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2008-01-19 14:48:48 UTC (rev 1167)
++++ trunk/IndexSearch/DBusIndex.cpp	2008-01-20 12:01:45 UTC (rev 1168)
+@@ -831,14 +831,47 @@
+ /// Checks whether the given URL is in the index.
+ unsigned int DBusIndex::hasDocument(const string &amp;url) const
+ {
+-	if (m_pROIndex == NULL)
++	if (m_pROIndex != NULL)
+ 	{
++		reopen();
++
++		return m_pROIndex-&gt;hasDocument(url);
++	}
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
+ 		return false;
+ 	}
+ 
+-	reopen();
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::hasDocument: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
+ 
+-	return m_pROIndex-&gt;hasDocument(url);
++	GError *pError = NULL;
++	const char *pUrl = url.c_str();
++	unsigned int docId = 0;
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;HasDocument&quot;, &amp;pError,
++		G_TYPE_STRING, pUrl,
++		G_TYPE_INVALID,
++		G_TYPE_UINT, &amp;docId,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::hasDocument: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return docId;
+ }
+ 
+ /// Gets terms with the same root.
+
+Modified: trunk/IndexSearch/pinot-index.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-index.cpp	2008-01-19 14:48:48 UTC (rev 1167)
++++ trunk/IndexSearch/pinot-index.cpp	2008-01-20 12:01:45 UTC (rev 1168)
+@@ -36,6 +36,7 @@
+ using namespace std;
+ 
+ static struct option g_longOptions[] = {
++	{&quot;backend&quot;, 1, 0, 'b'},
+ 	{&quot;check&quot;, 0, 0, 'c'},
+ 	{&quot;db&quot;, 1, 0, 'd'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
+@@ -50,10 +51,16 @@
+ 
+ static void printHelp(void)
+ {
++	map&lt;string, bool&gt; engines;
++
+ 	// Help
++	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/modules&quot;));
++	ModuleFactory::getSupportedEngines(engines);
++	ModuleFactory::unloadModules();
+ 	cout &lt;&lt; &quot;pinot-index - Index documents from the command-line\n\n&quot;
+ 		&lt;&lt; &quot;Usage: pinot-index [OPTIONS] URLS\n\n&quot;
+ 		&lt;&lt; &quot;Options:\n&quot;
++		&lt;&lt; &quot;  -b, --backend             name of back-end to use (default xapian)\n&quot;
+ 		&lt;&lt; &quot;  -c, --check               check whether the given URL is in the index\n&quot;
+ 		&lt;&lt; &quot;  -d, --db                  path to index to use (mandatory)\n&quot;
+ 		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
+@@ -62,11 +69,17 @@
+ 		&lt;&lt; &quot;  -p, --proxyport           proxy port\n&quot;
+ 		&lt;&lt; &quot;  -t, --proxytype           proxy type (default HTTP, SOCKS4, SOCKS5)\n&quot;
+ 		&lt;&lt; &quot;  -s, --showinfo            show information about the document\n&quot;
+-		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;;
+-	// Don't mention type dbus here as it doesn't support indexing and
+-	// is identical to xapian when checking for URLs
+-	cout &lt;&lt; &quot;Examples:\n&quot;
+-		&lt;&lt; &quot;pinot-index --check --showinfo --db ~/.pinot/daemon <A HREF="file:///home/fabrice/Documents/Bozo.txt\n\n">file:///home/fabrice/Documents/Bozo.txt\n\n</A>&quot;
++		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;
++		&lt;&lt; &quot;Supported back-ends are :&quot;;
++	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
++	{
++		if (engineIter-&gt;second == true)
++		{
++			cout &lt;&lt; &quot; &quot; &lt;&lt; engineIter-&gt;first;
++		}
++	}
++	cout &lt;&lt; &quot;\n\nExamples:\n&quot;
++		&lt;&lt; &quot;pinot-index --check --showinfo --backend xapian --db ~/.pinot/daemon <A HREF="file:///home/fabrice/Documents/Bozo.txt\n\n">file:///home/fabrice/Documents/Bozo.txt\n\n</A>&quot;
+ 		&lt;&lt; &quot;pinot-index --index --db ~/.pinot/index <A HREF="http://pinot.berlios.de/\n\n">http://pinot.berlios.de/\n\n</A>&quot;
+ 		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ }
+@@ -74,13 +87,14 @@
+ int main(int argc, char **argv)
+ {
+ 	string type, option;
+-	string databaseName, proxyAddress, proxyPort, proxyType;
++	// Use back-end xapian by default for backward compatibility
++	string backendType(&quot;xapian&quot;), databaseName, proxyAddress, proxyPort, proxyType;
+ 	int longOptionIndex = 0;
+ 	unsigned int docId = 0;
+ 	bool checkDocument = false, indexDocument = false, showInfo = false, success = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;cd:hia:p:t:sv&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;b:cd:hia:p:t:sv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		set&lt;string&gt; engines;
+@@ -93,6 +107,12 @@
+ 					proxyAddress = optarg;
+ 				}
+ 				break;
++			case 'b':
++				if (optarg != NULL)
++				{
++					backendType = optarg;
++				}
++				break;
+ 			case 'c':
+ 				checkDocument = true;
+ 				break;
+@@ -134,7 +154,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;cd:hia:p:t:sv&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;b:cd:hia:p:t:sv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -152,6 +172,7 @@
+ 
+ 	if (((indexDocument == false) &amp;&amp;
+ 		(checkDocument == false)) ||
++		(backendType.empty() == true) ||
+ 		(databaseName.empty() == true))
+ 	{
+ 		cerr &lt;&lt; &quot;Incorrect parameters&quot; &lt;&lt; endl;
+@@ -184,7 +205,7 @@
+ 
+ 	// Make sure the index is open in the correct mode
+ 	bool wasObsoleteFormat = false;
+-	if (ModuleFactory::openOrCreateIndex(&quot;xapian&quot;, databaseName, wasObsoleteFormat, (indexDocument ? false : true)) == false)
++	if (ModuleFactory::openOrCreateIndex(backendType, databaseName, wasObsoleteFormat, (indexDocument ? false : true)) == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't open index &quot; &lt;&lt; databaseName &lt;&lt; endl;
+ 
+@@ -197,7 +218,7 @@
+ 	}
+ 
+ 	// Get a read-write index of the given type
+-	IndexInterface *pIndex = ModuleFactory::getIndex(&quot;xapian&quot;, databaseName);
++	IndexInterface *pIndex = ModuleFactory::getIndex(backendType, databaseName);
+ 	if (pIndex == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain index for &quot; &lt;&lt; databaseName &lt;&lt; endl;
+
+Modified: trunk/IndexSearch/pinot-search.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-search.cpp	2008-01-19 14:48:48 UTC (rev 1167)
++++ trunk/IndexSearch/pinot-search.cpp	2008-01-20 12:01:45 UTC (rev 1168)
+@@ -78,7 +78,7 @@
+ 
+ static void printHelp(void)
+ {
+-	set&lt;string&gt; engines;
++	map&lt;string, bool&gt; engines;
+ 
+ 	// Help
+ 	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/modules&quot;));
+@@ -97,10 +97,10 @@
+ 		&lt;&lt; &quot;  -v, --version             output version information and exit\n&quot;
+ 		&lt;&lt; &quot;  -q, --xesamql             query input is a file containing Xesam QL\n&quot;
+ 		&lt;&lt; &quot;  -u, --xesamul             query input is a file containing Xesam UL\n\n&quot;
+-		&lt;&lt; &quot;Supported search engine types are&quot;;
+-	for (set&lt;string&gt;::iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
++		&lt;&lt; &quot;Supported search engine types are :&quot;;
++	for (map&lt;string, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 	{
+-		cout &lt;&lt; &quot; &quot; &lt;&lt; *engineIter;
++		cout &lt;&lt; &quot; &quot; &lt;&lt; engineIter-&gt;first;
+ 	}
+ 	cout &lt;&lt; &quot;\n\nExamples:\n&quot;
+ #ifdef HAVE_GOOGLEAPI
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-01-19 14:48:48 UTC (rev 1167)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-01-20 12:01:45 UTC (rev 1168)
+@@ -723,6 +723,36 @@
+ 			m_mustQuit = true;
+ 		}
+ 	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;HasDocument&quot;) == TRUE)
++	{
++		char *pUrl = NULL;
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pUrl,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received HasDocument &quot; &lt;&lt; pUrl &lt;&lt; endl;
++#endif
++			if (pUrl != NULL)
++			{
++				string url(pUrl);
++
++				// Check the index
++				docId = pIndex-&gt;hasDocument(url);
++			}
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
+ 	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetLabels&quot;) == TRUE)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-01-19 14:48:48 UTC (rev 1167)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-01-20 12:01:45 UTC (rev 1168)
+@@ -36,6 +36,15 @@
+       &lt;arg type=&quot;i&quot; name=&quot;exitStatus&quot; direction=&quot;out&quot; /&gt;
+     &lt;/method&gt;
+     &lt;!--
++	Checks if a URL is indexed.
++	 docId: the document's ID
++	--&gt;
++    &lt;method name=&quot;HasDocument&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.HasDocument&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;s&quot; name=&quot;url&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
+ 	Gets the list of known labels.
+ 	 labels: array of labels
+ 	--&gt;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001161.html">[Pinot-svn] r1167 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001163.html">[Pinot-svn] r1169 - in trunk: . IndexSearch IndexSearch/Xapian	UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1162">[ date ]</a>
+              <a href="thread.html#1162">[ thread ]</a>
+              <a href="subject.html#1162">[ subject ]</a>
+              <a href="author.html#1162">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

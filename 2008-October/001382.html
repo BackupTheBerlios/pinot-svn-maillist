@@ -1,0 +1,508 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1391 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1391%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200810270402.m9R42XSt015124%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001381.html">
+   <LINK REL="Next"  HREF="001383.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1391 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1391%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200810270402.m9R42XSt015124%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1391 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 27 05:02:33 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001381.html">[Pinot-svn] r1390 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001383.html">[Pinot-svn] r1392 - in trunk: IndexSearch/Xapian UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1382">[ date ]</a>
+              <a href="thread.html#1382">[ thread ]</a>
+              <a href="subject.html#1382">[ subject ]</a>
+              <a href="author.html#1382">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-10-27 05:02:01 +0100 (Mon, 27 Oct 2008)
+New Revision: 1391
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+The FileFound signal doesn't require a source label, the caller should set it
+on the document prior to emitting the signal.
+The DirectoryScanner thread inherits from Indexing and will index files as they
+are being found, unless the env var PINOT_DELEGATE_INDEXING is set to Y. I am
+enabling this by default, but this may change in the near future.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -540,27 +540,11 @@
+ 	pop_queue(indexedUrl);
+ }
+ 
+-void DaemonState::on_message_filefound(DocumentInfo docInfo, string sourceLabel, bool isDirectory)
++void DaemonState::on_message_filefound(DocumentInfo docInfo, bool isDirectory)
+ {
+ 	if (isDirectory == false)
+ 	{
+-		DocumentInfo docCopy(docInfo);
+-		set&lt;string&gt; labels;
+-
+-		if (sourceLabel.empty() == false)
+-		{
+-			// Insert a label that identifies the source
+-			labels.insert(sourceLabel);
+-			docCopy.setLabels(labels);
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DaemonState::on_message_filefound: source label for &quot; &lt;&lt; docCopy.getLocation() &lt;&lt; &quot; is &quot; &lt;&lt; sourceLabel &lt;&lt; endl;
+-#endif
+-		}
+-#ifdef DEBUG
+-		else cout &lt;&lt; &quot;DaemonState::on_message_filefound: no source label for &quot; &lt;&lt; docCopy.getLocation() &lt;&lt; endl;
+-#endif
+-
+-		queue_index(docCopy);
++		queue_index(docInfo);
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -48,8 +48,7 @@
+ 
+ 		void on_thread_end(WorkerThread *pThread);
+ 
+-		void on_message_filefound(DocumentInfo docInfo, std::string sourceLabel,
+-			bool isDirectory);
++		void on_message_filefound(DocumentInfo docInfo, bool isDirectory);
+ 
+ 		sigc::signal1&lt;void, int&gt;&amp; getQuitSignal(void);
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -48,8 +48,8 @@
+ 	pthread_mutex_destroy(&amp;m_mutex);
+ 
+ 	// Disconnect the signal
+-	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
+-	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	sigc::signal2&lt;void, DocumentInfo, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal2&lt;void, DocumentInfo, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+ 	if (slotIter != slotsList.end())
+ 	{
+ 		if (slotIter-&gt;empty() == false)
+@@ -203,7 +203,7 @@
+ 	DocumentInfo docInfo(&quot;&quot;, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+ 
+ 	// What source does it belong to ?
+-	for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = m_fileSources.begin();
++	for (map&lt;unsigned int, string&gt;::const_iterator sourceIter = m_fileSources.begin();
+ 		sourceIter != m_fileSources.end(); ++sourceIter)
+ 	{
+ 		sourceId = sourceIter-&gt;first;
+@@ -216,6 +216,7 @@
+ 
+ 		if (location.substr(0, sourceIter-&gt;second.length()) == sourceIter-&gt;second)
+ 		{
++			set&lt;string&gt; labels;
+ 			stringstream labelStream;
+ 
+ 			// That's the one
+@@ -223,18 +224,16 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;OnDiskHandler::indexFile: source label for &quot; &lt;&lt; location &lt;&lt; &quot; is &quot; &lt;&lt; labelStream.str() &lt;&lt; endl;
+ #endif
+-			m_signalFileFound(docInfo, labelStream.str(), isDirectory);
+-			return true;
++			labels.insert(labelStream.str());
++			docInfo.setLabels(labels);
++			break;
+ 		}
+ #ifdef DEBUG
+ 		else cout &lt;&lt; &quot;OnDiskHandler::indexFile: not &quot; &lt;&lt; sourceIter-&gt;second &lt;&lt; endl;
+ #endif
+ 	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::indexFile: no source label for &quot; &lt;&lt; location &lt;&lt; endl;
+-#endif
+ 
+-	m_signalFileFound(docInfo, &quot;&quot;, isDirectory);
++	m_signalFileFound(docInfo, isDirectory);
+ 
+ 	return true;
+ }
+@@ -413,7 +412,7 @@
+ 	return fileDeleted(dirName, IndexInterface::BY_DIRECTORY);
+ }
+ 
+-sigc::signal3&lt;void, DocumentInfo, string, bool&gt;&amp; OnDiskHandler::getFileFoundSignal(void)
++sigc::signal2&lt;void, DocumentInfo, bool&gt;&amp; OnDiskHandler::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -68,11 +68,11 @@
+ 		/// Handles directory deleted events.
+ 		virtual bool directoryDeleted(const std::string &amp;dirName);
+ 
+-		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt;&amp; getFileFoundSignal(void);
++		sigc::signal2&lt;void, DocumentInfo, bool&gt;&amp; getFileFoundSignal(void);
+ 
+ 	protected:
+ 		pthread_mutex_t m_mutex;
+-		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt; m_signalFileFound;
++		sigc::signal2&lt;void, DocumentInfo, bool&gt; m_signalFileFound;
+ 		std::map&lt;unsigned int, std::string&gt; m_fileSources;
+ 		CrawlHistory m_history;
+ 		IndexInterface *m_pIndex;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -23,6 +23,7 @@
+ #include &lt;stdlib.h&gt;
+ #include &lt;fcntl.h&gt;
+ #include &lt;string.h&gt;
++#include &lt;strings.h&gt;
+ #include &lt;signal.h&gt;
+ #include &lt;errno.h&gt;
+ #include &lt;exception&gt;
+@@ -37,6 +38,8 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;CrawlHistory.h&quot;
++#include &quot;MetaDataBackup.h&quot;
+ #include &quot;DBusIndex.h&quot;
+ #include &quot;ModuleFactory.h&quot;
+ #include &quot;DaemonState.h&quot;
+@@ -106,7 +109,7 @@
+ DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName, bool isSource,
+ 	bool fullScan, MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 	unsigned int maxLevel, bool followSymLinks) :
+-	WorkerThread(),
++	IndexingThread(),
+ 	m_dirName(dirName),
+ 	m_fullScan(fullScan),
+ 	m_pMonitor(pMonitor),
+@@ -114,8 +117,18 @@
+ 	m_sourceId(0),
+ 	m_currentLevel(0),
+ 	m_maxLevel(maxLevel),
+-	m_followSymLinks(followSymLinks)
++	m_followSymLinks(followSymLinks),
++	m_delegateIndexing(false)
+ {
++	// This is not set in the configuration file
++	char *pEnvVar = getenv(&quot;PINOT_DELEGATE_INDEXING&quot;);
++	if ((pEnvVar != NULL) &amp;&amp;
++		(strlen(pEnvVar) &gt; 0) &amp;&amp;
++		(strncasecmp(pEnvVar, &quot;Y&quot;, 1) == 0))
++	{
++		m_delegateIndexing = true;
++	}
++
+ 	if (m_dirName.empty() == false)
+ 	{
+ 		CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+@@ -171,8 +184,8 @@
+ void DirectoryScannerThread::stop(void)
+ {
+ 	// Disconnect the signal
+-	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
+-	sigc::signal3&lt;void, DocumentInfo, string, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	sigc::signal2&lt;void, DocumentInfo, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal2&lt;void, DocumentInfo, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+ 	if (slotIter != slotsList.end())
+ 	{
+ 		if (slotIter-&gt;empty() == false)
+@@ -184,7 +197,7 @@
+ 	WorkerThread::stop();
+ }
+ 
+-sigc::signal3&lt;void, DocumentInfo, string, bool&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
++sigc::signal2&lt;void, DocumentInfo, bool&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+@@ -202,6 +215,10 @@
+ 
+ void DirectoryScannerThread::flushUpdates(CrawlHistory &amp;crawlHistory)
+ {
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DirectoryScannerThread::flushUpdates: flushing updates&quot; &lt;&lt; endl;
++#endif
++
+ 	// Update these records
+ 	crawlHistory.updateItems(m_updateCache, CrawlHistory::CRAWLED);
+ 	m_updateCache.clear();
+@@ -219,14 +236,24 @@
+ 		return;
+ 	}
+ 
+-	stringstream labelStream;
++	if (m_delegateIndexing == false)
++	{
++		// Reset base class members
++		m_docInfo = docInfo;
++		m_docId = 0;
++		m_indexLocation = PinotSettings::getInstance().m_daemonIndexLocation;
++		m_update = false;
+ 
+-	// This identifies the source
+-	labelStream &lt;&lt; &quot;X-SOURCE&quot; &lt;&lt; m_sourceId;
++		IndexingThread::doWork();
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;DirectoryScannerThread::foundFile: source label for &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; is &quot; &lt;&lt; labelStream.str() &lt;&lt; endl;
++		cout &lt;&lt; &quot;DirectoryScannerThread::foundFile: indexed &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; to &quot; &lt;&lt; m_docId &lt;&lt; endl;
+ #endif
+-	m_signalFileFound(docInfo, labelStream.str(), false);
++	}
++	else
++	{
++		// Delegate indexing
++		m_signalFileFound(docInfo, false);
++	}
+ }
+ 
+ bool DirectoryScannerThread::scanEntry(const string &amp;entryName, CrawlHistory &amp;crawlHistory)
+@@ -421,6 +448,8 @@
+ 		if (reportFile == true)
+ 		{
+ 			DocumentInfo docInfo(&quot;&quot;, location, &quot;&quot;, &quot;&quot;);
++			set&lt;string&gt; labels;
++			stringstream labelStream;
+ 
+ 			if (S_ISDIR(fileStat.st_mode))
+ 			{
+@@ -433,6 +462,10 @@
+ 			}
+ 			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
+ 			docInfo.setSize(fileStat.st_size);
++			// Insert a label that identifies the source
++			labelStream &lt;&lt; &quot;X-SOURCE&quot; &lt;&lt; m_sourceId;
++			labels.insert(labelStream.str());
++			docInfo.setLabels(labels);
+ 
+ 			foundFile(docInfo);
+ 		}
+
+Modified: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/ServerThreads.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -41,7 +41,7 @@
+ #include &quot;DaemonState.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ 
+-class DirectoryScannerThread : public WorkerThread
++class DirectoryScannerThread : public IndexingThread
+ {
+ 	public:
+ 		DirectoryScannerThread(const std::string &amp;dirName, bool isSource,
+@@ -55,7 +55,7 @@
+ 
+ 		virtual void stop(void);
+ 
+-		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt;&amp; getFileFoundSignal(void);
++		sigc::signal2&lt;void, DocumentInfo, bool&gt;&amp; getFileFoundSignal(void);
+ 
+ 	protected:
+ 		std::string m_dirName;
+@@ -66,7 +66,8 @@
+ 		unsigned int m_currentLevel;
+ 		unsigned int m_maxLevel;
+ 		bool m_followSymLinks;
+-		sigc::signal3&lt;void, DocumentInfo, std::string, bool&gt; m_signalFileFound;
++		bool m_delegateIndexing;
++		sigc::signal2&lt;void, DocumentInfo, bool&gt; m_signalFileFound;
+ 		std::map&lt;std::string, time_t&gt; m_updateCache;
+ 
+ 		void cacheUpdate(const std::string &amp;location, time_t mTime, CrawlHistory &amp;crawlHistory);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -1357,6 +1357,14 @@
+ {
+ }
+ 
++DownloadingThread::DownloadingThread() :
++	WorkerThread(),
++	m_docInfo(&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;),
++	m_pDoc(NULL),
++	m_pDownloader(NULL)
++{
++}
++
+ DownloadingThread::~DownloadingThread()
+ {
+ 	if (m_pDoc != NULL)
+@@ -1386,6 +1394,11 @@
+ 
+ void DownloadingThread::doWork(void)
+ {
++	if (m_pDoc != NULL)
++	{
++		delete m_pDoc;
++		m_pDoc = NULL;
++	}
+ 	if (m_pDownloader != NULL)
+ 	{
+ 		delete m_pDownloader;
+@@ -1442,6 +1455,15 @@
+ {
+ }
+ 
++IndexingThread::IndexingThread() :
++	DownloadingThread(),
++	m_docId(0),
++	m_indexLocation(&quot;&quot;),
++	m_allowAllMIMETypes(true),
++	m_update(false)
++{
++}
++
+ IndexingThread::~IndexingThread()
+ {
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -373,6 +373,8 @@
+ 		Document *m_pDoc;
+ 		DownloaderInterface *m_pDownloader;
+ 
++		DownloadingThread();
++
+ 		virtual void doWork(void);
+ 
+ 	private:
+@@ -404,6 +406,8 @@
+ 		bool m_allowAllMIMETypes;
+ 		bool m_update;
+ 
++		IndexingThread();
++
+ 		virtual void doWork(void);
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001381.html">[Pinot-svn] r1390 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001383.html">[Pinot-svn] r1392 - in trunk: IndexSearch/Xapian UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1382">[ date ]</a>
+              <a href="thread.html#1382">[ thread ]</a>
+              <a href="subject.html#1382">[ subject ]</a>
+              <a href="author.html#1382">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

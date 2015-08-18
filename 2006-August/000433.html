@@ -1,0 +1,397 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r440 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r440%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608270238.k7R2crP5023611%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000432.html">
+   <LINK REL="Next"  HREF="000434.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r440 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r440%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608270238.k7R2crP5023611%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r440 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Aug 27 04:38:53 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000432.html">[Pinot-svn] r439 - in trunk: Monitor Search
+</A></li>
+        <LI>Next message: <A HREF="000434.html">[Pinot-svn] r441 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#433">[ date ]</a>
+              <a href="thread.html#433">[ thread ]</a>
+              <a href="subject.html#433">[ subject ]</a>
+              <a href="author.html#433">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-27 04:38:26 +0200 (Sun, 27 Aug 2006)
+New Revision: 440
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Expand queries with ExpandQueryThread rather than QueryingThread.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-27 02:35:51 UTC (rev 439)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-27 02:38:26 UTC (rev 440)
+@@ -709,19 +709,6 @@
+ {
+ }
+ 
+-QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+-	const string &amp;engineOption, const QueryProperties &amp;queryProps,
+-	const set&lt;unsigned int&gt; &amp;relevantDocs) :
+-	WorkerThread(),
+-	m_engineName(engineName),
+-	m_engineDisplayableName(engineDisplayableName),
+-	m_engineOption(engineOption),
+-	m_queryProps(queryProps)
+-{
+-	copy(relevantDocs.begin(), relevantDocs.end(),
+-		inserter(m_relevantDocs, m_relevantDocs.begin()));
+-}
+-
+ QueryingThread::~QueryingThread()
+ {
+ }
+@@ -751,11 +738,6 @@
+ 	return m_resultsList;
+ }
+ 
+-const set&lt;string&gt; &amp;QueryingThread::getExpandTerms(void) const
+-{
+-	return m_expandTerms;
+-}
+-
+ bool QueryingThread::stop(void)
+ {
+ 	m_done = true;
+@@ -779,11 +761,6 @@
+ 
+ 	// Set the maximum number of results
+ 	pEngine-&gt;setMaxResultsCount(m_queryProps.getMaximumResultsCount());
+-	if (m_relevantDocs.empty() == false)
+-	{
+-		// Set whether to expand the query
+-		pEngine-&gt;setQueryExpansion(m_relevantDocs);
+-	}
+ 
+ 	// Run the query
+ 	if (pEngine-&gt;runQuery(m_queryProps) == false)
+@@ -829,7 +806,77 @@
+ 				language,
+ 				resultIter-&gt;getScore()));
+ 		}
++	}
+ 
++	delete pEngine;
++}
++
++ExpandQueryThread::ExpandQueryThread(const string &amp;engineName,
++	const string &amp;engineOption, const QueryProperties &amp;queryProps,
++	const set&lt;unsigned int&gt; &amp;relevantDocs) :
++	WorkerThread(),
++	m_engineName(engineName),
++	m_engineOption(engineOption),
++	m_queryProps(queryProps)
++{
++	copy(relevantDocs.begin(), relevantDocs.end(),
++		inserter(m_relevantDocs, m_relevantDocs.begin()));
++}
++
++ExpandQueryThread::~ExpandQueryThread()
++{
++}
++
++string ExpandQueryThread::getType(void) const
++{
++	return &quot;ExpandQueryThread&quot;;
++}
++
++QueryProperties ExpandQueryThread::getQuery(void) const
++{
++	return m_queryProps;
++}
++
++const set&lt;string&gt; &amp;ExpandQueryThread::getExpandTerms(void) const
++{
++	return m_expandTerms;
++}
++
++bool ExpandQueryThread::stop(void)
++{
++	m_done = true;
++	m_status = _(&quot;Stopped expanding &quot;);
++	m_status += &quot; &quot;;
++	m_status += m_queryProps.getName();
++	return true;
++}
++
++void ExpandQueryThread::doWork(void)
++{
++	// Get the SearchEngine
++	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
++	if (pEngine == NULL)
++	{
++		m_status = _(&quot;Couldn't create search engine&quot;);
++		m_status += &quot; &quot;;
++		m_status += m_queryProps.getName();
++		return;
++	}
++
++	// Set the maximum number of results
++	pEngine-&gt;setMaxResultsCount(m_queryProps.getMaximumResultsCount());
++	// Set whether to expand the query
++	pEngine-&gt;setQueryExpansion(m_relevantDocs);
++
++	// Run the query
++	if (pEngine-&gt;runQuery(m_queryProps) == false)
++	{
++		m_status = _(&quot;Couldn't expand &quot;);
++		m_status += &quot; &quot;;
++		m_status += m_queryProps.getName();
++	}
++	else
++	{
+ 		// Copy the expand terms
+ 		const set&lt;string&gt; &amp;expandTerms = pEngine-&gt;getExpandTerms();
+ 		copy(expandTerms.begin(), expandTerms.end(),
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-27 02:35:51 UTC (rev 439)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-27 02:38:26 UTC (rev 440)
+@@ -192,9 +192,6 @@
+ 	public:
+ 		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+ 			const std::string &amp;engineOption, const QueryProperties &amp;queryProps);
+-		QueryingThread(const std::string &amp;engineName, const std::string &amp;engineDisplayableName,
+-			const std::string &amp;engineOption, const QueryProperties &amp;queryProps,
+-			const std::set&lt;unsigned int&gt; &amp;relevantDocs);
+ 		virtual ~QueryingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -205,8 +202,6 @@
+ 
+ 		const std::vector&lt;Result&gt; &amp;getResults(std::string &amp;charset) const;
+ 
+-		const std::set&lt;std::string&gt; &amp;getExpandTerms(void) const;
+-
+ 		virtual bool stop(void);
+ 
+ 	protected:
+@@ -214,7 +209,6 @@
+ 		std::string m_engineDisplayableName;
+ 		std::string m_engineOption;
+ 		QueryProperties m_queryProps;
+-		std::set&lt;unsigned int&gt; m_relevantDocs;
+ 		std::vector&lt;Result&gt; m_resultsList;
+ 		std::string m_resultsCharset;
+ 		std::set&lt;std::string&gt; m_expandTerms;
+@@ -227,6 +221,36 @@
+ 
+ };
+ 
++class ExpandQueryThread : public WorkerThread
++{
++	public:
++		ExpandQueryThread(const std::string &amp;engineName, const std::string &amp;engineOption,
++			const QueryProperties &amp;queryProps, const std::set&lt;unsigned int&gt; &amp;relevantDocs);
++		virtual ~ExpandQueryThread();
++
++		virtual std::string getType(void) const;
++
++		QueryProperties getQuery(void) const;
++
++		const std::set&lt;std::string&gt; &amp;getExpandTerms(void) const;
++
++		virtual bool stop(void);
++
++	protected:
++		std::string m_engineName;
++		std::string m_engineOption;
++		QueryProperties m_queryProps;
++		std::set&lt;unsigned int&gt; m_relevantDocs;
++		std::set&lt;std::string&gt; m_expandTerms;
++
++		virtual void doWork(void);
++
++	private:
++		ExpandQueryThread(const ExpandQueryThread &amp;other);
++		ExpandQueryThread &amp;operator=(const ExpandQueryThread &amp;other);
++
++};
++
+ class LabelUpdateThread : public WorkerThread
+ {
+ 	public:
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-08-27 02:35:51 UTC (rev 439)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-08-27 02:38:26 UTC (rev 440)
+@@ -989,62 +989,68 @@
+ 				m_state.queue_index(docInfo);
+ 			}
+ 		}
++	}
++	else if (type == &quot;ExpandQueryThread&quot;)
++	{
++		ExpandQueryThread *pExpandThread = dynamic_cast&lt;ExpandQueryThread *&gt;(pThread);
++		if (pExpandThread == NULL)
++		{
++			delete pThread;
++			return;
++		}
+ 
+-		// Any expand terms ?
+-		const set&lt;string&gt; &amp;expandTerms = pQueryThread-&gt;getExpandTerms();
+-		if (expandTerms.empty() == false)
++		QueryProperties queryProps = pExpandThread-&gt;getQuery();
++		const set&lt;string&gt; &amp;expandTerms = pExpandThread-&gt;getExpandTerms();
++		string queryName(_(&quot;More Like&quot;));
++		string moreLike;
++
++		if (queryProps.getName().empty() == true)
+ 		{
+-			string queryName(_(&quot;More Like&quot;));
+-			string moreLike;
++			queryName += &quot;...&quot;;
++		}
++		else
++		{
++			queryName += &quot; &quot;;
++			queryName += queryProps.getName();
++		}
++		queryProps.setName(queryName);
+ 
+-			if (queryProps.getName().empty() == true)
++		if (queryProps.getAnyWords().empty() == false)
++		{
++			moreLike = &quot; &quot;;
++		}
++		for (set&lt;string&gt;::const_iterator termIter = expandTerms.begin();
++			termIter != expandTerms.end(); ++termIter)
++		{
++			if (moreLike.empty() == false)
+ 			{
+-				queryName += &quot;...&quot;;
++				moreLike += &quot; &quot;;
+ 			}
+-			else
+-			{
+-				queryName += &quot; &quot;;
+-				queryName += queryProps.getName();
+-			}
+-			queryProps.setName(queryName);
++			moreLike += *termIter;
++		}
+ 
+-			moreLike.clear();
+-			if (queryProps.getAnyWords().empty() == false)
+-			{
+-				moreLike = &quot; &quot;;
+-			}
+-			for (set&lt;string&gt;::const_iterator termIter = expandTerms.begin();
+-				termIter != expandTerms.end(); ++termIter)
+-			{
+-				if (moreLike.empty() == false)
+-				{
+-					moreLike += &quot; &quot;;
+-				}
+-				moreLike += *termIter;
+-			}
++		// Does such a query already exist ?
++		TreeModel::Children children = m_refQueryTree-&gt;children();
++		for (TreeModel::Children::iterator iter = children.begin();
++			iter != children.end(); ++iter)
++		{
++			TreeModel::Row row = *iter;
+ 
+-			// Does such a query already exist ?
+-			TreeModel::Children children = m_refQueryTree-&gt;children();
+-			for (TreeModel::Children::iterator iter = children.begin();
+-				iter != children.end(); ++iter)
++			if (queryName == from_utf8(row[m_queryColumns.m_name]))
+ 			{
+-				TreeModel::Row row = *iter;
+-
+-				if (queryName == from_utf8(row[m_queryColumns.m_name]))
+-				{
+-					m_settings.removeQuery(queryName);
+-					break;
+-				}
++				m_settings.removeQuery(queryName);
++				break;
+ 			}
++		}
+ 
+-			// Add these terms
+-			queryProps.setAnyWords(queryProps.getAnyWords() + moreLike);
++		// Add these terms
++		queryProps.setAnyWords(queryProps.getAnyWords() + moreLike);
+ 
+-			// Update everything
+-			if (m_settings.addQuery(queryProps) == true)
+-			{
+-				populate_queryTreeview(queryName);
+-			}
++		// Update everything
++		if (m_settings.addQuery(queryProps) == true)
++		{
++			populate_queryTreeview(queryName);
++			queryExpander-&gt;set_expanded(true);
+ 		}
+ 	}
+ 	else if (type == &quot;LabelUpdateThread&quot;)
+@@ -1732,7 +1738,7 @@
+ 			}
+ 
+ 			// Spawn a new thread
+-			start_thread(new QueryingThread(&quot;xapian&quot;, &quot;&quot;, &quot;MERGED&quot;,
++			start_thread(new ExpandQueryThread(&quot;xapian&quot;, &quot;MERGED&quot;,
+ 				queryProps, docIdList));
+ 		}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000432.html">[Pinot-svn] r439 - in trunk: Monitor Search
+</A></li>
+	<LI>Next message: <A HREF="000434.html">[Pinot-svn] r441 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#433">[ date ]</a>
+              <a href="thread.html#433">[ thread ]</a>
+              <a href="subject.html#433">[ subject ]</a>
+              <a href="author.html#433">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

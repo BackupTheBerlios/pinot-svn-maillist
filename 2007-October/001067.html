@@ -1,0 +1,343 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1073 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1073%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710261518.l9QFIDMb025479%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001066.html">
+   <LINK REL="Next"  HREF="001068.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1073 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1073%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710261518.l9QFIDMb025479%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1073 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct 26 17:18:13 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001066.html">[Pinot-svn] r1072 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001068.html">[Pinot-svn] r1074 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1067">[ date ]</a>
+              <a href="thread.html#1067">[ thread ]</a>
+              <a href="subject.html#1067">[ subject ]</a>
+              <a href="author.html#1067">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-26 17:18:13 +0200 (Fri, 26 Oct 2007)
+New Revision: 1073
+
+Modified:
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+   trunk/UI/GTK2/src/propertiesDialog.cc
+Log:
+Better at telling when properties or daemon preferences have changed.
+
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2007-10-24 14:05:41 UTC (rev 1072)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2007-10-26 15:18:13 UTC (rev 1073)
+@@ -25,9 +25,10 @@
+ #include &lt;gtkmm/menu.h&gt;
+ #include &lt;gtkmm/messagedialog.h&gt;
+ 
+-#include &quot;SearchEngineFactory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
++#include &quot;StringManip.h&quot;
++#include &quot;SearchEngineFactory.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;prefsDialog.hh&quot;
+ 
+@@ -100,14 +101,6 @@
+ 	// Allow only single selection
+ 	patternsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	populate_patternsTreeview();
+-	if (m_settings.m_isBlackList == true)
+-	{
+-		patternsCombobox-&gt;set_active(0);
+-	}
+-	else
+-	{
+-		patternsCombobox-&gt;set_active(1);
+-	}
+ 
+ 	// Hide the Google API entry field ?
+ 	if (SearchEngineFactory::isSupported(&quot;googleapi&quot;) == false)
+@@ -258,6 +251,7 @@
+ {
+ 	TreeModel::iterator iter;
+ 	TreeModel::Row row;
++	ustring dirsString;
+ 
+ 	if (m_settings.m_indexableLocations.empty() == true)
+ 	{
+@@ -276,14 +270,16 @@
+ 		row = *iter;
+ 		row[m_directoriesColumns.m_monitor] = dirIter-&gt;m_monitor;
+ 		row[m_directoriesColumns.m_location] = dirIter-&gt;m_name;
++		dirsString += dirIter-&gt;m_name + (dirIter-&gt;m_monitor == true ? &quot;1&quot; : &quot;0&quot;) + &quot;|&quot;;
+ 	}
+ 
++	m_directoriesHash = StringManip::hashString(dirsString);
+ 	removeDirectoryButton-&gt;set_sensitive(true);
+ }
+ 
+ bool prefsDialog::save_directoriesTreeview()
+ {
+-	bool startService = false;
++	string dirsString;
+ 
+ 	// Clear the current settings
+ 	m_settings.m_indexableLocations.clear();
+@@ -316,17 +312,26 @@
+ 			cout &lt;&lt; &quot;prefsDialog::save_directoriesTreeview: &quot; &lt;&lt; indexableLocation.m_name &lt;&lt; endl;
+ #endif
+ 			m_settings.m_indexableLocations.insert(indexableLocation);
+-			startService = true;
++			dirsString += indexableLocation.m_name + (indexableLocation.m_monitor == true ? &quot;1&quot; : &quot;0&quot;) + &quot;|&quot;;
+ 		}
+ 	}
+ 
+-	return startService;
++	if (m_directoriesHash != StringManip::hashString(dirsString))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog::save_directoriesTreeview: directories changed&quot; &lt;&lt; endl;
++#endif
++		return true;
++	}
++
++	return false;
+ }
+ 
+ void prefsDialog::populate_patternsTreeview()
+ {
+ 	TreeModel::iterator iter;
+ 	TreeModel::Row row;
++	ustring patternsString;
+ 
+ 	if (m_settings.m_filePatternsList.empty() == true)
+ 	{
+@@ -340,20 +345,39 @@
+ 		patternIter != m_settings.m_filePatternsList.end();
+ 		++patternIter)
+ 	{
++		ustring pattern(*patternIter);
++
+ 		// Create a new row
+ 		iter = m_refPatternsTree-&gt;append();
+ 		row = *iter;
+ 		// Set its name
+-		row[m_patternsColumns.m_location] = *patternIter;
++		row[m_patternsColumns.m_location] = pattern;
++		patternsString += pattern + &quot;|&quot;;
+ 	}
+ 	patternsCombobox-&gt;append_text(_(&quot;Exclude these patterns from indexing&quot;));
+ 	patternsCombobox-&gt;append_text(_(&quot;Only index these patterns&quot;));
+ 
+ 	removePatternButton-&gt;set_sensitive(true);
++
++	// Is it a black or white list ?
++	if (m_settings.m_isBlackList == true)
++	{
++		patternsCombobox-&gt;set_active(0);
++		patternsString += &quot;0&quot;;
++	}
++	else
++	{
++		patternsCombobox-&gt;set_active(1);
++		patternsString += &quot;1&quot;;
++	}
++
++	m_patternsHash = StringManip::hashString(patternsString);
+ }
+ 
+-void prefsDialog::save_patternsTreeview()
++bool prefsDialog::save_patternsTreeview()
+ {
++	ustring patternsString;
++
+ 	// Clear the current settings
+ 	m_settings.m_filePatternsList.clear();
+ 
+@@ -370,17 +394,30 @@
+ 			if (pattern.empty() == false)
+ 			{
+ 				m_settings.m_filePatternsList.insert(pattern);
++				patternsString += pattern + &quot;|&quot;;
+ 			}
+ 		}
+ 	}
+ 	if (patternsCombobox-&gt;get_active_row_number() == 0)
+ 	{
+ 		m_settings.m_isBlackList = true;
++		patternsString += &quot;0&quot;;
+ 	}
+ 	else
+ 	{
+ 		m_settings.m_isBlackList = false;
++		patternsString += &quot;1&quot;;
+ 	}
++
++	if (m_patternsHash != StringManip::hashString(patternsString))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog::save_patternsTreeview: patterns changed&quot; &lt;&lt; endl;
++#endif
++		return true;
++	}
++
++	return false;
+ }
+ 
+ void prefsDialog::on_prefsOkbutton_clicked()
+@@ -414,8 +451,9 @@
+ 	// Validate the current lists
+ 	save_labelsTreeview();
+ 	bool startForDirectories = save_directoriesTreeview();
+-	save_patternsTreeview();
+-	if (startForDirectories == true)
++	bool startForPatterns = save_patternsTreeview();
++	if ((startForDirectories == true) ||
++		(startForPatterns == true))
+ 	{
+ 		// Save the settings
+ 		m_settings.save();
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2007-10-24 14:05:41 UTC (rev 1072)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2007-10-26 15:18:13 UTC (rev 1073)
+@@ -45,6 +45,23 @@
+ 	bool startDaemon(void) const;
+ 
+ protected:
++	PinotSettings &amp;m_settings;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refViewTree;
++	LabelModelColumns m_labelsColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelsTree;
++	IndexableModelColumns m_directoriesColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refDirectoriesTree;
++	TimestampedModelColumns m_mailColumns;
++	TimestampedModelColumns m_patternsColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refPatternsTree;
++	std::set&lt;std::string&gt; m_addedLabels;
++	std::set&lt;std::string&gt; m_deletedLabels;
++	std::map&lt;std::string, std::string&gt; m_renamedLabels;
++	std::set&lt;std::string&gt; m_deletedDirectories;
++	std::string m_directoriesHash;
++	std::string m_patternsHash;
++	bool m_startDaemon;
++
+ 	virtual void on_prefsOkbutton_clicked();
+ 	virtual void on_directConnectionRadiobutton_toggled();
+ 	virtual void on_addLabelButton_clicked();
+@@ -61,23 +78,8 @@
+ 	void populate_directoriesTreeview();
+ 	bool save_directoriesTreeview();
+ 	void populate_patternsTreeview();
+-	void save_patternsTreeview();
++	bool save_patternsTreeview();
+ 
+-private:
+-	PinotSettings &amp;m_settings;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refViewTree;
+-	LabelModelColumns m_labelsColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelsTree;
+-	IndexableModelColumns m_directoriesColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refDirectoriesTree;
+-	TimestampedModelColumns m_mailColumns;
+-	TimestampedModelColumns m_patternsColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refPatternsTree;
+-	std::set&lt;std::string&gt; m_addedLabels;
+-	std::set&lt;std::string&gt; m_deletedLabels;
+-	std::map&lt;std::string, std::string&gt; m_renamedLabels;
+-	std::set&lt;std::string&gt; m_deletedDirectories;
+-	bool m_startDaemon;
++};
+ 
+-};
+ #endif
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-24 14:05:41 UTC (rev 1072)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-26 15:18:13 UTC (rev 1073)
+@@ -217,7 +217,7 @@
+ 		{
+ 			// Yup
+ 			row[m_labelsColumns.m_enabled] = true;
+-			labelsString += labelName;
++			labelsString += labelName + &quot;|&quot;;
+ 			m_labels.insert(labelName);
+ 		}
+ 		else
+@@ -299,8 +299,7 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen language &quot; &lt;&lt; languageName &lt;&lt; endl;
+ #endif
+-	string newInfoHash(StringManip::hashString(title + languageName));
+-	if (newInfoHash != m_infoHash)
++	if (m_infoHash != StringManip::hashString(title + languageName))
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: properties changed&quot; &lt;&lt; endl;
+@@ -321,7 +320,7 @@
+ 			if (enabled == true)
+ 			{
+ 				ustring labelName = row[m_labelsColumns.m_name];
+-				labelsString += labelName;
++				labelsString += labelName + &quot;|&quot;;
+ 				m_labels.insert(from_utf8(labelName));
+ 			}
+ 		}
+@@ -329,8 +328,7 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen &quot; &lt;&lt; m_labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+ #endif
+-	string newLabelsHash(StringManip::hashString(labelsString));
+-	if (newLabelsHash != m_labelsHash)
++	if (m_labelsHash != StringManip::hashString(labelsString))
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: labels changed&quot; &lt;&lt; endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001066.html">[Pinot-svn] r1072 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001068.html">[Pinot-svn] r1074 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1067">[ date ]</a>
+              <a href="thread.html#1067">[ thread ]</a>
+              <a href="subject.html#1067">[ subject ]</a>
+              <a href="author.html#1067">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

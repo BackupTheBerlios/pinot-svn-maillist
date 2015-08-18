@@ -1,0 +1,450 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1719 - in trunk: . Core IndexSearch IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1719%20-%20in%20trunk%3A%20.%20Core%20IndexSearch%20IndexSearch/Xapian&In-Reply-To=%3C20100701103233.0807F480A13%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001707.html">
+   <LINK REL="Next"  HREF="001709.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1719 - in trunk: . Core IndexSearch IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1719%20-%20in%20trunk%3A%20.%20Core%20IndexSearch%20IndexSearch/Xapian&In-Reply-To=%3C20100701103233.0807F480A13%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1719 - in trunk: . Core IndexSearch IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul  1 12:32:32 CEST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001707.html">[Pinot-svn] r1718 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001709.html">[Pinot-svn] r1720 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1708">[ date ]</a>
+              <a href="thread.html#1708">[ thread ]</a>
+              <a href="subject.html#1708">[ subject ]</a>
+              <a href="author.html#1708">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-07-01 12:32:32 +0200 (Thu, 01 Jul 2010)
+New Revision: 1719
+
+Modified:
+   trunk/Core/pinot-search.1
+   trunk/Core/pinot-search.cpp
+   trunk/IndexSearch/Makefile.am
+   trunk/IndexSearch/QueryProperties.cpp
+   trunk/IndexSearch/QueryProperties.h
+   trunk/IndexSearch/Xapian/Makefile.am
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/Makefile.am
+   trunk/pinot.spec.in
+Log:
+Dropped Xesam support.
+
+
+Modified: trunk/Core/pinot-search.1
+===================================================================
+--- trunk/Core/pinot-search.1	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/Core/pinot-search.1	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -35,12 +35,6 @@
+ .TP
+ \fB\-v\fR, \fB\-\-version\fR
+ output version information and exit
+-.TP
+-\fB\-q\fR, \fB\-\-xesamql\fR
+-query input is a file containing Xesam QL
+-.TP
+-\fB\-u\fR, \fB\-\-xesamul\fR
+-query input is a file containing Xesam UL
+ .PP
+ Supported search engine types are : 'opensearch' 'sherlock' 'xapian'
+ .SH EXAMPLES
+@@ -53,10 +47,6 @@
+ pinot\-search xapian ~/.pinot/index &quot;label:Clowns&quot;
+ .PP
+ pinot\-search \fB\-\-stemming\fR english xapian somehostname:12345 &quot;clowning&quot;
+-.PP
+-pinot\-search \fB\-\-xesamul\fR xapian ~/.pinot/index some_xesamul_query.txt
+-.PP
+-pinot\-search \fB\-\-xesamql\fR xesam \- some_xesamql_query.xml
+ .SH &quot;REPORTING BUGS&quot;
+ Report bugs to <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabricecolin at users.berlios.de</A>
+ .PP
+
+Modified: trunk/Core/pinot-search.cpp
+===================================================================
+--- trunk/Core/pinot-search.cpp	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/Core/pinot-search.cpp	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -46,39 +46,9 @@
+ 	{&quot;tocsv&quot;, 1, 0, 'c'},
+ 	{&quot;toxml&quot;, 1, 0, 'x'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+-	{&quot;xesamql&quot;, 0, 0, 'q'},
+-	{&quot;xesamul&quot;, 0, 0, 'u'},
+ 	{0, 0, 0, 0}
+ };
+ 
+-static bool loadFile(const string &amp;xesamFile, string &amp;fileContents)
+-{
+-	ifstream inputFile;
+-	bool readFile = false;
+-
+-	inputFile.open(xesamFile.c_str());
+-	if (inputFile.good() == true)
+-	{
+-		inputFile.seekg(0, ios::end);
+-		int length = inputFile.tellg();
+-		inputFile.seekg(0, ios::beg);
+-
+-		char *pFileBuffer = new char[length + 1];
+-		inputFile.read(pFileBuffer, length);
+-		if (inputFile.fail() == false)
+-		{
+-			pFileBuffer[length] = '\0';
+-
+-			fileContents = string(pFileBuffer, length);
+-			readFile = true;
+-		}
+-		delete[] pFileBuffer;
+-	}
+-	inputFile.close();
+-
+-	return readFile;
+-}
+-
+ static void printHelp(void)
+ {
+ 	map&lt;ModuleProperties, bool&gt; engines;
+@@ -99,8 +69,6 @@
+ 		&lt;&lt; &quot;  -c, --tocsv               file to export results in CSV format to\n&quot;
+ 		&lt;&lt; &quot;  -x, --toxml               file to export results in XML format to\n&quot;
+ 		&lt;&lt; &quot;  -v, --version             output version information and exit\n&quot;
+-		&lt;&lt; &quot;  -q, --xesamql             query input is a file containing Xesam QL\n&quot;
+-		&lt;&lt; &quot;  -u, --xesamul             query input is a file containing Xesam UL\n\n&quot;
+ 		&lt;&lt; &quot;Supported search engine types are :&quot;;
+ 	for (map&lt;ModuleProperties, bool&gt;::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 	{
+@@ -112,8 +80,6 @@
+ 		&lt;&lt; &quot;pinot-search googleapi mygoogleapikey \&quot;clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;pinot-search xapian ~/.pinot/index \&quot;label:Clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;pinot-search --stemming english xapian somehostname:12345 \&quot;clowning\&quot;\n\n&quot;
+-		&lt;&lt; &quot;pinot-search --xesamul xapian ~/.pinot/index some_xesamul_query.txt\n\n&quot;
+-		&lt;&lt; &quot;pinot-search --xesamql xesam - some_xesamql_query.xml\n\n&quot;
+ 		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ }
+ 
+@@ -129,7 +95,7 @@
+ 	bool isStoredQuery = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:dhlm:qrs:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;c:dhlm:rs:vx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -156,9 +122,6 @@
+ 					maxResultsCount = (unsigned int )atoi(optarg);
+ 				}
+ 				break;
+-			case 'q':
+-				queryType = QueryProperties::XESAM_QL;
+-				break;
+ 			case 'r':
+ 				isStoredQuery = true;
+ 				break;
+@@ -168,9 +131,6 @@
+ 					stemLanguage = optarg;
+ 				}
+ 				break;
+-			case 'u':
+-				queryType = QueryProperties::XESAM_UL;
+-				break;
+ 			case 'v':
+ 				cout &lt;&lt; &quot;pinot-search - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot;
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+@@ -189,7 +149,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:dhlm:qrs:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;c:dhlm:rs:vx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ #if defined(ENABLE_NLS)
+@@ -276,32 +236,6 @@
+ 			queryProps.setFreeQuery(pQueryInput);
+ 		}
+ 	}
+-	else if (isStoredQuery == true)
+-	{
+-		cerr &lt;&lt; &quot;Options -r and -q/-u are incompatible&quot; &lt;&lt; endl;
+-
+-		DownloaderInterface::shutdown();
+-		MIMEScanner::shutdown();
+-
+-		return EXIT_FAILURE;
+-	}
+-	else
+-	{
+-		string fileContents;
+-
+-		// Load the query from file
+-		if (loadFile(pQueryInput, fileContents) == false)
+-		{
+-			cerr &lt;&lt; &quot;Couldn't load query from file &quot; &lt;&lt; pQueryInput &lt;&lt; endl;
+-
+-			DownloaderInterface::shutdown();
+-			MIMEScanner::shutdown();
+-
+-			return EXIT_FAILURE;
+-		}
+-
+-		queryProps.setFreeQuery(fileContents);
+-	}
+ 	queryProps.setStemmingLanguage(stemLanguage);
+ 	queryProps.setMaximumResultsCount(maxResultsCount);
+ 	if (sortByDate == true)
+
+Modified: trunk/IndexSearch/Makefile.am
+===================================================================
+--- trunk/IndexSearch/Makefile.am	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/Makefile.am	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -14,8 +14,7 @@
+ 	SearchEngineInterface.h \
+ 	SearchPluginProperties.h \
+ 	SherlockParser.h \
+-	WebEngine.h \
+-	XesamLog.h
++	WebEngine.h
+ 
+ if HAVE_DBUS
+ noinst_LTLIBRARIES = libIndex.la libIndexSearch.la
+@@ -70,7 +69,6 @@
+ 	-I$(top_srcdir)/Collect \
+ 	-I$(top_srcdir)/IndexSearch/cjkv \
+ 	-I$(top_srcdir)/IndexSearch/Google \
+-	-I$(top_srcdir)/IndexSearch/xesam \
+ 	@HTTP_CFLAGS@ @XML_CFLAGS@ @DBUS_CFLAGS@ \
+ 	@INDEX_CFLAGS@ @GLIBMM_CFLAGS@
+ 
+
+Modified: trunk/IndexSearch/QueryProperties.cpp
+===================================================================
+--- trunk/IndexSearch/QueryProperties.cpp	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/QueryProperties.cpp	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+
+Modified: trunk/IndexSearch/QueryProperties.h
+===================================================================
+--- trunk/IndexSearch/QueryProperties.h	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/QueryProperties.h	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,7 +30,7 @@
+ class PINOT_EXPORT QueryProperties
+ {
+ 	public:
+-		typedef enum { XAPIAN_QP = 0, XESAM_QL, XESAM_UL } QueryType;
++		typedef enum { XAPIAN_QP = 0 } QueryType;
+ 		typedef enum { RELEVANCE = 0, DATE } SortOrder;
+ 		typedef enum { NOTHING = 0, ALL_RESULTS, NEW_RESULTS } IndexWhat;
+ 
+
+Modified: trunk/IndexSearch/Xapian/Makefile.am
+===================================================================
+--- trunk/IndexSearch/Xapian/Makefile.am	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/Xapian/Makefile.am	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -6,12 +6,7 @@
+ 	XapianDatabase.h \
+ 	XapianDatabaseFactory.h \
+ 	XapianIndex.h \
+-	XapianEngine.h \
+-	$(top_srcdir)/IndexSearch/xesam/XapianQueryBuilder.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamParser.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQLParser.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQueryBuilder.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamULParser.h
++	XapianEngine.h
+ 
+ lib_LTLIBRARIES = libxapianbackend.la
+ 
+@@ -22,15 +17,8 @@
+ 	XapianDatabase.cpp \
+ 	XapianDatabaseFactory.cpp \
+ 	XapianIndex.cpp \
+-	XapianEngine.cpp \
+-	$(top_srcdir)/IndexSearch/xesam/XapianQueryBuilder.cc \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQLParser.cc \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQueryBuilder.cc
++	XapianEngine.cpp
+ 
+-if HAVE_BOOST_SPIRIT
+-libxapianbackend_la_SOURCES += $(top_srcdir)/IndexSearch/xesam/XesamULParser.cc
+-endif
+-
+ libxapianbackend_la_LDFLAGS = -module -avoid-version -shared -nostartfiles
+ 
+ libxapianbackend_la_LIBADD = \
+@@ -46,7 +34,6 @@
+ 	-I$(top_srcdir)/Tokenize/filters \
+ 	-I$(top_srcdir)/IndexSearch \
+ 	-I$(top_srcdir)/IndexSearch/cjkv \
+-	-I$(top_srcdir)/IndexSearch/xesam \
+ 	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @GLIBMM_CFLAGS@
+ 
+ if HAVE_BOOST_SPIRIT
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -37,11 +37,6 @@
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
+ #include &quot;XapianEngine.h&quot;
+-#include &quot;xesam/XapianQueryBuilder.h&quot;
+-#include &quot;xesam/XesamQLParser.h&quot;
+-#ifdef HAVE_BOOST_SPIRIT
+-#include &quot;xesam/XesamULParser.h&quot;
+-#endif
+ 
+ using std::string;
+ using std::multimap;
+@@ -725,39 +720,7 @@
+ 	QueryProperties::QueryType type = queryProps.getType();
+ 	if (type != QueryProperties::XAPIAN_QP)
+ 	{
+-		map&lt;string, string&gt; fieldMapping;
+-
+-		// Bare minimum mapping between Xesam fields and our prefixes 
+-		fieldMapping[&quot;dc:title&quot;] = &quot;S&quot;;
+-
+-		XapianQueryBuilder builder(parser, fieldMapping);
+-		XesamParser *pParser = NULL;
+-		bool parsedQuery = false;
+-
+-		// Get a Xesam parser
+-		if (type == QueryProperties::XESAM_QL)
+-		{
+-			pParser = new XesamQLParser();
+-		}
+-#ifdef HAVE_BOOST_SPIRIT_CORE_HPP
+-		else if (type == QueryProperties::XESAM_UL)
+-		{
+-			pParser = new XesamULParser();
+-		}
+-#endif
+-
+-		if (pParser != NULL)
+-		{
+-			parsedQuery = pParser-&gt;parse(freeQuery, builder);
+-
+-			delete pParser;
+-		}
+-
+-		if (parsedQuery == true)
+-		{
+-			return builder.get_query();
+-		}
+-
++		// This isn't supported
+ 		return Xapian::Query();
+ 	}
+ 
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/Makefile.am	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ 
+-SUBDIRS = po Utils Tokenize SQL Collect IndexSearch/Google IndexSearch IndexSearch/Xapian IndexSearch/XesamGLib Monitor Core UI/GTK2/src
++SUBDIRS = po Utils Tokenize SQL Collect IndexSearch/Google IndexSearch IndexSearch/Xapian Monitor Core UI/GTK2/src
+ 
+ # TODO: Fix that when cleaning up for distcheck! - crazy -
+ EXTRA_DIST = AUTHORS ChangeLog ChangeLog-dijon FAQ NEWS README TODO \
+
+Modified: trunk/pinot.spec.in
+===================================================================
+--- trunk/pinot.spec.in	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/pinot.spec.in	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -35,9 +35,6 @@
+ %if 0%{?_with_soap:1}
+ BuildRequires: gsoap &gt;= 2.7.9e
+ %endif
+-%if 0%{?_with_xesam_glib:1}
+-BuildRequires: xesam-glib &gt;= 0.3.0
+-%endif
+ %if 0%{?_with_libarchive:1}
+ Requires: libarchive &gt;= 2.6.2
+ BuildRequires: libarchive-devel &gt;= 2.6.2
+@@ -65,7 +62,7 @@
+ %setup -q
+ 
+ %build
+-%configure %{?_with_soap:--enable-soap=yes} %{?_with_xesam_glib:--enable-xesam-glib=yes} %{?_with_libarchive:--enable-libarchive=yes} %{?_with_debug:--enable-debug=yes}
++%configure %{?_with_soap:--enable-soap=yes} %{?_with_libarchive:--enable-libarchive=yes} %{?_with_debug:--enable-debug=yes}
+ make %{?_smp_mflags}
+ 
+ %install
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001707.html">[Pinot-svn] r1718 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001709.html">[Pinot-svn] r1720 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1708">[ date ]</a>
+              <a href="thread.html#1708">[ thread ]</a>
+              <a href="subject.html#1708">[ subject ]</a>
+              <a href="author.html#1708">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

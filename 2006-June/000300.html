@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r306 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r306%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606091203.k59C33j6021569%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000299.html">
+   <LINK REL="Next"  HREF="000301.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r306 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r306%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606091203.k59C33j6021569%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r306 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jun  9 14:03:03 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000299.html">[Pinot-svn] r305 - in trunk: . UI UI/GTK2 UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000301.html">[Pinot-svn] r307 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#300">[ date ]</a>
+              <a href="thread.html#300">[ thread ]</a>
+              <a href="subject.html#300">[ subject ]</a>
+              <a href="author.html#300">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-09 14:02:53 +0200 (Fri, 09 Jun 2006)
+New Revision: 306
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Remember whether the queries list is expanded.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-06-09 11:35:14 UTC (rev 305)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-06-09 12:02:53 UTC (rev 306)
+@@ -87,6 +87,7 @@
+ 	m_width(0),
+ 	m_height(0),
+ 	m_panePos(-1),
++	m_expandQueries(true),
+ 	m_ignoreRobotsDirectives(false),
+ 	m_suggestQueryTerms(true),
+ 	m_newResultsColour(&quot;red&quot;),
+@@ -390,6 +391,17 @@
+ 		{
+ 			m_panePos = atoi(nodeContent.c_str());
+ 		}
++		else if (nodeName == &quot;expandqueries&quot;)
++		{
++			if (nodeContent == &quot;YES&quot;)
++			{
++				m_expandQueries = true;
++			}
++			else
++			{
++				m_expandQueries = false;
++			}
++		}
+ 	}
+ 
+ 	return true;
+@@ -795,6 +807,7 @@
+ 	addChildElement(pElem, &quot;height&quot;, numStr);
+ 	sprintf(numStr, &quot;%d&quot;, m_panePos);
+ 	addChildElement(pElem, &quot;panepos&quot;, numStr);
++	addChildElement(pElem, &quot;expandqueries&quot;, (m_expandQueries ? &quot;YES&quot; : &quot;NO&quot;));
+ 	// User-defined indexes
+ 	for (map&lt;string, string&gt;::iterator indexIter = m_indexNames.begin(); indexIter != m_indexNames.end(); ++indexIter)
+ 	{
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-06-09 11:35:14 UTC (rev 305)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-06-09 12:02:53 UTC (rev 306)
+@@ -146,6 +146,7 @@
+ 		int m_width;
+ 		int m_height;
+ 		int m_panePos;
++		bool m_expandQueries;
+ 		bool m_ignoreRobotsDirectives;
+ 		bool m_suggestQueryTerms;
+ 		Gdk::Color m_newResultsColour;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-06-09 11:35:14 UTC (rev 305)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-06-09 12:02:53 UTC (rev 306)
+@@ -141,6 +141,7 @@
+ 	{
+ 		mainHpaned-&gt;set_position(m_settings.m_panePos);
+ 	}
++	queryExpander-&gt;set_expanded(m_settings.m_expandQueries);
+ 
+ 	// Position the engine tree
+ 	m_pEnginesTree = manage(new EnginesTree(enginesVbox, m_settings));
+@@ -2279,10 +2280,10 @@
+ 	m_pageSwitchConnection.disconnect();
+ 
+ 	// Save the window's position and dimensions now
+-	// Don't worry about the gravity, it hasn't been changed
+ 	get_position(m_settings.m_xPos, m_settings.m_yPos);
+ 	get_size(m_settings.m_width, m_settings.m_height);
+ 	m_settings.m_panePos = mainHpaned-&gt;get_position();
++	m_settings.m_expandQueries = queryExpander-&gt;get_expanded();
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;mainWindow::on_mainWindow_delete_event: quitting&quot; &lt;&lt; endl;
+ #endif
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000299.html">[Pinot-svn] r305 - in trunk: . UI UI/GTK2 UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000301.html">[Pinot-svn] r307 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#300">[ date ]</a>
+              <a href="thread.html#300">[ thread ]</a>
+              <a href="subject.html#300">[ subject ]</a>
+              <a href="author.html#300">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

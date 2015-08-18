@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r834 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r834%20-%20trunk/Index&In-Reply-To=%3C200705120349.l4C3nYVU013598%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000827.html">
+   <LINK REL="Next"  HREF="000829.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r834 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r834%20-%20trunk/Index&In-Reply-To=%3C200705120349.l4C3nYVU013598%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r834 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat May 12 05:49:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000827.html">[Pinot-svn] r833 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000829.html">[Pinot-svn] r835 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#828">[ date ]</a>
+              <a href="thread.html#828">[ thread ]</a>
+              <a href="subject.html#828">[ subject ]</a>
+              <a href="author.html#828">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-12 05:49:33 +0200 (Sat, 12 May 2007)
+New Revision: 834
+
+Modified:
+   trunk/Index/XapianDatabase.cpp
+   trunk/Index/XapianDatabase.h
+   trunk/Index/XapianDatabaseFactory.cpp
+   trunk/Index/XapianDatabaseFactory.h
+Log:
+Allow overwriting the index.
+Preparing for Xapian 1.0 : upon DatabaseVersionError, overwrite the database
+and let the app know so that it can do a full reindexing.
+
+
+Modified: trunk/Index/XapianDatabase.cpp
+===================================================================
+--- trunk/Index/XapianDatabase.cpp	2007-05-12 03:46:50 UTC (rev 833)
++++ trunk/Index/XapianDatabase.cpp	2007-05-12 03:49:33 UTC (rev 834)
+@@ -38,9 +38,12 @@
+ // This puts a limit to terms length.
+ const unsigned int XapianDatabase::m_maxTermLength = 230;
+ 
+-XapianDatabase::XapianDatabase(const string &amp;databaseName, bool readOnly) :
++XapianDatabase::XapianDatabase(const string &amp;databaseName,
++	bool readOnly, bool overwrite) :
+ 	m_databaseName(databaseName),
+ 	m_readOnly(readOnly),
++	m_overwrite(overwrite),
++	m_obsoleteFormat(false),
+ 	m_pDatabase(NULL),
+ 	m_isOpen(false),
+ 	m_merge(false),
+@@ -55,6 +58,8 @@
+ 	XapianDatabase *pFirst, XapianDatabase *pSecond) :
+ 	m_databaseName(databaseName),
+ 	m_readOnly(true),
++	m_overwrite(false),
++	m_obsoleteFormat(false),
+ 	m_pDatabase(NULL),
+ 	m_isOpen(pFirst-&gt;m_isOpen),
+ 	m_merge(true),
+@@ -67,6 +72,8 @@
+ XapianDatabase::XapianDatabase(const XapianDatabase &amp;other) :
+ 	m_databaseName(other.m_databaseName),
+ 	m_readOnly(other.m_readOnly),
++	m_overwrite(other.m_overwrite),
++	m_obsoleteFormat(other.m_obsoleteFormat),
+ 	m_pDatabase(NULL),
+ 	m_isOpen(other.m_isOpen),
+ 	m_merge(other.m_merge),
+@@ -95,6 +102,8 @@
+ 	{
+ 		m_databaseName = other.m_databaseName;
+ 		m_readOnly = other.m_readOnly;
++		m_overwrite = other.m_overwrite;
++		m_obsoleteFormat = other.m_obsoleteFormat;
+ 		if (m_pDatabase != NULL)
+ 		{
+ 			delete m_pDatabase;
+@@ -199,8 +208,8 @@
+ 			}
+ 			catch (const Xapian::Error &amp;error)
+ 			{
+-				cerr &lt;&lt; &quot;XapianDatabase::openDatabase: couldn't open remote database: &quot;
+-					&lt;&lt; error.get_msg() &lt;&lt; endl;
++				cerr &lt;&lt; &quot;XapianDatabase::openDatabase: &quot; &lt;&lt; error.get_type()
++					&lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 			}
+ 		}
+ #ifdef DEBUG
+@@ -252,7 +261,15 @@
+ 		}
+ 		else
+ 		{
+-			m_pDatabase = new Xapian::WritableDatabase(m_databaseName, Xapian::DB_CREATE_OR_OPEN);
++			int openAction = Xapian::DB_CREATE_OR_OPEN;
++
++			if (m_overwrite == true)
++			{
++				// An existing database will be overwritten
++				openAction = Xapian::DB_CREATE_OR_OVERWRITE;
++			}
++
++			m_pDatabase = new Xapian::WritableDatabase(m_databaseName, openAction);
+ 		}
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianDatabase::openDatabase: opened &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -261,10 +278,26 @@
+ 
+ 		return;
+ 	}
++#if XAPIAN_MAJOR_VERSION&gt;0
++	catch (const Xapian::DatabaseVersionError &amp;error)
++	{
++		// The format of the index is not understood
++		if (m_obsoleteFormat == false)
++		{
++			cerr &lt;&lt; &quot;XapianDatabase::openDatabase: &quot; &lt;&lt; error.get_type()
++				&lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; &quot;; trying again&quot; &lt;&lt; endl;
++
++			// Try once more
++			m_overwrite = true;
++			m_obsoleteFormat = true;
++			openDatabase();
++		}
++	}
++#endif
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;XapianDatabase::openDatabase: couldn't open database: &quot;
+-			&lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;XapianDatabase::openDatabase: &quot; &lt;&lt; error.get_type()
++			&lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ }
+ 
+@@ -274,6 +307,12 @@
+ 	return m_isOpen;
+ }
+ 
++/// Returns false if the database was of an obsolete format.
++bool XapianDatabase::wasObsoleteFormat(void) const
++{
++	return m_obsoleteFormat;
++}
++
+ /// Reopens the database.
+ void XapianDatabase::reopen(void)
+ {
+
+Modified: trunk/Index/XapianDatabase.h
+===================================================================
+--- trunk/Index/XapianDatabase.h	2007-05-12 03:46:50 UTC (rev 833)
++++ trunk/Index/XapianDatabase.h	2007-05-12 03:49:33 UTC (rev 834)
+@@ -30,8 +30,9 @@
+ class XapianDatabase
+ {
+ 	public:
+-		XapianDatabase(const std::string &amp;databaseName, bool readOnly = true);
+ 		XapianDatabase(const std::string &amp;databaseName,
++			bool readOnly = true, bool overwrite = false);
++		XapianDatabase(const std::string &amp;databaseName,
+ 			XapianDatabase *pFirst, XapianDatabase *pSecond);
+ 		XapianDatabase(const XapianDatabase &amp;other);
+ 		virtual ~XapianDatabase();
+@@ -41,6 +42,9 @@
+ 		/// Returns false if the database couldn't be opened.
+ 		bool isOpen(void) const;
+ 
++		/// Returns false if the database was of an obsolete format.
++		bool wasObsoleteFormat(void) const;
++
+ 		/// Reopens the database.
+ 		void reopen(void);
+ 
+@@ -69,6 +73,8 @@
+ 		static const unsigned int m_maxTermLength;
+ 		std::string m_databaseName;
+ 		bool m_readOnly;
++		bool m_overwrite;
++		bool m_obsoleteFormat;
+ 		pthread_mutex_t m_rwLock;
+ 		Xapian::Database *m_pDatabase;
+ 		bool m_isOpen;
+
+Modified: trunk/Index/XapianDatabaseFactory.cpp
+===================================================================
+--- trunk/Index/XapianDatabaseFactory.cpp	2007-05-12 03:46:50 UTC (rev 833)
++++ trunk/Index/XapianDatabaseFactory.cpp	2007-05-12 03:49:33 UTC (rev 834)
+@@ -65,7 +65,8 @@
+ }
+ 
+ /// Returns a XapianDatabase pointer; NULL if unavailable.
+-XapianDatabase *XapianDatabaseFactory::getDatabase(const string &amp;location, bool readOnly)
++XapianDatabase *XapianDatabaseFactory::getDatabase(const string &amp;location,
++	bool readOnly, bool overwrite)
+ {
+ 	XapianDatabase *pDb = NULL;
+ 
+@@ -88,7 +89,7 @@
+ 	else
+ 	{
+ 		// Create a new instance
+-		pDb = new XapianDatabase(location, readOnly);
++		pDb = new XapianDatabase(location, readOnly, overwrite);
+ 		// Insert it into the map
+ 		pair&lt;map&lt;string, XapianDatabase *&gt;::iterator, bool&gt; insertPair = m_databases.insert(pair&lt;string, XapianDatabase *&gt;(location, pDb));
+ 		// Was it inserted ?
+
+Modified: trunk/Index/XapianDatabaseFactory.h
+===================================================================
+--- trunk/Index/XapianDatabaseFactory.h	2007-05-12 03:46:50 UTC (rev 833)
++++ trunk/Index/XapianDatabaseFactory.h	2007-05-12 03:49:33 UTC (rev 834)
+@@ -36,7 +36,8 @@
+ 			XapianDatabase *pFirst, XapianDatabase *pSecond);
+ 
+ 		/// Returns a XapianDatabase pointer; NULL if unavailable.
+-		static XapianDatabase *getDatabase(const std::string &amp;location, bool readOnly = true);
++		static XapianDatabase *getDatabase(const std::string &amp;location,
++			bool readOnly = true, bool overwrite = false);
+ 
+ 		/// Closes all databases.
+ 		static void closeAll(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000827.html">[Pinot-svn] r833 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000829.html">[Pinot-svn] r835 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#828">[ date ]</a>
+              <a href="thread.html#828">[ thread ]</a>
+              <a href="subject.html#828">[ subject ]</a>
+              <a href="author.html#828">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

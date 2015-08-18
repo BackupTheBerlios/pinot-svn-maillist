@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1326 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1326%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200808061335.m76DZpJc007715%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001319.html">
+   <LINK REL="Next"  HREF="001321.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1326 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1326%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200808061335.m76DZpJc007715%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1326 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  6 15:35:51 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001319.html">[Pinot-svn] r1325 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001321.html">[Pinot-svn] r1330 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1320">[ date ]</a>
+              <a href="thread.html#1320">[ thread ]</a>
+              <a href="subject.html#1320">[ subject ]</a>
+              <a href="author.html#1320">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-08-06 15:35:44 +0200 (Wed, 06 Aug 2008)
+New Revision: 1326
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+Removed dead functions. Both set/getLabels() rely on set/getMetadata().
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-08-04 14:45:18 UTC (rev 1325)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-08-06 13:35:44 UTC (rev 1326)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -55,39 +55,6 @@
+ using std::min;
+ using std::max;
+ 
+-static bool setVersionFile(const string &amp;databaseName, const string &amp;version)
+-{
+-	ofstream verFile;
+-	string verFileName(databaseName + &quot;/version&quot;);
+-	bool setVer = false;
+-
+-	verFile.open(verFileName.c_str(), ios::trunc);
+-	if (verFile.good() == true)
+-	{
+-		verFile &lt;&lt; version;
+-		setVer = true;
+-	}
+-	verFile.close();
+-
+-	return setVer;
+-}
+-
+-static string getVersionFromFile(const string &amp;databaseName)
+-{
+-	ifstream verFile;
+-	string verFileName(databaseName + &quot;/version&quot;);
+-	string version;
+-
+-	verFile.open(verFileName.c_str());
+-	if (verFile.good() == true)
+-	{
+-		verFile &gt;&gt; version;
+-	}
+-	verFile.close();
+-
+-	return version;
+-}
+-
+ class TokensIndexer : public Dijon::CJKVTokenizer::TokensHandler
+ {
+ 	public:
+@@ -927,7 +894,7 @@
+ 	if (pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
++		return &quot;&quot;;
+ 	}
+ 
+ 	try
+@@ -1178,18 +1145,8 @@
+ /// Sets the list of known labels.
+ bool XapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
+ {
+-	bool setLabels = false;
++	string labelsString;
+ 
+-#if ENABLE_XAPIAN_DB_METADATA&gt;0
+-	string labelString;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+ 	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+ 		labelIter != labels.end(); ++labelIter)
+ 	{
+@@ -1198,89 +1155,40 @@
+ 		{
+ 			continue;
+ 		}
+-		labelString += &quot;[&quot;;
+-		labelString += Url::escapeUrl(*labelIter);
+-		labelString += &quot;]&quot;;
+-	}
+ 
+-	try
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianIndex::setLabels: &quot; &lt;&lt; labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+-#endif
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			pIndex-&gt;set_metadata(&quot;labels&quot;, labelString);
+-			setLabels = true;
+-		}
++		labelsString += &quot;[&quot;;
++		labelsString += Url::escapeUrl(*labelIter);
++		labelsString += &quot;]&quot;;
+ 	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't set database labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't set database labels, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-#endif
+ 
+-	return setLabels;
++	return setMetadata(&quot;labels&quot;, labelsString);
+ }
+ 
+ /// Gets the list of known labels.
+ bool XapianIndex::getLabels(set&lt;string&gt; &amp;labels) const
+ {
+-#if ENABLE_XAPIAN_DB_METADATA&gt;0
+-	string labelsString;
++	string labelsString(getMetadata(&quot;labels&quot;));
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+-	if (pDatabase == NULL)
++	if (labelsString.empty() == true)
+ 	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
+-	try
+-	{
+-		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+-		if (pIndex != NULL)
+-		{
+-			labelsString = pIndex-&gt;get_metadata(&quot;labels&quot;);
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get database labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get database labels, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
++	string::size_type endPos = 0;
++	string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
+ 
+-	if (labelsString.empty() == false)
++	while (label.empty() == false)
+ 	{
+-		string::size_type endPos = 0;
+-		string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
++		labels.insert(Url::unescapeUrl(label));
+ 
+-		while (label.empty() == false)
++		if (endPos == string::npos)
+ 		{
+-			labels.insert(Url::unescapeUrl(label));
+-
+-			if (endPos == string::npos)
+-			{
+-				break;
+-			}
+-			label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
++			break;
+ 		}
+-
+-		return true;
++		label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
+ 	}
+-#endif
+ 
+-	return false;
++	return true;
+ }
+ 
+ /// Adds a label.
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2008-08-04 14:45:18 UTC (rev 1325)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2008-08-06 13:35:44 UTC (rev 1326)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001319.html">[Pinot-svn] r1325 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001321.html">[Pinot-svn] r1330 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1320">[ date ]</a>
+              <a href="thread.html#1320">[ thread ]</a>
+              <a href="subject.html#1320">[ subject ]</a>
+              <a href="author.html#1320">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

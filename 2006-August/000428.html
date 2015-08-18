@@ -1,0 +1,351 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r435 - in trunk: Index Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r435%20-%20in%20trunk%3A%20Index%20Search%20Utils&In-Reply-To=%3C200608260901.k7Q91F64020626%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000427.html">
+   <LINK REL="Next"  HREF="000429.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r435 - in trunk: Index Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r435%20-%20in%20trunk%3A%20Index%20Search%20Utils&In-Reply-To=%3C200608260901.k7Q91F64020626%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r435 - in trunk: Index Search Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 26 11:01:15 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000427.html">[Pinot-svn] r434 - in trunk: Collect Index Search UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000429.html">[Pinot-svn] r436 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#428">[ date ]</a>
+              <a href="thread.html#428">[ thread ]</a>
+              <a href="subject.html#428">[ subject ]</a>
+              <a href="author.html#428">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-26 11:01:14 +0200 (Sat, 26 Aug 2006)
+New Revision: 435
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/WritableXapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/Utils/XapianDatabase.cpp
+   trunk/Utils/XapianDatabase.h
+Log:
+Reopen the database to the latest version before adding it to another one
+in XapianDatabase, before any read operations in DBusXapianIndex and before
+querying it in XapianEngine.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2006-08-26 08:33:31 UTC (rev 434)
++++ trunk/Index/DBusXapianIndex.cpp	2006-08-26 09:01:14 UTC (rev 435)
+@@ -86,17 +86,13 @@
+ 	return *this;
+ }
+ 
+-void DBusXapianIndex::reopen(void)
++void DBusXapianIndex::reopen(void) const
+ {
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+ 	if (pDatabase != NULL)
+ 	{
+-		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+-
+ 		// Re-open the database to the latest available version
+-		pIndex-&gt;reopen();
+-
+-		pDatabase-&gt;unlock();
++		pDatabase-&gt;reopen();
+ 	}
+ 
+ }
+@@ -108,54 +104,68 @@
+ /// Returns false if the index couldn't be opened.
+ bool DBusXapianIndex::isGood(void) const
+ {
+-	return m_goodIndex;
++	return XapianIndex::isGood();
+ }
+ 
+ /// Gets the index location.
+ string DBusXapianIndex::getLocation(void) const
+ {
+-	return m_databaseName;
++	return XapianIndex::getLocation();
+ }
+ 
+ /// Returns a document's properties.
+ bool DBusXapianIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
+ {
++	reopen();
++
+ 	return XapianIndex::getDocumentInfo(docId, docInfo);
+ }
+ 
+ /// Determines whether a document has a label.
+ bool DBusXapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
++	reopen();
++
+ 	return XapianIndex::hasLabel(docId, name);
+ }
+ 
+ /// Returns a document's labels.
+ bool DBusXapianIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
+ {
++	reopen();
++
+ 	return XapianIndex::getDocumentLabels(docId, labels);
+ }
+ 
+ /// Checks whether the given URL is in the index.
+ unsigned int DBusXapianIndex::hasDocument(const string &amp;url) const
+ {
++	reopen();
++
+ 	return XapianIndex::hasDocument(url);
+ }
+ 
+ /// Gets terms with the same root.
+ unsigned int DBusXapianIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
+ {
++	reopen();
++
+ 	return XapianIndex::getCloseTerms(term, suggestions);
+ }
+ 
+ /// Returns the ID of the last document.
+ unsigned int DBusXapianIndex::getLastDocumentID(void) const
+ {
++	reopen();
++
+ 	return XapianIndex::getLastDocumentID();
+ }
+ 
+ /// Returns the number of documents.
+ unsigned int DBusXapianIndex::getDocumentsCount(const string &amp;labelName) const
+ {
++	reopen();
++
+ 	return XapianIndex::getDocumentsCount(labelName);
+ }
+ 
+@@ -163,6 +173,8 @@
+ unsigned int DBusXapianIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
+ 	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
++	reopen();
++
+ 	return XapianIndex::listDocuments(docIds, maxDocsCount, startDoc);
+ }
+ 
+@@ -170,6 +182,8 @@
+ bool DBusXapianIndex::listDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
+ 	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
++	reopen();
++
+ 	return XapianIndex::listDocumentsWithLabel(name, docIds, maxDocsCount, startDoc);
+ }
+ 
+@@ -211,7 +225,6 @@
+ 		G_TYPE_INVALID) == TRUE)
+ 	{
+ 		updated = true;
+-		reopen();
+ 	}
+ 	else
+ 	{
+@@ -263,7 +276,6 @@
+ 		G_TYPE_INVALID) == TRUE)
+ 	{
+ 		updated = true;
+-		reopen();
+ 	}
+ 	else
+ 	{
+@@ -322,7 +334,6 @@
+ 		G_TYPE_INVALID) == TRUE)
+ 	{
+ 		updatedLabels = true;
+-		reopen();
+ 	}
+ 	else
+ 	{
+@@ -392,7 +403,6 @@
+ 		G_TYPE_INVALID) == TRUE)
+ 	{
+ 		renamedLabel = true;
+-		reopen();
+ 	}
+ 	else
+ 	{
+@@ -437,7 +447,6 @@
+ 		G_TYPE_INVALID) == TRUE)
+ 	{
+ 		deletedLabel = true;
+-		reopen();
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2006-08-26 08:33:31 UTC (rev 434)
++++ trunk/Index/DBusXapianIndex.h	2006-08-26 09:01:14 UTC (rev 435)
+@@ -96,7 +96,7 @@
+ 		virtual bool flush(void);
+ 
+ 	protected:
+-		void reopen(void);
++		void reopen(void) const;
+ 
+ };
+ 
+
+Modified: trunk/Index/WritableXapianIndex.cpp
+===================================================================
+--- trunk/Index/WritableXapianIndex.cpp	2006-08-26 08:33:31 UTC (rev 434)
++++ trunk/Index/WritableXapianIndex.cpp	2006-08-26 09:01:14 UTC (rev 435)
+@@ -517,13 +517,13 @@
+ /// Returns false if the index couldn't be opened.
+ bool WritableXapianIndex::isGood(void) const
+ {
+-	return m_goodIndex;
++	return XapianIndex::isGood();
+ }
+ 
+ /// Gets the index location.
+ string WritableXapianIndex::getLocation(void) const
+ {
+-	return m_databaseName;
++	return XapianIndex::getLocation();
+ }
+ 
+ /// Returns a document's properties.
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-08-26 08:33:31 UTC (rev 434)
++++ trunk/Search/XapianEngine.cpp	2006-08-26 09:01:14 UTC (rev 435)
+@@ -117,6 +117,8 @@
+ 		return false;
+ 	}
+ 
++	// Get the latest revision...
++	pDatabase-&gt;reopen();
+ 	Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 	if (pIndex != NULL)
+ 	{
+
+Modified: trunk/Utils/XapianDatabase.cpp
+===================================================================
+--- trunk/Utils/XapianDatabase.cpp	2006-08-26 08:33:31 UTC (rev 434)
++++ trunk/Utils/XapianDatabase.cpp	2006-08-26 09:01:14 UTC (rev 435)
+@@ -188,7 +188,7 @@
+ 			{
+ 				// We have to create the whole thing in read-write mode first
+ 				Xapian::WritableDatabase *pTmpDatabase = new Xapian::WritableDatabase(m_databaseName, Xapian::DB_CREATE_OR_OPEN);
+-				// ...then close and reopen in read-only mode
++				// ...then close and open again in read-only mode
+ 				delete pTmpDatabase;
+ 			}
+ 
+@@ -220,6 +220,22 @@
+ 	return m_isOpen;
+ }
+ 
++/// Reopens the database.
++void XapianDatabase::reopen(void)
++{
++	// This is provided by Xapian::Database
++	// FIXME: get the write lock to make sure read operations are not in progress ?
++	if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++	{
++		if (m_pDatabase != NULL)
++		{
++			m_pDatabase-&gt;reopen();
++		}
++
++		pthread_rwlock_unlock(&amp;m_rwLock);
++	}
++}
++
+ /// Attempts to lock and retrieve the database.
+ Xapian::Database *XapianDatabase::readLock(void)
+ {
+@@ -250,6 +266,9 @@
+ 
+ 		if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
+ 		{
++			// Reopen the second index
++			m_pSecond-&gt;reopen();
++
+ 			// Lock both indexes
+ 			Xapian::Database *pFirstDatabase = m_pFirst-&gt;readLock();
+ 			Xapian::Database *pSecondDatabase = m_pSecond-&gt;readLock();
+@@ -275,7 +294,6 @@
+ 	if ((m_readOnly == true) ||
+ 		(m_merge == true))
+ 	{
+-		// FIXME: close and reopen in write mode
+ 		cerr &lt;&lt; &quot;Couldn't open read-only database &quot; &lt;&lt; m_databaseName
+ 			&lt;&lt; &quot; for writing&quot; &lt;&lt; endl;
+ 		return NULL;
+
+Modified: trunk/Utils/XapianDatabase.h
+===================================================================
+--- trunk/Utils/XapianDatabase.h	2006-08-26 08:33:31 UTC (rev 434)
++++ trunk/Utils/XapianDatabase.h	2006-08-26 09:01:14 UTC (rev 435)
+@@ -37,6 +37,9 @@
+ 		/// Returns false if the database couldn't be opened.
+ 		bool isOpen(void) const;
+ 
++		/// Reopens the database.
++		void reopen(void);
++
+ 		/// Attempts to lock and retrieve the database.
+ 		Xapian::Database *readLock(void);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000427.html">[Pinot-svn] r434 - in trunk: Collect Index Search UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000429.html">[Pinot-svn] r436 - in trunk: Monitor UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#428">[ date ]</a>
+              <a href="thread.html#428">[ thread ]</a>
+              <a href="subject.html#428">[ subject ]</a>
+              <a href="author.html#428">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

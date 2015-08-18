@@ -1,0 +1,277 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r77 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r77%20-%20trunk/Search&In-Reply-To=%3C200601251428.k0PESCDa009474%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000075.html">
+   <LINK REL="Next"  HREF="000077.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r77 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r77%20-%20trunk/Search&In-Reply-To=%3C200601251428.k0PESCDa009474%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r77 - trunk/Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed Jan 25 15:28:12 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000075.html">[Pinot-svn] r76 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000077.html">[Pinot-svn] r78 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#76">[ date ]</a>
+              <a href="thread.html#76">[ thread ]</a>
+              <a href="subject.html#76">[ subject ]</a>
+              <a href="author.html#76">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-25 15:28:12 +0100 (Wed, 25 Jan 2006)
+New Revision: 77
+
+Modified:
+   trunk/Search/OpenSearchParser.cpp
+   trunk/Search/SherlockParser.cpp
+Log:
+Slightly better Response parsing.
+
+
+Modified: trunk/Search/OpenSearchParser.cpp
+===================================================================
+--- trunk/Search/OpenSearchParser.cpp	2006-01-25 13:51:16 UTC (rev 76)
++++ trunk/Search/OpenSearchParser.cpp	2006-01-25 14:28:12 UTC (rev 77)
+@@ -24,6 +24,7 @@
+ #include &lt;libxml++/parsers/domparser.h&gt;
+ #include &lt;libxml++/nodes/node.h&gt;
+ #include &lt;libxml++/nodes/textnode.h&gt;
++#include &lt;libxml++/nodes/cdatanode.h&gt;
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;OpenSearchParser.h&quot;
+@@ -32,24 +33,38 @@
+ using namespace Glib;
+ using namespace xmlpp;
+ 
+-static ustring getElementContent(const Element *pElem)
++static ustring getNodeContent(const Node *pNode)
+ {
+-	if (pElem == NULL)
++	if (pNode == NULL)
+ 	{
+ 		return &quot;&quot;;
+ 	}
+ 
++	// Is it an element ?
++	const Element *pElem = dynamic_cast&lt;const Element*&gt;(pNode);
++	if (pElem != NULL)
++	{
+ #ifdef HAS_LIBXMLPP026
+-	const TextNode *pText = pElem-&gt;get_child_content();
++		const TextNode *pText = pElem-&gt;get_child_content();
+ #else
+-	const TextNode *pText = pElem-&gt;get_child_text();
++		const TextNode *pText = pElem-&gt;get_child_text();
+ #endif
+-	if (pText == NULL)
++		if (pText == NULL)
++		{
++			return &quot;&quot;;
++		}
++
++		return pText-&gt;get_content();
++	}
++
++	// Is it CDATA ?
++	const CdataNode *pContent = dynamic_cast&lt;const CdataNode*&gt;(pNode);
++	if (pContent != NULL)
+ 	{
+-		return &quot;&quot;;
++		return pContent-&gt;get_content();
+ 	}
+ 
+-	return pText-&gt;get_content();
++	return &quot;&quot;;
+ }
+ 
+ OpenSearchResponseParser::OpenSearchResponseParser(bool rssResponse) :
+@@ -67,7 +82,7 @@
+ {
+ 	float pseudoScore = 100;
+ 	unsigned int contentLen = 0;
+-	bool success = true;
++	bool foundResult = true;
+ 
+ 	if ((pResponseDoc == NULL) ||
+ 		(pResponseDoc-&gt;getData(contentLen) == NULL) ||
+@@ -155,14 +170,8 @@
+ 			iter != childNodes.end(); ++iter)
+ 		{
+ 			Node *pNode = (*iter);
+-			// All nodes should be elements
+-			Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
+-			if (pElem == NULL)
+-			{
+-				continue;
+-			}
+ 
+-			ustring nodeName = pElem-&gt;get_name();
++			ustring nodeName = pNode-&gt;get_name();
+ 			if (nodeName != itemNode)
+ 			{
+ 				continue;
+@@ -170,28 +179,36 @@
+ 
+ 			// Go through the item's subnodes
+ 			ustring title, url, extract;
+-			const Node::NodeList itemChildNodes = pElem-&gt;get_children();
++			const Node::NodeList itemChildNodes = pNode-&gt;get_children();
+ 			for (Node::NodeList::const_iterator itemIter = itemChildNodes.begin();
+ 				itemIter != itemChildNodes.end(); ++itemIter)
+ 			{
+ 				Node *pItemNode = (*itemIter);
+-				// All nodes should be elements
+ 				Element *pItemElem = dynamic_cast&lt;Element*&gt;(pItemNode);
+ 				if (pItemElem == NULL)
+ 				{
+ 					continue;
+ 				}
+ 
+-				ustring itemNodeName = pItemElem-&gt;get_name();
++				ustring itemNodeName = pItemNode-&gt;get_name();
+ 				if (itemNodeName == &quot;title&quot;)
+ 				{
+-					title = getElementContent(pItemElem);
++					title = getNodeContent(pItemNode);
++					if (title.empty() == true)
++					{
++						// It may be given as CDATA
++						const Node::NodeList titleChildNodes = pItemNode-&gt;get_children();
++						if (titleChildNodes.size() == 1)
++						{
++							title = getNodeContent(*titleChildNodes.begin());
++						}
++					}
+ 				}
+ 				else if (itemNodeName == &quot;link&quot;)
+ 				{
+ 					if (m_rssResponse == true)
+ 					{
+-						url = getElementContent(pItemElem);
++						url = getNodeContent(pItemNode);
+ 					}
+ 					else
+ 					{
+@@ -204,13 +221,18 @@
+ 				}
+ 				else if (itemNodeName == descriptionNode)
+ 				{
+-					extract = getElementContent(pItemElem);
++					extract = getNodeContent(pItemNode);
+ 				}
+ 			}
+ 
+ 			resultsList.push_back(Result(url, title, extract, &quot;&quot;, pseudoScore));
+ 			--pseudoScore;
+-			success = true;
++			foundResult = true;
++			if (resultsList.size() == maxResultsCount)
++			{
++				// Enough results
++				break;
++			}
+ 		}
+ 	}
+ 	catch (const std::exception&amp; ex)
+@@ -218,10 +240,10 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;OpenSearchResponseParser::parse: caught exception: &quot; &lt;&lt; ex.what() &lt;&lt; endl;
+ #endif
+-		success = false;
++		foundResult = false;
+ 	}
+ 
+-	return success;
++	return foundResult;
+ }
+ 
+ OpenSearchParser::OpenSearchParser(const string &amp;fileName) :
+@@ -281,15 +303,14 @@
+ 			for (Node::NodeList::const_iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+ 			{
+ 				Node *pNode = (*iter);
+-				// All nodes should be elements
+ 				Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
+ 				if (pElem == NULL)
+ 				{
+ 					continue;
+ 				}
+ 
+-				ustring nodeName = pElem-&gt;get_name();
+-				ustring nodeContent = getElementContent(pElem);
++				ustring nodeName = pNode-&gt;get_name();
++				ustring nodeContent = getNodeContent(pNode);
+ 				if (nodeName == &quot;ShortName&quot;)
+ 				{
+ 					properties.m_name = nodeContent;
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2006-01-25 13:51:16 UTC (rev 76)
++++ trunk/Search/SherlockParser.cpp	2006-01-25 14:28:12 UTC (rev 77)
+@@ -306,8 +306,7 @@
+ #endif
+ 	string resultItem = StringManip::extractField(resultList,
+ 		m_resultItemStart, m_resultItemEnd, endPos);
+-	while ((resultItem.empty() == false) &amp;&amp;
+-		(resultsList.size() &lt;= maxResultsCount))
++	while (resultItem.empty() == false)
+ 	{
+ 		string contentType, url, name, extract;
+ 
+@@ -444,6 +443,11 @@
+ 			resultsList.push_back(Result(url, name, extract, &quot;&quot;, pseudoScore));
+ 			--pseudoScore;
+ 			foundResult = true;
++			if (resultsList.size() == maxResultsCount)
++			{
++				// Enough results
++				break;
++			}
+ 		}
+ 
+ 		// Next
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000075.html">[Pinot-svn] r76 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000077.html">[Pinot-svn] r78 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#76">[ date ]</a>
+              <a href="thread.html#76">[ thread ]</a>
+              <a href="subject.html#76">[ subject ]</a>
+              <a href="author.html#76">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

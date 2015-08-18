@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1183 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1183%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200802211435.m1LEZUkt007545%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001176.html">
+   <LINK REL="Next"  HREF="001178.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1183 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1183%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200802211435.m1LEZUkt007545%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1183 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 21 15:35:30 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001176.html">[Pinot-svn] r1182 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001178.html">[Pinot-svn] r1184 - trunk/IndexSearch/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1177">[ date ]</a>
+              <a href="thread.html#1177">[ thread ]</a>
+              <a href="subject.html#1177">[ subject ]</a>
+              <a href="author.html#1177">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-02-21 15:35:29 +0100 (Thu, 21 Feb 2008)
+New Revision: 1183
+
+Modified:
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+Log:
+Modified CrawlHistory to provide errors' dates.
+statisticsDialog could previously miss errors starting with the second source
+because it didn't keep track of the latest error date for each source.
+
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2008-02-21 14:32:49 UTC (rev 1182)
++++ trunk/SQL/CrawlHistory.cpp	2008-02-21 14:35:29 UTC (rev 1183)
+@@ -336,12 +336,12 @@
+ 	return success;
+ }
+ 
+-/// Gets the error number for a URL.
+-int CrawlHistory::getErrorNum(const string &amp;url)
++/// Gets the error number and date for a URL.
++int CrawlHistory::getErrorDetails(const string &amp;url, time_t &amp;date)
+ {
+ 	int errNum = 0;
+ 
+-	SQLiteResults *results = executeStatement(&quot;SELECT ErrorNum FROM CrawlHistory WHERE Url='%q';&quot;,
++	SQLiteResults *results = executeStatement(&quot;SELECT ErrorNum, Date FROM CrawlHistory WHERE Url='%q';&quot;,
+ 		Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+@@ -349,6 +349,7 @@
+ 		if (row != NULL)
+ 		{
+ 			errNum = atoi(row-&gt;getColumn(0).c_str());
++			date = (time_t)atoi(row-&gt;getColumn(1).c_str());
+ 
+ 			delete row;
+ 		}
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2008-02-21 14:32:49 UTC (rev 1182)
++++ trunk/SQL/CrawlHistory.h	2008-02-21 14:35:29 UTC (rev 1183)
+@@ -68,8 +68,8 @@
+ 		/// Updates the status of items en masse.
+ 		bool updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus);
+ 
+-		/// Gets the error number for a URL.
+-		int getErrorNum(const string &amp;url);
++		/// Gets the error number and date for a URL.
++		int getErrorDetails(const string &amp;url, time_t &amp;date);
+ 
+ 		/// Returns items that belong to a source.
+ 		unsigned int getSourceItems(unsigned int sourceId, CrawlStatus status,
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-02-21 14:32:49 UTC (rev 1182)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-02-21 14:35:29 UTC (rev 1183)
+@@ -41,8 +41,7 @@
+ 
+ statisticsDialog::statisticsDialog() :
+ 	statisticsDialog_glade(),
+-	m_hasErrors(false),
+-	m_lastErrorDate(0)
++	m_hasErrors(false)
+ {
+ 	// Associate the columns model to the engines tree
+ 	m_refStore = TreeStore::create(m_statsColumns);
+@@ -206,12 +205,19 @@
+ 	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+ 		sourceIter != sources.end(); ++sourceIter)
+ 	{
++		unsigned int sourceNum(sourceIter-&gt;first);
+ 		set&lt;string&gt; errors;
++		time_t latestErrorDate = 0;
+ 
++		std::map&lt;unsigned int, time_t&gt;::const_iterator dateIter = m_latestErrorDates.find(sourceNum);
++		if (dateIter != m_latestErrorDates.end())
++		{
++			latestErrorDate = dateIter-&gt;second;
++		}
++
+ 		// Did any error occur on this source ?
+-		unsigned int errorCount = crawlerHistory.getSourceItems(sourceIter-&gt;first,
+-			CrawlHistory::ERROR, errors, m_lastErrorDate);
+-		m_lastErrorDate = time(NULL);
++		unsigned int errorCount = crawlerHistory.getSourceItems(sourceNum,
++			CrawlHistory::ERROR, errors, latestErrorDate);
+ 		if ((errorCount &gt; 0) &amp;&amp;
+ 			(errors.empty() == false))
+ 		{
+@@ -231,8 +237,14 @@
+ 			{
+ 				string locationWithError(*errorIter);
+ 				TreeModel::iterator errIter;
+-				int errorNum = crawlerHistory.getErrorNum(locationWithError);
++				time_t errorDate;
++				int errorNum = crawlerHistory.getErrorDetails(locationWithError, errorDate);
+ 
++				if (errorDate &gt; latestErrorDate)
++				{
++					latestErrorDate = errorDate;
++				}
++
+ 				// Find or create the iterator for this particular kind of error
+ 				std::map&lt;int, TreeModel::iterator&gt;::const_iterator errorTreeIter = m_errorsIters.find(errorNum);
+ 				if (errorTreeIter == m_errorsIters.end())
+@@ -260,6 +272,9 @@
+ 			TreeModel::Path errPath = m_refStore-&gt;get_path(m_errorsTopIter);
+ 			statisticsTreeview-&gt;expand_to_path(errPath);
+ 		}
++
++		// The next check will ignore errors older than this
++		m_latestErrorDates[sourceNum] = latestErrorDate;
+ 	}
+ 
+ 	return true;
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2008-02-21 14:32:49 UTC (rev 1182)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2008-02-21 14:35:29 UTC (rev 1183)
+@@ -45,8 +45,8 @@
+ 	Gtk::TreeModel::iterator m_crawledStatIter;
+ 	Gtk::TreeModel::iterator m_errorsTopIter;
+ 	std::map&lt;int, Gtk::TreeModel::iterator&gt; m_errorsIters;
++	std::map&lt;unsigned int, time_t&gt; m_latestErrorDates;
+ 	bool m_hasErrors;
+-	time_t m_lastErrorDate;
+ 	sigc::connection m_idleConnection;
+ 
+ 	void populate(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001176.html">[Pinot-svn] r1182 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001178.html">[Pinot-svn] r1184 - trunk/IndexSearch/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1177">[ date ]</a>
+              <a href="thread.html#1177">[ thread ]</a>
+              <a href="subject.html#1177">[ subject ]</a>
+              <a href="author.html#1177">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

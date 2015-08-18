@@ -1,0 +1,457 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r316 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r316%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606151517.k5FFHpht000323%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000309.html">
+   <LINK REL="Next"  HREF="000311.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r316 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r316%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606151517.k5FFHpht000323%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r316 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Jun 15 17:17:51 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000309.html">[Pinot-svn] r315 - tags
+</A></li>
+        <LI>Next message: <A HREF="000311.html">[Pinot-svn] r317 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#310">[ date ]</a>
+              <a href="thread.html#310">[ thread ]</a>
+              <a href="subject.html#310">[ subject ]</a>
+              <a href="author.html#310">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-15 17:17:50 +0200 (Thu, 15 Jun 2006)
+New Revision: 316
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Load global settings at startup. The only configuration item currently supported
+is cache providers.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-06-11 08:03:05 UTC (rev 315)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-06-15 15:17:50 UTC (rev 316)
+@@ -32,6 +32,7 @@
+ #include &quot;config.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;NLS.h&quot;
++#include &quot;StringManip.h&quot;
+ #include &quot;PluginWebEngine.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+@@ -178,31 +179,43 @@
+ 	return &quot;&quot;;
+ }
+ 
+-bool PinotSettings::load(bool reload)
++void PinotSettings::clear(void)
+ {
+-	if (reload == true)
++	// Clear lists
++	m_indexNames.clear();
++	m_indexIds.clear();
++	m_engines.clear();
++	m_engineIds.clear();
++	m_queries.clear();
++	m_labels.clear();
++	m_mailAccounts.clear();
++	m_cacheProviders.clear();
++}
++
++bool PinotSettings::loadGlobal(const string &amp;fileName)
++{
++	if (loadConfiguration(fileName, true) == false)
+ 	{
+-		// Clear lists
+-		m_indexNames.clear();
+-		m_indexIds.clear();
+-		m_engines.clear();
+-		m_engineIds.clear();
+-		m_queries.clear();
+-		m_labels.clear();
+-		m_mailAccounts.clear();
++		return false;
+ 	}
+ 
++	return true;
++}
++
++
++bool PinotSettings::load(void)
++{
+ 	// Load the configuration file
+ 	string fileName = getConfigurationFileName();
+-	if ((m_firstRun == false) &amp;&amp;
+-		(loadConfiguration(fileName) == false))
++	if (m_firstRun == false)
+ 	{
+-		cerr &lt;&lt; &quot;Failed to parse configuration file &quot;
+-			&lt;&lt; fileName &lt;&lt; endl;
++		loadConfiguration(fileName, false);
+ 	}
++
+ 	// Internal indices
+ 	addIndex(_(&quot;My Documents&quot;), m_indexLocation);
+ 	addIndex(_(&quot;My Email&quot;), m_mailIndexLocation);
++
+ 	// Add default labels on the first run
+ 	if (m_firstRun == true)
+ 	{
+@@ -217,18 +230,13 @@
+ 	m_engines.insert(Engine(&quot;Google API&quot;, &quot;googleapi&quot;, &quot;&quot;, &quot;The Web&quot;));
+ 	m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;The Web&quot;, true));
+ #endif
+-#ifdef HAS_OSAPI
+-	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;ObjectsSearch API&quot;;
+-	m_engines.insert(Engine(&quot;ObjectsSearch API&quot;, &quot;objectssearchapi&quot;, &quot;&quot;, &quot;The Web&quot;));
+-	m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;The Web&quot;, true));
+-#endif
+ 	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;Xapian&quot;;
+ 	m_engines.insert(Engine(&quot;Xapian&quot;, &quot;xapian&quot;, &quot;&quot;, &quot;&quot;));
+ 
+ 	return true;
+ }
+ 
+-bool PinotSettings::loadConfiguration(const std::string &amp;fileName)
++bool PinotSettings::loadConfiguration(const std::string &amp;fileName, bool isGlobal)
+ {
+ 	struct stat fileStat;
+ 	bool success = true;
+@@ -236,6 +244,7 @@
+ 	if ((stat(fileName.c_str(), &amp;fileStat) != 0) ||
+ 		(!S_ISREG(fileStat.st_mode)))
+ 	{
++		cerr &lt;&lt; &quot;Couldn' open configuration file &quot; &lt;&lt; fileName &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
+@@ -278,10 +287,22 @@
+ 					continue;
+ 				}
+ 
+-				string nodeName = pElem-&gt;get_name();
+-				string nodeContent = getElementContent(pElem);
+-				if (nodeName == &quot;googleapikey&quot;)
++				string nodeName(pElem-&gt;get_name());
++				string nodeContent(getElementContent(pElem));
++				if (isGlobal == true)
+ 				{
++					if (nodeName == &quot;cache&quot;)
++					{
++						loadCacheProviders(pElem);
++					}
++					else
++					{
++						// Unsupported element
++						continue;
++					}
++				}
++				else if (nodeName == &quot;googleapikey&quot;)
++				{
+ 					m_googleAPIKey = nodeContent;
+ 				}
+ 				else if (nodeName == &quot;ui&quot;)
+@@ -722,6 +743,75 @@
+ 	return true;
+ }
+ 
++bool PinotSettings::loadCacheProviders(const Element *pElem)
++{
++	if (pElem == NULL)
++	{
++		return false;
++	}
++
++	Node::NodeList childNodes = pElem-&gt;get_children();
++	if (childNodes.empty() == true)
++	{
++		return false;
++	}
++
++	CacheProvider cacheProvider;
++
++	// Load the cache provider's properties
++	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++	{
++		Node *pNode = (*iter);
++		Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++		if (pElem == NULL)
++		{
++			continue;
++		}
++
++		string nodeName = pElem-&gt;get_name();
++		string nodeContent = getElementContent(pElem);
++
++		if (nodeName == &quot;name&quot;)
++		{
++			cacheProvider.m_name = nodeContent;
++		}
++		else if (nodeName == &quot;location&quot;)
++		{
++			cacheProvider.m_location = nodeContent;
++		}
++		else if (nodeName == &quot;protocols&quot;)
++		{
++			nodeContent += &quot;,&quot;;
++
++			ustring::size_type previousPos = 0, commaPos = nodeContent.find(&quot;,&quot;);
++			while (commaPos != ustring::npos)
++			{
++				string protocol(nodeContent.substr(previousPos,
++                                        commaPos - previousPos));
++
++				StringManip::trimSpaces(protocol);
++				cacheProvider.m_protocols.insert(protocol);
++
++				// Next
++				previousPos = commaPos + 1;
++				commaPos = nodeContent.find(&quot;,&quot;, previousPos);
++			}
++		}
++	}
++
++	if ((cacheProvider.m_name.empty() == false) &amp;&amp;
++		(cacheProvider.m_location.empty() == false))
++	{
++		m_cacheProviders.push_back(cacheProvider);
++
++		// Copy the list of protocols supported by this cache provider
++		copy(cacheProvider.m_protocols.begin(), cacheProvider.m_protocols.end(),
++			inserter(m_cacheProtocols, m_cacheProtocols.begin()));
++	}
++
++	return true;
++}
++
+ bool PinotSettings::loadSearchEngines(const string &amp;directoryName)
+ {
+ 	if (directoryName.empty() == true)
+@@ -1222,17 +1312,28 @@
+ 	m_size = 0;
+ }
+ 
+-PinotSettings::MailAccount::MailAccount(const MailAccount &amp;other)
++PinotSettings::MailAccount::MailAccount(const MailAccount &amp;other) :
++	m_name(other.m_name),
++	m_type(other.m_type),
++	m_modTime(other.m_modTime),
++	m_lastMessageTime(other.m_lastMessageTime),
++	m_size(other.m_size)
+ {
++}
++
++PinotSettings::MailAccount::~MailAccount()
++{
++}
++
++PinotSettings::MailAccount &amp;PinotSettings::MailAccount::operator=(const MailAccount &amp;other)
++{
+ 	m_name = other.m_name;
+ 	m_type = other.m_type;
+ 	m_modTime = other.m_modTime;
+ 	m_lastMessageTime = other.m_lastMessageTime;
+ 	m_size = other.m_size;
+-}
+ 
+-PinotSettings::MailAccount::~MailAccount()
+-{
++	return *this;
+ }
+ 
+ bool PinotSettings::MailAccount::operator&lt;(const MailAccount &amp;other) const
+@@ -1254,3 +1355,51 @@
+ 
+ 	return false;
+ }
++
++PinotSettings::CacheProvider::CacheProvider()
++{
++}
++
++PinotSettings::CacheProvider::CacheProvider(const CacheProvider &amp;other) :
++	m_name(other.m_name),
++	m_location(other.m_location)
++{
++	m_protocols.clear();
++	copy(other.m_protocols.begin(), other.m_protocols.end(),
++		inserter(m_protocols, m_protocols.begin()));
++}
++
++PinotSettings::CacheProvider::~CacheProvider()
++{
++}
++
++PinotSettings::CacheProvider &amp;PinotSettings::CacheProvider::operator=(const CacheProvider &amp;other)
++{
++	m_name = other.m_name;
++	m_location = other.m_location;
++	m_protocols.clear();
++	copy(other.m_protocols.begin(), other.m_protocols.end(),
++		inserter(m_protocols, m_protocols.begin()));
++
++	return *this;
++}
++
++bool PinotSettings::CacheProvider::operator&lt;(const CacheProvider &amp;other) const
++{
++	if (m_name &lt; other.m_name)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++bool PinotSettings::CacheProvider::operator==(const CacheProvider &amp;other) const
++{
++	if (m_name == other.m_name)
++	{
++		return true;
++	}
++
++	return false;
++}
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-06-11 08:03:05 UTC (rev 315)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-06-15 15:17:50 UTC (rev 316)
+@@ -19,6 +19,7 @@
+ 
+ #include &lt;sys/types.h&gt;
+ #include &lt;string&gt;
++#include &lt;vector&gt;
+ #include &lt;map&gt;
+ #include &lt;set&gt;
+ #include &lt;vector&gt;
+@@ -41,8 +42,12 @@
+ 
+ 		static std::string getCurrentUserName(void);
+ 
+-		bool load(bool reload = false);
++		void clear(void);
+ 
++		bool loadGlobal(const std::string &amp;fileName);
++
++		bool load(void);
++
+ 		bool loadSearchEngines(const std::string &amp;directoryName);
+ 
+ 		bool save(void);
+@@ -127,6 +132,7 @@
+ 				MailAccount(const MailAccount &amp;other);
+ 				~MailAccount();
+ 
++				MailAccount &amp;operator=(const MailAccount &amp;other);
+ 				bool operator&lt;(const MailAccount &amp;other) const;
+ 				bool operator==(const MailAccount &amp;other) const;
+ 
+@@ -137,6 +143,22 @@
+ 				off_t m_size;
+ 		};
+ 
++		class CacheProvider
++		{
++			public:
++				CacheProvider();
++				CacheProvider(const CacheProvider &amp;other);
++				~CacheProvider();
++
++				CacheProvider &amp;operator=(const CacheProvider &amp;other);
++				bool operator&lt;(const CacheProvider &amp;other) const;
++				bool operator==(const CacheProvider &amp;other) const;
++
++				Glib::ustring m_name;
++				Glib::ustring m_location;
++				std::set&lt;Glib::ustring&gt; m_protocols;
++		};
++
+ 		Glib::ustring m_googleAPIKey;
+ 		Glib::ustring m_indexLocation;
+ 		Glib::ustring m_mailIndexLocation;
+@@ -151,6 +173,8 @@
+ 		bool m_suggestQueryTerms;
+ 		Gdk::Color m_newResultsColour;
+ 		std::set&lt;MailAccount&gt; m_mailAccounts;
++		std::vector&lt;CacheProvider&gt; m_cacheProviders;
++		std::set&lt;Glib::ustring&gt; m_cacheProtocols;
+ 
+ 	protected:
+ 		static PinotSettings m_instance;
+@@ -164,7 +188,7 @@
+ 		std::set&lt;std::string&gt; m_labels;
+ 
+ 		PinotSettings();
+-		bool loadConfiguration(const std::string &amp;fileName);
++		bool loadConfiguration(const std::string &amp;fileName, bool isGlobal);
+ 		bool loadUi(const xmlpp::Element *pElem);
+ 		bool loadIndexes(const xmlpp::Element *pElem);
+ 		bool loadEngineChannels(const xmlpp::Element *pElem);
+@@ -172,6 +196,7 @@
+ 		bool loadLabels(const xmlpp::Element *pElem);
+ 		bool loadColour(const xmlpp::Element *pElem);
+ 		bool loadMailAccounts(const xmlpp::Element *pElem);
++		bool loadCacheProviders(const xmlpp::Element *pElem);
+ 
+ 	private:
+ 		PinotSettings(const PinotSettings &amp;other);
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-06-11 08:03:05 UTC (rev 315)
++++ trunk/UI/GTK2/src/pinot.cc	2006-06-15 15:17:50 UTC (rev 316)
+@@ -173,6 +173,7 @@
+ 	TokenizerFactory::loadTokenizers(prefixDir + string(&quot;/share/pinot/tokenizers&quot;));
+ 	TokenizerFactory::loadTokenizers(confDirectory + string(&quot;/tokenizers&quot;));
+ 	// Load the settings
++	settings.loadGlobal(prefixDir + string(&quot;/share/pinot/globalconfig.xml&quot;));
+ 	settings.load();
+ 
+ 	// Catch interrupts
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000309.html">[Pinot-svn] r315 - tags
+</A></li>
+	<LI>Next message: <A HREF="000311.html">[Pinot-svn] r317 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#310">[ date ]</a>
+              <a href="thread.html#310">[ thread ]</a>
+              <a href="subject.html#310">[ subject ]</a>
+              <a href="author.html#310">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

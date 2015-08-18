@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r560 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r560%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611040411.kA44BG4g004671%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000552.html">
+   <LINK REL="Next"  HREF="000554.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r560 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r560%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611040411.kA44BG4g004671%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r560 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Nov  4 05:11:16 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000552.html">[Pinot-svn] r559 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000554.html">[Pinot-svn] r561 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#553">[ date ]</a>
+              <a href="thread.html#553">[ thread ]</a>
+              <a href="subject.html#553">[ subject ]</a>
+              <a href="author.html#553">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-04 05:11:16 +0100 (Sat, 04 Nov 2006)
+New Revision: 560
+
+Modified:
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+DirectoryScanner checks whether files and directories are blacklisted so that
+it can skip crawling those that are and remove those that didn't used to be.
+Use unindexDocument() overload where it makes sense.
+DEBUG output a bit less verbose.
+
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-11-04 04:08:03 UTC (rev 559)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-11-04 04:11:16 UTC (rev 560)
+@@ -67,9 +67,6 @@
+ 	// Is it black-listed ?
+ 	if (PinotSettings::getInstance().isBlackListed(fileName) == true)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;OnDiskHandler::indexFile: &quot; &lt;&lt; location &lt;&lt; &quot; is black-listed&quot; &lt;&lt; endl;
+-#endif
+ 		return false;
+ 	}
+ 
+@@ -155,13 +152,8 @@
+ 
+ bool OnDiskHandler::replaceFile(unsigned int docId, DocumentInfo &amp;docInfo)
+ {
+-	// Has the destination file been indexed too ?
+-	unsigned int destDocId = m_index.hasDocument(docInfo.getLocation());
+-	if (destDocId &gt; 0)
+-	{
+-		// Unindex it
+-		m_index.unindexDocument(destDocId);
+-	}
++	// Unindex the destination file
++	m_index.unindexDocument(docInfo.getLocation());
+ 
+ 	// Update the document info
+ 	return m_index.updateDocumentInfo(docId, docInfo);
+@@ -345,7 +337,7 @@
+ 
+ bool OnDiskHandler::fileDeleted(const string &amp;fileName)
+ {
+-	bool handledEvent = false;
++	bool handledEvent = true;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileDeleted: &quot; &lt;&lt; fileName &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-11-04 04:08:03 UTC (rev 559)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-11-04 04:11:16 UTC (rev 560)
+@@ -1500,22 +1500,16 @@
+ 		return false;
+ 	}
+ 
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;PinotSettings::isBlackListed: examining &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+ 	// Any pattern matches this the file name ?
+ 	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsBlackList.begin(); patternIter != m_filePatternsBlackList.end() ; ++patternIter)
+ 	{
+ 		if (fnmatch(patternIter-&gt;c_str(), fileName.c_str(), FNM_NOESCAPE) == 0)
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;PinotSettings::isBlackListed: matched &quot; &lt;&lt; *patternIter &lt;&lt; endl;
++			cout &lt;&lt; &quot;PinotSettings::isBlackListed: &quot; &lt;&lt; fileName &lt;&lt; &quot; matches &quot; &lt;&lt; *patternIter &lt;&lt; endl;
+ #endif
+ 			return true;
+ 		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;PinotSettings::isBlackListed: didn't match &quot; &lt;&lt; *patternIter &lt;&lt; endl;
+-#endif
+ 	}
+ 
+ 	return false;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-04 04:08:03 UTC (rev 559)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-04 04:11:16 UTC (rev 560)
+@@ -328,9 +328,6 @@
+ 	// Is the document blacklisted ?
+ 	if (PinotSettings::getInstance().isBlackListed(location) == true)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;ThreadsManager::index_document: &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; &quot; is blacklisted&quot; &lt;&lt; endl;
+-#endif
+ 		ustring status(location);
+ 		status += &quot; &quot;;
+ 		status += _(&quot;is blacklisted&quot;);
+@@ -1815,29 +1812,34 @@
+ 	{
+ 		bool reportFile = false;
+ 
+-		// It's actually a file
+-		if (itemExists == false)
++		// Is this file blacklisted ?
++		// We have to check early so that if necessary the file's status stays at CRAWLING 
++		// and it is removed from the index at the end of this crawl
++		if (PinotSettings::getInstance().isBlackListed(entryName) == false)
+ 		{
+-			// Record it
+-			history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++			if (itemExists == false)
++			{
++				// Record it
++				history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
++				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+-			reportFile = true;
+-		}
+-		else
+-		{
+-			// Update the record
+-			history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, fileStat.st_mtime);
++				reportFile = true;
++			}
++			else
++			{
++				// Update the record
++				history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, fileStat.st_mtime);
+ 
+-			// Was it last crawled after it was modified ?
+-			if (itemDate &lt; fileStat.st_mtime)
+-			{
++				// Was it last crawled after it was modified ?
++				if (itemDate &lt; fileStat.st_mtime)
++				{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
++					cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+-				// No, crawl and index it again
+-				reportFile = true;
++					// No, crawl and index it again
++					reportFile = true;
++				}
+ 			}
+ 		}
+ 
+@@ -1849,8 +1851,9 @@
+ 	else if (S_ISDIR(fileStat.st_mode))
+ 	{
+ 		// Can we scan this directory ?
+-		if ((m_maxLevel == 0) ||
+-			(m_currentLevel &lt; m_maxLevel))
++		if (((m_maxLevel == 0) ||
++			(m_currentLevel &lt; m_maxLevel)) &amp;&amp;
++			(PinotSettings::getInstance().isBlackListed(entryName) == false))
+ 		{
+ 			++m_currentLevel;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000552.html">[Pinot-svn] r559 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000554.html">[Pinot-svn] r561 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#553">[ date ]</a>
+              <a href="thread.html#553">[ thread ]</a>
+              <a href="subject.html#553">[ subject ]</a>
+              <a href="author.html#553">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,458 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r847 - in trunk/Search: . Google
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r847%20-%20in%20trunk/Search%3A%20.%20Google&In-Reply-To=%3C200705260421.l4Q4LK7p012615%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000840.html">
+   <LINK REL="Next"  HREF="000842.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r847 - in trunk/Search: . Google</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r847%20-%20in%20trunk/Search%3A%20.%20Google&In-Reply-To=%3C200705260421.l4Q4LK7p012615%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r847 - in trunk/Search: . Google">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat May 26 06:21:20 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000840.html">[Pinot-svn] r846 - tags
+</A></li>
+        <LI>Next message: <A HREF="000842.html">[Pinot-svn] r848 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#841">[ date ]</a>
+              <a href="thread.html#841">[ thread ]</a>
+              <a href="subject.html#841">[ subject ]</a>
+              <a href="author.html#841">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-26 06:21:17 +0200 (Sat, 26 May 2007)
+New Revision: 847
+
+Modified:
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/Google/GoogleAPIEngine.h
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/PluginWebEngine.h
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/WebEngine.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/Search/pinot-search.cpp
+Log:
+A start document can be passed to runQuery().
+Support for total number of results estimates.
+Removed some cruft.
+
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2007-05-26 04:21:17 UTC (rev 847)
+@@ -36,7 +36,6 @@
+ 
+ GoogleAPIEngine::~GoogleAPIEngine()
+ {
+-	m_resultsList.clear();
+ }
+ 
+ /// Retrieves the specified URL from the cache; NULL if error. Caller deletes.
+@@ -83,10 +82,15 @@
+ //
+ 
+ /// Runs a query; true if success.
+-bool GoogleAPIEngine::runQuery(QueryProperties&amp; queryProps)
++bool GoogleAPIEngine::runQuery(QueryProperties&amp; queryProps,
++	unsigned int startDoc)
+ {
+ 	string queryString(queryProps.getFreeQuery(true));
++	unsigned int maxResultsCount = queryProps.getMaximumResultsCount();
+ 
++	m_resultsList.clear();
++	m_resultsCountEstimate = 0;
++
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
+ 	setQuery(queryProps);
+@@ -112,7 +116,7 @@
+ 	struct gapi1__doGoogleSearchResponse queryOut;
+ 
+ 	// No filter, no safe search
+-	int soapStatus = soapProxy.gapi1__doGoogleSearch(m_key, queryString, 0, (int)(m_maxResultsCount &gt; 10 ? 10 : m_maxResultsCount),
++	int soapStatus = soapProxy.gapi1__doGoogleSearch(m_key, queryString, 0, (int)(maxResultsCount &gt; 10 ? 10 : maxResultsCount),
+ 		false, &quot;&quot;, false, &quot;&quot;, &quot;utf-8&quot;, &quot;utf-8&quot;, queryOut);
+ 	if (soapStatus != SOAP_OK)
+ 	{
+@@ -127,6 +131,8 @@
+ 	{
+ 		float pseudoScore = 100;
+ 
++		m_resultsCountEstimate = searchResult-&gt;estimatedTotalResultsCount;
++
+ 		for (int i = 0; i &lt; searchResult-&gt;resultElements-&gt;__size; ++i)
+ 		{
+ 			struct gapi1__ResultElement *resultElement = searchResult-&gt;resultElements-&gt;__ptr[i];
+
+Modified: trunk/Search/Google/GoogleAPIEngine.h
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.h	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/Google/GoogleAPIEngine.h	2007-05-26 04:21:17 UTC (rev 847)
+@@ -34,7 +34,8 @@
+ 		virtual ~GoogleAPIEngine();
+ 
+ 		/// Runs a query; true if success.
+-		virtual bool runQuery(QueryProperties&amp; queryProps);
++		virtual bool runQuery(QueryProperties&amp; queryProps,
++			unsigned int startDoc = 0);
+ 
+ 		/// Retrieves the specified URL from the cache; NULL if error. Caller deletes.
+ 		Document *retrieveCachedUrl(const string &amp;url);
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/PluginWebEngine.cpp	2007-05-26 04:21:17 UTC (rev 847)
+@@ -65,7 +65,7 @@
+ 	delete pParser;
+ }
+ 
+-bool PluginWebEngine::getPage(const string &amp;formattedQuery)
++bool PluginWebEngine::getPage(const string &amp;formattedQuery, unsigned int maxResultsCount)
+ {
+ 	if ((m_pResponseParser == NULL) ||
+ 		(formattedQuery.empty() == true))
+@@ -101,7 +101,7 @@
+ #endif
+ 
+ 	bool success = m_pResponseParser-&gt;parse(pResponseDoc, m_resultsList,
+-		m_maxResultsCount, m_properties.m_nextBase);
++		maxResultsCount, m_properties.m_nextBase);
+ 	vector&lt;DocumentInfo&gt;::iterator resultIter = m_resultsList.begin();
+ 	while (resultIter != m_resultsList.end())
+ 	{
+@@ -210,13 +210,16 @@
+ //
+ 
+ /// Runs a query; true if success.
+-bool PluginWebEngine::runQuery(QueryProperties&amp; queryProps)
++bool PluginWebEngine::runQuery(QueryProperties&amp; queryProps,
++	unsigned int startDoc)
+ {
+ 	string queryString(queryProps.getFreeQuery(true));
+ 	char countStr[64];
++	unsigned int maxResultsCount(queryProps.getMaximumResultsCount());
+ 	unsigned int currentIncrement = 0, count = 0;
+ 
+ 	m_resultsList.clear();
++	m_resultsCountEstimate = 0;
+ 
+ 	if (queryString.empty() == true)
+ 	{
+@@ -255,7 +258,7 @@
+ 	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot;
+ 		&lt;&lt; m_properties.m_name &lt;&lt; endl;
+ #endif
+-	while (count &lt; m_maxResultsCount)
++	while (count &lt; maxResultsCount)
+ 	{
+ 		string pageQuery(formattedQuery);
+ 
+@@ -269,7 +272,7 @@
+ 				pageQuery += &quot;&amp;&quot;;
+ 				pageQuery += paramIter-&gt;second;
+ 				pageQuery += &quot;=&quot;;
+-				snprintf(countStr, 64, &quot;%u&quot;, m_maxResultsCount);
++				snprintf(countStr, 64, &quot;%u&quot;, maxResultsCount);
+ 				pageQuery += countStr;
+ 			}
+ 
+@@ -298,7 +301,7 @@
+ 			}
+ 		}
+ 
+-		if (getPage(pageQuery) == false)
++		if (getPage(pageQuery, queryProps.getMaximumResultsCount()) == false)
+ 		{
+ 			break;
+ 		}
+
+Modified: trunk/Search/PluginWebEngine.h
+===================================================================
+--- trunk/Search/PluginWebEngine.h	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/PluginWebEngine.h	2007-05-26 04:21:17 UTC (rev 847)
+@@ -36,7 +36,8 @@
+ 		static bool getDetails(const std::string &amp;fileName, std::string &amp;name, std::string &amp;channel);
+ 
+ 		/// Runs a query; true if success.
+-		virtual bool runQuery(QueryProperties&amp; queryProps);
++		virtual bool runQuery(QueryProperties&amp; queryProps,
++			unsigned int startDoc = 0);
+ 
+ 	protected:
+ 		SearchPluginProperties m_properties;
+@@ -44,7 +45,7 @@
+ 
+ 		void load(const std::string &amp;fileName);
+ 
+-		bool getPage(const std::string &amp;formattedQuery);
++		bool getPage(const std::string &amp;formattedQuery, unsigned int maxResultsCount);
+ 
+ 		static PluginParserInterface *getPluginParser(const std::string &amp;fileName);
+ 
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/SearchEngineInterface.cpp	2007-05-26 04:21:17 UTC (rev 847)
+@@ -29,7 +29,7 @@
+ SearchEngineInterface::SearchEngineInterface() :
+ 	m_callsCount(0),
+ 	m_startTime(time(NULL)),
+-	m_maxResultsCount(10)
++	m_resultsCountEstimate(0)
+ {
+ }
+ 
+@@ -50,12 +50,6 @@
+ 	m_startTime = startTime;
+ }
+ 
+-/// Sets the maximum number of results to return.
+-void SearchEngineInterface::setMaxResultsCount(unsigned int count)
+-{
+-	m_maxResultsCount = count;
+-}
+-
+ /// Sets whether the query should be expanded.
+ bool SearchEngineInterface::setQueryExpansion(set&lt;unsigned int&gt; &amp;relevantDocuments)
+ {
+@@ -75,6 +69,12 @@
+ 	return m_resultsList;
+ }
+ 
++/// Returns an estimate of the total number of results for the previous query.
++unsigned int SearchEngineInterface::getResultsCountEstimate(void) const
++{
++	return m_resultsCountEstimate;
++}
++
+ /// Returns the charset for the previous query's results.
+ string SearchEngineInterface::getResultsCharset(void) const
+ {
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/SearchEngineInterface.h	2007-05-26 04:21:17 UTC (rev 847)
+@@ -42,9 +42,6 @@
+ 		/// Sets the number of calls issued since start time.
+ 		virtual void setCallsCount(unsigned int count, time_t startTime);
+ 
+-		/// Sets the maximum number of results to return.
+-		virtual void setMaxResultsCount(unsigned int count);
+-
+ 		/// Sets whether the query should be expanded.
+ 		virtual bool setQueryExpansion(set&lt;unsigned int&gt; &amp;relevantDocuments);
+ 
+@@ -52,11 +49,15 @@
+ 		virtual DownloaderInterface *getDownloader(void);
+ 
+ 		/// Runs a query; true if success.
+-		virtual bool runQuery(QueryProperties&amp; queryProps) = 0;
++		virtual bool runQuery(QueryProperties&amp; queryProps,
++			unsigned int startDoc = 0) = 0;
+ 
+ 		/// Returns the results for the previous query.
+ 		virtual const vector&lt;DocumentInfo&gt; &amp;getResults(void) const;
+ 
++		/// Returns an estimate of the total number of results for the previous query.
++		virtual unsigned int getResultsCountEstimate(void) const;
++
+ 		/// Returns the charset for the previous query's results.
+ 		virtual string getResultsCharset(void) const;
+ 
+@@ -67,9 +68,9 @@
+ 		string m_key;
+ 		unsigned int m_callsCount;
+ 		time_t m_startTime;
+-		unsigned int m_maxResultsCount;
+ 		bool m_expandQueries;
+ 		vector&lt;DocumentInfo&gt; m_resultsList;
++		unsigned int m_resultsCountEstimate;
+ 		string m_charset;
+ 		set&lt;string&gt; m_expandTerms;
+ 
+
+Modified: trunk/Search/WebEngine.cpp
+===================================================================
+--- trunk/Search/WebEngine.cpp	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/WebEngine.cpp	2007-05-26 04:21:17 UTC (rev 847)
+@@ -61,7 +61,6 @@
+ 
+ WebEngine::~WebEngine()
+ {
+-	m_resultsList.clear();
+ 	if (m_pDownloader != NULL)
+ 	{
+ 		delete m_pDownloader;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/XapianEngine.cpp	2007-05-26 04:21:17 UTC (rev 847)
+@@ -102,15 +102,10 @@
+ 	{
+ 		m_databaseName = database;
+ 	}
+-
+-	// SearchEngineInterface members
+-	m_maxResultsCount = 10;
+-	m_resultsList.clear();
+ }
+ 
+ XapianEngine::~XapianEngine()
+ {
+-	m_resultsList.clear();
+ }
+ 
+ Xapian::Query XapianEngine::dateFilter(unsigned int minDay, unsigned int minMonth, unsigned int minYear,
+@@ -385,7 +380,8 @@
+ 	return goodQuery;
+ }
+ 
+-bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query)
++bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
++	unsigned int startDoc, unsigned int maxResultsCount)
+ {
+ 	bool completedQuery = false;
+ 
+@@ -406,14 +402,16 @@
+ 		enquire.set_query(query);
+ 
+ 		// Get the top results of the query
+-		Xapian::MSet matches = enquire.get_mset(0, m_maxResultsCount);
++		Xapian::MSet matches = enquire.get_mset(startDoc, maxResultsCount);
+ 		if (matches.empty() == false)
+ 		{
+-			// Get the results
++			m_resultsCountEstimate = matches.get_matches_estimated();
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.get_matches_estimated()
+-				&lt;&lt; &quot;/&quot; &lt;&lt; m_maxResultsCount &lt;&lt; &quot; results found&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; m_resultsCountEstimate &lt;&lt; &quot;/&quot;
++				&lt;&lt; maxResultsCount &lt;&lt; &quot; results found from position &quot; &lt;&lt; startDoc &lt;&lt; endl;
+ #endif
++
++			// Get the results
+ 			for (Xapian::MSetIterator mIter = matches.begin(); mIter != matches.end(); ++mIter)
+ 			{
+ 				Xapian::docid docId = *mIter;
+@@ -517,10 +515,12 @@
+ }
+ 
+ /// Runs a query; true if success.
+-bool XapianEngine::runQuery(QueryProperties&amp; queryProps)
++bool XapianEngine::runQuery(QueryProperties&amp; queryProps,
++	unsigned int startDoc)
+ {
+ 	// Clear the results list
+ 	m_resultsList.clear();
++	m_resultsCountEstimate = 0;
+ 
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, true);
+ 	if (pDatabase == NULL)
+@@ -550,7 +550,8 @@
+ 			cout &lt;&lt; &quot;XapianEngine::runQuery: &quot; &lt;&lt; fullQuery.get_description() &lt;&lt; endl;
+ #endif
+ 			// Query the database
+-			if (queryDatabase(pIndex, fullQuery) == false)
++			if (queryDatabase(pIndex, fullQuery, startDoc,
++				queryProps.getMaximumResultsCount()) == false)
+ 			{
+ 				break;
+ 			}
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/XapianEngine.h	2007-05-26 04:21:17 UTC (rev 847)
+@@ -43,13 +43,15 @@
+ 		bool setQueryExpansion(std::set&lt;unsigned int&gt; &amp;relevantDocuments);
+ 
+ 		/// Runs a query; true if success.
+-		virtual bool runQuery(QueryProperties&amp; queryProps);
++		virtual bool runQuery(QueryProperties&amp; queryProps,
++			unsigned int startDoc = 0);
+ 
+ 	protected:
+ 		std::string m_databaseName;
+ 		std::set&lt;unsigned int&gt; m_relevantDocuments;
+ 
+-		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query);
++		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
++			unsigned int startDoc, unsigned int maxResultsCount);
+ 
+ 		static Xapian::Query dateFilter(unsigned int minDay, unsigned int minMonth, unsigned int minYear,
+ 		        unsigned int maxDay, unsigned int maxMonth, unsigned int maxYear);
+
+Modified: trunk/Search/pinot-search.cpp
+===================================================================
+--- trunk/Search/pinot-search.cpp	2007-05-23 16:40:24 UTC (rev 846)
++++ trunk/Search/pinot-search.cpp	2007-05-26 04:21:17 UTC (rev 847)
+@@ -179,9 +179,6 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	// How many results ?
+-	pEngine-&gt;setMaxResultsCount(maxResultsCount);
+-
+ 	// Set up the proxy
+ 	DownloaderInterface *pDownloader = pEngine-&gt;getDownloader();
+ 	if ((pDownloader != NULL) &amp;&amp;
+@@ -193,7 +190,9 @@
+ 		pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
+ 	}
+ 
+-	QueryProperties queryProps(&quot;senginetest&quot;, pQuery);
++	QueryProperties queryProps(&quot;pinot-search&quot;, pQuery);
++
++	queryProps.setMaximumResultsCount(maxResultsCount);
+ 	if (pEngine-&gt;runQuery(queryProps) == true)
+ 	{
+ 		string resultsPage;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000840.html">[Pinot-svn] r846 - tags
+</A></li>
+	<LI>Next message: <A HREF="000842.html">[Pinot-svn] r848 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#841">[ date ]</a>
+              <a href="thread.html#841">[ thread ]</a>
+              <a href="subject.html#841">[ subject ]</a>
+              <a href="author.html#841">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

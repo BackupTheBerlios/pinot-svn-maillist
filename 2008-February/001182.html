@@ -1,0 +1,562 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1188 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1188%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200802241115.m1OBFvEa018334%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001181.html">
+   <LINK REL="Next"  HREF="001183.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1188 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1188%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200802241115.m1OBFvEa018334%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1188 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Feb 24 12:15:57 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001181.html">[Pinot-svn] r1187 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001183.html">[Pinot-svn] r1189 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1182">[ date ]</a>
+              <a href="thread.html#1182">[ thread ]</a>
+              <a href="subject.html#1182">[ subject ]</a>
+              <a href="author.html#1182">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-02-24 12:15:56 +0100 (Sun, 24 Feb 2008)
+New Revision: 1188
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+First shot at CJKV support. Documents that have CJKV are processed with Dijon's
+CJKVTokenizer and indexed in a manner compatible with TermGenerator's. Queries
+that are exclusively CJKV are pre-processed by CJKVTokenizer, then fed to the
+QueryParser.
+Changed XapianIndex::removePostingsFromDocument() to reuse the term generation
+code of addPostingsToDocument().
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-02-22 14:22:26 UTC (rev 1187)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-02-24 11:15:56 UTC (rev 1188)
+@@ -31,6 +31,7 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;CJKVTokenizer.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
+ #include &quot;XapianEngine.h&quot;
+@@ -175,10 +176,35 @@
+ {
+ 	Xapian::QueryParser parser;
+ 	Xapian::Stem stemmer;
++	CJKVTokenizer tokenizer;
+ 	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 	unsigned int minDay, minMonth, minYear = 0;
+ 	unsigned int maxDay, maxMonth, maxYear = 0;
+ 
++	if (tokenizer.has_cjkv_only(freeQuery) == true)
++	{
++		vector&lt;string&gt; tokens;
++		string cjkvQuery;
++
++		tokenizer.tokenize(freeQuery, tokens);
++
++		// Get the terms
++		for (vector&lt;string&gt;::const_iterator tokenIter = tokens.begin();
++			tokenIter != tokens.end(); ++tokenIter)
++		{
++			cjkvQuery += *tokenIter;
++			cjkvQuery += &quot; &quot;;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: CJKV query is &quot; &lt;&lt; cjkvQuery &lt;&lt; endl;
++#endif
++
++		// Do as if the user had given this as input
++		freeQuery = cjkvQuery;
++		// We can disable stemming and spelling correction
++		minimal = true;
++	}
++
+ 	if (pIndex != NULL)
+ 	{
+ 		// The database is required for wildcards and spelling
+@@ -230,6 +256,7 @@
+ 	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
+ 	parser.add_boolean_prefix(&quot;class&quot;, &quot;XCLASS:&quot;);
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
++	parser.add_boolean_prefix(&quot;tokens&quot;, &quot;XTOK:&quot;);
+ 
+ 	// Any limit on what documents should be searched ?
+ 	if (limitQuery.empty() == false)
+@@ -368,24 +395,24 @@
+ #endif
+ 	}
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+-	if (minimal == true)
+-	{
+-		return parsedQuery;
+-	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; parsedQuery.get_description() &lt;&lt; endl;
+ #endif
+ 
++	if (minimal == false)
++	{
++
+ #if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
+-	// Any correction ?
+-	correctedFreeQuery = parser.get_corrected_query_string();
++		// Any correction ?
++		correctedFreeQuery = parser.get_corrected_query_string();
+ #ifdef DEBUG
+-	if (correctedFreeQuery.empty() == false)
+-	{
+-		cout &lt;&lt; &quot;XapianEngine::parseQuery: corrected spelling to: &quot; &lt;&lt; correctedFreeQuery &lt;&lt; endl;
+-	}
++		if (correctedFreeQuery.empty() == false)
++		{
++			cout &lt;&lt; &quot;XapianEngine::parseQuery: corrected spelling to: &quot; &lt;&lt; correctedFreeQuery &lt;&lt; endl;
++		}
+ #endif
+ #endif
++	}
+ 
+ 	return parsedQuery;
+ }
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-02-22 14:22:26 UTC (rev 1187)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-02-24 11:15:56 UTC (rev 1188)
+@@ -39,6 +39,8 @@
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;XapianIndex.h&quot;
+ 
++#define MAGIC_TERM &quot;X-MetaSE-Doc&quot;
++
+ using std::cout;
+ using std::cerr;
+ using std::endl;
+@@ -85,8 +87,6 @@
+ 	return version;
+ }
+ 
+-const string XapianIndex::MAGIC_TERM = &quot;X-MetaSE-Doc&quot;;
+-
+ XapianIndex::XapianIndex(const string &amp;indexName) :
+ 	IndexInterface(),
+ 	m_databaseName(indexName),
+@@ -182,10 +182,11 @@
+ }
+ 
+ void XapianIndex::addPostingsToDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, bool noStemming)
++	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, bool noStemming, bool &amp;doSpelling,
++	Xapian::termcount &amp;termPos) const
+ {
+ 	Xapian::Stem *pStemmer = NULL;
+-	Xapian::TermGenerator generator;
++	bool isCJKV = false;
+ 
+ 	// Do we know what language to use for stemming ?
+ 	if ((noStemming == false) &amp;&amp;
+@@ -199,39 +200,61 @@
+ 		{
+ 			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 		}
++	}
+ 
+-		if (pStemmer != NULL)
++	const char *pRawData = itor.raw();
++	if (pRawData != NULL)
++	{
++		Dijon::CJKVTokenizer tokenizer;
++		string text(pRawData);
++
++		if (tokenizer.has_cjkv(text) == true)
+ 		{
+-			generator.set_stemmer(*pStemmer);
++			// Use overload
++			addPostingsToDocument(tokenizer, pStemmer, text, doc, prefix, termPos);
++			isCJKV = true;
+ 		}
+ 	}
+ 
+-	try
++	if (isCJKV == false)
+ 	{
+-		// Older Xapian backends don't support spelling correction
+-		if (m_doSpelling == true)
++		Xapian::TermGenerator generator;
++
++		// Set the stemmer
++		if (pStemmer != NULL)
+ 		{
+-			// The database is required for the spelling dictionary
+-			generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING);
+-			generator.set_database(db);
++			generator.set_stemmer(*pStemmer);
+ 		}
+-		generator.set_document(doc);
+-		generator.index_text(itor, 1, prefix);
+-	}
+-	catch (const Xapian::UnimplementedError &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't index with spelling correction: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 
+-		if (m_doSpelling == true)
++		generator.set_termpos(termPos);
++		try
+ 		{
+-			m_doSpelling = false;
+-
+-			// Try again without spelling correction
+-			// Let the caller catch the exception
+-			generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING, Xapian::TermGenerator::FLAG_SPELLING);
++			// Older Xapian backends don't support spelling correction
++			if (doSpelling == true)
++			{
++				// The database is required for the spelling dictionary
++				generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING);
++				generator.set_database(db);
++			}
+ 			generator.set_document(doc);
+ 			generator.index_text(itor, 1, prefix);
+ 		}
++		catch (const Xapian::UnimplementedError &amp;error)
++		{
++			cerr &lt;&lt; &quot;Couldn't index with spelling correction: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++
++			if (doSpelling == true)
++			{
++				doSpelling = false;
++
++				// Try again without spelling correction
++				// Let the caller catch the exception
++				generator.set_flags(Xapian::TermGenerator::FLAG_SPELLING, Xapian::TermGenerator::FLAG_SPELLING);
++				generator.set_document(doc);
++				generator.index_text(itor, 1, prefix);
++			}
++		}
++		termPos = generator.get_termpos();
+ 	}
+ 
+ 	if (pStemmer != NULL)
+@@ -240,39 +263,82 @@
+ 	}
+ }
+ 
+-void XapianIndex::removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, const string &amp;language, bool noStemming) const
++void XapianIndex::addPostingsToDocument(Dijon::CJKVTokenizer &amp;tokenizer, Xapian::Stem *pStemmer,
++	const string &amp;text, Xapian::Document &amp;doc, const string &amp;prefix, Xapian::termcount &amp;termPos) const
+ {
+-	Xapian::Document termsDoc;
+-	Xapian::TermGenerator generator;
+-	Xapian::Stem *pStemmer = NULL;
++	vector&lt;string&gt; tokens;
+ 	string stemPrefix(&quot;Z&quot;);
+-	string term;
++	unsigned int nGramSize = tokenizer.get_ngram_size();
++	unsigned int nGramCount = 0;
+ 
+-	// Do we know what language to use for stemming ?
+-	if ((noStemming == false) &amp;&amp;
+-		(language.empty() == false))
++	tokenizer.tokenize(text, tokens);
++
++	// Get the terms
++	for (vector&lt;string&gt;::const_iterator tokenIter = tokens.begin();
++		tokenIter != tokens.end(); ++tokenIter)
+ 	{
+-		try
++		if (tokenIter-&gt;empty() == true)
+ 		{
+-			pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
++			continue;
+ 		}
+-		catch (const Xapian::Error &amp;error)
++
++		// Lower case the term and trim spaces
++		string term(StringManip::toLowerCase(*tokenIter));
++		StringManip::trimSpaces(term);
++
++		if (term.empty() == true)
+ 		{
+-			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++			continue;
+ 		}
+ 
+-		if (pStemmer != NULL)
++		doc.add_posting(prefix + XapianDatabase::limitTermLength(term), termPos);
++
++		// Is this CJKV ?
++		if (tokenizer.has_cjkv(term) == false)
+ 		{
+-			generator.set_stemmer(*pStemmer);
++			// Don't stem if the term starts with a digit
++			if ((pStemmer != NULL) &amp;&amp;
++				(isdigit((int)term[0]) == 0))
++			{
++				string stemmedTerm((*pStemmer)(term));
++
++				doc.add_term(stemPrefix + XapianDatabase::limitTermLength(stemmedTerm));
++			}
++
++			++termPos;
++			nGramCount = 0;
+ 		}
++		else
++		{
++			if (nGramCount % nGramSize == 0)
++			{
++				++termPos;
++			}
++			++nGramCount;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: \&quot;&quot; &lt;&lt; term &lt;&lt; &quot;\&quot; at position &quot; &lt;&lt; termPos &lt;&lt; endl;
++#endif
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: &quot; &lt;&lt; nGramCount &lt;&lt; &quot; CJKV terms to position &quot; &lt;&lt; termPos &lt;&lt; endl;
++#endif
+ 
+-	// This temporary document enables to get to the same terms
+-	// that were added at indexing time
+-	generator.set_document(termsDoc);
+-	generator.index_text(itor, 1, prefix);
++	// This will help identify which documents were processed here
++	doc.add_term(&quot;XTOK:CJKV&quot;);
++}
+ 
++void XapianIndex::removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
++	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, const string &amp;language,
++	bool noStemming, bool &amp;doSpelling) const
++{
++	Xapian::Document termsDoc;
++	Xapian::termcount termPos = 0;
++	bool addDoSpelling = false;
++
++	// Get the terms, without populating the spelling database
++	addPostingsToDocument(itor, termsDoc, db, prefix, noStemming, addDoSpelling, termPos);
++
+ 	// Get the terms and remove the first posting for each
+ 	for (Xapian::TermIterator termListIter = termsDoc.termlist_begin();
+ 		termListIter != termsDoc.termlist_end(); ++termListIter)
+@@ -326,13 +392,27 @@
+ 			try
+ 			{
+ 				doc.remove_term(*termListIter);
++			}
++			catch (const Xapian::Error &amp;error)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;XapianIndex::removePostingsFromDocument: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++#endif
++			}
+ 
++			try
++			{
+ 				// Decrease this term's frequency in the spelling dictionary
+-				if (m_doSpelling == true)
++				if (doSpelling == true)
+ 				{
+ 					db.remove_spelling(*termListIter);
+ 				}
+ 			}
++			catch (const Xapian::UnimplementedError &amp;error)
++			{
++				cerr &lt;&lt; &quot;Couldn't remove spelling correction: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++				doSpelling = false;
++			}
+ 			catch (const Xapian::Error &amp;error)
+ 			{
+ #ifdef DEBUG
+@@ -367,15 +447,10 @@
+ 			}
+ 		}
+ 	}
+-
+-	if (pStemmer != NULL)
+-	{
+-		delete pStemmer;
+-	}
+ }
+ 
+ void XapianIndex::addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-	const Xapian::WritableDatabase &amp;db)
++	const Xapian::WritableDatabase &amp;db, Xapian::termcount &amp;termPos)
+ {
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+@@ -388,8 +463,13 @@
+ 	// Index the title with and without prefix S
+ 	if (title.empty() == false)
+ 	{
+-		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;, true);
+-		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, db, &quot;&quot;, false);
++		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;,
++			true, m_doSpelling, termPos);
++		addPostingsToDocument(Xapian::Utf8Iterator(title), doc, db, &quot;&quot;,
++			false, m_doSpelling, termPos);
++
++		// Make room between common terms and what follows
++		termPos += 100;
+ 	}
+ 
+ 	// Index the full URL with prefix U
+@@ -509,8 +589,10 @@
+ 	string title(docInfo.getTitle());
+ 	if (title.empty() == false)
+ 	{
+-		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;, language, true);
+-		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;&quot;, language, false);
++		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;,
++			language, true, m_doSpelling);
++		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;&quot;,
++			language, false, m_doSpelling);
+ 	}
+ 
+ 	// Location 
+@@ -1674,14 +1756,16 @@
+ 		if (pIndex != NULL)
+ 		{
+ 			Xapian::Document doc;
++			Xapian::termcount termPos = 0;
+ 
+ 			// Populate the Xapian document
+-			addCommonTerms(docInfo, doc, *pIndex);
++			addCommonTerms(docInfo, doc, *pIndex, termPos);
+ 			if ((pData != NULL) &amp;&amp;
+ 				(dataLength &gt; 0))
+ 			{
+ 				Xapian::Utf8Iterator itor(pData, dataLength);
+-				addPostingsToDocument(itor, doc, *pIndex, &quot;&quot;, false);
++				addPostingsToDocument(itor, doc, *pIndex, &quot;&quot;,
++					false, m_doSpelling, termPos);
+ 			}
+ 
+ 			// Add labels
+@@ -1761,14 +1845,16 @@
+ 		if (pIndex != NULL)
+ 		{
+ 			Xapian::Document doc;
++			Xapian::termcount termPos = 0;
+ 
+ 			// Populate the Xapian document
+-			addCommonTerms(docInfo, doc, *pIndex);
++			addCommonTerms(docInfo, doc, *pIndex, termPos);
+ 			if ((pData != NULL) &amp;&amp;
+ 				(dataLength &gt; 0))
+ 			{
+ 				Xapian::Utf8Iterator itor(pData, dataLength);
+-				addPostingsToDocument(itor, doc, *pIndex, &quot;&quot;, false);
++				addPostingsToDocument(itor, doc, *pIndex, &quot;&quot;,
++					false, m_doSpelling, termPos);
+ 			}
+ 
+ 			// Add labels
+@@ -1825,11 +1911,12 @@
+ 		if (pIndex != NULL)
+ 		{
+ 			Xapian::Document doc = pIndex-&gt;get_document(docId);
++			Xapian::termcount termPos = 0;
+ 
+ 			// Update the document data with the current language
+ 			m_stemLanguage = Languages::toEnglish(docInfo.getLanguage());
+ 			removeCommonTerms(doc, *pIndex);
+-			addCommonTerms(docInfo, doc, *pIndex);
++			addCommonTerms(docInfo, doc, *pIndex, termPos);
+ 			setDocumentData(docInfo, doc, m_stemLanguage);
+ 
+ 			pIndex-&gt;replace_document(docId, doc);
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2008-02-22 14:22:26 UTC (rev 1187)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2008-02-24 11:15:56 UTC (rev 1188)
+@@ -24,6 +24,7 @@
+ #include &lt;map&gt;
+ 
+ #include &quot;config.h&quot;
++#include &quot;CJKVTokenizer.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;IndexInterface.h&quot;
+ 
+@@ -149,7 +150,6 @@
+ 		virtual bool reset(void);
+ 
+ 	protected:
+-		static const std::string MAGIC_TERM;
+ 		std::string m_databaseName;
+ 		bool m_goodIndex;
+ 		bool m_doSpelling;
+@@ -159,14 +159,19 @@
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
+ 		void addPostingsToDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix, bool noStemming);
++			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix,
++			bool noStemming, bool &amp;doSpelling,  Xapian::termcount &amp;termPos) const;
+ 
++		void addPostingsToDocument(Dijon::CJKVTokenizer &amp;tokenizer, Xapian::Stem *pStemmer,
++			const std::string &amp;text, Xapian::Document &amp;doc, const std::string &amp;prefix,
++			Xapian::termcount &amp;termPos) const;
++
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+ 			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix,
+-			const std::string &amp;language, bool noStemming) const;
++			const std::string &amp;language, bool noStemming, bool &amp;doSpelling) const;
+ 
+ 		void addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-			const Xapian::WritableDatabase &amp;db);
++			const Xapian::WritableDatabase &amp;db, Xapian::termcount &amp;termPos);
+ 
+ 		void removeCommonTerms(Xapian::Document &amp;doc, const Xapian::WritableDatabase &amp;db);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001181.html">[Pinot-svn] r1187 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001183.html">[Pinot-svn] r1189 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1182">[ date ]</a>
+              <a href="thread.html#1182">[ thread ]</a>
+              <a href="subject.html#1182">[ subject ]</a>
+              <a href="author.html#1182">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

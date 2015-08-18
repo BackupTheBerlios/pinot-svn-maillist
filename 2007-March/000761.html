@@ -1,0 +1,424 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r767 - in trunk: Index Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r767%20-%20in%20trunk%3A%20Index%20Search&In-Reply-To=%3C200703161545.l2GFjvxL013251%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000760.html">
+   <LINK REL="Next"  HREF="000762.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r767 - in trunk: Index Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r767%20-%20in%20trunk%3A%20Index%20Search&In-Reply-To=%3C200703161545.l2GFjvxL013251%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r767 - in trunk: Index Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar 16 16:45:57 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000760.html">[Pinot-svn] r766 - in trunk: Index UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000762.html">[Pinot-svn] r768 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#761">[ date ]</a>
+              <a href="thread.html#761">[ thread ]</a>
+              <a href="subject.html#761">[ subject ]</a>
+              <a href="author.html#761">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-16 16:45:56 +0100 (Fri, 16 Mar 2007)
+New Revision: 767
+
+Modified:
+   trunk/Index/XapianDatabase.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+Log:
+In XapianIndex, if a prefix is to be used for terms use the same for capitalized
+terms, so that they are not confused with unprefixed terms.
+Escape label, file name, directory name and URL terms since they may contain
+spaces. On the search side, pre-process the query string and escape all filter
+values set between double-quotes.
+Reindexing is required for these changes to work properly.
+Some fixes to XapianDatabase.
+
+
+Modified: trunk/Index/XapianDatabase.cpp
+===================================================================
+--- trunk/Index/XapianDatabase.cpp	2007-03-16 15:39:33 UTC (rev 766)
++++ trunk/Index/XapianDatabase.cpp	2007-03-16 15:45:56 UTC (rev 767)
+@@ -20,6 +20,7 @@
+ #include &lt;sys/stat.h&gt;
+ #include &lt;fcntl.h&gt;
+ #include &lt;unistd.h&gt;
++#include &lt;stdlib.h&gt;
+ #include &lt;regex.h&gt;
+ #include &lt;stdio.h&gt;
+ #include &lt;iostream&gt;
+@@ -397,7 +398,7 @@
+ 
+ 	// A bad field is one that includes one of our field delimiters
+ 	if (regcomp(&amp;fieldRegex,
+-		&quot;(url|sample|caption|type|timestamp|language)=&quot;,
++		&quot;(url|sample|caption|type|modtime|language|size)=&quot;,
+ 		REG_EXTENDED|REG_ICASE) == 0)
+ 	{
+ 		if (regexec(&amp;fieldRegex, field.c_str(), 1,
+@@ -493,6 +494,11 @@
+ 		timestamp = TimeConverter::toTimestamp(timeT);
+ 	}
+ 	pDoc-&gt;setTimestamp(timestamp);
++	string bytesSize(StringManip::extractField(record, &quot;size=&quot;, &quot;&quot;));
++	if (bytesSize.empty() == false)
++	{
++		pDoc-&gt;setSize((off_t)atol(bytesSize.c_str()));
++	}
+ }
+ 
+ /// Returns the URL for the given document in the given index.
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-03-16 15:39:33 UTC (rev 766)
++++ trunk/Index/XapianIndex.cpp	2007-03-16 15:45:56 UTC (rev 767)
+@@ -165,6 +165,7 @@
+ 	const string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const
+ {
+ 	Xapian::Stem *pStemmer = NULL;
++	string upperCasePrefix(&quot;R&quot;);
+ 	string term;
+ 
+ 	// Do we know what language to use for stemming ?
+@@ -173,6 +174,12 @@
+ 		pStemmer = new Xapian::Stem(StringManip::toLowerCase(m_stemLanguage));
+ 	}
+ 
++	// Terms starting with a capital letter are R-prefixed, unless a prefix is already defined
++	if (prefix.empty() == false)
++	{
++		upperCasePrefix = prefix;
++	}
++
+ 	// Get the terms
+ 	while (tokens.nextToken(term) == true)
+ 	{
+@@ -183,8 +190,7 @@
+ 		// Does it start with a capital letter ?
+ 		if (isupper((int)term[0]) != 0)
+ 		{
+-			// R-prefix the raw term
+-			doc.add_posting(XapianDatabase::limitTermLength(string(&quot;R&quot;) + term), termPos);
++			doc.add_posting(XapianDatabase::limitTermLength(upperCasePrefix + term), termPos);
+ 		}
+ 		// Lower case the term
+ 		term = StringManip::toLowerCase(term);
+@@ -231,6 +237,7 @@
+ {
+ 	Xapian::TermIterator termListIter = doc.termlist_begin();
+ 	Xapian::Stem *pStemmer = NULL;
++	string upperCasePrefix(&quot;R&quot;);
+ 	string term;
+ 
+ 	// Do we know what language to use for stemming ?
+@@ -239,6 +246,12 @@
+ 		pStemmer = new Xapian::Stem(StringManip::toLowerCase(language));
+ 	}
+ 
++	// Terms starting with a capital letter are R-prefixed, unless a prefix is already defined
++	if (prefix.empty() == false)
++	{
++		upperCasePrefix = prefix;
++	}
++
+ 	// Get the terms and remove the first posting for each
+ 	while (tokens.nextToken(term) == true)
+ 	{
+@@ -249,8 +262,7 @@
+ 		// Does it start with a capital letter ?
+ 		if (isupper((int)term[0]) != 0)
+ 		{
+-			// R-prefix the raw term
+-			removeFirstPosting(doc, termListIter, string(&quot;R&quot;) + term);
++			removeFirstPosting(doc, termListIter, upperCasePrefix + term);
+ 		}
+ 		// Lower case the term
+ 		term = StringManip::toLowerCase(term);
+@@ -305,7 +317,7 @@
+ 	}
+ 
+ 	// Index the full URL with prefix U
+-	doc.add_term(XapianDatabase::limitTermLength(string(&quot;U&quot;) + location, true));
++	doc.add_term(XapianDatabase::limitTermLength(string(&quot;U&quot;) + Url::escapeUrl(location), true));
+ 	// ...the host name and included domains with prefix H
+ 	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+ 	if (hostName.empty() == false)
+@@ -324,11 +336,11 @@
+ 	string tree(urlObj.getLocation());
+ 	if (tree.empty() == false)
+ 	{
+-		doc.add_term(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + tree, true));
++		doc.add_term(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + Url::escapeUrl(tree), true));
+ 		string::size_type slashPos = tree.find('/', 1);
+ 		while (slashPos != string::npos)
+ 		{
+-			doc.add_term(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + tree.substr(0, slashPos), true));
++			doc.add_term(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) +  Url::escapeUrl(tree.substr(0, slashPos)), true));
+ 
+ 			// Next
+ 			slashPos = tree.find('/', slashPos + 1);
+@@ -340,7 +352,7 @@
+ 	{
+ 		string extension;
+ 
+-		doc.add_term(XapianDatabase::limitTermLength(string(&quot;P&quot;) + fileName, true));
++		doc.add_term(XapianDatabase::limitTermLength(string(&quot;P&quot;) + Url::escapeUrl(fileName), true));
+ 
+ 		// Does it have an extension ?
+ 		string::size_type extPos = fileName.rfind('.');
+@@ -419,8 +431,8 @@
+ 		removeFirstPostingsFromDocument(titleTokens, doc, &quot;&quot;, language, m_stemMode);
+ 	}
+ 
+-	// Title
+-	commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;U&quot;) + docInfo.getLocation(), true));
++	// Location 
++	commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;U&quot;) + Url::escapeUrl(docInfo.getLocation()), true));
+ 	// Host name
+ 	string hostName(StringManip::toLowerCase(urlObj.getHost()));
+ 	if (hostName.empty() == false)
+@@ -439,11 +451,11 @@
+ 	string tree(urlObj.getLocation());
+ 	if (tree.empty() == false)
+ 	{
+-		commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + tree, true));
++		commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + Url::escapeUrl(tree), true));
+ 		string::size_type slashPos = tree.find('/', 1);
+ 		while (slashPos != string::npos)
+ 		{
+-			commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + tree.substr(0, slashPos), true));
++			commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) +  Url::escapeUrl(tree.substr(0, slashPos)), true));
+ 
+ 			// Next
+ 			slashPos = tree.find('/', slashPos + 1);
+@@ -455,7 +467,7 @@
+ 	{
+ 		string extension;
+ 
+-		commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;P&quot;) + fileName, true));
++		commonTerms.insert(XapianDatabase::limitTermLength(string(&quot;P&quot;) + Url::escapeUrl(fileName), true));
+ 
+ 		// Does it have an extension ?
+ 		string::size_type extPos = fileName.rfind('.');
+@@ -694,7 +706,7 @@
+ 
+ 			// Get documents that have this label
+ 			// FIXME: would it be faster to get the document's terms ?
+-			term += name;
++			term += Url::escapeUrl(name);
+ 			Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+ 			if (postingIter != pIndex-&gt;postlist_end(term))
+ 			{
+@@ -753,7 +765,7 @@
+ 					// Is this a label ?
+ 					if (strncasecmp((*termIter).c_str(), &quot;XLABEL:&quot;, min(7, (int)(*termIter).length())) == 0)
+ 					{
+-						labels.insert((*termIter).substr(7));
++						labels.insert(Url::unescapeUrl((*termIter).substr(7)));
+ 					}
+ 				}
+ 				gotLabels = true;
+@@ -790,7 +802,7 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term = XapianDatabase::limitTermLength(string(&quot;U&quot;) + Url::canonicalizeUrl(url), true);
++			string term = XapianDatabase::limitTermLength(string(&quot;U&quot;) + Url::escapeUrl(Url::canonicalizeUrl(url)), true);
+ 
+ 			// Get documents that have this term
+ 			Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+@@ -960,7 +972,7 @@
+ 
+ 				// Each label appears only one per document so the collection frequency
+ 				// is the number of documents that have this label
+-				docCount = pIndex-&gt;get_collection_freq(term + labelName);
++				docCount = pIndex-&gt;get_collection_freq(term + Url::escapeUrl(labelName));
+ 			}
+ 		}
+ 	}
+@@ -991,7 +1003,7 @@
+ {
+ 	string term(&quot;XLABEL:&quot;);
+ 
+-	term += name;
++	term += Url::escapeUrl(name);
+ 	return listDocumentsWithTerm(term, docIds, maxDocsCount, startDoc);
+ }
+ 
+@@ -1001,7 +1013,7 @@
+ {
+ 	string term(&quot;XDIR:&quot;);
+ 
+-	term += dirName;
++	term += Url::escapeUrl(dirName);
+ 	return listDocumentsWithTerm(XapianDatabase::limitTermLength(term, true),
+ 		docIds, maxDocsCount, startDoc);
+ }
+@@ -1055,7 +1067,7 @@
+ 		for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 			++labelIter)
+ 		{
+-			doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++			doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + Url::escapeUrl(*labelIter)));
+ 		}
+ 		addCommonTerms(docInfo, doc, termPos);
+ 		setDocumentData(docInfo, doc, m_stemLanguage);
+@@ -1135,7 +1147,7 @@
+ 			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 				++labelIter)
+ 			{
+-				doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++				doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + Url::escapeUrl(*labelIter)));
+ 			}
+ 		}
+ 		addCommonTerms(docInfo, doc, termPos);
+@@ -1271,7 +1283,7 @@
+ 			{
+ 				if (labelIter-&gt;empty() == false)
+ 				{
+-					doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++					doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + Url::escapeUrl(*labelIter)));
+ 				}
+ 			}
+ 
+@@ -1355,7 +1367,7 @@
+ 		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term = XapianDatabase::limitTermLength(string(&quot;U&quot;) + Url::canonicalizeUrl(location), true);
++			string term = XapianDatabase::limitTermLength(string(&quot;U&quot;) + Url::escapeUrl(Url::canonicalizeUrl(location)), true);
+ 
+ 			// Only one document should have this term
+ 			pIndex-&gt;delete_document(term);
+@@ -1401,11 +1413,11 @@
+ 
+ 			if (isDirectory == true)
+ 			{
+-				term = XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + name, true);
++				term = XapianDatabase::limitTermLength(string(&quot;XDIR:&quot;) + Url::escapeUrl(name), true);
+ 			}
+ 			else
+ 			{
+-				term += name;
++				term += Url::escapeUrl(name);
+ 			}
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianIndex::unindexDocuments: term is &quot; &lt;&lt; term &lt;&lt; endl;
+@@ -1450,7 +1462,7 @@
+ 			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Get documents that have this label
+-			term += name;
++			term += Url::escapeUrl(name);
+ 			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+ 				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+ 			{
+@@ -1461,7 +1473,7 @@
+ 				// Remove the term
+ 				doc.remove_term(term);
+ 				// ...add the new one
+-				doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + newName));
++				doc.add_term(XapianDatabase::limitTermLength(string(&quot;XLABEL:&quot;) + Url::escapeUrl(newName)));
+ 				// ...and update the document
+ 				pIndex-&gt;replace_document(docId, doc);
+ 			}
+@@ -1502,7 +1514,7 @@
+ 			string term(&quot;XLABEL:&quot;);
+ 
+ 			// Get documents that have this label
+-			term += name;
++			term += Url::escapeUrl(name);
+ 			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+ 				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+ 			{
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-03-16 15:39:33 UTC (rev 766)
++++ trunk/Search/XapianEngine.cpp	2007-03-16 15:45:56 UTC (rev 767)
+@@ -203,6 +203,41 @@
+ 	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
+ 
++	// Do some pre-processing : look for filters with quoted values
++	string::size_type escapedFilterEnd = 0;
++	string::size_type escapedFilterStart = freeQuery.find(&quot;:\&quot;&quot;);
++	while ((escapedFilterStart != string::npos) &amp;&amp;
++		(escapedFilterStart &lt; freeQuery.length() - 2))
++	{
++		escapedFilterEnd = freeQuery.find(&quot;\&quot;&quot;, escapedFilterStart + 2);
++		if (escapedFilterEnd == string::npos)
++		{
++			break;
++		}
++
++		string filterValue = freeQuery.substr(escapedFilterStart + 2, escapedFilterEnd - escapedFilterStart - 2);
++		if (filterValue.empty() == false)
++		{
++			string escapedValue(Url::escapeUrl(filterValue));
++
++			freeQuery.replace(escapedFilterStart + 1, escapedFilterEnd - escapedFilterStart,
++				escapedValue);
++			escapedFilterEnd = escapedFilterEnd + escapedValue.length() - filterValue.length();
++		}
++		else
++		{
++			// No value !
++			freeQuery.replace(escapedFilterStart, escapedFilterEnd - escapedFilterStart + 1, &quot;:&quot;);
++			escapedFilterEnd -= 2;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: replaced filter: &quot; &lt;&lt; freeQuery &lt;&lt; endl;
++#endif
++
++		// Next
++		escapedFilterStart = freeQuery.find(&quot;:\&quot;&quot;, escapedFilterEnd);
++	}
++
+ 	// Activate all options and parse
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery,
+ 		Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|Xapian::QueryParser::FLAG_WILDCARD);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000760.html">[Pinot-svn] r766 - in trunk: Index UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000762.html">[Pinot-svn] r768 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#761">[ date ]</a>
+              <a href="thread.html#761">[ thread ]</a>
+              <a href="subject.html#761">[ subject ]</a>
+              <a href="author.html#761">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

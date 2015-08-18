@@ -1,0 +1,560 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r42 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r42%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200512311311.jBVDBXxX017346%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000040.html">
+   <LINK REL="Next"  HREF="000042.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r42 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r42%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200512311311.jBVDBXxX017346%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r42 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Dec 31 14:11:33 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000040.html">[Pinot-svn] r41 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000042.html">[Pinot-svn] r43 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#41">[ date ]</a>
+              <a href="thread.html#41">[ thread ]</a>
+              <a href="subject.html#41">[ subject ]</a>
+              <a href="author.html#41">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-31 14:11:29 +0100 (Sat, 31 Dec 2005)
+New Revision: 42
+
+Modified:
+   trunk/UI/GTK2/src/PinotUtils.cpp
+   trunk/UI/GTK2/src/PinotUtils.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/queryDialog.cc
+Log:
+Somewhat better charset conversion, especially for results, for which the
+charset obtained by the engine or the document is taken into account. Stuff
+that's already in UTF-8 is kept that way.
+
+
+Modified: trunk/UI/GTK2/src/PinotUtils.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotUtils.cpp	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/PinotUtils.cpp	2005-12-31 13:11:29 UTC (rev 42)
+@@ -138,16 +138,41 @@
+ 	return treeColumn;
+ }
+ 
+-/// Converts to UTF-8, catches conversion errors
+-ustring to_utf8(string text, ustring fallback)
++/// Converts to UTF-8.
++ustring to_utf8(const string &amp;text)
+ {
++	std::string charset;
++
++	// Get the locale charset
++	get_charset(charset);
++	// Call overload
++	return to_utf8(text, charset);
++}
++
++/// Converts from the given charset to UTF-8.
++ustring to_utf8(const string &amp;text, const string &amp;charset)
++{
++	if ((charset == &quot;UTF-8&quot;) ||
++		(charset == &quot;utf-8&quot;))
++	{
++		// No conversion necessary
++		return text;
++	}
++
+ 	try
+ 	{
+-		return locale_to_utf8(text);
++		if (charset.empty() == false)
++		{
++			return convert_with_fallback(text, &quot;UTF-8&quot;, charset);
++		}
++		else
++		{
++			return locale_to_utf8(text);
++		}
+ 	}
+ 	catch (ConvertError &amp;ce)
+ 	{
+ 	}
+ 
+-	return fallback;
++	return &quot;&quot;;
+ }
+
+Modified: trunk/UI/GTK2/src/PinotUtils.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotUtils.h	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/PinotUtils.h	2005-12-31 13:11:29 UTC (rev 42)
+@@ -40,7 +40,10 @@
+ 	const Gtk::TreeModelColumnBase&amp; modelColumn,
+ 	const  Gtk::TreeViewColumn::SlotCellData &amp;renderTextAndIconCell);
+ 
+-/// Converts to UTF-8, catches conversion errors
+-Glib::ustring to_utf8(std::string text, Glib::ustring fallback = Glib::ustring(&quot;&quot;));
++/// Converts to UTF-8.
++Glib::ustring to_utf8(const std::string &amp;text);
+ 
++/// Converts from the given charset to UTF-8.
++Glib::ustring to_utf8(const std::string &amp;text, const std::string &amp;charset);
++
+ #endif // _PINOTUTILS_HH
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2005-12-31 13:11:29 UTC (rev 42)
+@@ -347,7 +347,7 @@
+ 			}
+ 
+ 			RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
+-			refBuffer-&gt;set_text(to_utf8(extract));
++			refBuffer-&gt;set_text(extract);
+ 			// The extract is not editable
+ 			m_extractTextview-&gt;set_editable(false);
+ 			m_extractTextview-&gt;set_cursor_visible(false);
+@@ -391,7 +391,7 @@
+ // Returns true if something was added to the tree.
+ //
+ bool ResultsTree::addResults(QueryProperties &amp;queryProps, const string &amp;engineName,
+-	const vector&lt;Result&gt; &amp;resultsList, bool groupBySearchEngine)
++	const vector&lt;Result&gt; &amp;resultsList, const string &amp;charset, bool groupBySearchEngine)
+ {
+ 	std::map&lt;string, TreeModel::iterator&gt; updatedGroups;
+ 	string registeredEngineName = engineName;
+@@ -483,17 +483,20 @@
+ 
+ 			// Has the result's ranking changed ?
+ 			float oldestScore = 0;
+-			float previousScore = history.hasItem(queryName, registeredEngineName, location, oldestScore);
++			float previousScore = history.hasItem(queryName, registeredEngineName,
++				location, oldestScore);
+ 			if (previousScore &gt; 0)
+ 			{
+ 				// Update this result whatever the current and previous rankings were
+-				history.updateItem(queryName, registeredEngineName, location, title, extract, language, currentScore);
++				history.updateItem(queryName, registeredEngineName, location,
++					title, to_utf8(extract, charset).c_str(), language, currentScore);
+ 				rankDiff = (int)(currentScore - previousScore);
+ 			}
+ 			else
+ 			{
+ 				// No, this is a new result
+-				history.insertItem(queryName, registeredEngineName, location, resultIter-&gt;getTitle(), extract, language, currentScore);
++				history.insertItem(queryName, registeredEngineName, location,
++					resultIter-&gt;getTitle(), to_utf8(extract, charset).c_str(), language, currentScore);
+ 				// New results are displayed as such only if the query has already been run on the engine
+ 				if (isNewQuery == false)
+ 				{
+@@ -503,8 +506,9 @@
+ 			}
+ 
+ 			++count;
+-			if (appendResult(title, location, currentScore, language, rankDiff,
+-				queryName, engineId, indexId, titleIter, &amp;(*groupIter), true) == true)
++			if (appendResult(to_utf8(title, charset), to_utf8(location, charset),
++				currentScore, language, rankDiff, queryName, engineId, indexId,
++				titleIter, &amp;(*groupIter), true) == true)
+ 			{
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count &lt;&lt; endl;
+@@ -627,7 +631,8 @@
+ 					if (appendGroup(groupName, newType, groupIter) == true)
+ 					{
+ 						// Add result
+-						success = appendResult(locale_from_utf8(childRow[m_resultsColumns.m_text]), url,
++						success = appendResult(childRow[m_resultsColumns.m_text],
++							childRow[m_resultsColumns.m_url],
+ 							(float)atof(locale_from_utf8(childRow[m_resultsColumns.m_score]).c_str()),
+ 							locale_from_utf8(childRow[m_resultsColumns.m_language]),
+ 							childRow[m_resultsColumns.m_rankDiff],
+@@ -686,7 +691,8 @@
+ 							if (appendGroup(engineName, newType, groupIter) == true)
+ 							{
+ 								// Add result
+-								appendResult(locale_from_utf8(childRow[m_resultsColumns.m_text]), url,
++								appendResult(childRow[m_resultsColumns.m_text],
++									childRow[m_resultsColumns.m_url],
+ 									(float)atof(locale_from_utf8(childRow[m_resultsColumns.m_score]).c_str()),
+ 									locale_from_utf8(childRow[m_resultsColumns.m_language]),
+ 									childRow[m_resultsColumns.m_rankDiff],
+@@ -958,7 +964,7 @@
+ //
+ // Adds a new row in the results tree.
+ //
+-bool ResultsTree::appendResult(const string &amp;text, const string &amp;url,
++bool ResultsTree::appendResult(const ustring &amp;text, const ustring &amp;url,
+ 	float score, const string &amp;language, int rankDiff,
+ 	const string &amp;queryName, unsigned int engineId, unsigned int indexId,
+ 	TreeModel::iterator &amp;newRowIter, const TreeModel::Row *parentRow, bool noDuplicates)
+@@ -1007,7 +1013,6 @@
+ #endif
+ 	}
+ 
+-	string strippedText = HtmlTokenizer::stripTags(text);
+ 	XapianIndex index(m_settings.m_indexLocation);
+ 	ViewHistory viewHistory(m_settings.m_historyDatabase);
+ 	bool isIndexed = false;
+@@ -1026,8 +1031,7 @@
+ 	snprintf(scoreStr, 128, &quot;%.f&quot;, score);
+ 
+ 	TreeModel::Row childRow = *newRowIter;
+-	updateRow(childRow, to_utf8(strippedText, &quot;???&quot;),
+-		to_utf8(url), scoreStr,
++	updateRow(childRow, text, url, scoreStr,
+ 		to_utf8(language), to_utf8(queryName), engineId, indexId,
+ 		ResultsModelColumns::RESULT_TITLE, isIndexed,
+ 		wasViewed, rankDiff);
+@@ -1050,7 +1054,7 @@
+ 		// No, it isn't: insert a new group in the tree
+ 		groupIter = m_refStore-&gt;append();
+ 		TreeModel::Row groupRow = *groupIter;
+-		updateRow(groupRow, to_utf8(groupName, &quot;???&quot;),
++		updateRow(groupRow, to_utf8(groupName),
+ 				&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;, 0, 0, groupType,
+ 				false, false, false);
+ 
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/ResultsTree.h	2005-12-31 13:11:29 UTC (rev 42)
+@@ -56,7 +56,8 @@
+ 		  * Returns true if something was added to the tree.
+ 		  */
+ 		bool addResults(QueryProperties &amp;queryProps, const std::string &amp;engineName,
+-			const std::vector&lt;Result&gt; &amp;resultsList, bool groupBySearchEngine);
++			const std::vector&lt;Result&gt; &amp;resultsList, const std::string &amp;charset,
++			bool groupBySearchEngine);
+ 
+ 		/// Groups results.
+ 		void regroupResults(bool groupBySearchEngine);
+@@ -131,7 +132,7 @@
+ 			Gtk::TreeModel::iterator &amp;groupIter);
+ 
+ 		/// Adds a new row in the results tree.
+-		bool appendResult(const std::string &amp;text, const std::string &amp;url,
++		bool appendResult(const Glib::ustring &amp;text, const Glib::ustring &amp;url,
+ 			float score, const std::string &amp;language, int rankDiff,
+ 			const std::string &amp;queryName, unsigned int engineId, unsigned int indexId,
+ 			Gtk::TreeModel::iterator &amp;newRowIter,
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2005-12-31 13:11:29 UTC (rev 42)
+@@ -291,8 +291,13 @@
+ 	return m_queryProps;
+ }
+ 
+-const vector&lt;Result&gt; &amp;QueryingThread::getResults(void) const
++const vector&lt;Result&gt; &amp;QueryingThread::getResults(string &amp;charset) const
+ {
++	charset = m_resultsCharset;
++#ifdef DEBUG
++	cout &lt;&lt; &quot;QueryingThread::getResults: charset is &quot; &lt;&lt; charset &lt;&lt; endl;
++#endif
++
+ 	return m_resultsList;
+ }
+ 
+@@ -331,9 +336,11 @@
+ 	{
+ 		const vector&lt;Result&gt; &amp;resultsList = engine-&gt;getResults();
+ 
+-		// Copy the results list
+ 		m_resultsList.clear();
+ 		m_resultsList.reserve(resultsList.size());
++		m_resultsCharset = engine-&gt;getResultsCharset();
++
++		// Copy the results list
+ 		for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
+@@ -763,8 +770,7 @@
+ 		}
+ 
+ 		// Use the title we were supplied with ?
+-		if ((m_docInfo.getTitle().empty() == false) ||
+-			(urlObj.getProtocol() == &quot;file&quot;))
++		if (m_docInfo.getTitle().empty() == false)
+ 		{
+ 			m_pDoc-&gt;setTitle(m_docInfo.getTitle());
+ 		}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2005-12-31 13:11:29 UTC (rev 42)
+@@ -129,7 +129,7 @@
+ 
+ 		QueryProperties getQuery(void) const;
+ 
+-		const std::vector&lt;Result&gt; &amp;getResults(void) const;
++		const std::vector&lt;Result&gt; &amp;getResults(std::string &amp;charset) const;
+ 
+ 		virtual bool stop(void);
+ 
+@@ -139,6 +139,7 @@
+ 		std::string m_engineOption;
+ 		QueryProperties m_queryProps;
+ 		std::vector&lt;Result&gt; m_resultsList;
++		std::string m_resultsCharset;
+ 
+ 		void do_querying();
+ 
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/importDialog.cc	2005-12-31 13:11:29 UTC (rev 42)
+@@ -244,7 +244,7 @@
+ 
+ void importDialog::on_selectButton_clicked()
+ {
+-	ustring fileName = locale_to_utf8(m_directory);
++	ustring fileName = to_utf8(m_directory);
+ 
+ 	if (select_file_name(*this, _(&quot;Document To Import&quot;), fileName, true, m_importDirectory) == true)
+ 	{
+@@ -257,9 +257,9 @@
+ 		if (pos != string::npos)
+ 		{
+ 			// Update m_directory
+-		m_directory = locale_from_utf8(fileName.substr(0, pos + 1));
++			m_directory = locale_from_utf8(fileName.substr(0, pos + 1));
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;importDialog::on_selectButton_clicked: directory now &quot; &lt;&lt; m_directory &lt;&lt; endl;
++			cout &lt;&lt; &quot;importDialog::on_selectButton_clicked: directory now &quot; &lt;&lt; m_directory &lt;&lt; endl;
+ #endif
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/mainWindow.cc	2005-12-31 13:11:29 UTC (rev 42)
+@@ -818,7 +818,7 @@
+ 
+ 		IndexPage *pIndexPage = NULL;
+ 		IndexTree *pIndexTree = NULL;
+-		ustring indexName = locale_to_utf8(pBrowseThread-&gt;getIndexName());
++		ustring indexName = to_utf8(pBrowseThread-&gt;getIndexName());
+ 
+ 		// Find the page for this index
+ 		pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+@@ -877,7 +877,8 @@
+ 		QueryProperties queryProps = pQueryThread-&gt;getQuery();
+ 		ustring queryName = to_utf8(queryProps.getName());
+ 		ustring engineName = to_utf8(pQueryThread-&gt;getEngineName());
+-		const vector&lt;Result&gt; &amp;resultsList = pQueryThread-&gt;getResults();
++		string resultsCharset;
++		const vector&lt;Result&gt; &amp;resultsList = pQueryThread-&gt;getResults(resultsCharset);
+ 
+ 		status = _(&quot;Query&quot;);
+ 		status += &quot; &quot;;
+@@ -931,7 +932,8 @@
+ 		{
+ 			// Add the results to the tree
+ 			pResultsTree-&gt;addResults(queryProps, engineName,
+-				resultsList, searchenginegroup1-&gt;get_active());
++				resultsList, resultsCharset,
++				searchenginegroup1-&gt;get_active());
+ 			// Switch to that page
+ 			m_pNotebook-&gt;set_current_page(pageNum);
+ 		}
+@@ -963,7 +965,7 @@
+ 			delete pThread;
+ 			return;
+ 		}
+-		ustring indexName = locale_to_utf8(pLabelQueryThread-&gt;getIndexName());
++		ustring indexName = to_utf8(pLabelQueryThread-&gt;getIndexName());
+ 
+ 		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage == NULL)
+@@ -981,7 +983,7 @@
+ 		ustring labelName = pIndexPage-&gt;getLabelName();
+ 		if ((pIndexTree-&gt;isEmpty() == false) &amp;&amp;
+ 			(labelName.empty() == false) &amp;&amp;
+-			(labelName == locale_to_utf8(pLabelQueryThread-&gt;getLabelName())))
++			(labelName == to_utf8(pLabelQueryThread-&gt;getLabelName())))
+ 		{
+ 			const set&lt;unsigned int&gt; &amp;documentsList = pLabelQueryThread-&gt;getDocumentsList();
+ 			char docsCountStr[64];
+@@ -1063,7 +1065,7 @@
+ 						if (m_pHtmlView-&gt;renderData(pData, dataLength, url) == true)
+ 						{
+ 							//viewstop1-&gt;set_sensitive(true);
+-							set_status(locale_to_utf8(url));
++							set_status(to_utf8(url));
+ 						}
+ 
+ 						m_pNotebook-&gt;set_current_page(pageNum);
+@@ -1122,7 +1124,7 @@
+ 				// Was the current label applied to that document ?
+ 				ustring labelName = pIndexPage-&gt;getLabelName();
+ 				if ((labelName.empty() == false) &amp;&amp;
+-					(labelName == locale_to_utf8(pIndexThread-&gt;getLabelName())))
++					(labelName == to_utf8(pIndexThread-&gt;getLabelName())))
+ 				{
+ 					labeled = true;
+ 				}
+@@ -1312,7 +1314,7 @@
+ 	bool hasLabel = false;
+ 
+ 	// Find the page for this index
+-	pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(locale_to_utf8(indexName), NotebookPageBox::INDEX_PAGE));
++	pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(to_utf8(indexName), NotebookPageBox::INDEX_PAGE));
+ 	if (pIndexPage == NULL)
+ 	{
+ 		// It's probably been closed by the user
+@@ -2996,7 +2998,7 @@
+ 				{
+ 					//viewstop1-&gt;set_sensitive(true);
+ 				}
+-				set_status(locale_to_utf8(m_pHtmlView-&gt;getLocation()));
++				set_status(to_utf8(m_pHtmlView-&gt;getLocation()));
+ 			}
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2005-12-31 13:11:29 UTC (rev 42)
+@@ -297,8 +297,8 @@
+ 		TreeModel::iterator iter = m_refMailTree-&gt;append();
+ 		TreeModel::Row row = *iter;
+ 
+-		row[m_mailColumns.m_location] = locale_to_utf8(fileName);
+-		row[m_mailColumns.m_type] = locale_to_utf8(mimeType);
++		row[m_mailColumns.m_location] = to_utf8(fileName);
++		row[m_mailColumns.m_type] = to_utf8(mimeType);
+ 		row[m_mailColumns.m_mTime] = 0;
+ 		row[m_mailColumns.m_minDate] = 0;
+ 	}
+@@ -360,7 +360,7 @@
+ 	// Now create a new entry in the labels list
+ 	TreeModel::iterator iter = m_refLabelsTree-&gt;append();
+ 	TreeModel::Row row = *iter;
+-	row[m_labelsColumns.m_name] = locale_to_utf8(_(&quot;New Label&quot;));
++	row[m_labelsColumns.m_name] = to_utf8(_(&quot;New Label&quot;));
+ 	// This marks the label as new
+ 	row[m_labelsColumns.m_enabled] = false;
+ 	// FIXME: initialize the colour to something meaningful, depending on the current theme perhaps ?
+@@ -469,7 +469,7 @@
+ 		if (select_file_name(*this, _(&quot;Mbox File Location&quot;), fileName, true) == true)
+ 		{
+ 			row[m_mailColumns.m_location] = fileName;
+-			row[m_mailColumns.m_type] = locale_to_utf8(MIMEScanner::scanFile(fileName));
++			row[m_mailColumns.m_type] = to_utf8(MIMEScanner::scanFile(fileName));
+ 		}
+ 	}
+ }
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2005-12-31 11:26:01 UTC (rev 41)
++++ trunk/UI/GTK2/src/queryDialog.cc	2005-12-31 13:11:29 UTC (rev 42)
+@@ -13,6 +13,7 @@
+ #include &quot;config.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;NLS.h&quot;
++#include &quot;PinotUtils.h&quot;
+ #include &quot;queryDialog.hh&quot;
+ 
+ using namespace std;
+@@ -50,18 +51,18 @@
+ 	}
+ 	else
+ 	{
+-		nameEntry-&gt;set_text(locale_to_utf8(name));
++		nameEntry-&gt;set_text(to_utf8(name));
+ 	}
+ 	// Query terms
+-	andEntry-&gt;set_text(locale_to_utf8(m_properties.getAndWords()));
+-	phraseEntry-&gt;set_text(locale_to_utf8(m_properties.getPhrase()));
+-	anyEntry-&gt;set_text(locale_to_utf8(m_properties.getAnyWords()));
+-	notEntry-&gt;set_text(locale_to_utf8(m_properties.getNotWords()));
++	andEntry-&gt;set_text(to_utf8(m_properties.getAndWords()));
++	phraseEntry-&gt;set_text(to_utf8(m_properties.getPhrase()));
++	anyEntry-&gt;set_text(to_utf8(m_properties.getAnyWords()));
++	notEntry-&gt;set_text(to_utf8(m_properties.getNotWords()));
+ 
+ 	// Host name
+-	hostNameEntry-&gt;set_text(locale_to_utf8(m_properties.getHostFilter()));
++	hostNameEntry-&gt;set_text(to_utf8(m_properties.getHostFilter()));
+ 	// File name
+-	fileNameEntry-&gt;set_text(locale_to_utf8(m_properties.getFileFilter()));
++	fileNameEntry-&gt;set_text(to_utf8(m_properties.getFileFilter()));
+ 	// Maximum number of results
+ 	resultsCountSpinbutton-&gt;set_value((double)m_properties.getMaximumResultsCount());
+ 	// Index all results
+@@ -93,7 +94,7 @@
+ 
+ 		iter = m_refLabelNameTree-&gt;append();
+ 		row = *iter;
+-		row[m_labelNameColumns.m_name] = locale_to_utf8(labelName);
++		row[m_labelNameColumns.m_name] = to_utf8(labelName);
+ 		if (labelName == m_properties.getLabelName())
+ 		{
+ 			labelNameCombobox-&gt;set_active(labelNum);
+@@ -101,7 +102,7 @@
+ 
+ 		iter = m_refLabelFilterTree-&gt;append();
+ 		row = *iter;
+-		row[m_labelFilterColumns.m_name] = locale_to_utf8(labelName);
++		row[m_labelFilterColumns.m_name] = to_utf8(labelName);
+ 		if (labelName == m_properties.getLabelFilter())
+ 		{
+ 			labelFilterCombobox-&gt;set_active(labelNum);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000040.html">[Pinot-svn] r41 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000042.html">[Pinot-svn] r43 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#41">[ date ]</a>
+              <a href="thread.html#41">[ thread ]</a>
+              <a href="subject.html#41">[ subject ]</a>
+              <a href="author.html#41">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

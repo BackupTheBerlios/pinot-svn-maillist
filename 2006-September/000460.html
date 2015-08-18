@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r467 - in trunk: Monitor UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r467%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200609071150.k87BoR02023277%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000459.html">
+   <LINK REL="Next"  HREF="000461.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r467 - in trunk: Monitor UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r467%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200609071150.k87BoR02023277%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r467 - in trunk: Monitor UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Sep  7 13:50:27 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000459.html">[Pinot-svn] r466 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000461.html">[Pinot-svn] r468 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#460">[ date ]</a>
+              <a href="thread.html#460">[ thread ]</a>
+              <a href="subject.html#460">[ subject ]</a>
+              <a href="author.html#460">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-07 13:50:27 +0200 (Thu, 07 Sep 2006)
+New Revision: 467
+
+Modified:
+   trunk/Monitor/MonitorHandler.cpp
+   trunk/Monitor/MonitorHandler.h
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Update signalling in MonitorHandler is no longer useful.
+
+
+Modified: trunk/Monitor/MonitorHandler.cpp
+===================================================================
+--- trunk/Monitor/MonitorHandler.cpp	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/Monitor/MonitorHandler.cpp	2006-09-07 11:50:27 UTC (rev 467)
+@@ -17,7 +17,6 @@
+ #include &quot;MonitorHandler.h&quot;
+ 
+ using namespace std;
+-using namespace SigC;
+ 
+ MonitorHandler::MonitorHandler()
+ {
+@@ -31,8 +30,3 @@
+ {
+ 	return m_fileNames;
+ }
+-
+-Signal3&lt;void, IndexedDocument, unsigned int, string&gt;&amp; MonitorHandler::getUpdateSignal(void)
+-{
+-	return m_signalUpdate;
+-}
+
+Modified: trunk/Monitor/MonitorHandler.h
+===================================================================
+--- trunk/Monitor/MonitorHandler.h	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/Monitor/MonitorHandler.h	2006-09-07 11:50:27 UTC (rev 467)
+@@ -20,8 +20,6 @@
+ #include &lt;string&gt;
+ #include &lt;set&gt;
+ #include &lt;map&gt;
+-#include &lt;sigc++/compatibility.h&gt;
+-#include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;MonitorInterface.h&quot;
+@@ -64,12 +62,8 @@
+ 		/// Returns the names of files to monitor.
+ 		const std::set&lt;std::string&gt; &amp;getFileNames(void) const;
+ 
+-		/// Returns the file update signal.
+-		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
+-
+ 	protected:
+ 		std::set&lt;std::string&gt; m_fileNames;
+-		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt; m_signalUpdate;
+ 
+ 	private:
+ 		MonitorHandler(const MonitorHandler &amp;other);
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2006-09-07 11:50:27 UTC (rev 467)
+@@ -16,6 +16,8 @@
+ 
+ #include &lt;iostream&gt;
+ #include &lt;sigc++/class_slot.h&gt;
++#include &lt;sigc++/compatibility.h&gt;
++#include &lt;sigc++/slot.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;glibmm/stringutils.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+@@ -91,19 +93,12 @@
+ 	WorkerThread::immediateFlush(false);
+ 
+ 	// Fire up the mail monitor thread now
+-	MboxHandler *pMboxHandler = new MboxHandler();
+-	// Connect to its update signal
+-	pMboxHandler-&gt;getUpdateSignal().connect(
+-		SigC::slot(*this, &amp;DaemonState::on_message_indexupdate));
+-	MonitorThread *pMailMonitorThread = new MonitorThread(m_pMailMonitor, pMboxHandler);
++	MonitorThread *pMailMonitorThread = new MonitorThread(m_pMailMonitor, new MboxHandler());
+ 	pMailMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+ 	start_thread(pMailMonitorThread, true);
+ 
+ 	// Same for the disk monitor thread
+ 	m_pDiskHandler = new OnDiskHandler();
+-	// Connect to its update signal
+-	m_pDiskHandler-&gt;getUpdateSignal().connect(
+-		SigC::slot(*this, &amp;DaemonState::on_message_indexupdate));
+ 	MonitorThread *pDiskMonitorThread = new MonitorThread(m_pDiskMonitor, m_pDiskHandler);
+ 	pDiskMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+ 	start_thread(pDiskMonitorThread, true);
+@@ -201,11 +196,6 @@
+ 	pop_queue(indexedUrl);
+ }
+ 
+-void DaemonState::on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, string indexName)
+-{
+-	// FIXME: anything to do ?
+-}
+-
+ void DaemonState::on_message_filefound(const string &amp;location, const string &amp;sourceLabel, bool isDirectory)
+ {
+ 	if (isDirectory == false)
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/UI/GTK2/src/DaemonState.h	2006-09-07 11:50:27 UTC (rev 467)
+@@ -37,8 +37,6 @@
+ 
+ 		void on_thread_end(WorkerThread *pThread);
+ 
+-		void on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, std::string indexName);
+-
+ 		void on_message_filefound(const std::string &amp;location, const std::string &amp;sourceLabel,
+ 			bool isDirectory);
+ 
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-09-07 11:50:27 UTC (rev 467)
+@@ -177,20 +177,11 @@
+ 
+ 			unsigned int docId = 0;
+ 			indexedFile = m_index.indexDocument(*pTokenizer, labels, docId);
+-			if (indexedFile == true)
++#ifdef DEBUG
++			if (indexedFile == false)
+ 			{
+-				time_t messageDate = boxParser.getDate();
+-
+-				IndexedDocument docInfo(pMessage-&gt;getTitle(),
+-					XapianDatabase::buildUrl(PinotSettings::getInstance().m_daemonIndexLocation, docId),
+-					pMessage-&gt;getLocation(), pMessage-&gt;getType(), pMessage-&gt;getLanguage());
+-				docInfo.setTimestamp(TimeConverter::toTimestamp(messageDate));
+-
+-				// Signal
+-				m_signalUpdate(docInfo, docId, _(&quot;My Documents&quot;));
++				cout &lt;&lt; &quot;MboxHandler::parseMailAccount: couldn't index message &quot; &lt;&lt; docNum &lt;&lt; endl;
+ 			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;MboxHandler::parseMailAccount: couldn't index message &quot; &lt;&lt; docNum &lt;&lt; endl;
+ #endif
+ 
+ 			delete pTokenizer;
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2006-09-07 11:50:27 UTC (rev 467)
+@@ -129,17 +129,11 @@
+ 		indexedFile = m_index.updateDocument(docId, *pTokenizer);
+ 	}
+ 
+-	if (indexedFile == true)
++#ifdef DEBUG
++	if (indexedFile == false)
+ 	{
+-		IndexedDocument indexedDocInfo(docInfo.getTitle(),
+-			XapianDatabase::buildUrl(PinotSettings::getInstance().m_daemonIndexLocation, docId),
+-			docInfo.getLocation(), docInfo.getType(), docInfo.getLanguage());
+-
+-		// Signal
+-		m_signalUpdate(indexedDocInfo, docId, _(&quot;My Documents&quot;));
++		cout &lt;&lt; &quot;OnDiskHandler::indexFile: couldn't index &quot; &lt;&lt; location &lt;&lt; endl;
+ 	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;OnDiskHandler::indexFile: couldn't index &quot; &lt;&lt; location &lt;&lt; endl;
+ #endif
+ 
+ 	delete pTokenizer;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-09-07 11:41:21 UTC (rev 466)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-09-07 11:50:27 UTC (rev 467)
+@@ -27,6 +27,8 @@
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;sigc++/class_slot.h&gt;
++#include &lt;sigc++/compatibility.h&gt;
++#include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;XmlTokenizer.h&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000459.html">[Pinot-svn] r466 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000461.html">[Pinot-svn] r468 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#460">[ date ]</a>
+              <a href="thread.html#460">[ thread ]</a>
+              <a href="subject.html#460">[ subject ]</a>
+              <a href="author.html#460">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

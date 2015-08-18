@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r97 - in trunk: . Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r97%20-%20in%20trunk%3A%20.%20Index&In-Reply-To=%3C200602061423.k16ENUns013722%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000095.html">
+   <LINK REL="Next"  HREF="000097.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r97 - in trunk: . Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r97%20-%20in%20trunk%3A%20.%20Index&In-Reply-To=%3C200602061423.k16ENUns013722%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r97 - in trunk: . Index">fabricecolin at berlios.de
+       </A><BR>
+    <I>Mon Feb  6 15:23:30 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000095.html">[Pinot-svn] r96 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000097.html">[Pinot-svn] r98 - in trunk: Index Search Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#96">[ date ]</a>
+              <a href="thread.html#96">[ thread ]</a>
+              <a href="subject.html#96">[ subject ]</a>
+              <a href="author.html#96">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-02-06 15:23:27 +0100 (Mon, 06 Feb 2006)
+New Revision: 97
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/pinot.spec
+Log:
+Dropped support for libxml++ v0.26 as v2.12 is required now (or so it seems).
+Add H-prefixed terms for all of the host name's subdomains so that searching
+for &quot;Hberlios.de&quot; returns pages from &quot;Hpinot.berlios.de&quot;...
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-02-06 14:16:55 UTC (rev 96)
++++ trunk/Index/XapianIndex.cpp	2006-02-06 14:23:27 UTC (rev 97)
+@@ -163,11 +163,14 @@
+ bool XapianIndex::prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 	Xapian::termcount &amp;termPos, const std::string &amp;summary) const
+ {
++	string title(info.getTitle());
++	string location(info.getLocation());
++	Url urlObj(location);
++
+ 	// Add a magic term :-)
+ 	doc.add_term(MAGIC_TERM);
+ 
+ 	// Index the title with and without prefix T
+-	string title = info.getTitle();
+ 	if (title.empty() == false)
+ 	{
+ 		Document titleDoc;
+@@ -178,17 +181,28 @@
+ 		addTermsToDocument(titleTokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 	}
+ 
+-	string location = info.getLocation();
+-	Url urlObj(location);
+-
+ 	// Index the full URL with prefix U
+ 	doc.add_term(limitTermLength(string(&quot;U&quot;) + location, true));
+-	// ...the host name with prefix H
+-	string hostName = urlObj.getHost();
+-	doc.add_term(limitTermLength(string(&quot;H&quot;) + StringManip::toLowerCase(hostName), true));
++	// ...the host name and included domains with prefix H
++	string hostName(StringManip::toLowerCase(urlObj.getHost()));
++	if (hostName.empty() == false)
++	{
++		doc.add_term(limitTermLength(string(&quot;H&quot;) + hostName, true));
++		string::size_type dotPos = hostName.find('.');
++		while (dotPos != string::npos)
++		{
++			doc.add_term(limitTermLength(string(&quot;H&quot;) + hostName.substr(dotPos + 1), true));
++
++			// Next
++			dotPos = hostName.find('.', dotPos + 1);
++		}
++	}
+ 	// ...and the file name with prefix F
+-	string fileName = urlObj.getFile();
+-	doc.add_term(limitTermLength(string(&quot;F&quot;) + StringManip::toLowerCase(fileName), true));
++	string fileName(urlObj.getFile());
++	if (fileName.empty() == false)
++	{
++		doc.add_term(limitTermLength(string(&quot;F&quot;) + StringManip::toLowerCase(fileName), true));
++	}
+ 	// Finally, add the language with prefix L
+ 	doc.add_term(string(&quot;L&quot;) + StringManip::toLowerCase(m_stemLanguage));
+ 
+
+Modified: trunk/pinot.spec
+===================================================================
+--- trunk/pinot.spec	2006-02-06 14:16:55 UTC (rev 96)
++++ trunk/pinot.spec	2006-02-06 14:23:27 UTC (rev 97)
+@@ -8,18 +8,10 @@
+ License: GPL
+ Group: Applications/Internet 
+ Source: %{name}-%{version}.tar.gz
+-Patch0: libxmlpp026.patch
+ URL: <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A>
+ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+-Requires: xapian-core-libs &gt;= 0.9.2, neon &gt;= 0.24, gtkmm24 &gt;= 2.6, mozilla &gt;= %{mozilla_ver}, sqlite &gt;= 3.1.2, ots &gt;= 0.4.2, libtextcat &gt;= 2.2, fam &gt;= 2.6.10, gmime &gt;= 2.1, file
+-BuildRequires: xapian-core-devel &gt;= 0.9.2, neon-devel &gt;= 0.24, gtkmm24-devel &gt;= 2.6, mozilla-devel &gt;= %{mozilla_ver}, sqlite-devel &gt;= 3.1.2, ots-devel &gt;= 0.4.2, libtextcat-devel &gt;= 2.2, fam-devel &gt;= 2.6.10, gmime-devel &gt;= 2.1, file, boost-devel &gt;= 1.32, desktop-file-utils
+-%if 0%{?_with_libxmlpp026:1}
+-Requires: libxml++ &gt;= 0.26
+-BuildRequires: libxml++-devel &gt;= 0.26
+-%else
+-Requires: libxml++ &gt;= 2.6 
+-BuildRequires: libxml++-devel &gt;= 2.6
+-%endif
++Requires: xapian-core-libs &gt;= 0.9.2, neon &gt;= 0.24, gtkmm24 &gt;= 2.6, libxml++ &gt;= 2.12, mozilla &gt;= %{mozilla_ver}, sqlite &gt;= 3.1.2, ots &gt;= 0.4.2, libtextcat &gt;= 2.2, fam &gt;= 2.6.10, gmime &gt;= 2.1, file
++BuildRequires: xapian-core-devel &gt;= 0.9.2, neon-devel &gt;= 0.24, gtkmm24-devel &gt;= 2.6, libxml++-devel &gt;= 2.12, mozilla-devel &gt;= %{mozilla_ver}, sqlite-devel &gt;= 3.1.2, ots-devel &gt;= 0.4.2, libtextcat-devel &gt;= 2.2, fam-devel &gt;= 2.6.10, gmime-devel &gt;= 2.1, file, boost-devel &gt;= 1.32, desktop-file-utils
+ 
+ %description
+ Pinot is a metasearch tool for the Free Desktop. It enables one to query
+@@ -47,9 +39,6 @@
+ 
+ %prep
+ %setup -q
+-%if 0%{?_with_libxmlpp026:1}
+-%patch0 -p1 -b .xml026
+-%endif
+ 
+ %build
+ make DEBUG=yes
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000095.html">[Pinot-svn] r96 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000097.html">[Pinot-svn] r98 - in trunk: Index Search Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#96">[ date ]</a>
+              <a href="thread.html#96">[ thread ]</a>
+              <a href="subject.html#96">[ subject ]</a>
+              <a href="author.html#96">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

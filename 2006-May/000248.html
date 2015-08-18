@@ -1,0 +1,1717 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r250 - in trunk: Monitor UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r250%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200605200431.k4K4V2jI011522%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000247.html">
+   <LINK REL="Next"  HREF="000249.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r250 - in trunk: Monitor UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r250%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200605200431.k4K4V2jI011522%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r250 - in trunk: Monitor UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat May 20 06:31:02 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000247.html">[Pinot-svn] r249 - in trunk: Monitor UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000249.html">[Pinot-svn] r251 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#248">[ date ]</a>
+              <a href="thread.html#248">[ thread ]</a>
+              <a href="subject.html#248">[ subject ]</a>
+              <a href="author.html#248">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-20 06:30:58 +0200 (Sat, 20 May 2006)
+New Revision: 250
+
+Added:
+   trunk/Monitor/MonitorHandler.cpp
+   trunk/Monitor/MonitorHandler.h
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+Removed:
+   trunk/UI/GTK2/src/MonitorHandler.cpp
+   trunk/UI/GTK2/src/MonitorHandler.h
+Modified:
+   trunk/Monitor/Makefile.am
+   trunk/UI/GTK2/src/Makefile.am
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+Split MonitorHandler and MboxHandler. In MonitorThread, replaced calls to FAM
+with MonitorInterface.
+
+
+Modified: trunk/Monitor/Makefile.am
+===================================================================
+--- trunk/Monitor/Makefile.am	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/Monitor/Makefile.am	2006-05-20 04:30:58 UTC (rev 250)
+@@ -4,6 +4,7 @@
+ 	INotifyMonitor.h \
+ 	MonitorEvent.h \
+ 	MonitorFactory.h \
++	MonitorHandler.h \
+ 	MonitorInterface.h
+ 
+ noinst_LTLIBRARIES = libMonitor.la
+@@ -11,7 +12,9 @@
+ libMonitor_la_SOURCES = \
+ 	INotifyMonitor.cpp \
+ 	MonitorEvent.cpp \
+-	MonitorFactory.cpp
++	MonitorFactory.cpp \
++	MonitorHandler.cpp
+ 
+-AM_CXXFLAGS = -I../Utils
++AM_CXXFLAGS = -I../Utils -I../Tokenize -I../SQL -I../Collect -I../Search -I../Index \
++	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @SOAP_CFLAGS@ @MIME_CFLAGS@ @SIGCPP_CFLAGS@
+ 
+
+Copied: trunk/Monitor/MonitorHandler.cpp (from rev 249, trunk/UI/GTK2/src/MonitorHandler.cpp)
+===================================================================
+--- trunk/UI/GTK2/src/MonitorHandler.cpp	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/Monitor/MonitorHandler.cpp	2006-05-20 04:30:58 UTC (rev 250)
+@@ -0,0 +1,33 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &quot;MonitorHandler.h&quot;
++
++using namespace std;
++using namespace SigC;
++
++MonitorHandler::MonitorHandler()
++{
++}
++
++MonitorHandler::~MonitorHandler()
++{
++}
++
++Signal3&lt;void, IndexedDocument, unsigned int, string&gt;&amp; MonitorHandler::getUpdateSignal(void)
++{
++	return m_signalUpdate;
++}
+
+Copied: trunk/Monitor/MonitorHandler.h (from rev 249, trunk/UI/GTK2/src/MonitorHandler.h)
+===================================================================
+--- trunk/UI/GTK2/src/MonitorHandler.h	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/Monitor/MonitorHandler.h	2006-05-20 04:30:58 UTC (rev 250)
+@@ -0,0 +1,64 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++ 
++#ifndef _MONITORHANDLER_HH
++#define _MONITORHANDLER_HH
++
++#include &lt;string&gt;
++#include &lt;set&gt;
++#include &lt;map&gt;
++#include &lt;sigc++/compatibility.h&gt;
++#include &lt;sigc++/slot.h&gt;
++
++#include &quot;IndexedDocument.h&quot;
++
++class MonitorHandler
++{
++	public:
++		MonitorHandler();
++		virtual ~MonitorHandler();
++
++		/// Returns locations.
++		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
++			std::set&lt;std::string&gt; &amp;locationsToRemove) = 0;
++
++		/// Handles file existence events.
++		virtual bool fileExists(const std::string &amp;fileName) = 0;
++
++		/// Handles file creation events.
++		virtual bool fileCreated(const std::string &amp;fileName) = 0;
++
++		/// Handles file modified events.
++		virtual bool fileModified(const std::string &amp;fileName) = 0;
++
++		/// Handles file moved events.
++		virtual bool fileMoved(const std::string &amp;fileName) = 0;
++
++		/// Handles file deleted events.
++		virtual bool fileDeleted(const std::string &amp;fileName) = 0;
++
++		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
++
++	protected:
++		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt; m_signalUpdate;
++
++	private:
++		MonitorHandler(const MonitorHandler &amp;other);
++		MonitorHandler &amp;operator=(const MonitorHandler &amp;other);
++
++};
++
++#endif	// _MONITORHANDLER_HH
+
+Modified: trunk/UI/GTK2/src/Makefile.am
+===================================================================
+--- trunk/UI/GTK2/src/Makefile.am	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/UI/GTK2/src/Makefile.am	2006-05-20 04:30:58 UTC (rev 250)
+@@ -21,7 +21,7 @@
+ 	WorkerThreads.h \
+ 	HtmlView.h \
+ 	IndexTree.h \
+-	MonitorHandler.h \
++	MboxHandler.cpp \
+ 	PinotSettings.h \
+ 	ResultsTree.h
+ 
+@@ -47,18 +47,20 @@
+ 	WorkerThreads.cpp \
+ 	HtmlView.cpp \
+ 	IndexTree.cpp \
+-	MonitorHandler.cpp \
++	MboxHandler.cpp \
+ 	PinotSettings.cpp \
+ 	ResultsTree.cpp
+ 
+ bin_PROGRAMS = pinot
+ 
+-AM_CXXFLAGS = -I../../../Utils -I../../../Tokenize -I../../../SQL -I../../../Collect \
+-	-I../../../Search -I../../../Search/Google -I../../../Index -I../../RenderHTML \
++AM_CXXFLAGS = -I../../../Utils -I../../../Tokenize -I../../../SQL \
++	-I../../../Monitor -I../../../Collect -I../../../Search \
++	-I../../../Search/Google -I../../../Index -I../../RenderHTML \
+ 	@SQL_CFLAGS@ @HTTP_CFLAGS@ @MIME_CFLAGS@ @XML_CFLAGS@ @SOAP_CFLAGS@ @INDEX_CFLAGS@ @UI_CFLAGS@
+ 
+-pinot_LDADD = -L../../../Utils -L../../../Tokenize -L../../../SQL -L../../../Collect \
+-	-L../../../Search -L../../../Search/Google -L../../../Index -L../../RenderHTML \
+-	-lHTML -lIndex @SEARCH_LIBS@ -lCollect -lSQL -lTokenize -lUtils \
++pinot_LDADD = -L../../../Utils -L../../../Tokenize -L../../../SQL -L../../../Monitor \
++	-L../../../Collect -L../../../Search -L../../../Search/Google \
++	-L../../../Index -L../../RenderHTML \
++	-lHTML -lIndex @SEARCH_LIBS@ -lMonitor -lCollect -lSQL -lTokenize -lUtils \
+ 	@LIBS@ @UI_LIBS@ @INDEX_LIBS@ @SOAP_LIBS@ @XML_LIBS@ @MIME_LIBS@ @HTTP_LIBS@ @SQL_LIBS@ @MISC_LIBS@
+ 
+
+Added: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-05-20 04:30:58 UTC (rev 250)
+@@ -0,0 +1,465 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;fcntl.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;iostream&gt;
++#include &lt;fstream&gt;
++
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
++#include &quot;StringManip.h&quot;
++#include &quot;Timer.h&quot;
++#include &quot;TimeConverter.h&quot;
++#include &quot;TokenizerFactory.h&quot;
++#include &quot;FileCollector.h&quot;
++#include &quot;XapianIndex.h&quot;
++#include &quot;XapianEngine.h&quot;
++#include &quot;PinotUtils.h&quot;
++#include &quot;MboxHandler.h&quot;
++
++using namespace std;
++using namespace SigC;
++
++MboxHandler::MboxHandler() :
++	MonitorHandler(),
++	m_locationsCount(0)
++{
++}
++
++MboxHandler::~MboxHandler()
++{
++}
++
++bool MboxHandler::checkMailAccount(const string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
++		off_t &amp;previousSize)
++{
++	struct stat fileStat;
++
++	mailAccount.m_name = to_utf8(fileName);
++
++	// Ensure it's one of our mail accounts
++	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
++	if (mailIter == mailAccounts.end())
++	{
++		// It doesn't seem to be
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not one of &quot; &lt;&lt; mailAccounts.size() &lt;&lt; &quot; accounts&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	// Find out when it was last modified
++	if ((stat(fileName.c_str(), &amp;fileStat) == 0) &amp;&amp;
++		(!S_ISREG(fileStat.st_mode)))
++	{
++		// This is not a file !
++		return false;
++	}
++
++	if (fileStat.st_mtime &lt;= mailIter-&gt;m_modTime)
++	{
++		// No change since last time...
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not modified since last time (&quot;
++			&lt;&lt; mailIter-&gt;m_modTime &lt;&lt; &quot;&gt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxHandler::checkMailAccount: modified since last time (&quot;
++		&lt;&lt; mailIter-&gt;m_modTime &lt;&lt; &quot;&lt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++
++	// Update this mail account's properties
++	mailAccount = (*mailIter);
++	mailAccount.m_modTime = fileStat.st_mtime;
++	previousSize = mailAccount.m_size;
++	mailAccount.m_size = fileStat.st_size;
++
++	return true;
++}
++
++bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, IndexInterface *pIndex,
++	time_t &amp;lastMessageTime,
++	const string &amp;tempSourceLabel, const string &amp;sourceLabel)
++{
++	bool indexedFile = false;
++
++	if (pIndex == NULL)
++	{
++		return false;
++	}
++
++	// Parse the mbox file
++#ifdef DEBUG
++	Timer timer;
++	timer.start();
++#endif
++	const Document *pMessage = boxParser.getDocument();
++	unsigned int docNum = 0;
++
++	while (pMessage != NULL)
++	{
++		// Has this message already been indexed ?
++		unsigned int docId = pIndex-&gt;hasDocument(pMessage-&gt;getLocation());
++		if (docId == 0)
++		{
++			pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
++
++			// Get an ad hoc tokenizer for the message
++			Tokenizer *pTokenizer = TokenizerFactory::getTokenizerByType(pMessage-&gt;getType(), pMessage);
++			if (pTokenizer == NULL)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;MboxHandler::parseMailAccount: no tokenizer for message &quot; &lt;&lt; docNum &lt;&lt; endl;
++#endif
++				break;	
++			}
++
++			set&lt;string&gt; labels;
++			labels.insert(tempSourceLabel);
++
++			unsigned int docId = 0;
++			indexedFile = pIndex-&gt;indexDocument(*pTokenizer, labels, docId);
++			if (indexedFile == true)
++			{
++				time_t messageDate = boxParser.getDate();
++
++				if (messageDate &gt; lastMessageTime)
++				{
++					// This is the latest message so far
++					lastMessageTime = messageDate;
++				}
++
++				pIndex-&gt;setDocumentLabels(docId, labels);
++
++				IndexedDocument docInfo(pMessage-&gt;getTitle(),
++					XapianEngine::buildUrl(PinotSettings::getInstance().m_mailIndexLocation, docId),
++					pMessage-&gt;getLocation(), pMessage-&gt;getType(), pMessage-&gt;getLanguage());
++				docInfo.setTimestamp(TimeConverter::toTimestamp(messageDate));
++
++				// Signal
++				m_signalUpdate(docInfo, docId, _(&quot;My Email&quot;));
++			}
++#ifdef DEBUG
++			else cout &lt;&lt; &quot;MboxHandler::parseMailAccount: couldn't index message &quot; &lt;&lt; docNum &lt;&lt; endl;
++#endif
++
++			delete pTokenizer;
++		}
++		else
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: already indexed message &quot;
++				&lt;&lt; docNum &lt;&lt; &quot;, document ID &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			if (sourceLabel.empty() == false)
++			{
++				set&lt;string&gt; labels;
++
++				// Get the message's labels
++				pIndex-&gt;getDocumentLabels(docId, labels);
++				// The source label must have been applied to the message when originally indexed
++				set&lt;string&gt;::iterator labelIter = labels.find(sourceLabel.c_str());
++				if (labelIter != labels.end())
++				{
++					// Erase it
++					labels.erase(labelIter);
++					// Add the temporary label
++					labels.insert(tempSourceLabel);
++					pIndex-&gt;setDocumentLabels(docId, labels);
++				}
++			}
++		}
++
++		// More messages ?
++		if (boxParser.nextMessage() == false)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: no more messages from parser&quot; &lt;&lt; endl;
++#endif
++			break;
++		}
++		pMessage = boxParser.getDocument();
++		++docNum;
++	}
++#ifdef DEBUG
++	long microsecs = timer.stop();
++	cout &lt;&lt; &quot;MboxHandler::parseMailAccount: parsed &quot; &lt;&lt; docNum &lt;&lt; &quot; documents in &quot;
++		&lt;&lt; microsecs/1000000 &lt;&lt; &quot; seconds (&quot; &lt;&lt; microsecs &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++
++	return indexedFile;
++}
++
++bool MboxHandler::deleteMessages(IndexInterface *pIndex, const string &amp;sourceLabel)
++{
++	set&lt;unsigned int&gt; docIdList;
++	bool unindexedMsgs = false;
++
++	if (pIndex == NULL)
++	{
++		return false;
++	}
++
++	// Unindex all documents labeled with this source label
++	if ((pIndex-&gt;listDocumentsWithLabel(sourceLabel, docIdList) == true) &amp;&amp;
++		(docIdList.empty() == false))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MboxHandler::deleteMessages: &quot; &lt;&lt; docIdList.size() &lt;&lt; &quot; message(s) to unindex&quot; &lt;&lt; endl;
++#endif
++		for (set&lt;unsigned int&gt;::iterator docIter = docIdList.begin();
++			docIter != docIdList.end(); ++docIter)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MboxHandler::deleteMessages: unindexing document ID &quot; &lt;&lt; *docIter &lt;&lt; endl;
++#endif
++			if (pIndex-&gt;unindexDocument(*docIter) == true)
++			{
++				unindexedMsgs = true;
++			}
++		}
++	}
++
++	return unindexedMsgs;
++}
++
++bool MboxHandler::getLocations(set&lt;string&gt; &amp;newLocations,
++	set&lt;string&gt; &amp;locationsToRemove)
++{
++	newLocations.clear();
++	locationsToRemove.clear();
++
++	copy(m_locations.begin(), m_locations.end(),
++		inserter(locationsToRemove, locationsToRemove.begin()));
++
++	// Get the mail accounts map
++	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	for (set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.begin();
++		mailIter != mailAccounts.end(); ++mailIter)
++	{
++		// Is this a known location ?
++		set&lt;string&gt;::iterator locationIter = m_locations.find(mailIter-&gt;m_name);
++		if (locationIter == m_locations.end())
++		{
++			// No, it is new
++			m_locations.insert(mailIter-&gt;m_name);
++			newLocations.insert(mailIter-&gt;m_name);
++		}
++		else
++		{
++			// Since it's a known location, we'd better not remove it
++			set&lt;string&gt;::iterator removeIter = locationsToRemove.find(mailIter-&gt;m_name);
++			if (removeIter != locationsToRemove.end())
++			{
++				locationsToRemove.erase(removeIter);
++			}
++		}
++	}
++
++	// Locations in locationsToRemove have to be removed
++	for (set&lt;string&gt;::iterator removeIter = locationsToRemove.begin();
++		removeIter != locationsToRemove.end(); ++removeIter)
++	{
++		set&lt;string&gt;::iterator locationIter = m_locations.find(*removeIter);
++		if (locationIter != m_locations.end())
++		{
++			m_locations.erase(locationIter);
++		}
++	}
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxHandler::getLocations: &quot; &lt;&lt; m_locations.size() &lt;&lt; &quot; locations, &quot;
++		&lt;&lt; newLocations.size() &lt;&lt; &quot; new, &quot; &lt;&lt; locationsToRemove.size() &lt;&lt; &quot; to be removed&quot; &lt;&lt; endl;
++#endif
++
++	if ((newLocations.empty() == false) ||
++		(locationsToRemove.empty() == false))
++	{
++		return true;
++	}
++
++	return false;
++}
++
++bool MboxHandler::fileExists(const string &amp;fileName)
++{
++	PinotSettings::MailAccount mailAccount;
++	off_t previousSize = 0;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxHandler::fileExists: &quot; &lt;&lt; fileName &lt;&lt; endl;
++#endif
++	if (checkMailAccount(fileName, mailAccount, previousSize) == false)
++	{
++		return false;
++	}
++
++	// Come up with a label for this mbox file's messages
++	string sourceLabel = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
++	sourceLabel += fileName;
++	string tempSourceLabel = &quot;Temp&quot;;
++	tempSourceLabel += sourceLabel;
++
++	// Get the mail index
++	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
++	if (index.isGood() == false)
++	{
++		cerr &lt;&lt; &quot;MboxHandler::fileExists: couldn't get mail index&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	// Get a parser
++	MboxParser boxParser(fileName);
++
++	bool indexedFile = parseMailAccount(boxParser, &amp;index, 
++		mailAccount.m_lastMessageTime, tempSourceLabel, sourceLabel);
++
++	// Any document still labeled with this source label wasn't found
++	// this time around and should be unindexed
++	if (deleteMessages(&amp;index, sourceLabel) == true)
++	{
++		indexedFile = true;
++	}
++
++	// Rename the temporary label for next time the mbox is parsed
++	index.deleteLabel(sourceLabel);
++	index.renameLabel(tempSourceLabel, sourceLabel);
++
++	// Flush the index
++	index.flush();
++
++	// Update this mail account in the list
++	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
++	if (mailIter != mailAccounts.end())
++	{
++		mailAccounts.erase(mailIter);
++	}
++	mailAccounts.insert(mailAccount);
++
++	return indexedFile;
++}
++
++bool MboxHandler::fileCreated(const string &amp;fileName)
++{
++	// Nothing to do here
++	return true;
++}
++
++bool MboxHandler::fileModified(const string &amp;fileName)
++{
++	PinotSettings::MailAccount mailAccount;
++	off_t previousSize = 0, mboxOffset = 0;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MboxHandler::fileModified: &quot; &lt;&lt; fileName &lt;&lt; &quot; changed&quot; &lt;&lt; endl;
++#endif
++	if (checkMailAccount(fileName, mailAccount, previousSize) == false)
++	{
++		return false;
++	}
++
++	if (mailAccount.m_size &lt;= previousSize)
++	{
++		// Parse the file from the beginning...
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MboxHandler::fileModified: file smaller or same size&quot; &lt;&lt; endl;
++#endif
++		return fileExists(fileName);
++	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;MboxHandler::fileModified: file now larger than &quot; &lt;&lt; previousSize &lt;&lt; endl;
++#endif
++
++	// Chances are new messages were added but none removed
++	mboxOffset = previousSize;
++
++	// Come up with a label for this mbox file's messages
++	string sourceLabel = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
++	sourceLabel += fileName;
++
++	// Get the mail index
++	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
++	if (index.isGood() == false)
++	{
++		cerr &lt;&lt; &quot;MboxHandler::fileModified: couldn't get mail index&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	// Get a parser
++	MboxParser boxParser(fileName, mboxOffset);
++
++	bool indexedFile = parseMailAccount(boxParser, &amp;index,
++		mailAccount.m_lastMessageTime, sourceLabel, &quot;&quot;);
++	if (indexedFile == true)
++	{
++		// Do not attempt to find out if some of the messages were removed
++		// Some messages may also be indexed twice now, eg if another message
++		// was inserted and changed offsets
++		// Let the next fileExists() deal with it and clean up the whole thing
++
++		// Flush the index
++		index.flush();
++	}
++
++	// Update this mail account in the list
++	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
++	if (mailIter != mailAccounts.end())
++	{
++		mailAccounts.erase(mailIter);
++	}
++	mailAccounts.insert(mailAccount);
++
++	return indexedFile;
++}
++
++bool MboxHandler::fileMoved(const string &amp;fileName)
++{
++	// Nothing to do here
++	return true;
++}
++
++bool MboxHandler::fileDeleted(const string &amp;fileName)
++{
++	string sourceLabel = string(&quot;<A HREF="mailbox://">mailbox://</A>&quot;) + fileName;
++	bool unindexedFile = false;
++
++	// Get the mail index
++	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
++	if (index.isGood() == false)
++	{
++		cerr &lt;&lt; &quot;MboxHandler::fileDeleted: couldn't get mail index&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	// Unindex all documents labeled with this source label
++	if (deleteMessages(&amp;index, sourceLabel) == true)
++	{
++		// Delete the label
++		index.deleteLabel(sourceLabel);
++
++		return true;
++	}
++
++	return false;
++}
+
+Added: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/UI/GTK2/src/MboxHandler.h	2006-05-20 04:30:58 UTC (rev 250)
+@@ -0,0 +1,76 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++ 
++#ifndef _MBOXHANDLER_HH
++#define _MBOXHANDLER_HH
++
++#include &lt;time.h&gt;
++#include &lt;string&gt;
++#include &lt;set&gt;
++#include &lt;map&gt;
++#include &lt;sigc++/slot.h&gt;
++
++#include &quot;IndexedDocument.h&quot;
++#include &quot;MboxParser.h&quot;
++#include &quot;IndexInterface.h&quot;
++#include &quot;MonitorHandler.h&quot;
++#include &quot;PinotSettings.h&quot;
++
++class MboxHandler : public MonitorHandler
++{
++	public:
++		MboxHandler();
++		virtual ~MboxHandler();
++
++		/// Returns locations.
++		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
++			std::set&lt;std::string&gt; &amp;locationsToRemove);
++
++		/// Handles file existence events.
++		virtual bool fileExists(const std::string &amp;fileName);
++
++		/// Handles file creation events.
++		virtual bool fileCreated(const std::string &amp;fileName);
++
++		/// Handles file modified events.
++		virtual bool fileModified(const std::string &amp;fileName);
++
++		/// Handles file moved events.
++		virtual bool fileMoved(const std::string &amp;fileName);
++
++		/// Handles file deleted events.
++		virtual bool fileDeleted(const std::string &amp;fileName);
++
++	protected:
++		unsigned int m_locationsCount;
++		std::set&lt;std::string&gt; m_locations;
++
++		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
++			off_t &amp;previousSize);
++
++		bool parseMailAccount(MboxParser &amp;boxParser, IndexInterface *pIndex,
++			time_t &amp;lastMessageTime, const std::string &amp;tempSourceLabel,
++			const std::string &amp;sourceLabel);
++
++		bool deleteMessages(IndexInterface *pIndex, const std::string &amp;sourceLabel);
++
++	private:
++		MboxHandler(const MboxHandler &amp;other);
++		MboxHandler &amp;operator=(const MboxHandler &amp;other);
++
++};
++
++#endif // _MBOXHANDLER_HH
+
+Deleted: trunk/UI/GTK2/src/MonitorHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MonitorHandler.cpp	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/UI/GTK2/src/MonitorHandler.cpp	2006-05-20 04:30:58 UTC (rev 250)
+@@ -1,478 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;fcntl.h&gt;
+-#include &lt;unistd.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;fstream&gt;
+-
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
+-#include &quot;StringManip.h&quot;
+-#include &quot;Timer.h&quot;
+-#include &quot;TimeConverter.h&quot;
+-#include &quot;TokenizerFactory.h&quot;
+-#include &quot;FileCollector.h&quot;
+-#include &quot;XapianIndex.h&quot;
+-#include &quot;XapianEngine.h&quot;
+-#include &quot;PinotUtils.h&quot;
+-#include &quot;MonitorHandler.h&quot;
+-
+-using namespace std;
+-using namespace SigC;
+-
+-MonitorHandler::MonitorHandler()
+-{
+-}
+-
+-MonitorHandler::~MonitorHandler()
+-{
+-}
+-
+-Signal3&lt;void, IndexedDocument, unsigned int, string&gt;&amp; MonitorHandler::getUpdateSignal(void)
+-{
+-	return m_signalUpdate;
+-}
+-
+-MboxHandler::MboxHandler() :
+-	MonitorHandler(),
+-	m_locationsCount(0)
+-{
+-}
+-
+-MboxHandler::~MboxHandler()
+-{
+-}
+-
+-bool MboxHandler::checkMailAccount(const string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
+-		off_t &amp;previousSize)
+-{
+-	struct stat fileStat;
+-
+-	mailAccount.m_name = to_utf8(fileName);
+-
+-	// Ensure it's one of our mail accounts
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter == mailAccounts.end())
+-	{
+-		// It doesn't seem to be
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not one of &quot; &lt;&lt; mailAccounts.size() &lt;&lt; &quot; accounts&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	// Find out when it was last modified
+-	if ((stat(fileName.c_str(), &amp;fileStat) == 0) &amp;&amp;
+-		(!S_ISREG(fileStat.st_mode)))
+-	{
+-		// This is not a file !
+-		return false;
+-	}
+-
+-	if (fileStat.st_mtime &lt;= mailIter-&gt;m_modTime)
+-	{
+-		// No change since last time...
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not modified since last time (&quot;
+-			&lt;&lt; mailIter-&gt;m_modTime &lt;&lt; &quot;&gt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::checkMailAccount: modified since last time (&quot;
+-		&lt;&lt; mailIter-&gt;m_modTime &lt;&lt; &quot;&lt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-
+-	// Update this mail account's properties
+-	mailAccount = (*mailIter);
+-	mailAccount.m_modTime = fileStat.st_mtime;
+-	previousSize = mailAccount.m_size;
+-	mailAccount.m_size = fileStat.st_size;
+-
+-	return true;
+-}
+-
+-bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, IndexInterface *pIndex,
+-	time_t &amp;lastMessageTime,
+-	const string &amp;tempSourceLabel, const string &amp;sourceLabel)
+-{
+-	bool indexedFile = false;
+-
+-	if (pIndex == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// Parse the mbox file
+-#ifdef DEBUG
+-	Timer timer;
+-	timer.start();
+-#endif
+-	const Document *pMessage = boxParser.getDocument();
+-	unsigned int docNum = 0;
+-
+-	while (pMessage != NULL)
+-	{
+-		// Has this message already been indexed ?
+-		unsigned int docId = pIndex-&gt;hasDocument(pMessage-&gt;getLocation());
+-		if (docId == 0)
+-		{
+-			pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
+-
+-			// Get an ad hoc tokenizer for the message
+-			Tokenizer *pTokenizer = TokenizerFactory::getTokenizerByType(pMessage-&gt;getType(), pMessage);
+-			if (pTokenizer == NULL)
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;MboxHandler::parseMailAccount: no tokenizer for message &quot; &lt;&lt; docNum &lt;&lt; endl;
+-#endif
+-				break;	
+-			}
+-
+-			set&lt;string&gt; labels;
+-			labels.insert(tempSourceLabel);
+-
+-			unsigned int docId = 0;
+-			indexedFile = pIndex-&gt;indexDocument(*pTokenizer, labels, docId);
+-			if (indexedFile == true)
+-			{
+-				time_t messageDate = boxParser.getDate();
+-
+-				if (messageDate &gt; lastMessageTime)
+-				{
+-					// This is the latest message so far
+-					lastMessageTime = messageDate;
+-				}
+-
+-				pIndex-&gt;setDocumentLabels(docId, labels);
+-
+-				IndexedDocument docInfo(pMessage-&gt;getTitle(),
+-					XapianEngine::buildUrl(PinotSettings::getInstance().m_mailIndexLocation, docId),
+-					pMessage-&gt;getLocation(), pMessage-&gt;getType(), pMessage-&gt;getLanguage());
+-				docInfo.setTimestamp(TimeConverter::toTimestamp(messageDate));
+-
+-				// Signal
+-				m_signalUpdate(docInfo, docId, _(&quot;My Email&quot;));
+-			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;MboxHandler::parseMailAccount: couldn't index message &quot; &lt;&lt; docNum &lt;&lt; endl;
+-#endif
+-
+-			delete pTokenizer;
+-		}
+-		else
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: already indexed message &quot;
+-				&lt;&lt; docNum &lt;&lt; &quot;, document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			if (sourceLabel.empty() == false)
+-			{
+-				set&lt;string&gt; labels;
+-
+-				// Get the message's labels
+-				pIndex-&gt;getDocumentLabels(docId, labels);
+-				// The source label must have been applied to the message when originally indexed
+-				set&lt;string&gt;::iterator labelIter = labels.find(sourceLabel.c_str());
+-				if (labelIter != labels.end())
+-				{
+-					// Erase it
+-					labels.erase(labelIter);
+-					// Add the temporary label
+-					labels.insert(tempSourceLabel);
+-					pIndex-&gt;setDocumentLabels(docId, labels);
+-				}
+-			}
+-		}
+-
+-		// More messages ?
+-		if (boxParser.nextMessage() == false)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: no more messages from parser&quot; &lt;&lt; endl;
+-#endif
+-			break;
+-		}
+-		pMessage = boxParser.getDocument();
+-		++docNum;
+-	}
+-#ifdef DEBUG
+-	long microsecs = timer.stop();
+-	cout &lt;&lt; &quot;MboxHandler::parseMailAccount: parsed &quot; &lt;&lt; docNum &lt;&lt; &quot; documents in &quot;
+-		&lt;&lt; microsecs/1000000 &lt;&lt; &quot; seconds (&quot; &lt;&lt; microsecs &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-
+-	return indexedFile;
+-}
+-
+-bool MboxHandler::deleteMessages(IndexInterface *pIndex, const string &amp;sourceLabel)
+-{
+-	set&lt;unsigned int&gt; docIdList;
+-	bool unindexedMsgs = false;
+-
+-	if (pIndex == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// Unindex all documents labeled with this source label
+-	if ((pIndex-&gt;listDocumentsWithLabel(sourceLabel, docIdList) == true) &amp;&amp;
+-		(docIdList.empty() == false))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::deleteMessages: &quot; &lt;&lt; docIdList.size() &lt;&lt; &quot; message(s) to unindex&quot; &lt;&lt; endl;
+-#endif
+-		for (set&lt;unsigned int&gt;::iterator docIter = docIdList.begin();
+-			docIter != docIdList.end(); ++docIter)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::deleteMessages: unindexing document ID &quot; &lt;&lt; *docIter &lt;&lt; endl;
+-#endif
+-			if (pIndex-&gt;unindexDocument(*docIter) == true)
+-			{
+-				unindexedMsgs = true;
+-			}
+-		}
+-	}
+-
+-	return unindexedMsgs;
+-}
+-
+-bool MboxHandler::getLocations(set&lt;string&gt; &amp;newLocations,
+-	set&lt;string&gt; &amp;locationsToRemove)
+-{
+-	newLocations.clear();
+-	locationsToRemove.clear();
+-
+-	copy(m_locations.begin(), m_locations.end(),
+-		inserter(locationsToRemove, locationsToRemove.begin()));
+-
+-	// Get the mail accounts map
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	for (set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.begin();
+-		mailIter != mailAccounts.end(); ++mailIter)
+-	{
+-		// Is this a known location ?
+-		set&lt;string&gt;::iterator locationIter = m_locations.find(mailIter-&gt;m_name);
+-		if (locationIter == m_locations.end())
+-		{
+-			// No, it is new
+-			m_locations.insert(mailIter-&gt;m_name);
+-			newLocations.insert(mailIter-&gt;m_name);
+-		}
+-		else
+-		{
+-			// Since it's a known location, we'd better not remove it
+-			set&lt;string&gt;::iterator removeIter = locationsToRemove.find(mailIter-&gt;m_name);
+-			if (removeIter != locationsToRemove.end())
+-			{
+-				locationsToRemove.erase(removeIter);
+-			}
+-		}
+-	}
+-
+-	// Locations in locationsToRemove have to be removed
+-	for (set&lt;string&gt;::iterator removeIter = locationsToRemove.begin();
+-		removeIter != locationsToRemove.end(); ++removeIter)
+-	{
+-		set&lt;string&gt;::iterator locationIter = m_locations.find(*removeIter);
+-		if (locationIter != m_locations.end())
+-		{
+-			m_locations.erase(locationIter);
+-		}
+-	}
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::getLocations: &quot; &lt;&lt; m_locations.size() &lt;&lt; &quot; locations, &quot;
+-		&lt;&lt; newLocations.size() &lt;&lt; &quot; new, &quot; &lt;&lt; locationsToRemove.size() &lt;&lt; &quot; to be removed&quot; &lt;&lt; endl;
+-#endif
+-
+-	if ((newLocations.empty() == false) ||
+-		(locationsToRemove.empty() == false))
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-bool MboxHandler::fileExists(const string &amp;fileName)
+-{
+-	PinotSettings::MailAccount mailAccount;
+-	off_t previousSize = 0;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::fileExists: &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-	if (checkMailAccount(fileName, mailAccount, previousSize) == false)
+-	{
+-		return false;
+-	}
+-
+-	// Come up with a label for this mbox file's messages
+-	string sourceLabel = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
+-	sourceLabel += fileName;
+-	string tempSourceLabel = &quot;Temp&quot;;
+-	tempSourceLabel += sourceLabel;
+-
+-	// Get the mail index
+-	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::fileExists: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Get a parser
+-	MboxParser boxParser(fileName);
+-
+-	bool indexedFile = parseMailAccount(boxParser, &amp;index, 
+-		mailAccount.m_lastMessageTime, tempSourceLabel, sourceLabel);
+-
+-	// Any document still labeled with this source label wasn't found
+-	// this time around and should be unindexed
+-	if (deleteMessages(&amp;index, sourceLabel) == true)
+-	{
+-		indexedFile = true;
+-	}
+-
+-	// Rename the temporary label for next time the mbox is parsed
+-	index.deleteLabel(sourceLabel);
+-	index.renameLabel(tempSourceLabel, sourceLabel);
+-
+-	// Flush the index
+-	index.flush();
+-
+-	// Update this mail account in the list
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter != mailAccounts.end())
+-	{
+-		mailAccounts.erase(mailIter);
+-	}
+-	mailAccounts.insert(mailAccount);
+-
+-	return indexedFile;
+-}
+-
+-bool MboxHandler::fileCreated(const string &amp;fileName)
+-{
+-	// Nothing to do here
+-	return true;
+-}
+-
+-bool MboxHandler::fileModified(const string &amp;fileName)
+-{
+-	PinotSettings::MailAccount mailAccount;
+-	off_t previousSize = 0, mboxOffset = 0;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::fileModified: &quot; &lt;&lt; fileName &lt;&lt; &quot; changed&quot; &lt;&lt; endl;
+-#endif
+-	if (checkMailAccount(fileName, mailAccount, previousSize) == false)
+-	{
+-		return false;
+-	}
+-
+-	if (mailAccount.m_size &lt;= previousSize)
+-	{
+-		// Parse the file from the beginning...
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::fileModified: file smaller or same size&quot; &lt;&lt; endl;
+-#endif
+-		return fileExists(fileName);
+-	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;MboxHandler::fileModified: file now larger than &quot; &lt;&lt; previousSize &lt;&lt; endl;
+-#endif
+-
+-	// Chances are new messages were added but none removed
+-	mboxOffset = previousSize;
+-
+-	// Come up with a label for this mbox file's messages
+-	string sourceLabel = &quot;<A HREF="mailbox://">mailbox://</A>&quot;;
+-	sourceLabel += fileName;
+-
+-	// Get the mail index
+-	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::fileModified: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Get a parser
+-	MboxParser boxParser(fileName, mboxOffset);
+-
+-	bool indexedFile = parseMailAccount(boxParser, &amp;index,
+-		mailAccount.m_lastMessageTime, sourceLabel, &quot;&quot;);
+-	if (indexedFile == true)
+-	{
+-		// Do not attempt to find out if some of the messages were removed
+-		// Some messages may also be indexed twice now, eg if another message
+-		// was inserted and changed offsets
+-		// Let the next fileExists() deal with it and clean up the whole thing
+-
+-		// Flush the index
+-		index.flush();
+-	}
+-
+-	// Update this mail account in the list
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter != mailAccounts.end())
+-	{
+-		mailAccounts.erase(mailIter);
+-	}
+-	mailAccounts.insert(mailAccount);
+-
+-	return indexedFile;
+-}
+-
+-bool MboxHandler::fileMoved(const string &amp;fileName)
+-{
+-	// Nothing to do here
+-	return true;
+-}
+-
+-bool MboxHandler::fileDeleted(const string &amp;fileName)
+-{
+-	string sourceLabel = string(&quot;<A HREF="mailbox://">mailbox://</A>&quot;) + fileName;
+-	bool unindexedFile = false;
+-
+-	// Get the mail index
+-	XapianIndex index(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::fileDeleted: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Unindex all documents labeled with this source label
+-	if (deleteMessages(&amp;index, sourceLabel) == true)
+-	{
+-		// Delete the label
+-		index.deleteLabel(sourceLabel);
+-
+-		return true;
+-	}
+-
+-	return false;
+-}
+
+Deleted: trunk/UI/GTK2/src/MonitorHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MonitorHandler.h	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/UI/GTK2/src/MonitorHandler.h	2006-05-20 04:30:58 UTC (rev 250)
+@@ -1,112 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+- 
+-#ifndef _MONITORHANDLER_HH
+-#define _MONITORHANDLER_HH
+-
+-#include &lt;time.h&gt;
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-#include &lt;map&gt;
+-#include &lt;sigc++/slot.h&gt;
+-
+-#include &quot;DocumentInfo.h&quot;
+-#include &quot;IndexedDocument.h&quot;
+-#include &quot;MboxParser.h&quot;
+-#include &quot;IndexInterface.h&quot;
+-#include &quot;PinotSettings.h&quot;
+-
+-class MonitorHandler
+-{
+-	public:
+-		MonitorHandler();
+-		virtual ~MonitorHandler();
+-
+-		/// Returns locations.
+-		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
+-			std::set&lt;std::string&gt; &amp;locationsToRemove) = 0;
+-
+-		/// Handles file existence events.
+-		virtual bool fileExists(const string &amp;fileName) = 0;
+-
+-		/// Handles file creation events.
+-		virtual bool fileCreated(const std::string &amp;fileName) = 0;
+-
+-		/// Handles file modified events.
+-		virtual bool fileModified(const std::string &amp;fileName) = 0;
+-
+-		/// Handles file moved events.
+-		virtual bool fileMoved(const std::string &amp;fileName) = 0;
+-
+-		/// Handles file deleted events.
+-		virtual bool fileDeleted(const std::string &amp;fileName) = 0;
+-
+-		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
+-
+-	protected:
+-		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt; m_signalUpdate;
+-
+-	private:
+-		MonitorHandler(const MonitorHandler &amp;other);
+-		MonitorHandler &amp;operator=(const MonitorHandler &amp;other);
+-
+-};
+-
+-class MboxHandler : public MonitorHandler
+-{
+-	public:
+-		MboxHandler();
+-		virtual ~MboxHandler();
+-
+-		/// Returns locations.
+-		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
+-			std::set&lt;std::string&gt; &amp;locationsToRemove);
+-
+-		/// Handles file existence events.
+-		virtual bool fileExists(const string &amp;fileName);
+-
+-		/// Handles file creation events.
+-		virtual bool fileCreated(const std::string &amp;fileName);
+-
+-		/// Handles file modified events.
+-		virtual bool fileModified(const std::string &amp;fileName);
+-
+-		/// Handles file moved events.
+-		virtual bool fileMoved(const std::string &amp;fileName);
+-
+-		/// Handles file deleted events.
+-		virtual bool fileDeleted(const std::string &amp;fileName);
+-
+-	protected:
+-		unsigned int m_locationsCount;
+-		std::set&lt;std::string&gt; m_locations;
+-
+-		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
+-			off_t &amp;previousSize);
+-
+-		bool parseMailAccount(MboxParser &amp;boxParser, IndexInterface *pIndex,
+-			time_t &amp;lastMessageTime, const std::string &amp;tempSourceLabel,
+-			const std::string &amp;sourceLabel);
+-
+-		bool deleteMessages(IndexInterface *pIndex, const std::string &amp;sourceLabel);
+-
+-	private:
+-		MboxHandler(const MboxHandler &amp;other);
+-		MboxHandler &amp;operator=(const MboxHandler &amp;other);
+-
+-};
+-
+-#endif	// _MONITORHANDLER_HH
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-20 04:00:42 UTC (rev 249)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-20 04:30:58 UTC (rev 250)
+@@ -22,7 +22,7 @@
+ #include &lt;fcntl.h&gt;
+ #include &lt;string.h&gt;
+ #include &lt;signal.h&gt;
+-#include &lt;fam.h&gt;
++#include &lt;errno.h&gt;
+ #include &lt;exception&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+@@ -36,6 +36,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
++#include &quot;MonitorFactory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+ #ifdef HAS_GOOGLEAPI
+@@ -1185,15 +1186,14 @@
+ 
+ void MonitorThread::doWork(void)
+ {
+-	FAMConnection famConn;
+-	FAMRequest famReq;
+-	map&lt;unsigned long, string&gt; fsLocations;
++	MonitorInterface *pMonitor = MonitorFactory::getMonitor();
++	set&lt;string&gt; newLocations;
++	set&lt;string&gt; locationsToRemove;
+ 	bool setLocationsToMonitor = true;
+-	bool firstTime = true;
+-	bool closeMonitor = false, resumeMonitor = false;
+-	int famStatus = -1;
++	bool resumeMonitor = false;
+ 
+-	if (m_pHandler == NULL)
++	if ((m_pHandler == NULL) ||
++		(pMonitor == NULL))
+ 	{
+ 		m_status = _(&quot;No monitoring handler&quot;);
+ 		return;
+@@ -1204,7 +1204,7 @@
+ 	{
+ 		struct timeval selectTimeout;
+ 		fd_set listenSet;
+-		int famFd = -1;
++		int monitorFd = -1;
+ 
+ 		selectTimeout.tv_sec = 60;
+ 		selectTimeout.tv_usec = 0;
+@@ -1216,69 +1216,46 @@
+ 		}
+ 
+ 		if ((setLocationsToMonitor == true) &amp;&amp;
+-			(m_pHandler-&gt;getFileSystemLocations(fsLocations) &gt; 0) &amp;&amp;
+-			(m_pHandler-&gt;hasNewLocations() == true))
++			(m_pHandler-&gt;getLocations(newLocations, locationsToRemove) == true))
+ 		{
+-			// Tell FAM what we want to monitor
++			// Specify what we want to monitor
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;MonitorThread::doWork: change detected&quot; &lt;&lt; endl;
+ #endif
+-			if (firstTime == false)
+-			{
+-				// Cancel
+-				FAMCancelMonitor(&amp;famConn, &amp;famReq);
+-				FAMClose(&amp;famConn);
+-			}
+-			else
+-			{
+-				firstTime = false;
+-			}
+ 			resumeMonitor = false;
+ 
+-			// FIXME: opening a new connection every time might be overkill
+-			if (FAMOpen(&amp;famConn) != 0)
++			// Add new locations
++			for (set&lt;string&gt;::const_iterator locationIter = newLocations.begin();
++				(locationIter != newLocations.end()) &amp;&amp; (m_done == false); ++locationIter)
+ 			{
+-				m_status = _(&quot;Couldn't open FAM connection&quot;);
+-				return;
+-			}
+-			closeMonitor = true;
+-
+-			// Go through the locations map
+-			for (map&lt;unsigned long, string&gt;::const_iterator fsIter = fsLocations.begin(); fsIter != fsLocations.end(); ++fsIter)
+-			{
+-				string fsLocation = fsIter-&gt;second;
+-				struct stat fileStat;
+-
+-				if (m_done == true)
++				// Monitor this
++				if (pMonitor-&gt;addLocation(*locationIter) == true)
+ 				{
+-					break;
++					// Confirm the file exists
++					m_pHandler-&gt;fileExists(*locationIter);
+ 				}
+-				if (stat(fsLocation.c_str(), &amp;fileStat) == -1)
+-				{
+-					continue;
+-				}
++			}
+ 
+-				// Is that a file or a directory ?
+-				if (S_ISREG(fileStat.st_mode))
+-				{
+-					famStatus = FAMMonitorFile(&amp;famConn, fsLocation.c_str(), &amp;famReq, NULL);
+-				}
+-				else if (S_ISDIR(fileStat.st_mode))
+-				{
+-					// FIXME: FAM works one level deep only: monitor sub-directories if there are any...
+-					famStatus = FAMMonitorDirectory(&amp;famConn, fsLocation.c_str(), &amp;famReq, (void*)(fsIter-&gt;first + 1));
+-				}
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;MonitorThread::doWork: added &quot; &lt;&lt; fsLocation &lt;&lt; &quot;, &quot; &lt;&lt; famStatus &lt;&lt; endl;
+-#endif
++			// Remove others
++			for (set&lt;string&gt;::const_iterator locationIter = locationsToRemove.begin();
++				(locationIter != locationsToRemove.end()) &amp;&amp; (m_done == false); ++locationIter)
++			{
++				// Stop monitoring this
++				pMonitor-&gt;removeLocation(*locationIter);
+ 			}
+ 
+-			famFd = FAMCONNECTION_GETFD(&amp;famConn);
+-			FD_SET(famFd, &amp;listenSet);
++			monitorFd = pMonitor-&gt;getFileDescriptor();
++			FD_SET(monitorFd, &amp;listenSet);
+ 		}
+ 		setLocationsToMonitor = false;
+ 
+-		int fdCount = select(max(famFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
++		if (monitorFd &lt; 0)
++		{
++			m_status = _(&quot;Couldn't initialize file monitor&quot;);
++			return;
++		}
++
++		int fdCount = select(max(monitorFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
+ 		if ((fdCount &lt; 0) &amp;&amp;
+ 			(errno != EINTR))
+ 		{
+@@ -1287,21 +1264,22 @@
+ #endif
+ 			break;
+ 		}
+-		else if ((famFd &gt;= 0) &amp;&amp;
+-			(FD_ISSET(famFd, &amp;listenSet)))
++		else if (FD_ISSET(monitorFd, &amp;listenSet))
+ 		{
++			queue&lt;MonitorEvent&gt; events;
++
+ 			// There might be more than one event waiting...
+-			int pendingEvents = FAMPending(&amp;famConn);
+-			if (pendingEvents &lt; 0)
++			if (pMonitor-&gt;retrievePendingEvents(events) == false)
+ 			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;MonitorThread::doWork: FAMPending() failed&quot; &lt;&lt; endl;
++				cout &lt;&lt; &quot;MonitorThread::doWork: failed to retrieve pending events&quot; &lt;&lt; endl;
+ #endif
+ 				break;
+ 			}
+-			while ((pendingEvents &gt;= 1) &amp;&amp;
+-				(m_done == false))
++
++			while ((events.empty() == false) &amp;&amp; (m_done == false))
+ 			{
++				MonitorEvent &amp;event = events.front();
+ 				double averageLoad[3];
+ 
+ 				// Get the load averaged over the last minute
+@@ -1312,77 +1290,44 @@
+ 					{
+ 						// Ignore pending events if the load has become too high
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;MonitorThread::doWork: cancelling monitoring because of load (&quot; &lt;&lt; averageLoad[0] &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++						cout &lt;&lt; &quot;MonitorThread::doWork: ignoring events because of load (&quot;
++							&lt;&lt; averageLoad[0] &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+ #endif
+-						FAMCancelMonitor(&amp;famConn, &amp;famReq);
+ 						resumeMonitor = true;
+ 						break;
+ 					}
+ 				}
+ 
+-				FAMEvent famEvent;
+-				if ((FAMNextEvent(&amp;famConn, &amp;famEvent) == 1) &amp;&amp;
+-					(famEvent.filename != NULL) &amp;&amp;
+-					(strlen(famEvent.filename) &gt; 0))
++				if ((event.m_location.empty() == true) ||
++					(event.m_type == MonitorEvent::UNKNOWN))
+ 				{
+-					string fileName;
+-					bool updatedIndex = false;
++					// Next
++					events.pop();
++					continue;
++				}
+ 
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;MonitorThread::doWork: event &quot; &lt;&lt; famEvent.code
+-						&lt;&lt; &quot; on &quot; &lt;&lt; famEvent.filename &lt;&lt; endl;
+-#endif
+-					if (famEvent.code == FAMEndExist)
+-					{
+-						updatedIndex = m_pHandler-&gt;fileExists(famEvent.filename, true);
+-						// FIXME: accounts for which we didn't receive a FAMExists should
+-						// be removed
+-					}
+-					else
+-					{
+-						// Are we monitoring a file or a directory ?
+-						if (famEvent.userdata != NULL)
+-						{
+-							// A directory...
+-							if (famEvent.filename[0] == '/')
+-							{
+-								// Not interested in monitored directories...
+-								continue;
+-							}
++				bool updatedIndex = false;
+ 
+-							// The event is on a file in that directory
+-							map&lt;unsigned long, string&gt;::const_iterator fsIter = fsLocations.find((unsigned long)famEvent.userdata);
+-							if (fsIter == fsLocations.end())
+-							{
+-								continue;
+-							}
+-							fileName += fsIter-&gt;second;
+-							fileName += &quot;/&quot;;
+-						}
+-						fileName += famEvent.filename;
+-
+-						// What's the event code ?
+-						if (famEvent.code == FAMExists)
+-						{
+-							updatedIndex = m_pHandler-&gt;fileExists(fileName);
+-						}
+-						else if (famEvent.code == FAMCreated)
+-						{
+-							m_pHandler-&gt;fileCreated(fileName);
+-						}
+-						else if (famEvent.code == FAMChanged)
+-						{
+-							updatedIndex = m_pHandler-&gt;fileChanged(fileName);
+-						}
+-						else if (famEvent.code == FAMDeleted)
+-						{
+-							updatedIndex = m_pHandler-&gt;fileDeleted(fileName);
+-						}
+-					}
++				// What's the event code ?
++				if (event.m_type == MonitorEvent::CREATED)
++				{
++					m_pHandler-&gt;fileCreated(event.m_location);
+ 				}
++				else if (event.m_type == MonitorEvent::WRITE_CLOSED)
++				{
++					updatedIndex = m_pHandler-&gt;fileModified(event.m_location);
++				}
++				else if (event.m_type == MonitorEvent::MOVED)
++				{
++					updatedIndex = m_pHandler-&gt;fileMoved(event.m_location);
++				}
++				else if (event.m_type == MonitorEvent::DELETED)
++				{
++					updatedIndex = m_pHandler-&gt;fileDeleted(event.m_location);
++				}
+ 
+-				// Anything else pending ?
+-				pendingEvents = FAMPending(&amp;famConn);
++				// Next
++				events.pop();
+ 			}
+ 		}
+ 		else
+@@ -1393,7 +1338,6 @@
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;MonitorThread::doWork: resuming monitoring&quot; &lt;&lt; endl;
+ #endif
+-				FAMResumeMonitor(&amp;famConn, &amp;famReq);
+ 				resumeMonitor = false;
+ 			}
+ 
+@@ -1403,12 +1347,7 @@
+ 		}
+ 	}
+ 
+-	if (closeMonitor == true)
+-	{
+-		// Stop monitoring and close the connection
+-		FAMCancelMonitor(&amp;famConn, &amp;famReq);
+-		FAMClose(&amp;famConn);
+-	}
++	delete pMonitor;
+ }
+ 
+ DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000247.html">[Pinot-svn] r249 - in trunk: Monitor UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000249.html">[Pinot-svn] r251 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#248">[ date ]</a>
+              <a href="thread.html#248">[ thread ]</a>
+              <a href="subject.html#248">[ subject ]</a>
+              <a href="author.html#248">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

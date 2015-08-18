@@ -1,0 +1,454 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1386 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1386%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200810151346.m9FDke5B003466%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001376.html">
+   <LINK REL="Next"  HREF="001378.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1386 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1386%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200810151346.m9FDke5B003466%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1386 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct 15 15:46:40 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001376.html">[Pinot-svn] r1385 - trunk/Collect
+</A></li>
+        <LI>Next message: <A HREF="001378.html">[Pinot-svn] r1387 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1377">[ date ]</a>
+              <a href="thread.html#1377">[ thread ]</a>
+              <a href="subject.html#1377">[ subject ]</a>
+              <a href="author.html#1377">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-10-15 15:46:31 +0200 (Wed, 15 Oct 2008)
+New Revision: 1386
+
+Modified:
+   trunk/UI/GTK2/src/Notebook.cpp
+   trunk/UI/GTK2/src/Notebook.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+When a spelling suggestion is available, don't create a Corrected query right
+away. Instead, show suggestions below the results list, in a combobox labeled
+&quot;Did you mean ?&quot; and let the user choose which one he thinks is relevant and
+click the Yes button. Then create a new query, based on the original.
+
+
+Modified: trunk/UI/GTK2/src/Notebook.cpp
+===================================================================
+--- trunk/UI/GTK2/src/Notebook.cpp	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/Notebook.cpp	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,9 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#if _USE_BUTTON_TAB
+ #include &lt;gtkmm/rc.h&gt;
+-#endif
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -60,21 +58,49 @@
+ ResultsPage::ResultsPage(const ustring &amp;queryName, ResultsTree *pTree,
+ 	int parentHeight, PinotSettings &amp;settings) :
+ 	NotebookPageBox(queryName, NotebookPageBox::RESULTS_PAGE, settings),
++	m_pLabel(NULL),
++	m_pCombobox(NULL),
++	m_pButton(NULL),
++	m_pHBox(NULL),
++	m_pVBox(NULL),
+ 	m_pVPaned(NULL),
+ 	m_pTree(pTree)
+ {
+ 	if (pTree != NULL)
+ 	{
++		m_pLabel = manage(new Label(_(&quot;Did you mean ?&quot;)));
++		m_pCombobox = manage(new ComboBoxText());
++		m_pButton = manage(new Button(StockID(&quot;gtk-yes&quot;)));
++
++		m_pHBox = manage(new HBox(false, 0));
++		m_pHBox-&gt;pack_start(*m_pLabel, Gtk::PACK_SHRINK, 4);
++		m_pHBox-&gt;pack_start(*m_pCombobox, Gtk::PACK_EXPAND_WIDGET, 4);
++		m_pHBox-&gt;pack_start(*m_pButton, Gtk::PACK_SHRINK, 4);
++
++		m_pVBox = manage(new VBox(false, 0));
++		m_pVBox-&gt;pack_start(*pTree-&gt;getResultsScrolledWindow());
++		m_pVBox-&gt;pack_start(*m_pHBox, Gtk::PACK_SHRINK, 0);
++
+ 		m_pVPaned = manage(new VPaned());
+ 		m_pVPaned-&gt;set_flags(Gtk::CAN_FOCUS);
+ 		m_pVPaned-&gt;set_position(105);
+-		m_pVPaned-&gt;pack1(*pTree-&gt;getResultsScrolledWindow(), Gtk::EXPAND|Gtk::SHRINK);
++		m_pVPaned-&gt;pack1(*m_pVBox, Gtk::EXPAND|Gtk::SHRINK);
+ 		m_pVPaned-&gt;pack2(*pTree-&gt;getExtractScrolledWindow(), Gtk::SHRINK);
+ 		pack_start(*m_pVPaned, Gtk::PACK_EXPAND_WIDGET, 0);
+ 
+ 		// Give the extract 2/10th of the height
+ 		m_pVPaned-&gt;set_position((parentHeight * 8) / 10);
++
++		// Hide suggestions by default
++		m_pLabel-&gt;hide();
++		m_pCombobox-&gt;hide();
++		m_pButton-&gt;hide();
++		m_pHBox-&gt;hide();
++		m_pVBox-&gt;show();
+ 		m_pVPaned-&gt;show();
++
++		m_pButton-&gt;signal_clicked().connect(
++			sigc::mem_fun(*this, &amp;ResultsPage::onButtonClicked), false);
+ 	}
+ 
+ 	show();
+@@ -84,6 +110,16 @@
+ {
+ }
+ 
++void ResultsPage::onButtonClicked()
++{
++	if (m_pCombobox == NULL)
++	{
++		return;
++	}
++
++	m_signalSuggest(m_title, m_pCombobox-&gt;get_active_text());
++}
++
+ //
+ // Returns the page's tree.
+ //
+@@ -92,6 +128,29 @@
+ 	return m_pTree;
+ }
+ 
++// Returns the suggest signal.
++sigc::signal2&lt;void, ustring, ustring&gt;&amp; ResultsPage::getSuggestSignal(void)
++{
++	return m_signalSuggest;
++}
++
++//
++// Append a suggestion.
++//
++void ResultsPage::appendSuggestion(const ustring &amp;text)
++{
++	if (text.empty() == false)
++	{
++		m_pCombobox-&gt;prepend_text(text);
++		m_pCombobox-&gt;set_active(0);
++
++		m_pLabel-&gt;show();
++		m_pCombobox-&gt;show();
++		m_pButton-&gt;show();
++		m_pHBox-&gt;show();
++	}
++}
++
+ bool NotebookTabBox::m_initialized = false;
+ 
+ NotebookTabBox::NotebookTabBox(const Glib::ustring &amp;title, NotebookPageBox::PageType type) :
+@@ -100,17 +159,12 @@
+ 	m_pageType(type),
+ 	m_tabLabel(NULL),
+ 	m_tabImage(NULL),
+-#if _USE_BUTTON_TAB
+ 	m_tabButton(NULL)
+-#else
+-	m_tabEventBox(NULL)
+-#endif
+ {
+ 	if (m_initialized == false)
+ 	{
+ 		m_initialized = true;
+ 
+-#if _USE_BUTTON_TAB
+ 		// This was lifted from gnome-terminal's terminal-window.c
+ 		RC::parse_string(&quot;style \&quot;pinot-tab-close-button-style\&quot;\n&quot;
+ 			&quot;{\n&quot;
+@@ -120,16 +174,11 @@
+ 			&quot;ythickness = 0\n&quot;
+ 			&quot;}\n&quot;
+ 			&quot;widget \&quot;*.pinot-tab-close-button\&quot; style \&quot;pinot-tab-close-button-style\&quot;&quot;);
+-#endif
+ 	}
+ 
+ 	m_tabLabel = manage(new Label(title));
+ 	m_tabImage = manage(new Image(StockID(&quot;gtk-close&quot;), IconSize(ICON_SIZE_MENU)));
+-#if _USE_BUTTON_TAB
+ 	m_tabButton = manage(new Button());
+-#else
+-	m_tabEventBox = manage(new EventBox);
+-#endif
+ 
+ 	m_tabLabel-&gt;set_alignment(0, 0.5);
+ 	m_tabLabel-&gt;set_padding(0, 0);
+@@ -139,58 +188,32 @@
+ 	m_tabLabel-&gt;set_selectable(false);
+ 	m_tabImage-&gt;set_alignment(0, 0);
+ 	m_tabImage-&gt;set_padding(0, 0);
+-#if _USE_BUTTON_TAB
+ 	m_tabButton-&gt;set_relief(RELIEF_NONE);
+ 	m_tabButton-&gt;set_border_width(0);
+ 	m_tabButton-&gt;set_name(&quot;pinot-tab-close-button&quot;);
+ 	m_tabButton-&gt;set_tooltip_text(_(&quot;Close&quot;));
+ 	m_tabButton-&gt;set_alignment(0, 0);
+ 	m_tabButton-&gt;add(*m_tabImage);
+-#else
+-	m_tabEventBox-&gt;add(*m_tabImage);
+-	m_tabEventBox-&gt;set_events(Gdk::BUTTON_PRESS_MASK);
+-#endif
+ 	pack_start(*m_tabLabel);
+-#if _USE_BUTTON_TAB
+ 	pack_start(*m_tabButton, PACK_SHRINK);
+-#else
+-	pack_start(*m_tabEventBox, PACK_SHRINK);
+-#endif
+ 	set_spacing(0);
+ 	set_homogeneous(false);
+ 	m_tabLabel-&gt;show();
+ 	m_tabImage-&gt;show();
+-#if _USE_BUTTON_TAB
+ 	m_tabButton-&gt;show();
+-#else
+-	m_tabEventBox-&gt;show();
+-#endif
+ 	show();
+ 
+-#if _USE_BUTTON_TAB
+ 	m_tabButton-&gt;signal_clicked().connect(
+ 		sigc::mem_fun(*this, &amp;NotebookTabBox::onButtonClicked));
+-#else
+-	m_tabEventBox-&gt;signal_button_press_event().connect(
+-		sigc::mem_fun(*this, &amp;NotebookTabBox::onButtonPressEvent));
+-#endif
+ }
+ 
+ NotebookTabBox::~NotebookTabBox()
+ {
+ }
+ 
+-#if _USE_BUTTON_TAB
+ void NotebookTabBox::onButtonClicked(void)
+-#else
+-bool NotebookTabBox::onButtonPressEvent(GdkEventButton *ev)
+-#endif
+ {
+ 	m_signalClose(m_title, m_pageType);
+-
+-#if !_USE_BUTTON_TAB
+-	return true;
+-#endif
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/Notebook.h
+===================================================================
+--- trunk/UI/GTK2/src/Notebook.h	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/Notebook.h	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -22,15 +22,11 @@
+ #include &lt;sigc++/sigc++.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;gtkmm/box.h&gt;
++#include &lt;gtkmm/button.h&gt;
++#include &lt;gtkmm/comboboxtext.h&gt;
++#include &lt;gtkmm/image.h&gt;
++#include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/paned.h&gt;
+-#include &lt;gtkmm/label.h&gt;
+-#include &lt;gtkmm/image.h&gt;
+-#define _USE_BUTTON_TAB 1
+-#if _USE_BUTTON_TAB
+-#include &lt;gtkmm/button.h&gt;
+-#else
+-#include &lt;gtkmm/eventbox.h&gt;
+-#endif
+ #include &lt;gtkmm/textview.h&gt;
+ 
+ #include &quot;PinotSettings.h&quot;
+@@ -68,10 +64,24 @@
+ 		/// Returns the page's tree.
+ 		virtual ResultsTree *getTree(void) const;
+ 
++		/// Returns the suggest signal.
++		sigc::signal2&lt;void, Glib::ustring, Glib::ustring&gt;&amp; getSuggestSignal(void);
++
++		/// Append a suggestion.
++		void appendSuggestion(const Glib::ustring &amp;text);
++
+ 	protected:
++		Gtk::Label *m_pLabel;
++		Gtk::ComboBoxText *m_pCombobox;
++		Gtk::Button *m_pButton;
++		Gtk::HBox *m_pHBox;
++		Gtk::VBox *m_pVBox;
+ 		Gtk::VPaned *m_pVPaned;
+ 		ResultsTree *m_pTree;
++		sigc::signal2&lt;void, Glib::ustring, Glib::ustring&gt; m_signalSuggest;
+ 
++		void onButtonClicked();
++
+ };
+ 
+ class NotebookTabBox : public Gtk::HBox
+@@ -89,18 +99,10 @@
+ 		NotebookPageBox::PageType m_pageType;
+ 		Gtk::Label *m_tabLabel;
+ 		Gtk::Image *m_tabImage;
+-#if _USE_BUTTON_TAB
+ 		Gtk::Button *m_tabButton;
+-#else
+-		Gtk::EventBox *m_tabEventBox;
+-#endif
+ 		sigc::signal2&lt;void, Glib::ustring, NotebookPageBox::PageType&gt; m_signalClose;
+ 
+-#if _USE_BUTTON_TAB
+ 		void onButtonClicked(void);
+-#else
+-		bool onButtonPressEvent(GdkEventButton *ev);
+-#endif
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -1330,26 +1330,6 @@
+ 		status += _(&quot;ended&quot;);
+ 		set_status(status);
+ 
+-		// Suggest the correction to the user
+-		if (wasCorrected == true)
+-		{
+-			ustring correctedQueryName(_(&quot;Corrected&quot;));
+-
+-			if (queryName.empty() == true)
+-			{
+-				correctedQueryName += &quot;...&quot;;
+-			}
+-			else
+-			{
+-				correctedQueryName += &quot; &quot;;
+-				correctedQueryName += queryName;
+-			}
+-			queryProps.setName(correctedQueryName);
+-			queryProps.setModified(true);
+-
+-			add_query(queryProps, true);
+-		}
+-
+ 		// Index results ?
+ 		QueryProperties::IndexWhat indexResults = queryProps.getIndexResults();
+ 		if ((indexResults != QueryProperties::NOTHING) &amp;&amp;
+@@ -1462,6 +1442,14 @@
+ 				resultsCharset, pQueryThread-&gt;isLive());
+ 		}
+ 
++		// Suggest the correction to the user
++		if ((pResultsPage != NULL) &amp;&amp;
++			(wasCorrected == true))
++		{
++			pResultsPage-&gt;getSuggestSignal().connect(sigc::mem_fun(*this, &amp;mainWindow::on_suggestQueryButton_clicked));
++			pResultsPage-&gt;appendSuggestion(queryProps.getFreeQuery());
++		}
++
+ 		// Now that results are displayed, go ahead and index documents
+ 		for (set&lt;DocumentInfo&gt;::const_iterator docIter = docsToIndex.begin();
+ 			docIter != docsToIndex.end(); ++docIter)
+@@ -2909,6 +2897,26 @@
+ }
+ 
+ //
++// Suggest query button click
++//
++void mainWindow::on_suggestQueryButton_clicked(ustring queryName, ustring queryText)
++{
++	// Find the query
++	const std::map&lt;string, QueryProperties&gt; &amp;queriesMap = m_settings.getQueries();
++	std::map&lt;string, QueryProperties&gt;::const_iterator queryIter = queriesMap.find(queryName);
++	if (queryIter != queriesMap.end())
++	{
++		QueryProperties queryProps(queryIter-&gt;second);
++
++		queryProps.setName(&quot;&quot;);
++		queryProps.setFreeQuery(queryText);
++		queryProps.setModified(true);
++
++		edit_query(queryProps, true);
++	}
++}
++
++//
+ // Index back button click
+ //
+ void mainWindow::on_indexBackButton_clicked(ustring indexName)
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/mainWindow.hh	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -121,6 +121,7 @@
+ 	virtual void on_removeQueryButton_clicked();
+ 	virtual void on_queryHistoryButton_clicked();
+ 	virtual void on_findQueryButton_clicked();
++	virtual void on_suggestQueryButton_clicked(Glib::ustring queryName, Glib::ustring queryText);
+ 
+ 	virtual void on_indexBackButton_clicked(Glib::ustring indexName);
+ 	virtual void on_indexForwardButton_clicked(Glib::ustring indexName);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001376.html">[Pinot-svn] r1385 - trunk/Collect
+</A></li>
+	<LI>Next message: <A HREF="001378.html">[Pinot-svn] r1387 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1377">[ date ]</a>
+              <a href="thread.html#1377">[ thread ]</a>
+              <a href="subject.html#1377">[ subject ]</a>
+              <a href="author.html#1377">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

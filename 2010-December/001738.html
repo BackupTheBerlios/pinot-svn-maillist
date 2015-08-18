@@ -1,0 +1,227 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1749 - in trunk: . UI/GTK2 UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1749%20-%20in%20trunk%3A%20.%20UI/GTK2%20UI/GTK2/src&In-Reply-To=%3C20101220084238.8FB1848146A%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001737.html">
+   <LINK REL="Next"  HREF="001739.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1749 - in trunk: . UI/GTK2 UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1749%20-%20in%20trunk%3A%20.%20UI/GTK2%20UI/GTK2/src&In-Reply-To=%3C20101220084238.8FB1848146A%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1749 - in trunk: . UI/GTK2 UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec 20 09:42:38 CET 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001737.html">[Pinot-svn] r1748 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001739.html">[Pinot-svn] r1750 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1738">[ date ]</a>
+              <a href="thread.html#1738">[ thread ]</a>
+              <a href="subject.html#1738">[ subject ]</a>
+              <a href="author.html#1738">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-12-20 09:42:38 +0100 (Mon, 20 Dec 2010)
+New Revision: 1749
+
+Modified:
+   trunk/README
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/prefsWindow.cc
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+Log:
+The UI checks for the environment variable PINOT_MAXIMUM_QUERY_RESULTS. This
+overrides the number of results returned by queries run through the UI's Query
+field as well as the number of results initially set for new stored queries,
+which is now capped to 1000.
+The UI calls mustQuit() on exit.
+
+
+Modified: trunk/README
+===================================================================
+--- trunk/README	2010-12-15 13:29:36 UTC (rev 1748)
++++ trunk/README	2010-12-20 08:42:38 UTC (rev 1749)
+@@ -1,5 +1,5 @@
+ Pinot
+-Copyright 2005-2009 Fabrice Colin &lt;fabricecolin at users dot berlios dot de&gt;
++Copyright 2005-2010 Fabrice Colin &lt;fabricecolin at users dot berlios dot de&gt;
+ <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A>
+ 
+ 
+@@ -459,6 +459,10 @@
+       This limits the extraction of documents nested inside others, such as
+       archives or mail messages, based on their size. By default, this is
+       deactivated and set to 0.
++    * PINOT_MAXIMUM_QUERY_RESULTS
++      This overrides the number of results returned by queries run through
++      the UI's Query field as well as the number of results initially set
++      for new stored queries.
+ 
+   Another environment variable that you may want to tweak comes from Xapian.
+   XAPIAN_FLUSH_THRESHOLD can be set to the number of documents after which
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2010-12-15 13:29:36 UTC (rev 1748)
++++ trunk/UI/GTK2/metase-gtk2.glade	2010-12-20 08:42:38 UTC (rev 1749)
+@@ -1307,7 +1307,7 @@
+ 		  &lt;property name=&quot;update_policy&quot;&gt;GTK_UPDATE_ALWAYS&lt;/property&gt;
+ 		  &lt;property name=&quot;snap_to_ticks&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;adjustment&quot;&gt;10 10 100 10 20 0&lt;/property&gt;
++		  &lt;property name=&quot;adjustment&quot;&gt;10 10 1000 10 20 0&lt;/property&gt;
+ 		&lt;/widget&gt;
+ 		&lt;packing&gt;
+ 		  &lt;property name=&quot;left_attach&quot;&gt;1&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2010-12-15 13:29:36 UTC (rev 1748)
++++ trunk/UI/GTK2/src/mainWindow.cc	2010-12-20 08:42:38 UTC (rev 1749)
+@@ -141,8 +141,22 @@
+ 	m_pFindMenu(NULL),
+ 	m_pSettingsMonitor(MonitorFactory::getMonitor()),
+ 	m_pSettingsHandler(NULL),
+-	m_state(this)
++	m_state(this),
++	m_maxResultsCount(10)
+ {
++	// Override the number of query results ?
++	char *pEnvVar = getenv(&quot;PINOT_MAXIMUM_QUERY_RESULTS&quot;);
++	if ((pEnvVar != NULL) &amp;&amp;
++		(strlen(pEnvVar) &gt; 0))
++	{
++		int threadsNum = atoi(pEnvVar);
++
++		if (threadsNum &gt; 0)
++		{
++			m_maxResultsCount = (unsigned int)threadsNum;
++		}
++	}
++
+ 	// Reposition and resize the window
+ 	// Make sure the coordinates and sizes make sense
+ 	if ((m_settings.m_xPos &gt;= 0) &amp;&amp;
+@@ -2832,6 +2846,8 @@
+ {
+ 	QueryProperties queryProps(_(&quot;Live query&quot;), liveQueryEntry-&gt;get_text());
+ 
++	queryProps.setMaximumResultsCount(m_maxResultsCount);
++
+ 	run_search(queryProps);
+ }
+ 
+@@ -3001,15 +3017,11 @@
+ 		{
+ 			return true;
+ 		}
+-
+-		m_state.disconnect();
+-		m_state.stop_threads();
+ 	}
+-	else
+-	{
+-		m_state.disconnect();
+-	}
+ 
++	m_state.disconnect();
++	m_state.mustQuit(true);
++
+ 	// Disconnect UI signals
+ 	m_pageSwitchConnection.disconnect();
+ 
+@@ -3164,6 +3176,11 @@
+ 		// Backup the current name
+ 		queryName = queryProps.getName();
+ 	}
++	else
++	{
++		// Initialize the number of results
++		queryProps.setMaximumResultsCount(m_maxResultsCount);
++	}
+ 
+ 	// Edit the query's properties
+ 	queryDialog queryBox(queryProps);
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2010-12-15 13:29:36 UTC (rev 1748)
++++ trunk/UI/GTK2/src/mainWindow.hh	2010-12-20 08:42:38 UTC (rev 1749)
+@@ -200,6 +200,7 @@
+ 
+ 	} m_state;
+ 	static unsigned int m_maxDocsCount;
++	unsigned int m_maxResultsCount;
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/prefsWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsWindow.cc	2010-12-15 13:29:36 UTC (rev 1748)
++++ trunk/UI/GTK2/src/prefsWindow.cc	2010-12-20 08:42:38 UTC (rev 1749)
+@@ -969,7 +969,7 @@
+ 		}
+ 
+ 		m_state.disconnect();
+-		m_state.stop_threads();
++		m_state.mustQuit(true);
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2010-12-15 13:29:36 UTC (rev 1748)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2010-12-20 08:42:38 UTC (rev 1749)
+@@ -83,7 +83,7 @@
+    labelNameCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
+    Gtk::Label *resultsCountLabel = Gtk::manage(new class Gtk::Label(_(&quot;Number of results:&quot;)));
+-   Gtk::Adjustment *resultsCountSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(10, 10, 100, 10, 20, 0));
++   Gtk::Adjustment *resultsCountSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(10, 10, 1000, 10, 20, 0));
+    resultsCountSpinbutton = Gtk::manage(new class Gtk::SpinButton(*resultsCountSpinbutton_adj, 1, 0));
+    
+    Gtk::Label *sortOrderLabel = Gtk::manage(new class Gtk::Label(_(&quot;Sort order:&quot;)));
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001737.html">[Pinot-svn] r1748 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001739.html">[Pinot-svn] r1750 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1738">[ date ]</a>
+              <a href="thread.html#1738">[ thread ]</a>
+              <a href="subject.html#1738">[ subject ]</a>
+              <a href="author.html#1738">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,231 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1402 - in trunk: . IndexSearch IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1402%20-%20in%20trunk%3A%20.%20IndexSearch%20IndexSearch/Xapian&In-Reply-To=%3C200811080400.mA840c9s003026%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001392.html">
+   <LINK REL="Next"  HREF="001394.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1402 - in trunk: . IndexSearch IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1402%20-%20in%20trunk%3A%20.%20IndexSearch%20IndexSearch/Xapian&In-Reply-To=%3C200811080400.mA840c9s003026%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1402 - in trunk: . IndexSearch IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Nov  8 05:00:38 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001392.html">[Pinot-svn] r1401 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="001394.html">[Pinot-svn] r1403 - trunk/scripts/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1393">[ date ]</a>
+              <a href="thread.html#1393">[ thread ]</a>
+              <a href="subject.html#1393">[ subject ]</a>
+              <a href="author.html#1393">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-08 05:00:11 +0100 (Sat, 08 Nov 2008)
+New Revision: 1402
+
+Modified:
+   trunk/AUTHORS
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/pinot-search.cpp
+Log:
+Patches by C. Scott Ananian. Fix XapianEngine to get the results count estimate
+even when there are no matches left. Serialize results score over D-Bus. Add a
+&quot;sort by date first&quot; mode to pinot-search.
+
+
+Modified: trunk/AUTHORS
+===================================================================
+--- trunk/AUTHORS	2008-11-02 09:11:04 UTC (rev 1401)
++++ trunk/AUTHORS	2008-11-08 04:00:11 UTC (rev 1402)
+@@ -25,6 +25,7 @@
+ 	Michael Biebl &lt;biebl at debian dot org&gt;
+ 	Constantin Teodorescu &lt;brailateo at gmail dot com&gt;
+ 	Adrian Bunk &lt;bunk at stusta dot de&gt;
++	C. Scott Ananian &lt;cscott at laptop dot org&gt;
+ 
+ The source in Utils/unac is from unac 1.7.0 (Copyright Loic Dachary
+ &lt;loic at senga dot org&gt;).
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2008-11-02 09:11:04 UTC (rev 1401)
++++ trunk/IndexSearch/DBusIndex.cpp	2008-11-08 04:00:11 UTC (rev 1402)
+@@ -16,8 +16,8 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;stdlib.h&gt;
+ #include &lt;iostream&gt;
+-#include &lt;cstdlib&gt;
+ 
+ #include &quot;Languages.h&quot;
+ #include &quot;DBusIndex.h&quot;
+@@ -30,7 +30,7 @@
+ using std::map;
+ using std::min;
+ 
+-static const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, &quot;extract&quot;, NULL };
++static const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, &quot;extract&quot;, &quot;score&quot;, NULL };
+ 
+ static DBusGConnection *getBusConnection(void)
+ {
+@@ -192,6 +192,10 @@
+ 		{
+ 			docInfo.setExtract(pValue);
+ 		}
++		else if (fieldName == g_fieldNames[7])
++		{
++			docInfo.setScore((float)atof(pValue));
++		}
+ 	}
+ 	while (dbus_message_iter_next(&amp;array_iter));
+ 
+@@ -230,7 +234,7 @@
+ 	for (unsigned int fieldNum = 0; g_fieldNames[fieldNum] != NULL; ++fieldNum)
+ 	{
+ 		string value;
+-		char sizeStr[64];
++		char numStr[64];
+ 
+ 		switch (fieldNum)
+ 		{
+@@ -250,12 +254,16 @@
+ 				value = docInfo.getTimestamp();
+ 				break;
+ 			case 5:
+-				snprintf(sizeStr, 64, &quot;%u&quot;, docInfo.getSize());
+-				value = sizeStr;
++				snprintf(numStr, 64, &quot;%u&quot;, docInfo.getSize());
++				value = numStr;
+ 				break;
+ 			case 6:
+ 				value = docInfo.getExtract();
+ 				break;
++			case 7:
++				snprintf(numStr, 64, &quot;%f&quot;, docInfo.getScore());
++				value = numStr;
++				break;
+ 			default:
+ 				break;
+ 		}
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-11-02 09:11:04 UTC (rev 1401)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-11-08 04:00:11 UTC (rev 1402)
+@@ -802,9 +802,9 @@
+ 
+ 		// Get the top results of the query
+ 		Xapian::MSet matches = enquire.get_mset(startDoc, maxResultsCount, (2 * maxResultsCount) + 1);
++		m_resultsCountEstimate = matches.get_matches_estimated();
+ 		if (matches.empty() == false)
+ 		{
+-			m_resultsCountEstimate = matches.get_matches_estimated();
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::queryDatabase: found &quot; &lt;&lt; matches.size() &lt;&lt; &quot;/&quot; &lt;&lt; maxResultsCount
+ 				&lt;&lt; &quot; results found from position &quot; &lt;&lt; startDoc &lt;&lt; endl;
+
+Modified: trunk/IndexSearch/pinot-search.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-search.cpp	2008-11-02 09:11:04 UTC (rev 1401)
++++ trunk/IndexSearch/pinot-search.cpp	2008-11-08 04:00:11 UTC (rev 1402)
+@@ -35,6 +35,7 @@
+ using namespace std;
+ 
+ static struct option g_longOptions[] = {
++	{&quot;datefirst&quot;, 0, 0, 'd'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
+ 	{&quot;max&quot;, 1, 0, 'm'},
+ 	{&quot;proxyaddress&quot;, 1, 0, 'a'},
+@@ -89,6 +90,7 @@
+ 	cout &lt;&lt; &quot;pinot-search - Query search engines from the command-line\n\n&quot;
+ 		&lt;&lt; &quot;Usage: pinot-search [OPTIONS] SEARCHENGINETYPE SEARCHENGINENAME|SEARCHENGINEOPTION QUERYINPUT\n\n&quot;
+ 		&lt;&lt; &quot;Options:\n&quot;
++		&lt;&lt; &quot;  -d, --datefirst           sort by date then by relevance\n&quot;
+ 		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
+ 		&lt;&lt; &quot;  -m, --max                 maximum number of results (default 10)\n&quot;
+ 		&lt;&lt; &quot;  -a, --proxyaddress        proxy address\n&quot;
+@@ -124,9 +126,10 @@
+ 	unsigned int maxResultsCount = 10; 
+ 	int longOptionIndex = 0;
+ 	bool printResults = true;
++	bool sortByDate = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:hm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;c:dhm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -137,6 +140,9 @@
+ 					proxyAddress = optarg;
+ 				}
+ 				break;
++			case 'd':
++				sortByDate = true;
++				break;
+ 			case 'e':
+ 				if (optarg != NULL)
+ 				{
+@@ -201,7 +207,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:hm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;c:dhm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -304,6 +310,10 @@
+ 	}
+ 	queryProps.setStemmingLanguage(stemLanguage);
+ 	queryProps.setMaximumResultsCount(maxResultsCount);
++	if (sortByDate == true)
++	{
++		queryProps.setSortOrder(QueryProperties::DATE);
++	}
+ 
+ 	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+ 	if (pEngine-&gt;runQuery(queryProps) == true)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001392.html">[Pinot-svn] r1401 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="001394.html">[Pinot-svn] r1403 - trunk/scripts/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1393">[ date ]</a>
+              <a href="thread.html#1393">[ thread ]</a>
+              <a href="subject.html#1393">[ subject ]</a>
+              <a href="author.html#1393">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

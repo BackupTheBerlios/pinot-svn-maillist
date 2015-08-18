@@ -1,0 +1,366 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r775 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r775%20-%20trunk/Search&In-Reply-To=%3C200703201142.l2KBgPLr022345%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000768.html">
+   <LINK REL="Next"  HREF="000770.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r775 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r775%20-%20trunk/Search&In-Reply-To=%3C200703201142.l2KBgPLr022345%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r775 - trunk/Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Mar 20 12:42:25 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000768.html">[Pinot-svn] r774 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000770.html">[Pinot-svn] r776 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#769">[ date ]</a>
+              <a href="thread.html#769">[ thread ]</a>
+              <a href="subject.html#769">[ subject ]</a>
+              <a href="author.html#769">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-20 12:42:22 +0100 (Tue, 20 Mar 2007)
+New Revision: 775
+
+Modified:
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/WebEngine.cpp
+   trunk/Search/WebEngine.h
+   trunk/Search/pinot-search.1
+   trunk/Search/pinot-search.cpp
+Log:
+Changes to allow configuring the proxy to use for Web searches.
+
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2007-03-20 11:39:35 UTC (rev 774)
++++ trunk/Search/SearchEngineInterface.cpp	2007-03-20 11:42:22 UTC (rev 775)
+@@ -63,6 +63,12 @@
+ 	return false;
+ }
+ 
++/// Returns the downloader used if any.
++DownloaderInterface *SearchEngineInterface::getDownloader(void)
++{
++	return NULL;
++}
++
+ /// Returns the results for the previous query.
+ const vector&lt;Result&gt; &amp;SearchEngineInterface::getResults(void) const
+ {
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2007-03-20 11:39:35 UTC (rev 774)
++++ trunk/Search/SearchEngineInterface.h	2007-03-20 11:42:22 UTC (rev 775)
+@@ -24,6 +24,7 @@
+ #include &lt;set&gt;
+ #include &lt;vector&gt;
+ 
++#include &quot;DownloaderInterface.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ #include &quot;Result.h&quot;
+ 
+@@ -47,6 +48,9 @@
+ 		/// Sets whether the query should be expanded.
+ 		virtual bool setQueryExpansion(set&lt;unsigned int&gt; &amp;relevantDocuments);
+ 
++		/// Returns the downloader used if any.
++		virtual DownloaderInterface *getDownloader(void);
++
+ 		/// Runs a query; true if success.
+ 		virtual bool runQuery(QueryProperties&amp; queryProps) = 0;
+ 
+
+Modified: trunk/Search/WebEngine.cpp
+===================================================================
+--- trunk/Search/WebEngine.cpp	2007-03-20 11:39:35 UTC (rev 774)
++++ trunk/Search/WebEngine.cpp	2007-03-20 11:42:22 UTC (rev 775)
+@@ -54,27 +54,30 @@
+ }
+ 
+ WebEngine::WebEngine() :
+-	SearchEngineInterface()
++	SearchEngineInterface(),
++	m_pDownloader(DownloaderFactory::getDownloader(&quot;http&quot;))
+ {
+ }
+ 
+ WebEngine::~WebEngine()
+ {
+ 	m_resultsList.clear();
++	if (m_pDownloader != NULL)
++	{
++		delete m_pDownloader;
++	}
+ }
+ 
+ Document *WebEngine::downloadPage(const DocumentInfo &amp;docInfo)
+ {
+ 	m_charset.clear();
+ 
+-	// Any type of downloader will do...
+-	DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(&quot;http&quot;);
+-	if (pDownloader == NULL)
++	if (m_pDownloader == NULL)
+ 	{
+ 		return NULL;
+ 	}
+ 
+-	Document *pDoc = pDownloader-&gt;retrieveUrl(docInfo);
++	Document *pDoc = m_pDownloader-&gt;retrieveUrl(docInfo);
+ 	if (pDoc != NULL)
+ 	{
+ 		string contentType(pDoc-&gt;getType());
+@@ -104,7 +107,6 @@
+ 			}
+ 		}
+ 	}
+-	delete pDownloader;
+ 
+ 	return pDoc;
+ }
+@@ -269,3 +271,9 @@
+ 
+ 	return true;
+ }
++
++/// Returns the downloader used if any.
++DownloaderInterface *WebEngine::getDownloader(void)
++{
++	return m_pDownloader;
++}
+
+Modified: trunk/Search/WebEngine.h
+===================================================================
+--- trunk/Search/WebEngine.h	2007-03-20 11:39:35 UTC (rev 774)
++++ trunk/Search/WebEngine.h	2007-03-20 11:42:22 UTC (rev 775)
+@@ -33,7 +33,11 @@
+ 		WebEngine();
+ 		virtual ~WebEngine();
+ 
++		/// Returns the downloader used if any.
++		virtual DownloaderInterface *getDownloader(void);
++
+ 	protected:
++		DownloaderInterface *m_pDownloader;
+ 		std::string m_hostFilter;
+ 		std::string m_fileFilter;
+ 		std::set&lt;std::string&gt; m_queryTerms;
+
+Modified: trunk/Search/pinot-search.1
+===================================================================
+--- trunk/Search/pinot-search.1	2007-03-20 11:39:35 UTC (rev 774)
++++ trunk/Search/pinot-search.1	2007-03-20 11:42:22 UTC (rev 775)
+@@ -13,8 +13,17 @@
+ display this help and exit
+ .TP
+ \fB\-m\fR, \fB\-\-max\fR
+-maximum number of results (default: 10)
++maximum number of results (default 10)
+ .TP
++\fB\-a\fR, \fB\-\-proxyaddress\fR
++proxy address
++.TP
++\fB\-p\fR, \fB\-\-proxyport\fR
++proxy port
++.TP
++\fB\-t\fR, \fB\-\-proxytype\fR
++proxy type (default HTTP, SOCKS4, SOCKS5)
++.TP
+ \fB\-v\fR, \fB\-\-version\fR
+ output version information and exit
+ .PP
+
+Modified: trunk/Search/pinot-search.cpp
+===================================================================
+--- trunk/Search/pinot-search.cpp	2007-03-20 11:39:35 UTC (rev 774)
++++ trunk/Search/pinot-search.cpp	2007-03-20 11:42:22 UTC (rev 775)
+@@ -36,47 +36,64 @@
+ static struct option g_longOptions[] = {
+ 	{&quot;help&quot;, 0, 0, 'h'},
+ 	{&quot;max&quot;, 1, 0, 'm'},
++	{&quot;proxyaddress&quot;, 1, 0, 'a'},
++	{&quot;proxyport&quot;, 1, 0, 'p'},
++	{&quot;proxytype&quot;, 1, 0, 't'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
+ 
++static void printHelp(void)
++{
++	set&lt;string&gt; engines;
++
++	// Help
++	SearchEngineFactory::getSupportedEngines(engines);
++	cout &lt;&lt; &quot;pinot-search - Query search engines from the command-line\n\n&quot;
++		&lt;&lt; &quot;Usage: pinot-search [OPTIONS] SEARCHENGINETYPE SEARCHENGINENAME|SEARCHENGINEOPTION QUERYSTRING\n\n&quot;
++		&lt;&lt; &quot;Options:\n&quot;
++		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
++		&lt;&lt; &quot;  -m, --max                 maximum number of results (default 10)\n&quot;
++		&lt;&lt; &quot;  -a, --proxyaddress        proxy address\n&quot;
++		&lt;&lt; &quot;  -p, --proxyport           proxy port\n&quot;
++		&lt;&lt; &quot;  -t, --proxytype           proxy type (default HTTP, SOCKS4, SOCKS5)\n&quot;
++		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;
++		&lt;&lt; &quot;Supported search engine types are&quot;;
++	for (set&lt;string&gt;::iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
++	{
++		cout &lt;&lt; &quot; &quot; &lt;&lt; *engineIter;
++	}
++	cout &lt;&lt; &quot;\n\nExamples:\n&quot;
++#ifdef HAVE_GOOGLEAPI
++		&lt;&lt; &quot;pinot-search googleapi mygoogleapikey \&quot;clowns\&quot; 10\n\n&quot;
++#endif
++		&lt;&lt; &quot;pinot-search opensearch &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/KrustyDescription.xml \&quot;clowns\&quot;\n\n&quot;
++		&lt;&lt; &quot;pinot-search --max 20 sherlock &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/Bozo.src \&quot;clowns\&quot;\n\n&quot;
++		&lt;&lt; &quot;pinot-search --max 10 xapian ~/.pinot/index \&quot;clowns\&quot;\n\n&quot;
++		&lt;&lt; &quot;pinot-search xapian somehostname:12345 \&quot;clowns\&quot; 10\n\n&quot;
++		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
++}
++
+ int main(int argc, char **argv)
+ {
+-	string type, option;
++	string type, option, proxyAddress, proxyPort, proxyType;
+ 	unsigned int count = 10; 
+ 	int longOptionIndex = 0;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;hm:v&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;hm:a:p:t:v&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+-		set&lt;string&gt; engines;
+-
+ 		switch (optionChar)
+ 		{
+-			case 'h':
+-				// Help
+-				SearchEngineFactory::getSupportedEngines(engines);
+-				cout &lt;&lt; &quot;pinot-search - Query search engines from the command-line\n\n&quot;
+-					&lt;&lt; &quot;Usage: pinot-search [OPTIONS] SEARCHENGINETYPE SEARCHENGINENAME|SEARCHENGINEOPTION QUERYSTRING\n\n&quot;
+-					&lt;&lt; &quot;Options:\n&quot;
+-					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+-					&lt;&lt; &quot;  -m, --max 		maximum number of results (default: 10)\n&quot;
+-					&lt;&lt; &quot;  -v, --version		output version information and exit\n\n&quot;
+-					&lt;&lt; &quot;Supported search engine types are&quot;;
+-				for (set&lt;string&gt;::iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
++			case 'a':
++				if (optarg != NULL)
+ 				{
+-					cout &lt;&lt; &quot; &quot; &lt;&lt; *engineIter;
++					proxyAddress = optarg;
+ 				}
+-				cout &lt;&lt; &quot;\n\nExamples:\n&quot;
+-#ifdef HAVE_GOOGLEAPI
+-					&lt;&lt; &quot;pinot-search googleapi mygoogleapikey \&quot;clowns\&quot; 10\n\n&quot;
+-#endif
+-					&lt;&lt; &quot;pinot-search opensearch &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/KrustyDescription.xml \&quot;clowns\&quot;\n\n&quot;
+-					&lt;&lt; &quot;pinot-search --max 20 sherlock &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/Bozo.src \&quot;clowns\&quot;\n\n&quot;
+-					&lt;&lt; &quot;pinot-search --max 10 xapian ~/.pinot/index \&quot;clowns\&quot;\n\n&quot;
+-					&lt;&lt; &quot;pinot-search xapian somehostname:12345 \&quot;clowns\&quot; 10\n\n&quot;
+-					&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
++				break;
++			case 'h':
++				printHelp();
+ 				return EXIT_SUCCESS;
+ 			case 'm':
+ 				if (optarg != NULL)
+@@ -84,6 +101,18 @@
+ 					count = (unsigned int )atoi(optarg);
+ 				}
+ 				break;
++			case 'p':
++				if (optarg != NULL)
++				{
++					proxyPort = optarg;
++				}
++				break;
++			case 't':
++				if (optarg != NULL)
++				{
++					proxyType = optarg;
++				}
++				break;
+ 			case 'v':
+ 				cout &lt;&lt; &quot;pinot-search - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot;
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+@@ -95,9 +124,15 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;hm:v&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;hm:a:p:t:v&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
++	if (argc == 1)
++	{
++		printHelp();
++		return EXIT_SUCCESS;
++	}
++
+ 	if ((argc &lt; 4) ||
+ 		(argc - optind != 3))
+ 	{
+@@ -125,6 +160,17 @@
+ 	// How many results ?
+ 	pEngine-&gt;setMaxResultsCount(count);
+ 
++	// Set up the proxy
++	DownloaderInterface *pDownloader = pEngine-&gt;getDownloader();
++	if ((pDownloader != NULL) &amp;&amp;
++		(proxyAddress.empty() == false) &amp;&amp;
++		(proxyPort.empty() == false))
++	{
++		pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, proxyAddress);
++		pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
++		pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
++	}
++
+ 	QueryProperties queryProps(&quot;senginetest&quot;, argv[optind + 2]);
+ 	if (pEngine-&gt;runQuery(queryProps) == true)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000768.html">[Pinot-svn] r774 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000770.html">[Pinot-svn] r776 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#769">[ date ]</a>
+              <a href="thread.html#769">[ thread ]</a>
+              <a href="subject.html#769">[ subject ]</a>
+              <a href="author.html#769">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

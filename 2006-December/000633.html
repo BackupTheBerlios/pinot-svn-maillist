@@ -1,0 +1,2688 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r639 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r639%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200612100718.kBA7IOjk017075%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000632.html">
+   <LINK REL="Next"  HREF="000634.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r639 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r639%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200612100718.kBA7IOjk017075%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r639 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Dec 10 08:18:24 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000632.html">[Pinot-svn] r638 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000634.html">[Pinot-svn] r640 - trunk/scripts/bash
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#633">[ date ]</a>
+              <a href="thread.html#633">[ thread ]</a>
+              <a href="subject.html#633">[ subject ]</a>
+              <a href="author.html#633">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-12-10 08:18:22 +0100 (Sun, 10 Dec 2006)
+New Revision: 639
+
+Added:
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/Makefile.am
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Let D-Bus message be processed and replied to by DBusServletThread.
+Moved Monitor and DirectoryScannerThread to ServerThreads.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2006-12-10 07:18:22 UTC (rev 639)
+@@ -33,7 +33,7 @@
+ #include &quot;OnDiskHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+-#include &quot;WorkerThreads.h&quot;
++#include &quot;ServerThreads.h&quot;
+ 
+ using namespace std;
+ using namespace Glib;
+@@ -196,20 +196,27 @@
+ 	}
+ 	else if (type == &quot;UnindexingThread&quot;)
+ 	{
+-		UnindexingThread *pUnindexThread = dynamic_cast&lt;UnindexingThread *&gt;(pThread);
+-		if (pUnindexThread == NULL)
+-		{
+-			delete pThread;
+-			return;
+-		}
+-
+ 		// FIXME: anything to do ?
+ 	}
+ 	else if (type == &quot;MonitorThread&quot;)
+ 	{
+ 		// FIXME: do something about this
+ 	}
++	else if (type == &quot;DBusServletThread&quot;)
++	{
++		DBusServletThread *pDBusThread = dynamic_cast&lt;DBusServletThread *&gt;(pThread);
++		if (pDBusThread == NULL)
++		{
++			delete pThread;
++			return;
++		}
+ 
++		if (pDBusThread-&gt;mustQuit() == true)
++		{
++			m_signalQuit(0);
++		}
++	}
++
+ 	// Delete the thread
+ 	delete pThread;
+ 
+@@ -241,3 +248,8 @@
+ 	}
+ }
+ 
++SigC::Signal1&lt;void, int&gt;&amp; DaemonState::getQuitSignal(void)
++{
++	return m_signalQuit;
++}
++
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/DaemonState.h	2006-12-10 07:18:22 UTC (rev 639)
+@@ -23,8 +23,9 @@
+ #include &lt;queue&gt;
+ #include &lt;set&gt;
+ 
++#include &quot;IndexedDocument.h&quot;
+ #include &quot;MonitorInterface.h&quot;
+-#include &quot;IndexedDocument.h&quot;
++#include &quot;MonitorHandler.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ 
+ class DaemonState : public ThreadsManager
+@@ -42,12 +43,15 @@
+ 		void on_message_filefound(const DocumentInfo &amp;docInfo, const std::string &amp;sourceLabel,
+ 			bool isDirectory);
+ 
++		SigC::Signal1&lt;void, int&gt;&amp; getQuitSignal(void);
++
+ 	protected:
+ 		MonitorInterface *m_pMailMonitor;
+ 		MonitorInterface *m_pDiskMonitor;
+ 		MonitorHandler *m_pMailHandler;
+ 		MonitorHandler *m_pDiskHandler;
+ 		std::string m_locationBeingCrawled;
++		SigC::Signal1&lt;void, int&gt; m_signalQuit;
+ 
+ 		bool crawlLocation(const std::string &amp;locationToCrawl, bool isSource, bool doMonitoring);
+ 
+
+Modified: trunk/UI/GTK2/src/Makefile.am
+===================================================================
+--- trunk/UI/GTK2/src/Makefile.am	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/Makefile.am	2006-12-10 07:18:22 UTC (rev 639)
+@@ -24,6 +24,7 @@
+ 	PinotSettings.h \
+ 	PinotUtils.h \
+ 	ResultsTree.h \
++	ServerThreads.h \
+ 	WorkerThreads.h
+ 
+ pinot_SOURCES = \
+@@ -57,6 +58,7 @@
+ 	MboxHandler.cpp \
+ 	OnDiskHandler.cpp \
+ 	PinotSettings.cpp \
++	ServerThreads.cpp \
+ 	WorkerThreads.cpp
+ 
+ bin_PROGRAMS = pinot pinot-dbus-daemon
+
+Added: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2006-12-10 07:18:22 UTC (rev 639)
+@@ -0,0 +1,1099 @@
++/*
++ *  Copyright 2005,2006 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;sys/types.h&gt;
++#include &lt;dirent.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;stdlib.h&gt;
++#include &lt;fcntl.h&gt;
++#include &lt;string.h&gt;
++#include &lt;signal.h&gt;
++#include &lt;errno.h&gt;
++#include &lt;exception&gt;
++#include &lt;iostream&gt;
++#include &lt;sigc++/class_slot.h&gt;
++#include &lt;sigc++/compatibility.h&gt;
++#include &lt;sigc++/slot.h&gt;
++#include &lt;glibmm/miscutils.h&gt;
++
++#include &quot;Languages.h&quot;
++#include &quot;TimeConverter.h&quot;
++#include &quot;Url.h&quot;
++#include &quot;CrawlHistory.h&quot;
++#include &quot;XapianIndex.h&quot;
++#include &quot;XapianEngine.h&quot;
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
++#include &quot;DaemonState.h&quot;
++#include &quot;PinotSettings.h&quot;
++#include &quot;ServerThreads.h&quot;
++
++using namespace SigC;
++using namespace Glib;
++using namespace std;
++
++static DBusMessage *newDBusReply(DBusMessage *pMessage)
++{
++        if (pMessage == NULL) 
++        {
++                return NULL;
++        }
++
++        DBusMessage *pReply = dbus_message_new_method_return(pMessage);
++        if (pReply != NULL)
++        {
++                return pReply;
++        }
++
++        return NULL;
++}
++
++MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler) :
++	WorkerThread(),
++	m_ctrlReadPipe(-1),
++	m_ctrlWritePipe(-1),
++	m_pMonitor(pMonitor),
++	m_pHandler(pHandler)
++{
++	int pipeFds[2];
++
++	if (pipe(pipeFds) == 0)
++	{
++		// This pipe will allow to stop select()
++		m_ctrlReadPipe = pipeFds[0];
++		m_ctrlWritePipe = pipeFds[1];
++	}
++}
++
++MonitorThread::~MonitorThread()
++{
++	close(m_ctrlReadPipe);
++	close(m_ctrlWritePipe);
++}
++
++string MonitorThread::getType(void) const
++{
++	return &quot;MonitorThread&quot;;
++}
++
++bool MonitorThread::stop(void)
++{
++	// Disconnect the signal
++	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalDirectoryFound.slots();
++	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
++	m_done = true;
++	write(m_ctrlWritePipe, &quot;X&quot;, 1);
++
++	return true;
++}
++
++Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; MonitorThread::getDirectoryFoundSignal(void)
++{
++	return m_signalDirectoryFound;
++}
++
++void MonitorThread::processEvents(void)
++{
++	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++	queue&lt;MonitorEvent&gt; events;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MonitorThread::processEvents: checking for events&quot; &lt;&lt; endl;
++#endif
++	if ((m_pMonitor == NULL) ||
++		(m_pMonitor-&gt;retrievePendingEvents(events) == false))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MonitorThread::processEvents: failed to retrieve pending events&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MonitorThread::processEvents: retrieved &quot; &lt;&lt; events.size() &lt;&lt; &quot; events&quot; &lt;&lt; endl;
++#endif
++
++	while ((events.empty() == false) &amp;&amp;
++		(m_done == false))
++	{
++		MonitorEvent &amp;event = events.front();
++
++		if ((event.m_location.empty() == true) ||
++			(event.m_type == MonitorEvent::UNKNOWN))
++		{
++			// Next
++			events.pop();
++			continue;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MonitorThread::processEvents: event &quot; &lt;&lt; event.m_type &lt;&lt; &quot; on &quot;
++			&lt;&lt; event.m_location &lt;&lt; &quot; &quot; &lt;&lt; event.m_isDirectory &lt;&lt; endl;
++#endif
++
++		// What's the event code ?
++		if (event.m_type == MonitorEvent::EXISTS)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileExists(event.m_location);
++			}
++		}
++		else if (event.m_type == MonitorEvent::CREATED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileCreated(event.m_location);
++			}
++			else
++			{
++				DocumentInfo docInfo(&quot;&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + event.m_location, &quot;&quot;, &quot;&quot;);
++
++				// Report this directory so that it is crawled
++				m_signalDirectoryFound(docInfo, &quot;&quot;, true);
++			}
++		}
++		else if (event.m_type == MonitorEvent::WRITE_CLOSED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
++				struct stat fileStat;
++				time_t itemDate;
++
++				if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + event.m_location, status, itemDate) == true)
++				{
++					// Was the file actually modified ?
++					if ((stat(event.m_location.c_str(), &amp;fileStat) == 0) &amp;&amp;
++						(itemDate &lt; fileStat.st_mtime))
++					{
++						m_pHandler-&gt;fileModified(event.m_location);
++					}
++#ifdef DEBUG
++					else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't modified&quot; &lt;&lt; endl;
++#endif
++				}
++#ifdef DEBUG
++				else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't crawled&quot; &lt;&lt; endl;
++#endif
++			}
++		}
++		else if (event.m_type == MonitorEvent::MOVED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
++			}
++			else
++			{
++				// We should receive this only if the destination directory is monitored too
++				m_pHandler-&gt;directoryMoved(event.m_location, event.m_previousLocation);
++			}
++		}
++		else if (event.m_type == MonitorEvent::DELETED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileDeleted(event.m_location);
++			}
++			else
++			{
++				// The monitor should have stopped monitoring this
++				// In practice, events for the files in this directory will already have been received 
++				m_pHandler-&gt;directoryDeleted(event.m_location);
++			}
++		}
++
++		// Next
++		events.pop();
++	}
++}
++
++void MonitorThread::doWork(void)
++{
++	if ((m_pHandler == NULL) ||
++		(m_pMonitor == NULL))
++	{
++		m_status = _(&quot;No monitoring handler&quot;);
++		return;
++	}
++
++	// Initialize the handler
++	m_pHandler-&gt;initialize();
++
++	// Get the list of files to monitor
++	const set&lt;string&gt; &amp;fileNames = m_pHandler-&gt;getFileNames();
++	for (set&lt;string&gt;::const_iterator fileIter = fileNames.begin();
++		fileIter != fileNames.end(); ++fileIter)
++	{
++		m_pMonitor-&gt;addLocation(*fileIter, false);
++	}
++	// Directories, if any, are set elsewhere
++	// In the case of OnDiskHandler, they are set by DirectoryScannerThread
++
++	// There might already be events that need processing
++	processEvents();
++
++	// Wait for something to happen
++	while (m_done == false)
++	{
++		struct timeval selectTimeout;
++		fd_set listenSet;
++
++		selectTimeout.tv_sec = 60;
++		selectTimeout.tv_usec = 0;
++
++		FD_ZERO(&amp;listenSet);
++		if (m_ctrlReadPipe &gt;= 0)
++		{
++			FD_SET(m_ctrlReadPipe, &amp;listenSet);
++		}
++
++		m_pHandler-&gt;flushIndex();
++
++		// The file descriptor may change over time
++		int monitorFd = m_pMonitor-&gt;getFileDescriptor();
++		FD_SET(monitorFd, &amp;listenSet);
++		if (monitorFd &lt; 0)
++		{
++			m_status = _(&quot;Couldn't initialize file monitor&quot;);
++			return;
++		}
++
++		int fdCount = select(max(monitorFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
++		if ((fdCount &lt; 0) &amp;&amp;
++			(errno != EINTR))
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MonitorThread::doWork: select() failed&quot; &lt;&lt; endl;
++#endif
++			break;
++		}
++		else if (FD_ISSET(monitorFd, &amp;listenSet))
++		{
++			processEvents();
++		}
++	}
++}
++
++DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName, bool isSource,
++	unsigned int maxLevel, bool followSymLinks,
++	MonitorInterface *pMonitor, MonitorHandler *pHandler) :
++	WorkerThread(),
++	m_dirName(dirName),
++	m_maxLevel(maxLevel),
++	m_followSymLinks(followSymLinks),
++	m_pMonitor(pMonitor),
++	m_pHandler(pHandler),
++	m_currentLevel(0),
++	m_sourceId(0)
++{
++	if (m_dirName.empty() == false)
++	{
++		CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++
++		if (isSource == true)
++		{
++			// Does this source exist ?
++			if (history.hasSource(&quot;<A HREF="file://">file://</A>&quot; + m_dirName, m_sourceId) == false)
++			{
++				// Create it
++				m_sourceId = history.insertSource(&quot;<A HREF="file://">file://</A>&quot; + m_dirName);
++			}
++		}
++		else
++		{
++			map&lt;unsigned int, string&gt; fileSources;
++
++			// What source does this belong to ?
++			for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = fileSources.begin();
++				sourceIter != fileSources.end(); ++sourceIter)
++			{
++				if (sourceIter-&gt;second.length() &lt; m_dirName.length())
++				{
++					// Skip
++					continue;
++				}
++
++				if (sourceIter-&gt;second.substr(0, m_dirName.length()) == m_dirName)
++				{
++					// That's the one
++					m_sourceId = sourceIter-&gt;first;
++					break;
++				}
++			}
++		}
++	}
++}
++
++DirectoryScannerThread::~DirectoryScannerThread()
++{
++}
++
++string DirectoryScannerThread::getType(void) const
++{
++	return &quot;DirectoryScannerThread&quot;;
++}
++
++string DirectoryScannerThread::getDirectory(void) const
++{
++	return m_dirName;
++}
++
++bool DirectoryScannerThread::stop(void)
++{
++	// Disconnect the signal
++	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
++	m_done = true;
++
++	return true;
++}
++
++Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
++{
++	return m_signalFileFound;
++}
++
++void DirectoryScannerThread::foundFile(const DocumentInfo &amp;docInfo)
++{
++	char labelStr[64];
++
++	if ((docInfo.getLocation().empty() == true) ||
++		(m_done == true))
++	{
++		return;
++	}
++
++	// This identifies the source
++	snprintf(labelStr, 64, &quot;SOURCE%u&quot;, m_sourceId);
++
++	m_signalFileFound(docInfo, labelStr, false);
++}
++
++bool DirectoryScannerThread::scanEntry(const string &amp;entryName)
++{
++	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++	CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
++	time_t itemDate;
++	struct stat fileStat;
++	int statSuccess = 0;
++
++	if (entryName.empty() == true)
++	{
++		return false;
++	}
++
++	// Skip . .. and dotfiles
++	Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + entryName);
++	if (urlObj.getFile()[0] == '.')
++	{
++		return false;
++	}
++
++	if (m_followSymLinks == false)
++	{
++		statSuccess = lstat(entryName.c_str(), &amp;fileStat);
++	}
++	else
++	{
++		// Stat the files pointed to by symlinks
++		statSuccess = stat(entryName.c_str(), &amp;fileStat);
++	}
++
++	if (statSuccess == -1)
++	{
++		return false;
++	}
++
++	bool itemExists = history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, status, itemDate);
++
++	// Is it a file or a directory ?
++	if (S_ISLNK(fileStat.st_mode))
++	{
++		// This won't happen when m_followSymLinks is true
++		return false;
++	}
++	else if (S_ISREG(fileStat.st_mode))
++	{
++		DocumentInfo docInfo;
++		bool reportFile = false;
++
++		docInfo.setLocation(&quot;<A HREF="file://">file://</A>&quot; + entryName);
++
++		// Is this file blacklisted ?
++		// We have to check early so that if necessary the file's status stays at CRAWLING 
++		// and it is removed from the index at the end of this crawl
++		if (PinotSettings::getInstance().isBlackListed(entryName) == false)
++		{
++			if (itemExists == false)
++			{
++				// Record it
++				history.insertItem(docInfo.getLocation(), CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++				reportFile = true;
++			}
++			else
++			{
++				// Update the record
++				history.updateItem(docInfo.getLocation(), CrawlHistory::CRAWLED, fileStat.st_mtime);
++
++				// Was it last crawled after it was modified ?
++				if (itemDate &lt; fileStat.st_mtime)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++					// No, crawl and index it again
++					reportFile = true;
++				}
++			}
++		}
++
++		if (reportFile == true)
++		{
++			Url urlObj(docInfo.getLocation());
++
++			docInfo.setTitle(urlObj.getFile());
++			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
++			docInfo.setSize(fileStat.st_size);
++
++			foundFile(docInfo);
++		}
++	}
++	else if (S_ISDIR(fileStat.st_mode))
++	{
++		// Can we scan this directory ?
++		if (((m_maxLevel == 0) ||
++			(m_currentLevel &lt; m_maxLevel)) &amp;&amp;
++			(PinotSettings::getInstance().isBlackListed(entryName) == false))
++		{
++			++m_currentLevel;
++
++			// Open the directory
++			DIR *pDir = opendir(entryName.c_str());
++			if (pDir == NULL)
++			{
++				return false;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: entering &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++
++			if (m_pMonitor != NULL)
++			{
++				// Monitor first so that we don't miss events
++				m_pMonitor-&gt;addLocation(entryName, true);
++			}
++
++			// Iterate through this directory's entries
++			struct dirent *pDirEntry = readdir(pDir);
++			while ((m_done == false) &amp;&amp;
++				(pDirEntry != NULL))
++			{
++				char *pEntryName = pDirEntry-&gt;d_name;
++
++				// Skip . .. and dotfiles
++				if ((pEntryName != NULL) &amp;&amp;
++					(pEntryName[0] != '.'))
++				{
++					string subEntryName(entryName);
++
++					if (entryName[entryName.length() - 1] != '/')
++					{
++						subEntryName += &quot;/&quot;;
++					}
++					subEntryName += pEntryName;
++
++					// Scan this entry
++					if (scanEntry(subEntryName) == false)
++					{
++#ifdef DEBUG
++						cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: failed to open &quot;
++							&lt;&lt; subEntryName &lt;&lt; endl;
++#endif
++					}
++				}
++
++				// Next entry
++				pDirEntry = readdir(pDir);
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: done with &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++
++			// Close the directory
++			closedir(pDir);
++			--m_currentLevel;
++		}
++	}
++	else
++	{
++		return false;
++	}
++
++	return true;
++}
++
++void DirectoryScannerThread::doWork(void)
++{
++	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++	set&lt;string&gt; deletedFiles;
++
++	if (m_dirName.empty() == true)
++	{
++		return;
++	}
++
++	// Update this source's items status
++	history.updateItemsStatus(m_sourceId, CrawlHistory::CRAWLED, CrawlHistory::CRAWLING);
++
++	if (scanEntry(m_dirName) == false)
++	{
++		m_status = _(&quot;Couldn't open directory&quot;);
++		m_status += &quot; &quot;;
++		m_status += m_dirName;
++	}
++
++	if (m_done == true)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DirectoryScannerThread::doWork: leaving cleanup until next crawl&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++
++	// All files with status set to CRAWLING were not found in this crawl
++	// Chances are they were removed after the previous crawl
++	if ((m_pHandler != NULL) &amp;&amp;
++		(history.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, deletedFiles) &gt; 0))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DirectoryScannerThread::doWork: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; files were deleted&quot; &lt;&lt; endl;
++#endif
++		for(set&lt;string&gt;::const_iterator fileIter = deletedFiles.begin();
++			fileIter != deletedFiles.end(); ++fileIter)
++		{
++			// Inform the MonitorHandler
++			if (m_pHandler-&gt;fileDeleted(fileIter-&gt;substr(7)) == true)
++			{
++				// Delete this item
++				history.deleteItem(*fileIter);
++			}
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;DirectoryScannerThread::doWork: done crawling &quot; &lt;&lt; m_dirName &lt;&lt; endl;
++#endif
++}
++
++DBusServletThread::DBusServletThread(DaemonState *pServer, DBusConnection *pConnection, DBusMessage *pRequest) :
++	WorkerThread(),
++	m_pServer(pServer),
++	m_pConnection(pConnection),
++	m_pRequest(pRequest),
++	m_pReply(NULL),
++	m_pArray(NULL),
++	m_mustQuit(false)
++{
++}
++
++DBusServletThread::~DBusServletThread()
++{
++	if (m_pArray != NULL)
++	{
++		// Free the array
++		g_ptr_array_free(m_pArray, TRUE);
++	}
++	if (m_pRequest != NULL)
++	{
++		dbus_message_ref(m_pRequest);
++	}
++	if (m_pConnection != NULL)
++	{
++		dbus_connection_ref(m_pConnection);
++	}
++}
++
++string DBusServletThread::getType(void) const
++{
++	return &quot;DBusServletThread&quot;;
++}
++
++bool DBusServletThread::stop(void)
++{
++	m_done = true;
++	return true;
++}
++
++DBusConnection *DBusServletThread::getConnection(void) const
++{
++	return m_pConnection;
++}
++
++DBusMessage *DBusServletThread::getReply(void) const
++{
++	return m_pReply;
++}
++
++bool DBusServletThread::mustQuit(void) const
++{
++	return m_mustQuit;
++}
++
++void DBusServletThread::doWork(void)
++{
++	XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
++	DBusError error;
++	const char *pSender = dbus_message_get_sender(m_pRequest);
++	bool processedMessage = true, flushIndex = false;
++
++	if ((m_pServer == NULL) ||
++		(m_pConnection == NULL) ||
++		(m_pRequest == NULL))
++	{
++		return;
++	}
++
++	dbus_error_init(&amp;error);
++
++#ifdef DEBUG
++	if (pSender != NULL)
++	{
++		cout &lt;&lt; &quot;DBusServletThread::doWork: called by &quot; &lt;&lt; pSender &lt;&lt; endl;
++	}
++	else
++	{
++		cout &lt;&lt; &quot;DBusServletThread::doWork: called by unknown sender&quot; &lt;&lt; endl;
++	}
++#endif
++
++	if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;DeleteLabel&quot;) == TRUE)
++	{
++		char *pLabel = NULL;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pLabel,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received DeleteLabel &quot; &lt;&lt; pLabel &lt;&lt; endl;
++#endif
++			// Delete the label
++			flushIndex = index.deleteLabel(pLabel);
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_STRING, &amp;pLabel,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentInfo&quot;) == TRUE)
++	{
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			DocumentInfo docInfo;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received GetDocumentInfo &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			if (index.getDocumentInfo(docId, docInfo) == true)
++			{
++				// Prepare the reply
++				m_pReply = newDBusReply(m_pRequest);
++				if (m_pReply != NULL)
++				{
++					string language(Languages::toEnglish(docInfo.getLanguage()));
++					const char *pTitle = docInfo.getTitle().c_str();
++					const char *pLocation = docInfo.getLocation().c_str();
++					const char *pType = docInfo.getType().c_str();
++					const char *pLanguage = language.c_str();
++
++					dbus_message_append_args(m_pReply,
++						DBUS_TYPE_STRING, &amp;pTitle,
++						DBUS_TYPE_STRING, &amp;pLocation,
++						DBUS_TYPE_STRING, &amp;pType,
++						DBUS_TYPE_STRING, &amp;pLanguage,
++						DBUS_TYPE_INVALID);
++				}
++			}
++			else
++			{
++				m_pReply = dbus_message_new_error(m_pRequest,
++					&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
++					&quot;Unknown document&quot;);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetDocumentLabels&quot;) == TRUE)
++	{
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			set&lt;string&gt; labels;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received GetDocumentLabels &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			if (index.getDocumentLabels(docId, labels) == true)
++			{
++				m_pArray = g_ptr_array_new();
++
++				for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++					labelIter != labels.end(); ++labelIter)
++				{
++					string labelName(*labelIter);
++
++					g_ptr_array_add(m_pArray, const_cast&lt;char*&gt;(labelName.c_str()));
++#ifdef DEBUG
++					cout &lt;&lt; &quot;DBusServletThread::doWork: adding label &quot; &lt;&lt; m_pArray-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; labelName &lt;&lt; endl;
++#endif
++				}
++
++				// Prepare the reply
++				m_pReply = newDBusReply(m_pRequest);
++				if (m_pReply != NULL)
++				{
++					dbus_message_append_args(m_pReply,
++						DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;m_pArray-&gt;pdata, m_pArray-&gt;len,
++						DBUS_TYPE_INVALID);
++				}
++			}
++			else
++			{
++				m_pReply = dbus_message_new_error(m_pRequest,
++					&quot;de.berlios.Pinot.GetDocumentLabels&quot;,
++					&quot; failed&quot;);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;GetStatistics&quot;) == TRUE)
++	{
++		CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++		unsigned int crawledFilesCount = history.getItemsCount();
++		unsigned int docsCount = index.getDocumentsCount();
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletThread::doWork: received GetStatistics&quot; &lt;&lt; endl;
++#endif
++		// Prepare the reply
++		m_pReply = newDBusReply(m_pRequest);
++		if (m_pReply != NULL)
++		{
++			dbus_message_append_args(m_pReply,
++				DBUS_TYPE_UINT32, &amp;crawledFilesCount,
++				DBUS_TYPE_UINT32, &amp;docsCount,
++				DBUS_TYPE_INVALID);
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;RenameLabel&quot;) == TRUE)
++	{
++		char *pOldLabel = NULL;
++		char *pNewLabel = NULL;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pOldLabel,
++			DBUS_TYPE_STRING, &amp;pNewLabel,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received RenameLabel &quot; &lt;&lt; pOldLabel &lt;&lt; &quot;, &quot; &lt;&lt; pNewLabel &lt;&lt; endl;
++#endif
++			// Rename the label
++			flushIndex = index.renameLabel(pOldLabel, pNewLabel);
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_STRING, &amp;pNewLabel,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentInfo&quot;) == TRUE)
++	{
++		char *pTitle = NULL;
++		char *pLocation = NULL;
++		char *pType = NULL;
++		char *pLanguage = NULL;
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_STRING, &amp;pTitle,
++			DBUS_TYPE_STRING, &amp;pLocation,
++			DBUS_TYPE_STRING, &amp;pType,
++			DBUS_TYPE_STRING, &amp;pLanguage,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			DocumentInfo docInfo(pTitle, pLocation, pType,
++				((pLanguage != NULL) ? Languages::toLocale(pLanguage) : &quot;&quot;));
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received SetDocumentInfo &quot; &lt;&lt; docId &lt;&lt; &quot;, &quot; &lt;&lt; pTitle
++				&lt;&lt; &quot;, &quot; &lt;&lt; pLocation &lt;&lt; &quot;, &quot; &lt;&lt; pType &lt;&lt; &quot;, &quot; &lt;&lt; pLanguage &lt;&lt; endl;
++#endif
++
++			// Update the document info
++			flushIndex = index.updateDocumentInfo(docId, docInfo);
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentLabels&quot;) == TRUE)
++	{
++		char **ppLabels = NULL;
++		dbus_uint32_t labelsCount = 0;
++		unsigned int docId = 0;
++		gboolean resetLabels = TRUE;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppLabels, &amp;labelsCount,
++			DBUS_TYPE_BOOLEAN, &amp;resetLabels,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			set&lt;string&gt; labels;
++
++			for (dbus_uint32_t labelIndex = 0; labelIndex &lt; labelsCount; ++labelIndex)
++			{
++				if (ppLabels[labelIndex] == NULL)
++				{
++					break;
++				}
++				labels.insert(ppLabels[labelIndex]);
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received SetDocumentLabels &quot; &lt;&lt; docId &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels
++				&lt;&lt; &quot; with &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
++			// Set labels
++			flushIndex = index.setDocumentLabels(docId, labels, ((resetLabels == TRUE) ? true : false));
++
++			// Free container types
++			g_strfreev(ppLabels);
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SimpleQuery&quot;) == TRUE)
++	{
++		char *pSearchText = NULL;
++		dbus_uint32_t maxHits = 0;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pSearchText,
++			DBUS_TYPE_UINT32, &amp;maxHits,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			XapianEngine engine(PinotSettings::getInstance().m_daemonIndexLocation);
++			bool replyWithError = true;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received SimpleQuery &quot; &lt;&lt; pSearchText &lt;&lt; &quot;, &quot; &lt;&lt; maxHits &lt;&lt; endl;
++#endif
++			if (pSearchText != NULL)
++			{
++				QueryProperties queryProps(&quot;DBUS&quot;, pSearchText);
++
++				// Run the query
++				engine.setMaxResultsCount(maxHits);
++				if (engine.runQuery(queryProps) == true)
++				{
++					const vector&lt;Result&gt; &amp;resultsList = engine.getResults();
++					vector&lt;string&gt; docIds;
++					m_pArray = g_ptr_array_new();
++
++					for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
++						resultIter != resultsList.end(); ++resultIter)
++					{
++						// We only need the document ID
++						unsigned int docId = index.hasDocument(resultIter-&gt;getLocation());
++						if (docId &gt; 0)
++						{
++							char docIdStr[64];
++							snprintf(docIdStr, 64, &quot;%u&quot;, docId);
++							docIds.push_back(docIdStr);
++						}
++					}
++
++					for (vector&lt;string&gt;::const_iterator docIter = docIds.begin();
++						docIter != docIds.end(); ++docIter)
++					{
++#ifdef DEBUG
++						cout &lt;&lt; &quot;DBusServletThread::doWork: adding result &quot; &lt;&lt; m_pArray-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; *docIter &lt;&lt; endl;
++#endif
++						g_ptr_array_add(m_pArray, const_cast&lt;char*&gt;(docIter-&gt;c_str()));
++					}
++
++					// Prepare the reply
++					m_pReply = newDBusReply(m_pRequest);
++					if (m_pReply != NULL)
++					{
++						dbus_message_append_args(m_pReply,
++							DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;m_pArray-&gt;pdata, m_pArray-&gt;len,
++							DBUS_TYPE_INVALID);
++
++						replyWithError = false;
++					}
++				}
++			}
++
++			if (replyWithError == true)
++			{
++				m_pReply = dbus_message_new_error(m_pRequest,
++					&quot;de.berlios.Pinot.SimpleQuery&quot;,
++					&quot;Query failed&quot;);
++			}
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Stop&quot;) == TRUE)
++	{
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			int exitStatus = EXIT_SUCCESS;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received Stop&quot; &lt;&lt; endl;
++#endif
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_INT32, &amp;exitStatus,
++					DBUS_TYPE_INVALID);
++			}
++
++			m_mustQuit = true;
++		}
++	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;UpdateDocument&quot;) == TRUE)
++	{
++		unsigned int docId = 0;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_UINT32, &amp;docId,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			DocumentInfo docInfo;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received UpdateDocument &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++			if (index.getDocumentInfo(docId, docInfo) == true)
++			{
++				// Update document
++				m_pServer-&gt;queue_index(docInfo);
++			}
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_UINT32, &amp;docId,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
++	else
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletThread::doWork: foreign message for/from &quot; &lt;&lt; dbus_message_get_interface(m_pRequest)
++			&lt;&lt; &quot; &quot; &lt;&lt; dbus_message_get_member(m_pRequest) &lt;&lt; endl;
++#endif
++		processedMessage = false;
++	}
++
++	// Did an error occur ?
++	if (error.message != NULL)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletThread::doWork: error occured: &quot; &lt;&lt; error.message &lt;&lt; endl;
++#endif
++		// Use the error message as reply
++		m_pReply = dbus_message_new_error(m_pRequest, error.name, error.message);
++	}
++
++	dbus_error_free(&amp;error);
++
++	if (flushIndex == true)
++	{
++		// Flush now for the sake of the client application
++		index.flush();
++	}
++
++	// Send a reply ?
++	if ((m_pConnection != NULL) &amp;&amp;
++		(m_pReply != NULL))
++	{
++		dbus_connection_send(m_pConnection, m_pReply, NULL);
++		dbus_connection_flush(m_pConnection);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletThread::doWork: sent reply&quot; &lt;&lt; endl;
++#endif
++		dbus_message_unref(m_pReply);
++	}
++}
++
+
+Added: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/ServerThreads.h	2006-12-10 07:18:22 UTC (rev 639)
+@@ -0,0 +1,136 @@
++/*
++ *  Copyright 2005,2006 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _SERVERTHREADS_HH
++#define _SERVERTHREADS_HH
++
++#include &lt;string&gt;
++extern &quot;C&quot;
++{
++#define DBUS_API_SUBJECT_TO_CHANGE
++#include &lt;dbus/dbus.h&gt;
++#include &lt;dbus/dbus-glib.h&gt;
++#include &lt;dbus/dbus-glib-lowlevel.h&gt;
++}
++#include &lt;sigc++/object.h&gt;
++#include &lt;sigc++/slot.h&gt;
++#include &lt;sigc++/connection.h&gt;
++#include &lt;glibmm/ustring.h&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;MonitorInterface.h&quot;
++#include &quot;MonitorHandler.h&quot;
++#include &quot;WorkerThreads.h&quot;
++
++class MonitorThread : public WorkerThread
++{
++	public:
++		MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler);
++		virtual ~MonitorThread();
++
++		virtual std::string getType(void) const;
++
++		virtual bool stop(void);
++
++		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getDirectoryFoundSignal(void);
++
++	protected:
++		int m_ctrlReadPipe;
++		int m_ctrlWritePipe;
++		MonitorInterface *m_pMonitor;
++		MonitorHandler *m_pHandler;
++		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalDirectoryFound;
++
++		void processEvents(void);
++		virtual void doWork(void);
++
++	private:
++		MonitorThread(const MonitorThread &amp;other);
++		MonitorThread &amp;operator=(const MonitorThread &amp;other);
++
++};
++
++class DirectoryScannerThread : public WorkerThread
++{
++	public:
++		DirectoryScannerThread(const std::string &amp;dirName, bool isSource,
++			unsigned int maxLevel, bool followSymLinks,
++			MonitorInterface *pMonitor, MonitorHandler *pHandler);
++		virtual ~DirectoryScannerThread();
++
++		virtual std::string getType(void) const;
++
++		virtual std::string getDirectory(void) const;
++
++		virtual bool stop(void);
++
++		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getFileFoundSignal(void);
++
++	protected:
++		std::string m_dirName;
++		unsigned int m_maxLevel;
++		bool m_followSymLinks;
++		MonitorInterface *m_pMonitor;
++		MonitorHandler *m_pHandler;
++		unsigned int m_currentLevel;
++		unsigned int m_sourceId;
++		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
++
++		void foundFile(const DocumentInfo &amp;docInfo);
++		bool scanEntry(const std::string &amp;entryName);
++		virtual void doWork(void);
++
++	private:
++		DirectoryScannerThread(const DirectoryScannerThread &amp;other);
++		DirectoryScannerThread &amp;operator=(const DirectoryScannerThread &amp;other);
++
++};
++
++class DBusServletThread : public WorkerThread
++{
++	public:
++		DBusServletThread(DaemonState *pServer, DBusConnection *pConnection, DBusMessage *pRequest);
++		virtual ~DBusServletThread();
++
++		virtual std::string getType(void) const;
++
++		virtual bool stop(void);
++
++		DBusConnection *getConnection(void) const;
++
++		DBusMessage *getReply(void) const;
++
++		bool mustQuit(void) const;
++
++	protected:
++		DaemonState *m_pServer;
++		DBusConnection *m_pConnection;
++		DBusMessage *m_pRequest;
++		DBusMessage *m_pReply;
++		GPtrArray *m_pArray;
++		bool m_mustQuit;
++
++		virtual void doWork(void);
++
++	private:
++		DBusServletThread(const DBusServletThread &amp;other);
++		DBusServletThread &amp;operator=(const DBusServletThread &amp;other);
++
++};
++
++#endif // _SERVERTHREADS_HH
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-12-10 07:18:22 UTC (rev 639)
+@@ -16,9 +16,6 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include &lt;sys/types.h&gt;
+-#include &lt;dirent.h&gt;
+-#include &lt;sys/stat.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;stdlib.h&gt;
+ #include &lt;fcntl.h&gt;
+@@ -42,7 +39,6 @@
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;ActionQueue.h&quot;
+-#include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+@@ -1151,35 +1147,38 @@
+ 	}
+ 
+ 	// We may not have to download the document
+-	if (thisUrl.getProtocol() == &quot;file&quot;)
++	// If coming from a crawl, this will be empty
++	if (m_docInfo.getType().empty() == true)
+ 	{
+-		// If coming from a crawl, this will be empty
+-		if (m_docInfo.getType().empty() == true)
+-		{
+-			m_docInfo.setType(MIMEScanner::scanFile(m_docInfo.getLocation()));
+-		}
++		m_docInfo.setType(MIMEScanner::scanFile(m_docInfo.getLocation()));
++	}
+ 
+-		if (TokenizerFactory::isSupportedType(m_docInfo.getType(), dataNeeds) == false)
++	if (TokenizerFactory::isSupportedType(m_docInfo.getType(), dataNeeds) == false)
++	{
++		// Skip unsupported types ?
++		if (m_allowAllMIMETypes == false)
+ 		{
+-			// Skip unsupported types ?
+-			if (m_allowAllMIMETypes == false)
+-			{
+-				m_status = _(&quot;Cannot index document type&quot;);
+-				m_status += &quot; &quot;;
+-				m_status += m_docInfo.getType();
+-				m_status += &quot; &quot;;
+-				m_status += _(&quot;at&quot;);
+-				m_status += &quot; &quot;;
+-				m_status += m_docInfo.getLocation();
+-				return;
+-			}
++			m_status = _(&quot;Cannot index document type&quot;);
++			m_status += &quot; &quot;;
++			m_status += m_docInfo.getType();
++			m_status += &quot; &quot;;
++			m_status += _(&quot;at&quot;);
++			m_status += &quot; &quot;;
++			m_status += m_docInfo.getLocation();
++			return;
+ 		}
+-		else if (dataNeeds == Tokenizer::ALL_BUT_FILES)
+-		{
+-			doDownload = false;
+-		}
+ 	}
+ 
++	if ((dataNeeds == Tokenizer::ALL_BUT_FILES) &amp;&amp;
++		(thisUrl.getProtocol() == &quot;file&quot;))
++	{
++		doDownload = false;
++	}
++	else if (dataNeeds == Tokenizer::NO_DOCUMENTS)
++	{
++		doDownload = false;
++	}
++
+ 	if (doDownload == true)
+ 	{
+ 		DownloadingThread::doWork();
+@@ -1559,558 +1558,3 @@
+ 	}
+ }
+ 
+-MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+-	WorkerThread(),
+-	m_ctrlReadPipe(-1),
+-	m_ctrlWritePipe(-1),
+-	m_pMonitor(pMonitor),
+-	m_pHandler(pHandler)
+-{
+-	int pipeFds[2];
+-
+-	if (pipe(pipeFds) == 0)
+-	{
+-		// This pipe will allow to stop select()
+-		m_ctrlReadPipe = pipeFds[0];
+-		m_ctrlWritePipe = pipeFds[1];
+-	}
+-}
+-
+-MonitorThread::~MonitorThread()
+-{
+-	close(m_ctrlReadPipe);
+-	close(m_ctrlWritePipe);
+-}
+-
+-string MonitorThread::getType(void) const
+-{
+-	return &quot;MonitorThread&quot;;
+-}
+-
+-bool MonitorThread::stop(void)
+-{
+-	// Disconnect the signal
+-	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalDirectoryFound.slots();
+-	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+-	if (slotIter != slotsList.end())
+-	{
+-		if (slotIter-&gt;empty() == false)
+-		{
+-			slotIter-&gt;block();
+-			slotIter-&gt;disconnect();
+-		}
+-	}
+-	m_done = true;
+-	write(m_ctrlWritePipe, &quot;X&quot;, 1);
+-
+-	return true;
+-}
+-
+-Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; MonitorThread::getDirectoryFoundSignal(void)
+-{
+-	return m_signalDirectoryFound;
+-}
+-
+-void MonitorThread::processEvents(void)
+-{
+-	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
+-	queue&lt;MonitorEvent&gt; events;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MonitorThread::processEvents: checking for events&quot; &lt;&lt; endl;
+-#endif
+-	if ((m_pMonitor == NULL) ||
+-		(m_pMonitor-&gt;retrievePendingEvents(events) == false))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MonitorThread::processEvents: failed to retrieve pending events&quot; &lt;&lt; endl;
+-#endif
+-		return;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MonitorThread::processEvents: retrieved &quot; &lt;&lt; events.size() &lt;&lt; &quot; events&quot; &lt;&lt; endl;
+-#endif
+-
+-	while ((events.empty() == false) &amp;&amp;
+-		(m_done == false))
+-	{
+-		MonitorEvent &amp;event = events.front();
+-
+-		if ((event.m_location.empty() == true) ||
+-			(event.m_type == MonitorEvent::UNKNOWN))
+-		{
+-			// Next
+-			events.pop();
+-			continue;
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MonitorThread::processEvents: event &quot; &lt;&lt; event.m_type &lt;&lt; &quot; on &quot;
+-			&lt;&lt; event.m_location &lt;&lt; &quot; &quot; &lt;&lt; event.m_isDirectory &lt;&lt; endl;
+-#endif
+-
+-		// What's the event code ?
+-		if (event.m_type == MonitorEvent::EXISTS)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileExists(event.m_location);
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::CREATED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileCreated(event.m_location);
+-			}
+-			else
+-			{
+-				DocumentInfo docInfo(&quot;&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + event.m_location, &quot;&quot;, &quot;&quot;);
+-
+-				// Report this directory so that it is crawled
+-				m_signalDirectoryFound(docInfo, &quot;&quot;, true);
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::WRITE_CLOSED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
+-				struct stat fileStat;
+-				time_t itemDate;
+-
+-				if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + event.m_location, status, itemDate) == true)
+-				{
+-					// Was the file actually modified ?
+-					if ((stat(event.m_location.c_str(), &amp;fileStat) == 0) &amp;&amp;
+-						(itemDate &lt; fileStat.st_mtime))
+-					{
+-						m_pHandler-&gt;fileModified(event.m_location);
+-					}
+-#ifdef DEBUG
+-					else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't modified&quot; &lt;&lt; endl;
+-#endif
+-				}
+-#ifdef DEBUG
+-				else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't crawled&quot; &lt;&lt; endl;
+-#endif
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::MOVED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
+-			}
+-			else
+-			{
+-				// We should receive this only if the destination directory is monitored too
+-				m_pHandler-&gt;directoryMoved(event.m_location, event.m_previousLocation);
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::DELETED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileDeleted(event.m_location);
+-			}
+-			else
+-			{
+-				// The monitor should have stopped monitoring this
+-				// In practice, events for the files in this directory will already have been received 
+-				m_pHandler-&gt;directoryDeleted(event.m_location);
+-			}
+-		}
+-
+-		// Next
+-		events.pop();
+-	}
+-}
+-
+-void MonitorThread::doWork(void)
+-{
+-	if ((m_pHandler == NULL) ||
+-		(m_pMonitor == NULL))
+-	{
+-		m_status = _(&quot;No monitoring handler&quot;);
+-		return;
+-	}
+-
+-	// Initialize the handler
+-	m_pHandler-&gt;initialize();
+-
+-	// Get the list of files to monitor
+-	const set&lt;string&gt; &amp;fileNames = m_pHandler-&gt;getFileNames();
+-	for (set&lt;string&gt;::const_iterator fileIter = fileNames.begin();
+-		fileIter != fileNames.end(); ++fileIter)
+-	{
+-		m_pMonitor-&gt;addLocation(*fileIter, false);
+-	}
+-	// Directories, if any, are set elsewhere
+-	// In the case of OnDiskHandler, they are set by DirectoryScannerThread
+-
+-	// There might already be events that need processing
+-	processEvents();
+-
+-	// Wait for something to happen
+-	while (m_done == false)
+-	{
+-		struct timeval selectTimeout;
+-		fd_set listenSet;
+-
+-		selectTimeout.tv_sec = 60;
+-		selectTimeout.tv_usec = 0;
+-
+-		FD_ZERO(&amp;listenSet);
+-		if (m_ctrlReadPipe &gt;= 0)
+-		{
+-			FD_SET(m_ctrlReadPipe, &amp;listenSet);
+-		}
+-
+-		m_pHandler-&gt;flushIndex();
+-
+-		// The file descriptor may change over time
+-		int monitorFd = m_pMonitor-&gt;getFileDescriptor();
+-		FD_SET(monitorFd, &amp;listenSet);
+-		if (monitorFd &lt; 0)
+-		{
+-			m_status = _(&quot;Couldn't initialize file monitor&quot;);
+-			return;
+-		}
+-
+-		int fdCount = select(max(monitorFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
+-		if ((fdCount &lt; 0) &amp;&amp;
+-			(errno != EINTR))
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MonitorThread::doWork: select() failed&quot; &lt;&lt; endl;
+-#endif
+-			break;
+-		}
+-		else if (FD_ISSET(monitorFd, &amp;listenSet))
+-		{
+-			processEvents();
+-		}
+-	}
+-}
+-
+-DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName, bool isSource,
+-	unsigned int maxLevel, bool followSymLinks,
+-	MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+-	WorkerThread(),
+-	m_dirName(dirName),
+-	m_maxLevel(maxLevel),
+-	m_followSymLinks(followSymLinks),
+-	m_pMonitor(pMonitor),
+-	m_pHandler(pHandler),
+-	m_currentLevel(0),
+-	m_sourceId(0)
+-{
+-	if (m_dirName.empty() == false)
+-	{
+-		CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
+-
+-		if (isSource == true)
+-		{
+-			// Does this source exist ?
+-			if (history.hasSource(&quot;<A HREF="file://">file://</A>&quot; + m_dirName, m_sourceId) == false)
+-			{
+-				// Create it
+-				m_sourceId = history.insertSource(&quot;<A HREF="file://">file://</A>&quot; + m_dirName);
+-			}
+-		}
+-		else
+-		{
+-			map&lt;unsigned int, string&gt; fileSources;
+-
+-			// What source does this belong to ?
+-			for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = fileSources.begin();
+-				sourceIter != fileSources.end(); ++sourceIter)
+-			{
+-				if (sourceIter-&gt;second.length() &lt; m_dirName.length())
+-				{
+-					// Skip
+-					continue;
+-				}
+-
+-				if (sourceIter-&gt;second.substr(0, m_dirName.length()) == m_dirName)
+-				{
+-					// That's the one
+-					m_sourceId = sourceIter-&gt;first;
+-					break;
+-				}
+-			}
+-		}
+-	}
+-}
+-
+-DirectoryScannerThread::~DirectoryScannerThread()
+-{
+-}
+-
+-string DirectoryScannerThread::getType(void) const
+-{
+-	return &quot;DirectoryScannerThread&quot;;
+-}
+-
+-string DirectoryScannerThread::getDirectory(void) const
+-{
+-	return m_dirName;
+-}
+-
+-bool DirectoryScannerThread::stop(void)
+-{
+-	// Disconnect the signal
+-	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
+-	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+-	if (slotIter != slotsList.end())
+-	{
+-		if (slotIter-&gt;empty() == false)
+-		{
+-			slotIter-&gt;block();
+-			slotIter-&gt;disconnect();
+-		}
+-	}
+-	m_done = true;
+-
+-	return true;
+-}
+-
+-Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
+-{
+-	return m_signalFileFound;
+-}
+-
+-void DirectoryScannerThread::foundFile(const DocumentInfo &amp;docInfo)
+-{
+-	char labelStr[64];
+-
+-	if ((docInfo.getLocation().empty() == true) ||
+-		(m_done == true))
+-	{
+-		return;
+-	}
+-
+-	// This identifies the source
+-	snprintf(labelStr, 64, &quot;SOURCE%u&quot;, m_sourceId);
+-
+-	m_signalFileFound(docInfo, labelStr, false);
+-}
+-
+-bool DirectoryScannerThread::scanEntry(const string &amp;entryName)
+-{
+-	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
+-	CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
+-	time_t itemDate;
+-	struct stat fileStat;
+-	int statSuccess = 0;
+-
+-	if (entryName.empty() == true)
+-	{
+-		return false;
+-	}
+-
+-	// Skip . .. and dotfiles
+-	Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+-	if (urlObj.getFile()[0] == '.')
+-	{
+-		return false;
+-	}
+-
+-	if (m_followSymLinks == false)
+-	{
+-		statSuccess = lstat(entryName.c_str(), &amp;fileStat);
+-	}
+-	else
+-	{
+-		// Stat the files pointed to by symlinks
+-		statSuccess = stat(entryName.c_str(), &amp;fileStat);
+-	}
+-
+-	if (statSuccess == -1)
+-	{
+-		return false;
+-	}
+-
+-	bool itemExists = history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, status, itemDate);
+-
+-	// Is it a file or a directory ?
+-	if (S_ISLNK(fileStat.st_mode))
+-	{
+-		// This won't happen when m_followSymLinks is true
+-		return false;
+-	}
+-	else if (S_ISREG(fileStat.st_mode))
+-	{
+-		DocumentInfo docInfo;
+-		bool reportFile = false;
+-
+-		docInfo.setLocation(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+-
+-		// Is this file blacklisted ?
+-		// We have to check early so that if necessary the file's status stays at CRAWLING 
+-		// and it is removed from the index at the end of this crawl
+-		if (PinotSettings::getInstance().isBlackListed(entryName) == false)
+-		{
+-			if (itemExists == false)
+-			{
+-				// Record it
+-				history.insertItem(docInfo.getLocation(), CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-				reportFile = true;
+-			}
+-			else
+-			{
+-				// Update the record
+-				history.updateItem(docInfo.getLocation(), CrawlHistory::CRAWLED, fileStat.st_mtime);
+-
+-				// Was it last crawled after it was modified ?
+-				if (itemDate &lt; fileStat.st_mtime)
+-				{
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-					// No, crawl and index it again
+-					reportFile = true;
+-				}
+-			}
+-		}
+-
+-		if (reportFile == true)
+-		{
+-			Url urlObj(docInfo.getLocation());
+-
+-			docInfo.setTitle(urlObj.getFile());
+-			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
+-			docInfo.setSize(fileStat.st_size);
+-
+-			foundFile(docInfo);
+-		}
+-	}
+-	else if (S_ISDIR(fileStat.st_mode))
+-	{
+-		// Can we scan this directory ?
+-		if (((m_maxLevel == 0) ||
+-			(m_currentLevel &lt; m_maxLevel)) &amp;&amp;
+-			(PinotSettings::getInstance().isBlackListed(entryName) == false))
+-		{
+-			++m_currentLevel;
+-
+-			// Open the directory
+-			DIR *pDir = opendir(entryName.c_str());
+-			if (pDir == NULL)
+-			{
+-				return false;
+-			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: entering &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-
+-			if (m_pMonitor != NULL)
+-			{
+-				// Monitor first so that we don't miss events
+-				m_pMonitor-&gt;addLocation(entryName, true);
+-			}
+-
+-			// Iterate through this directory's entries
+-			struct dirent *pDirEntry = readdir(pDir);
+-			while ((m_done == false) &amp;&amp;
+-				(pDirEntry != NULL))
+-			{
+-				char *pEntryName = pDirEntry-&gt;d_name;
+-
+-				// Skip . .. and dotfiles
+-				if ((pEntryName != NULL) &amp;&amp;
+-					(pEntryName[0] != '.'))
+-				{
+-					string subEntryName(entryName);
+-
+-					if (entryName[entryName.length() - 1] != '/')
+-					{
+-						subEntryName += &quot;/&quot;;
+-					}
+-					subEntryName += pEntryName;
+-
+-					// Scan this entry
+-					if (scanEntry(subEntryName) == false)
+-					{
+-#ifdef DEBUG
+-						cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: failed to open &quot;
+-							&lt;&lt; subEntryName &lt;&lt; endl;
+-#endif
+-					}
+-				}
+-
+-				// Next entry
+-				pDirEntry = readdir(pDir);
+-			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: done with &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-
+-			// Close the directory
+-			closedir(pDir);
+-			--m_currentLevel;
+-		}
+-	}
+-	else
+-	{
+-		return false;
+-	}
+-
+-	return true;
+-}
+-
+-void DirectoryScannerThread::doWork(void)
+-{
+-	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
+-	set&lt;string&gt; deletedFiles;
+-
+-	if (m_dirName.empty() == true)
+-	{
+-		return;
+-	}
+-
+-	// Update this source's items status
+-	history.updateItemsStatus(m_sourceId, CrawlHistory::CRAWLED, CrawlHistory::CRAWLING);
+-
+-	if (scanEntry(m_dirName) == false)
+-	{
+-		m_status = _(&quot;Couldn't open directory&quot;);
+-		m_status += &quot; &quot;;
+-		m_status += m_dirName;
+-	}
+-
+-	if (m_done == true)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::doWork: leaving cleanup until next crawl&quot; &lt;&lt; endl;
+-#endif
+-		return;
+-	}
+-
+-	// All files with status set to CRAWLING were not found in this crawl
+-	// Chances are they were removed after the previous crawl
+-	if ((m_pHandler != NULL) &amp;&amp;
+-		(history.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, deletedFiles) &gt; 0))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::doWork: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; files were deleted&quot; &lt;&lt; endl;
+-#endif
+-		for(set&lt;string&gt;::const_iterator fileIter = deletedFiles.begin();
+-			fileIter != deletedFiles.end(); ++fileIter)
+-		{
+-			// Inform the MonitorHandler
+-			if (m_pHandler-&gt;fileDeleted(fileIter-&gt;substr(7)) == true)
+-			{
+-				// Delete this item
+-				history.deleteItem(*fileIter);
+-			}
+-		}
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;DirectoryScannerThread::doWork: done crawling &quot; &lt;&lt; m_dirName &lt;&lt; endl;
+-#endif
+-}
+-
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-12-10 07:18:22 UTC (rev 639)
+@@ -34,12 +34,10 @@
+ #include &lt;glibmm/ustring.h&gt;
+ 
+ #include &quot;Document.h&quot;
+-#include &quot;MonitorInterface.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ #include &quot;Result.h&quot;
+-#include &quot;MonitorHandler.h&quot;
+ 
+ class WorkerThread
+ {
+@@ -394,68 +392,4 @@
+ 
+ };
+ 
+-class MonitorThread : public WorkerThread
+-{
+-	public:
+-		MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler);
+-		virtual ~MonitorThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		virtual bool stop(void);
+-
+-		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getDirectoryFoundSignal(void);
+-
+-	protected:
+-		int m_ctrlReadPipe;
+-		int m_ctrlWritePipe;
+-		MonitorInterface *m_pMonitor;
+-		MonitorHandler *m_pHandler;
+-		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalDirectoryFound;
+-
+-		void processEvents(void);
+-		virtual void doWork(void);
+-
+-	private:
+-		MonitorThread(const MonitorThread &amp;other);
+-		MonitorThread &amp;operator=(const MonitorThread &amp;other);
+-
+-};
+-
+-class DirectoryScannerThread : public WorkerThread
+-{
+-	public:
+-		DirectoryScannerThread(const std::string &amp;dirName, bool isSource,
+-			unsigned int maxLevel, bool followSymLinks,
+-			MonitorInterface *pMonitor, MonitorHandler *pHandler);
+-		virtual ~DirectoryScannerThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		virtual std::string getDirectory(void) const;
+-
+-		virtual bool stop(void);
+-
+-		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getFileFoundSignal(void);
+-
+-	protected:
+-		std::string m_dirName;
+-		unsigned int m_maxLevel;
+-		bool m_followSymLinks;
+-		MonitorInterface *m_pMonitor;
+-		MonitorHandler *m_pHandler;
+-		unsigned int m_currentLevel;
+-		unsigned int m_sourceId;
+-		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
+-
+-		void foundFile(const DocumentInfo &amp;docInfo);
+-		bool scanEntry(const std::string &amp;entryName);
+-		virtual void doWork(void);
+-
+-	private:
+-		DirectoryScannerThread(const DirectoryScannerThread &amp;other);
+-		DirectoryScannerThread &amp;operator=(const DirectoryScannerThread &amp;other);
+-
+-};
+-
+ #endif // _WORKERTHREADS_HH
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-12-10 07:09:09 UTC (rev 638)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-12-10 07:18:22 UTC (rev 639)
+@@ -31,13 +31,6 @@
+ #include &lt;glibmm/miscutils.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/object.h&gt;
+-extern &quot;C&quot;
+-{
+-#define DBUS_API_SUBJECT_TO_CHANGE
+-#include &lt;dbus/dbus.h&gt;
+-#include &lt;dbus/dbus-glib.h&gt;
+-#include &lt;dbus/dbus-glib-lowlevel.h&gt;
+-}
+ #include &lt;glibmm/main.h&gt;
+ 
+ #include &quot;TokenizerFactory.h&quot;
+@@ -57,6 +50,7 @@
+ #include &quot;NLS.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;PinotSettings.h&quot;
++#include &quot;ServerThreads.h&quot;
+ 
+ using namespace std;
+ 
+@@ -116,22 +110,6 @@
+ 	}
+ }
+ 
+-static DBusMessage *newDBusReply(DBusMessage *pMessage)
+-{
+-	if (pMessage == NULL)
+-	{
+-		return NULL;
+-	}
+-
+-	DBusMessage *pReply = dbus_message_new_method_return(pMessage);
+-	if (pReply != NULL)
+-	{
+-		return pReply;
+-	}
+-
+-	return NULL;
+-}
+-
+ static DBusHandlerResult filterHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
+ #ifdef DEBUG
+@@ -164,454 +142,23 @@
+ 
+ static DBusHandlerResult messageHandler(DBusConnection *pConnection, DBusMessage *pMessage, void *pData)
+ {
+-	XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+ 	DaemonState *pServer = NULL;
+-	DBusMessage *pReply = NULL;
+-	DBusError error;
+-	const char *pSender = dbus_message_get_sender(pMessage);
+-	bool processedMessage = true, flushIndex = false, quitLoop = false;
+ 
+ 	if (pData != NULL)
+ 	{
+ 		pServer = (DaemonState *)pData;
+ 	}
+ 
+-	dbus_error_init(&amp;error);
+-
+-#ifdef DEBUG
+-	if (pSender != NULL)
++	if ((pConnection != NULL) &amp;&amp;
++		(pMessage != NULL))
+ 	{
+-		cout &lt;&lt; &quot;messageHandler: called by &quot; &lt;&lt; pSender &lt;&lt; endl;
+-	}
+-	else
+-	{
+-		cout &lt;&lt; &quot;messageHandler: called by unknown sender&quot; &lt;&lt; endl;
+-	}
+-#endif
++		dbus_connection_ref(pConnection);
++		dbus_message_ref(pMessage);
+ 
+-	if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;DeleteLabel&quot;) == TRUE)
+-	{
+-		char *pLabel = NULL;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_STRING, &amp;pLabel,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received DeleteLabel &quot; &lt;&lt; pLabel &lt;&lt; endl;
+-#endif
+-			// Delete the label
+-			flushIndex = index.deleteLabel(pLabel);
+-
+-			// Prepare the reply
+-			pReply = newDBusReply(pMessage);
+-			if (pReply != NULL)
+-			{
+-				dbus_message_append_args(pReply,
+-					DBUS_TYPE_STRING, &amp;pLabel,
+-					DBUS_TYPE_INVALID);
+-			}
+-		}
++		pServer-&gt;start_thread(new DBusServletThread(pServer, pConnection, pMessage));
+ 	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;GetDocumentInfo&quot;) == TRUE)
+-	{
+-		unsigned int docId = 0;
+ 
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_UINT32, &amp;docId,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			DocumentInfo docInfo;
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received GetDocumentInfo &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			if (index.getDocumentInfo(docId, docInfo) == true)
+-			{
+-				// Prepare the reply
+-				pReply = newDBusReply(pMessage);
+-				if (pReply != NULL)
+-				{
+-					string language(Languages::toEnglish(docInfo.getLanguage()));
+-					const char *pTitle = docInfo.getTitle().c_str();
+-					const char *pLocation = docInfo.getLocation().c_str();
+-					const char *pType = docInfo.getType().c_str();
+-					const char *pLanguage = language.c_str();
+-
+-					dbus_message_append_args(pReply,
+-						DBUS_TYPE_STRING, &amp;pTitle,
+-						DBUS_TYPE_STRING, &amp;pLocation,
+-						DBUS_TYPE_STRING, &amp;pType,
+-						DBUS_TYPE_STRING, &amp;pLanguage,
+-						DBUS_TYPE_INVALID);
+-				}
+-			}
+-			else
+-			{
+-				pReply = dbus_message_new_error(pMessage,
+-					&quot;de.berlios.Pinot.GetDocumentInfo&quot;,
+-					&quot;Unknown document&quot;);
+-			}
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;GetDocumentLabels&quot;) == TRUE)
+-	{
+-		unsigned int docId = 0;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_UINT32, &amp;docId,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			set&lt;string&gt; labels;
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received GetDocumentLabels &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			if (index.getDocumentLabels(docId, labels) == true)
+-			{
+-				GPtrArray *pLabels = g_ptr_array_new();
+-
+-				for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-					labelIter != labels.end(); ++labelIter)
+-				{
+-					string labelName(*labelIter);
+-
+-					g_ptr_array_add(pLabels, const_cast&lt;char*&gt;(labelName.c_str()));
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;messageHandler: adding label &quot; &lt;&lt; pLabels-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
+-				}
+-
+-				// Prepare the reply
+-				pReply = newDBusReply(pMessage);
+-				if (pReply != NULL)
+-				{
+-					dbus_message_append_args(pReply,
+-						DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;pLabels-&gt;pdata, pLabels-&gt;len,
+-						DBUS_TYPE_INVALID);
+-
+-					// Send the reply here
+-					dbus_connection_send(pConnection, pReply, NULL);
+-					dbus_message_unref(pReply);
+-
+-					pReply = NULL;
+-				}
+-
+-				// Free the array
+-				g_ptr_array_free(pLabels, TRUE);
+-			}
+-			else
+-			{
+-				pReply = dbus_message_new_error(pMessage,
+-					&quot;de.berlios.Pinot.GetDocumentLabels&quot;,
+-					&quot; failed&quot;);
+-			}
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;GetStatistics&quot;) == TRUE)
+-	{
+-		CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
+-		unsigned int crawledFilesCount = history.getItemsCount();
+-		unsigned int docsCount = index.getDocumentsCount();
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;messageHandler: received GetStatistics&quot; &lt;&lt; endl;
+-#endif
+-		// Prepare the reply
+-		pReply = newDBusReply(pMessage);
+-		if (pReply != NULL)
+-		{
+-			dbus_message_append_args(pReply,
+-				DBUS_TYPE_UINT32, &amp;crawledFilesCount,
+-				DBUS_TYPE_UINT32, &amp;docsCount,
+-				DBUS_TYPE_INVALID);
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;RenameLabel&quot;) == TRUE)
+-	{
+-		char *pOldLabel = NULL;
+-		char *pNewLabel = NULL;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_STRING, &amp;pOldLabel,
+-			DBUS_TYPE_STRING, &amp;pNewLabel,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received RenameLabel &quot; &lt;&lt; pOldLabel &lt;&lt; &quot;, &quot; &lt;&lt; pNewLabel &lt;&lt; endl;
+-#endif
+-			// Rename the label
+-			flushIndex = index.renameLabel(pOldLabel, pNewLabel);
+-
+-			// Prepare the reply
+-			pReply = newDBusReply(pMessage);
+-			if (pReply != NULL)
+-			{
+-				dbus_message_append_args(pReply,
+-					DBUS_TYPE_STRING, &amp;pNewLabel,
+-					DBUS_TYPE_INVALID);
+-			}
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SetDocumentInfo&quot;) == TRUE)
+-	{
+-		char *pTitle = NULL;
+-		char *pLocation = NULL;
+-		char *pType = NULL;
+-		char *pLanguage = NULL;
+-		unsigned int docId = 0;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_UINT32, &amp;docId,
+-			DBUS_TYPE_STRING, &amp;pTitle,
+-			DBUS_TYPE_STRING, &amp;pLocation,
+-			DBUS_TYPE_STRING, &amp;pType,
+-			DBUS_TYPE_STRING, &amp;pLanguage,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			DocumentInfo docInfo(pTitle, pLocation, pType,
+-				((pLanguage != NULL) ? Languages::toLocale(pLanguage) : &quot;&quot;));
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received SetDocumentInfo &quot; &lt;&lt; docId &lt;&lt; &quot;, &quot; &lt;&lt; pTitle
+-				&lt;&lt; &quot;, &quot; &lt;&lt; pLocation &lt;&lt; &quot;, &quot; &lt;&lt; pType &lt;&lt; &quot;, &quot; &lt;&lt; pLanguage &lt;&lt; endl;
+-#endif
+-
+-			// Update the document info
+-			flushIndex = index.updateDocumentInfo(docId, docInfo);
+-
+-			// Prepare the reply
+-			pReply = newDBusReply(pMessage);
+-			if (pReply != NULL)
+-			{
+-				dbus_message_append_args(pReply,
+-					DBUS_TYPE_UINT32, &amp;docId,
+-					DBUS_TYPE_INVALID);
+-			}
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SetDocumentLabels&quot;) == TRUE)
+-	{
+-		char **ppLabels = NULL;
+-		dbus_uint32_t labelsCount = 0;
+-		unsigned int docId = 0;
+-		gboolean resetLabels = TRUE;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_UINT32, &amp;docId,
+-			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppLabels, &amp;labelsCount,
+-			DBUS_TYPE_BOOLEAN, &amp;resetLabels,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			set&lt;string&gt; labels;
+-
+-			for (dbus_uint32_t labelIndex = 0; labelIndex &lt; labelsCount; ++labelIndex)
+-			{
+-				if (ppLabels[labelIndex] == NULL)
+-				{
+-					break;
+-				}
+-				labels.insert(ppLabels[labelIndex]);
+-			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received SetDocumentLabels &quot; &lt;&lt; docId &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels
+-				&lt;&lt; &quot; with &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+-#endif
+-			// Set labels
+-			flushIndex = index.setDocumentLabels(docId, labels, ((resetLabels == TRUE) ? true : false));
+-
+-			// Free container types
+-			g_strfreev(ppLabels);
+-
+-			// Prepare the reply
+-			pReply = newDBusReply(pMessage);
+-			if (pReply != NULL)
+-			{
+-				dbus_message_append_args(pReply,
+-					DBUS_TYPE_UINT32, &amp;docId,
+-					DBUS_TYPE_INVALID);
+-			}
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;SimpleQuery&quot;) == TRUE)
+-	{
+-		char *pSearchText = NULL;
+-		dbus_uint32_t maxHits = 0;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_STRING, &amp;pSearchText,
+-			DBUS_TYPE_UINT32, &amp;maxHits,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			XapianEngine engine(PinotSettings::getInstance().m_daemonIndexLocation);
+-			bool replyWithError = true;
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received SimpleQuery &quot; &lt;&lt; pSearchText &lt;&lt; &quot;, &quot; &lt;&lt; maxHits &lt;&lt; endl;
+-#endif
+-			if (pSearchText != NULL)
+-			{
+-				QueryProperties queryProps(&quot;DBUS&quot;, pSearchText);
+-
+-				// Run the query
+-				engine.setMaxResultsCount(maxHits);
+-				if (engine.runQuery(queryProps) == true)
+-				{
+-					const vector&lt;Result&gt; &amp;resultsList = engine.getResults();
+-					vector&lt;string&gt; docIds;
+-					GPtrArray *pDocIds = g_ptr_array_new();
+-
+-					for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+-						resultIter != resultsList.end(); ++resultIter)
+-					{
+-						// We only need the document ID
+-						unsigned int docId = index.hasDocument(resultIter-&gt;getLocation());
+-						if (docId &gt; 0)
+-						{
+-							char docIdStr[64];
+-							snprintf(docIdStr, 64, &quot;%u&quot;, docId);
+-							docIds.push_back(docIdStr);
+-						}
+-					}
+-
+-					for (vector&lt;string&gt;::const_iterator docIter = docIds.begin();
+-						docIter != docIds.end(); ++docIter)
+-					{
+-#ifdef DEBUG
+-						cout &lt;&lt; &quot;messageHandler: adding result &quot; &lt;&lt; pDocIds-&gt;len &lt;&lt; &quot; &quot; &lt;&lt; *docIter &lt;&lt; endl;
+-#endif
+-						g_ptr_array_add(pDocIds, const_cast&lt;char*&gt;(docIter-&gt;c_str()));
+-					}
+-
+-					// Prepare the reply
+-					pReply = newDBusReply(pMessage);
+-					if (pReply != NULL)
+-					{
+-						dbus_message_append_args(pReply,
+-							DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;pDocIds-&gt;pdata, pDocIds-&gt;len,
+-							DBUS_TYPE_INVALID);
+-
+-						// Send the reply here
+-						dbus_connection_send(pConnection, pReply, NULL);
+-						dbus_message_unref(pReply);
+-
+-						pReply = NULL;
+-						replyWithError = false;
+-					}
+-
+-					// Free the array
+-					g_ptr_array_free(pDocIds, TRUE);
+-				}
+-			}
+-
+-			if (replyWithError == true)
+-			{
+-				pReply = dbus_message_new_error(pMessage,
+-					&quot;de.berlios.Pinot.SimpleQuery&quot;,
+-					&quot;Query failed&quot;);
+-			}
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;Stop&quot;) == TRUE)
+-	{
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			int exitStatus = EXIT_SUCCESS;
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received Stop&quot; &lt;&lt; endl;
+-#endif
+-			// Prepare the reply
+-			pReply = newDBusReply(pMessage);
+-			if (pReply != NULL)
+-			{
+-				dbus_message_append_args(pReply,
+-					DBUS_TYPE_INT32, &amp;exitStatus,
+-					DBUS_TYPE_INVALID);
+-			}
+-
+-			quitLoop = true;
+-		}
+-	}
+-	else if (dbus_message_is_method_call(pMessage, g_pinotDBusService, &quot;UpdateDocument&quot;) == TRUE)
+-	{
+-		unsigned int docId = 0;
+-
+-		if (dbus_message_get_args(pMessage, &amp;error,
+-			DBUS_TYPE_UINT32, &amp;docId,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-			DocumentInfo docInfo;
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;messageHandler: received UpdateDocument &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			if (index.getDocumentInfo(docId, docInfo) == true)
+-			{
+-				// Update document
+-				pServer-&gt;queue_index(docInfo);
+-			}
+-
+-			// Prepare the reply
+-			pReply = newDBusReply(pMessage);
+-			if (pReply != NULL)
+-			{
+-				dbus_message_append_args(pReply,
+-					DBUS_TYPE_UINT32, &amp;docId,
+-					DBUS_TYPE_INVALID);
+-			}
+-		}
+-	}
+-	else
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;messageHandler: foreign message for/from &quot; &lt;&lt; dbus_message_get_interface(pMessage)
+-			&lt;&lt; &quot; &quot; &lt;&lt; dbus_message_get_member(pMessage) &lt;&lt; endl;
+-#endif
+-		processedMessage = false;
+-	}
+-
+-	// Did an error occur ?
+-	if (error.message != NULL)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;messageHandler: error occured: &quot; &lt;&lt; error.message &lt;&lt; endl;
+-#endif
+-		// Use the error message as reply
+-		pReply = dbus_message_new_error(pMessage, error.name, error.message);
+-	}
+-
+-	dbus_error_free(&amp;error);
+-
+-	if (flushIndex == true)
+-	{
+-		// Flush now for the sake of the client application
+-		index.flush();
+-	}
+-
+-	// Send a reply ?
+-	if (pReply != NULL)
+-	{
+-		dbus_connection_send(pConnection, pReply, NULL);
+-		dbus_connection_flush(pConnection);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;messageHandler: sent reply&quot; &lt;&lt; endl;
+-#endif
+-		dbus_message_unref(pReply);
+-	}
+-
+-	if (quitLoop == true)
+-	{
+-		quitAll(0);
+-	}
+-
+-	if (processedMessage == true)
+-	{
+-		return DBUS_HANDLER_RESULT_HANDLED;
+-	}
+-
+-	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
++	return DBUS_HANDLER_RESULT_HANDLED;
+ }
+ 
+ int main(int argc, char **argv)
+@@ -814,6 +361,7 @@
+ 
+ 		try
+ 		{
++			server.getQuitSignal().connect(SigC::slot(&amp;quitAll));
+ 
+ 			// Connect to threads' finished signal
+ 			server.connect();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000632.html">[Pinot-svn] r638 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000634.html">[Pinot-svn] r640 - trunk/scripts/bash
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#633">[ date ]</a>
+              <a href="thread.html#633">[ thread ]</a>
+              <a href="subject.html#633">[ subject ]</a>
+              <a href="author.html#633">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,405 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1740 - in trunk: Core UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1740%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C20101210021333.11626480EBB%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001728.html">
+   <LINK REL="Next"  HREF="001730.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1740 - in trunk: Core UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1740%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C20101210021333.11626480EBB%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1740 - in trunk: Core UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Dec 10 03:13:32 CET 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001728.html">[Pinot-svn] r1739 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001730.html">[Pinot-svn] r1741 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1729">[ date ]</a>
+              <a href="thread.html#1729">[ thread ]</a>
+              <a href="subject.html#1729">[ subject ]</a>
+              <a href="author.html#1729">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-12-10 03:13:32 +0100 (Fri, 10 Dec 2010)
+New Revision: 1740
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/ServerThreads.h
+   trunk/Core/WorkerThreads.cpp
+   trunk/Core/WorkerThreads.h
+   trunk/Core/pinot-index.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/prefsWindow.cc
+   trunk/UI/GTK2/src/prefsWindow.hh
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+Log:
+The maximum number of indexing threads defaults to 1, can still be controlled
+globally by PINOT_MAXIMUM_INDEX_THREADS. Crawler and DirectoryScanner threads
+index documents inline by default, don't delegate to an Indexing thread.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/Core/DaemonState.cpp	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -317,7 +317,7 @@
+ #endif
+ 
+ DaemonState::DaemonState() :
+-	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 4),
++	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation),
+ 	m_isReindex(false),
+ 	m_reload(false),
+ 	m_flush(false),
+@@ -328,19 +328,6 @@
+ {
+ 	FD_ZERO(&amp;m_flagsSet);
+ 
+-	// Override the number of indexing threads ?
+-	char *pEnvVar = getenv(&quot;PINOT_MAXIMUM_INDEX_THREADS&quot;);
+-	if ((pEnvVar != NULL) &amp;&amp;
+-		(strlen(pEnvVar) &gt; 0))
+-	{
+-		int threadsNum = atoi(pEnvVar);
+-
+-		if (threadsNum &gt; 0)
+-		{
+-			m_maxIndexThreads = (unsigned int)threadsNum;
+-		}
+-	}
+-
+ 	// Check disk usage every minute
+ 	m_timeoutConnection = Glib::signal_timeout().connect(sigc::mem_fun(*this,
+ 		&amp;DaemonState::on_activity_timeout), 60000);
+@@ -441,10 +428,11 @@
+ 
+ bool DaemonState::crawl_location(const PinotSettings::IndexableLocation &amp;location)
+ {
++	CrawlerThread *pCrawlerThread = NULL;
+ 	string locationToCrawl(location.m_name);
+ 	bool doMonitoring = location.m_monitor;
+ 	bool isSource = location.m_isSource;
+-	CrawlerThread *pCrawlerThread = NULL;
++	bool inlineIndexing = false;
+ 
+ 	// Can we go ahead and crawl ?
+ 	if ((is_flag_set(LOW_DISK_SPACE) == true) ||
+@@ -461,17 +449,22 @@
+ 		return false;
+ 	}
+ 
++	if (m_maxIndexThreads &lt; 2)
++	{
++		inlineIndexing = true;
++	}
++
+ 	if (doMonitoring == false)
+ 	{
+ 		// Monitoring is not necessary, but we still have to pass the handler
+ 		// so that we can act on documents that have been deleted
+ 		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+-			NULL, m_pDiskHandler);
++			NULL, m_pDiskHandler, inlineIndexing);
+ 	}
+ 	else
+ 	{
+ 		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+-			m_pDiskMonitor, m_pDiskHandler);
++			m_pDiskMonitor, m_pDiskHandler, inlineIndexing);
+ 	}
+ 	pCrawlerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
+ 
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/Core/ServerThreads.cpp	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -113,10 +113,11 @@
+ }
+ 
+ CrawlerThread::CrawlerThread(const string &amp;dirName, bool isSource,
+-	MonitorInterface *pMonitor, MonitorHandler *pHandler) :
++	MonitorInterface *pMonitor, MonitorHandler *pHandler,
++	bool inlineIndexing) :
+ 	DirectoryScannerThread(dirName,
+ 		PinotSettings::getInstance().m_daemonIndexLocation,
+-		0, false, true),
++		0, inlineIndexing, true),
+ 	m_sourceId(0),
+ 	m_pMonitor(pMonitor),
+ 	m_pHandler(pHandler),
+
+Modified: trunk/Core/ServerThreads.h
+===================================================================
+--- trunk/Core/ServerThreads.h	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/Core/ServerThreads.h	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -41,7 +41,8 @@
+ {
+ 	public:
+ 		CrawlerThread(const std::string &amp;dirName, bool isSource,
+-			MonitorInterface *pMonitor, MonitorHandler *pHandler);
++			MonitorInterface *pMonitor, MonitorHandler *pHandler,
++			bool inlineIndexing = false);
+ 		virtual ~CrawlerThread();
+ 
+ 		virtual std::string getType(void) const;
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/Core/WorkerThreads.cpp	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -274,11 +274,10 @@
+ unsigned int ThreadsManager::m_nextThreadId = 1;
+ 
+ ThreadsManager::ThreadsManager(const string &amp;defaultIndexLocation,
+-	unsigned int maxIndexThreads, unsigned int maxThreadsTime,
+-	bool scanLocalFiles) :
++	unsigned int maxThreadsTime, bool scanLocalFiles) :
+ 	m_actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name()),
+ 	m_defaultIndexLocation(defaultIndexLocation),
+-	m_maxIndexThreads(maxIndexThreads),
++	m_maxIndexThreads(1),
+ 	m_backgroundThreadsCount(0),
+ 	m_foregroundThreadsMaxTime(maxThreadsTime),
+ 	m_scanLocalFiles(scanLocalFiles),
+@@ -288,6 +287,19 @@
+ 	pthread_rwlock_init(&amp;m_threadsLock, NULL);
+ 	pthread_rwlock_init(&amp;m_listsLock, NULL);
+ 
++	// Override the number of indexing threads ?
++	char *pEnvVar = getenv(&quot;PINOT_MAXIMUM_INDEX_THREADS&quot;);
++	if ((pEnvVar != NULL) &amp;&amp;
++		(strlen(pEnvVar) &gt; 0))
++	{
++		int threadsNum = atoi(pEnvVar);
++
++		if (threadsNum &gt; 0)
++		{
++			m_maxIndexThreads = (unsigned int)threadsNum;
++		}
++	}
++
+ #ifdef __OpenBSD__
+ 	int mib[2], ncpus;
+ 
+
+Modified: trunk/Core/WorkerThreads.h
+===================================================================
+--- trunk/Core/WorkerThreads.h	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/Core/WorkerThreads.h	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -112,7 +112,6 @@
+ {
+ 	public:
+ 		ThreadsManager(const std::string &amp;defaultIndexLocation,
+-			unsigned int maxIndexThreads,
+ 			unsigned int maxThreadsTime = 300,
+ 			bool scanLocalFiles = false);
+ 		virtual ~ThreadsManager();
+
+Modified: trunk/Core/pinot-index.cpp
+===================================================================
+--- trunk/Core/pinot-index.cpp	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/Core/pinot-index.cpp	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -60,7 +60,7 @@
+ {
+ 	public:
+ 		IndexingState(const string &amp;indexLocation) :
+-			ThreadsManager(indexLocation, 1, 60, true),
++			ThreadsManager(indexLocation, 60, true),
+ 			m_docId(0)
+ 		{
+ 			// Disable implicit flushing
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/UI/GTK2/src/mainWindow.cc	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -116,7 +116,7 @@
+ }
+ 
+ mainWindow::InternalState::InternalState(mainWindow *pWindow) :
+-	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, 2, 60, true),
++	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, 60, true),
+ 	m_liveQueryLength(0),
+ 	m_currentPage(0),
+ 	m_browsingIndex(false)
+
+Modified: trunk/UI/GTK2/src/prefsWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsWindow.cc	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/UI/GTK2/src/prefsWindow.cc	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2008-2009 Fabrice Colin
++ *  Copyright 2008-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -129,8 +129,8 @@
+ 
+ };
+ 
+-prefsWindow::InternalState::InternalState(unsigned int maxIndexThreads, prefsWindow *pWindow) :
+-        ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
++prefsWindow::InternalState::InternalState(prefsWindow *pWindow) :
++        ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation),
+ 	m_savedPrefs(false)
+ {
+         m_onThreadEndSignal.connect(sigc::mem_fun(*pWindow, &amp;prefsWindow::on_thread_end));
+@@ -143,7 +143,7 @@
+ prefsWindow::prefsWindow() :
+ 	prefsWindow_glade(),
+ 	m_settings(PinotSettings::getInstance()),
+-	m_state(10, this)
++	m_state(this)
+ {
+ 	Color newColour;
+ 	ustring desktopName(_(&quot;File Indexing and Search&quot;));
+
+Modified: trunk/UI/GTK2/src/prefsWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsWindow.hh	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/UI/GTK2/src/prefsWindow.hh	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2008-2009 Fabrice Colin
++ *  Copyright 2008-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -57,8 +57,7 @@
+ 	class InternalState : public ThreadsManager
+ 	{
+ 	public:
+-		InternalState(unsigned int maxIndexThreads,
+-			prefsWindow *pWindow);
++		InternalState(prefsWindow *pWindow);
+ 		~InternalState();
+ 
+ 		bool m_savedPrefs;
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -91,8 +91,8 @@
+ };
+ #endif
+ 
+-statisticsDialog::InternalState::InternalState(unsigned int maxIndexThreads, statisticsDialog *pWindow) :
+-        ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
++statisticsDialog::InternalState::InternalState(statisticsDialog *pWindow) :
++        ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation),
+ 	m_getStats(true),
+ 	m_gettingStats(false),
+ 	m_lowDiskSpace(false),
+@@ -112,7 +112,7 @@
+ 	m_hasDiskSpace(false),
+ 	m_hasBattery(false),
+ 	m_hasCrawl(false),
+-	m_state(10, this)
++	m_state(this)
+ {
+ 	// Associate the columns model to the engines tree
+ 	m_refStore = TreeStore::create(m_statsColumns);
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2010-12-10 02:07:46 UTC (rev 1739)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2010-12-10 02:13:32 UTC (rev 1740)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -58,8 +58,7 @@
+ 	class InternalState : public ThreadsManager
+ 	{
+ 	public:
+-		InternalState(unsigned int maxIndexThreads,
+-			statisticsDialog *pWindow);
++		InternalState(statisticsDialog *pWindow);
+ 		~InternalState();
+ 
+ 		bool m_getStats;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001728.html">[Pinot-svn] r1739 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001730.html">[Pinot-svn] r1741 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1729">[ date ]</a>
+              <a href="thread.html#1729">[ thread ]</a>
+              <a href="subject.html#1729">[ subject ]</a>
+              <a href="author.html#1729">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

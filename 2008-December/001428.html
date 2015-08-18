@@ -1,0 +1,216 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1438 - trunk/scripts/bash
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1438%20-%20trunk/scripts/bash&In-Reply-To=%3C200812070544.mB75iE4T029467%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001427.html">
+   <LINK REL="Next"  HREF="001429.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1438 - trunk/scripts/bash</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1438%20-%20trunk/scripts/bash&In-Reply-To=%3C200812070544.mB75iE4T029467%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1438 - trunk/scripts/bash">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Dec  7 06:44:14 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001427.html">[Pinot-svn] r1436 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001429.html">[Pinot-svn] r1439 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1428">[ date ]</a>
+              <a href="thread.html#1428">[ thread ]</a>
+              <a href="subject.html#1428">[ subject ]</a>
+              <a href="author.html#1428">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-07 06:44:07 +0100 (Sun, 07 Dec 2008)
+New Revision: 1438
+
+Added:
+   trunk/scripts/bash/pinot-cd.sh
+Log:
+This script implements a &quot;tagged cd&quot;. The idea, from C. Scott Ananian, is to
+allow changing to a directory based on tags it matches. Tags here are the
+components of the path that leads to that directory, and the directory name
+itself.
+This will only work on an index built with the latest Xapian back-end.
+
+
+Added: trunk/scripts/bash/pinot-cd.sh
+===================================================================
+--- trunk/scripts/bash/pinot-cd.sh	2008-12-07 05:39:40 UTC (rev 1437)
++++ trunk/scripts/bash/pinot-cd.sh	2008-12-07 05:44:07 UTC (rev 1438)
+@@ -0,0 +1,129 @@
++#!/bin/bash
++# A &quot;tagged cd&quot; implementation
++# Based on an idea by C. Scott Ananian (<A HREF="http://wiki.laptop.org/go/Experiments_with_unordered_paths">http://wiki.laptop.org/go/Experiments_with_unordered_paths</A>)
++# Run this script with &quot;. /path/to/pinot-cd.sh&quot;
++
++MISSING_PROGRAM=1
++MISSING_INDEX=1
++FOUND_MATCH=0
++
++# Check programs we need are available
++checkprograms()
++{
++  WHICH_BN=`which basename`
++  if [ $? != 0 ]; then
++    echo &quot;Couldn't find basename. Is the coreutils package installed ?&quot;
++    return
++  fi
++  WHICH_CAT=`which cat`
++  if [ $? != 0 ]; then
++    echo &quot;Couldn't find cat. Is the coreutils package installed ?&quot;
++    return
++  fi
++  WHICH_MKTEMP=`which mktemp`
++  if [ $? != 0 ]; then
++    echo &quot;Couldn't find mktemp. Is the coreutils package installed ?&quot;
++    return
++  fi
++  WHICH_GREP=`which grep`
++  if [ $? != 0 ]; then
++    echo &quot;Couldn't find grep. Is the grep package installed ?&quot;
++    return
++  fi
++  WHICH_SED=`which sed`
++  if [ $? != 0 ]; then
++    echo &quot;Couldn't find sed. Is the sed package installed ?&quot;
++    return
++  fi
++  WHICH_PS=`which pinot-search`
++  if [ $? != 0 ]; then
++    echo &quot;Couldn't find pinot-search. Is the pinot package installed ?&quot;
++    return
++  fi
++
++  MISSING_PROGRAM=0
++}
++
++# Check the daemon's index exists
++checkindex()
++{
++  if [ ! -d &quot;$HOME/.pinot/daemon&quot; ]; then
++    echo &quot;Configure Pinot to crawl and index directories first.&quot;
++    return
++  fi
++
++  MISSING_INDEX=0
++}
++
++# Run the actual search and get matches
++runsearch()
++{
++  local TEMP_FILE=`mktemp`
++
++  pinot-search -l xapian &quot;$HOME/.pinot/daemon&quot; &quot;type:x-directory/normal $1&quot; 2&gt;/dev/null | grep &quot;<A HREF="file://">file://</A>&quot; | sed -e &quot;s/file:\/\/\(.*\)/\1/g&quot; &gt;$TEMP_FILE 2&gt;/dev/null
++
++  local RESULTS=`cat $TEMP_FILE`
++  local RESULTS_COUNT=`cat $TEMP_FILE|wc -l`
++
++  if [ $RESULTS_COUNT -eq 1 ]; then
++    FOUND_MATCH=1
++    echo $RESULTS
++    cd &quot;$RESULTS&quot;
++  elif [ $RESULTS_COUNT -gt 1 ]; then
++    FOUND_MATCH=1
++    echo &quot;Matches for \&quot;$1\&quot;:&quot;
++    cat $TEMP_FILE
++  fi
++  \rm -f $TEMP_FILE &gt;/dev/null 2&gt;&amp;1
++}
++
++# Prepares the query string
++preparequery()
++{
++  local ARGS=&quot;&quot;
++  local LAST_ARG=&quot;&quot;
++
++  for ARG in `echo $@` ;
++  do
++    ARGS=&quot;$ARGS path:$ARG&quot;
++    LAST_ARG=&quot;$ARG&quot;
++  done
++
++  if [ -z &quot;$LAST_ARG&quot; ]; then
++    return
++  fi
++
++  PATHS_ONLY_STRING=$ARGS
++  # Assume the last path is the name of the final directory
++  PATHS_AND_FILE_STRING=`echo $ARGS | sed -e &quot;s/path:$LAST_ARG/file:$LAST_ARG/g&quot;`
++
++  runsearch &quot;$PATHS_AND_FILE_STRING&quot;
++  if [ $FOUND_MATCH -eq 0 ]; then
++    # That assumption doesn't seem correct
++    runsearch &quot;$PATHS_ONLY_STRING&quot;
++    if [ $FOUND_MATCH -eq 0 ]; then
++      echo &quot;No match&quot;
++    fi
++  fi
++}
++
++# Warn if not sourced
++BASE_NAME=`basename $0`
++if [ &quot;$BASE_NAME&quot; == &quot;pinot-cd.sh&quot; ]; then
++  echo &quot;Run this script with . $0&quot;
++  exit 1
++fi
++
++checkprograms
++checkindex
++
++if [ $# == 0 ]; then
++  echo &quot;Usage: pinot-cd.sh path1 path2...&quot;
++elif [ &quot;$MISSING_PROGRAM&quot; == 0 ] || [ &quot;$MISSING_INDEX&quot; == 0 ]; then
++  if [ $# -eq 1 ] &amp;&amp; [ &quot;$1&quot; == &quot;-&quot; ] &amp;&amp; [ ! -z &quot;$OLDPWD&quot; ]; then
++    cd &quot;$OLDPWD&quot;
++  else
++    preparequery $@
++  fi
++fi
++
+
+
+Property changes on: trunk/scripts/bash/pinot-cd.sh
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001427.html">[Pinot-svn] r1436 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001429.html">[Pinot-svn] r1439 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1428">[ date ]</a>
+              <a href="thread.html#1428">[ thread ]</a>
+              <a href="subject.html#1428">[ subject ]</a>
+              <a href="author.html#1428">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

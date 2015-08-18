@@ -1,0 +1,1133 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r58%20-%20in%20trunk%3A%20Collect%20Index%20UI/GTK2%20UI/GTK2/src%20Utils&In-Reply-To=%3C200601131636.k0DGaHjt031612%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000056.html">
+   <LINK REL="Next"  HREF="000058.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r58%20-%20in%20trunk%3A%20Collect%20Index%20UI/GTK2%20UI/GTK2/src%20Utils&In-Reply-To=%3C200601131636.k0DGaHjt031612%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Jan 13 17:36:17 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000056.html">[Pinot-svn] r57 - in trunk: Index UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000058.html">[Pinot-svn] r59 - in trunk: Collect Index UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#57">[ date ]</a>
+              <a href="thread.html#57">[ thread ]</a>
+              <a href="subject.html#57">[ subject ]</a>
+              <a href="author.html#57">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-13 17:36:15 +0100 (Fri, 13 Jan 2006)
+New Revision: 58
+
+Modified:
+   trunk/Collect/DownloaderInterface.cpp
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Index/LanguageDetector.cpp
+   trunk/Index/LanguageDetector.h
+   trunk/Index/Summarizer.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/IndexPage.cpp
+   trunk/UI/GTK2/src/IndexTree.cpp
+   trunk/UI/GTK2/src/MonitorHandler.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog_glade.cc
+   trunk/UI/GTK2/src/importDialog_glade.hh
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/Utils/HtmlDocument.cpp
+   trunk/Utils/Url.cpp
+   trunk/Utils/Url.h
+Log:
+Mutexes for safe multi-threading with OpenSSL are type ERRORCHECK. Limit the
+amount of text parsed by language guessing and summarization. Use canonical
+URLs to &quot;key&quot; documents. The importer can follow symlinks. Several other
+tweaks and fixes.
+
+
+Modified: trunk/Collect/DownloaderInterface.cpp
+===================================================================
+--- trunk/Collect/DownloaderInterface.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Collect/DownloaderInterface.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -19,9 +19,9 @@
+ 
+ using namespace std;
+ 
+-DownloaderInterface::DownloaderInterface()
++DownloaderInterface::DownloaderInterface() :
++	m_timeout(60)
+ {
+-	m_timeout = 15000;
+ }
+ 
+ DownloaderInterface::~DownloaderInterface()
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Collect/NeonDownloader.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -73,16 +73,27 @@
+ // OpenSSL locking functiom
+ static void lockingCallback(int mode, int n, const char *file, int line)
+ {
++	int status = 0;
++
++	if (mode &amp; CRYPTO_LOCK)
++	{
++		status = pthread_mutex_lock(&amp;(locksTable[n]));
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;lockingCallback: called for mutex &quot; &lt;&lt; n &lt;&lt; endl;
++		if (status != 0)
++		{
++			cout &lt;&lt; &quot;lockingCallback: failed to lock mutex &quot; &lt;&lt; n &lt;&lt; endl;
++		}
+ #endif
+-	if (mode &amp; CRYPTO_LOCK)
+-	{
+-		pthread_mutex_lock(&amp;(locksTable[n]));
+ 	}
+ 	else
+ 	{
+-		pthread_mutex_unlock(&amp;(locksTable[n]));
++		status = pthread_mutex_unlock(&amp;(locksTable[n]));
++#ifdef DEBUG
++		if (status != 0)
++		{
++			cout &lt;&lt; &quot;lockingCallback: failed to unlock mutex &quot; &lt;&lt; n &lt;&lt; endl;
++		}
++#endif
+ 	}
+ }
+ 
+@@ -96,10 +107,15 @@
+ void NeonDownloader::initialize(void)
+ {
+ #ifdef NE_SSL_H
++	pthread_mutexattr_t mutexAttr;
++
++	pthread_mutexattr_init(&amp;mutexAttr);
++	pthread_mutexattr_settype(&amp;mutexAttr, PTHREAD_MUTEX_ERRORCHECK);
++
+ 	// Initialize the OpenSSL mutexes
+ 	for (unsigned int lockNum = 0; lockNum &lt; CRYPTO_NUM_LOCKS; ++lockNum)
+ 	{
+-		pthread_mutex_init(&amp;(locksTable[lockNum]), NULL);
++		pthread_mutex_init(&amp;(locksTable[lockNum]), &amp;mutexAttr);
+ 	}
+ 	// Set the callbacks
+ 	CRYPTO_set_locking_callback(lockingCallback);
+@@ -123,7 +139,9 @@
+ }
+ 
+ NeonDownloader::NeonDownloader() :
+-	m_pSession(NULL), m_pRequest(NULL), DownloaderInterface()
++	DownloaderInterface(),
++	m_pSession(NULL),
++	m_pRequest(NULL)
+ {
+ 	// Pretend to be Mozilla
+ 	m_userAgent = &quot;Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020&quot;;
+
+Modified: trunk/Index/LanguageDetector.cpp
+===================================================================
+--- trunk/Index/LanguageDetector.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Index/LanguageDetector.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -16,6 +16,7 @@
+ 
+ #include &lt;sys/time.h&gt;
+ #include &lt;iostream&gt;
++#include &lt;utility&gt;
+ 
+ extern &quot;C&quot;
+ {
+@@ -31,7 +32,10 @@
+ using std::endl;
+ using std::string;
+ using std::vector;
++using std::min;
+ 
++unsigned int LanguageDetector::m_maxTextSize = 10000;
++
+ LanguageDetector::LanguageDetector()
+ {
+ }
+@@ -64,9 +68,11 @@
+ #ifdef DEBUG
+ 	Timer timer;
+ 	timer.start();
++	cout &lt;&lt; &quot;LanguageDetector::guessLanguage: starting&quot; &lt;&lt; endl;
+ #endif
+ #ifdef HAVE_TEXTCAT_CAT
+-	unsigned int resultNum = textcat_Cat(td, pData, dataLength, catResults, 10);
++	unsigned int resultNum = textcat_Cat(td, pData,
++		min(dataLength, m_maxTextSize), catResults, 10);
+ 	if (resultNum == 0 )
+ 	{
+ 		candidates.push_back(&quot;unknown&quot;);
+@@ -90,7 +96,8 @@
+ 		}
+ 	}
+ #else
+-	const char *languages = textcat_Classify(td, pData, dataLength);
++	const char *languages = textcat_Classify(td, pData,
++		min(dataLength, m_maxTextSize));
+ 	if (languages == NULL)
+ 	{
+ 		candidates.push_back(&quot;unknown&quot;);
+
+Modified: trunk/Index/LanguageDetector.h
+===================================================================
+--- trunk/Index/LanguageDetector.h	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Index/LanguageDetector.h	2006-01-13 16:36:15 UTC (rev 58)
+@@ -33,6 +33,9 @@
+ 		void guessLanguage(const char *pData, unsigned int dataLength,
+ 			std::vector&lt;std::string&gt; &amp;candidates);
+ 
++	protected:
++		static unsigned int m_maxTextSize;
++
+ 	private:
+ 		LanguageDetector(const LanguageDetector &amp;other);
+ 		LanguageDetector &amp;operator=(const LanguageDetector &amp;other);
+
+Modified: trunk/Index/Summarizer.cpp
+===================================================================
+--- trunk/Index/Summarizer.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Index/Summarizer.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -34,7 +34,7 @@
+ using std::map;
+ using std::min;
+ 
+-unsigned int Summarizer::m_maxTextSize = 500000;
++unsigned int Summarizer::m_maxTextSize = 50000;
+ 
+ Summarizer::Summarizer(const std::string &amp;language, unsigned int wordsCount) :
+ 	m_wordsCount(wordsCount),
+@@ -59,6 +59,9 @@
+ /// Attempts to summarize the document in wordsCount words.
+ string Summarizer::summarize(const char *pText, unsigned int textLen)
+ {
++	unsigned char *pSummary = NULL;
++	size_t outputLen = 0;
++
+ 	if ((pText == NULL) ||
+ 		(textLen == 0))
+ 	{
+@@ -67,56 +70,45 @@
+ 
+ 	m_title.clear();
+ 
+-	// OTS may take too much time with long documents
+-	if (textLen &lt; m_maxTextSize)
+-	{
+-		unsigned char *pSummary = NULL;
+-		size_t outputLen = 0;
+ #ifdef DEBUG
+-		Timer timer;
+-		timer.start();
++	Timer timer;
++	timer.start();
++	cout &lt;&lt; &quot;Summarizer::summarize: starting&quot; &lt;&lt; endl;
+ #endif
++	// Create a new article
++	OtsArticle *pArticle = ots_new_article();
++	if ((pArticle != NULL) &amp;&amp;
++		(ots_load_xml_dictionary(pArticle, m_dictionaryCode.c_str())))
++	{
++		// OTS may take too much time with long documents
++		ots_parse_stream((const unsigned char*)pText,
++			min(textLen, m_maxTextSize), pArticle);
+ 
+-		// Create a new article
+-		OtsArticle *pArticle = ots_new_article();
+-		if ((pArticle != NULL) &amp;&amp;
+-			(ots_load_xml_dictionary(pArticle, m_dictionaryCode.c_str())))
+-		{
+-			ots_parse_stream((const unsigned char*)pText, textLen, pArticle);
++		ots_grade_doc(pArticle);
++		ots_highlight_doc_words(pArticle, m_wordsCount);
+ 
+-			ots_grade_doc(pArticle);
+-			ots_highlight_doc_words(pArticle, m_wordsCount);
+-
+-			// Summarize
+-			pSummary = ots_get_doc_text(pArticle, &amp;outputLen);
++		// Summarize
++		pSummary = ots_get_doc_text(pArticle, &amp;outputLen);
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;Summarizer::summarize: summarized to &quot; &lt;&lt; outputLen &lt;&lt; &quot; bytes in &quot;
+-				&lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;Summarizer::summarize: summarized to &quot; &lt;&lt; outputLen &lt;&lt; &quot; bytes in &quot;
++			&lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ #endif
+ 
+-			// Get the title before freeing the article
+-			if (pArticle-&gt;title != NULL)
+-			{
+-				m_title = pArticle-&gt;title;
+-			}
+-			ots_free_article(pArticle);
+-		}
+-
+-		if (pSummary != NULL)
++		// Get the title before freeing the article
++		if (pArticle-&gt;title != NULL)
+ 		{
+-			string sum((const char *)pSummary, outputLen);
+-
+-			free(pSummary);
+-
+-			return sum;
++			m_title = pArticle-&gt;title;
+ 		}
++		ots_free_article(pArticle);
+ 	}
+-	else
++
++	if (pSummary != NULL)
+ 	{
+-		unsigned int arbitraryLen = min(5 * m_wordsCount, m_maxTextSize / 1000);
++		string sum((const char *)pSummary, outputLen);
+ 
+-		// This is totally arbitray
+-		return string(pText, arbitraryLen);
++		free(pSummary);
++
++		return sum;
+ 	}
+ 
+ 	return &quot;&quot;;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Index/XapianIndex.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -147,7 +147,7 @@
+ 	Url urlObj(location);
+ 
+ 	// Index the full URL with prefix U
+-	doc.add_term(limitTermLength(string(&quot;U&quot;) + StringManip::toLowerCase(location)));
++	doc.add_term(limitTermLength(string(&quot;U&quot;) + Url::canonicalizeUrl(location)));
+ 	// ...the host name with prefix H
+ 	string hostName = urlObj.getHost();
+ 	doc.add_term(limitTermLength(string(&quot;H&quot;) + StringManip::toLowerCase(hostName)));
+@@ -738,7 +738,7 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(string(&quot;U&quot;) + StringManip::toLowerCase(url));
++			string term(string(&quot;U&quot;) + Url::canonicalizeUrl(url));
+ 
+ 			// Get documents that have this term
+ 			Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/metase-gtk2.glade	2006-01-13 16:36:15 UTC (rev 58)
+@@ -3354,7 +3354,7 @@
+ 	    &lt;widget class=&quot;GtkTable&quot; id=&quot;docTable&quot;&gt;
+ 	      &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 	      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-	      &lt;property name=&quot;n_rows&quot;&gt;4&lt;/property&gt;
++	      &lt;property name=&quot;n_rows&quot;&gt;5&lt;/property&gt;
+ 	      &lt;property name=&quot;n_columns&quot;&gt;2&lt;/property&gt;
+ 	      &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+ 	      &lt;property name=&quot;row_spacing&quot;&gt;0&lt;/property&gt;
+@@ -3548,9 +3548,32 @@
+ 	      &lt;/child&gt;
+ 
+ 	      &lt;child&gt;
+-		&lt;widget class=&quot;GtkLabel&quot; id=&quot;depthLabel&quot;&gt;
++		&lt;widget class=&quot;GtkSpinButton&quot; id=&quot;depthSpinbutton&quot;&gt;
+ 		  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;climb_rate&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;digits&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;numeric&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;update_policy&quot;&gt;GTK_UPDATE_ALWAYS&lt;/property&gt;
++		  &lt;property name=&quot;snap_to_ticks&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;adjustment&quot;&gt;0 0 100 1 5 5&lt;/property&gt;
++		&lt;/widget&gt;
++		&lt;packing&gt;
++		  &lt;property name=&quot;left_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;right_attach&quot;&gt;2&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;3&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
++		&lt;/packing&gt;
++	      &lt;/child&gt;
++
++	      &lt;child&gt;
++		&lt;widget class=&quot;GtkLabel&quot; id=&quot;depthLabel&quot;&gt;
++		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+ 		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Depth:&lt;/property&gt;
+ 		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
+@@ -3572,28 +3595,56 @@
+ 		  &lt;property name=&quot;top_attach&quot;&gt;3&lt;/property&gt;
+ 		  &lt;property name=&quot;bottom_attach&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;x_options&quot;&gt;fill&lt;/property&gt;
+-		  &lt;property name=&quot;y_options&quot;&gt;&lt;/property&gt;
++		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
+ 		&lt;/packing&gt;
+ 	      &lt;/child&gt;
+ 
+ 	      &lt;child&gt;
+-		&lt;widget class=&quot;GtkSpinButton&quot; id=&quot;depthSpinbutton&quot;&gt;
++		&lt;widget class=&quot;GtkLabel&quot; id=&quot;linksLabel&quot;&gt;
++		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Symlinks:&lt;/property&gt;
++		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
++		  &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;selectable&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;xalign&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;yalign&quot;&gt;0.5&lt;/property&gt;
++		  &lt;property name=&quot;xpad&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;ypad&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;ellipsize&quot;&gt;PANGO_ELLIPSIZE_NONE&lt;/property&gt;
++		  &lt;property name=&quot;width_chars&quot;&gt;-1&lt;/property&gt;
++		  &lt;property name=&quot;single_line_mode&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;angle&quot;&gt;0&lt;/property&gt;
++		&lt;/widget&gt;
++		&lt;packing&gt;
++		  &lt;property name=&quot;left_attach&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;right_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;5&lt;/property&gt;
++		  &lt;property name=&quot;x_options&quot;&gt;fill&lt;/property&gt;
++		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
++		&lt;/packing&gt;
++	      &lt;/child&gt;
++
++	      &lt;child&gt;
++		&lt;widget class=&quot;GtkCheckButton&quot; id=&quot;linksCheckbutton&quot;&gt;
+ 		  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+ 		  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;climb_rate&quot;&gt;1&lt;/property&gt;
+-		  &lt;property name=&quot;digits&quot;&gt;0&lt;/property&gt;
+-		  &lt;property name=&quot;numeric&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;update_policy&quot;&gt;GTK_UPDATE_ALWAYS&lt;/property&gt;
+-		  &lt;property name=&quot;snap_to_ticks&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;adjustment&quot;&gt;0 0 100 1 5 5&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Follow symlinks&lt;/property&gt;
++		  &lt;property name=&quot;use_underline&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;relief&quot;&gt;GTK_RELIEF_NORMAL&lt;/property&gt;
++		  &lt;property name=&quot;focus_on_click&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;active&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;inconsistent&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;draw_indicator&quot;&gt;True&lt;/property&gt;
+ 		&lt;/widget&gt;
+ 		&lt;packing&gt;
+ 		  &lt;property name=&quot;left_attach&quot;&gt;1&lt;/property&gt;
+ 		  &lt;property name=&quot;right_attach&quot;&gt;2&lt;/property&gt;
+-		  &lt;property name=&quot;top_attach&quot;&gt;3&lt;/property&gt;
+-		  &lt;property name=&quot;bottom_attach&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;5&lt;/property&gt;
+ 		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/IndexPage.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexPage.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/IndexPage.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -21,7 +21,6 @@
+ #include &lt;gtkmm/textbuffer.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+-#include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;config.h&quot;
+
+Modified: trunk/UI/GTK2/src/IndexTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/IndexTree.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -19,7 +19,6 @@
+ #include &lt;gtkmm/textbuffer.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+-#include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;config.h&quot;
+@@ -207,12 +206,8 @@
+ 	TreeModel::Row childRow = *newRowIter;
+ 	string title = docInfo.getTitle();
+ 
+-	if (title.empty() == true)
++	if (title.length() &gt; 50)
+ 	{
+-		title = _(&quot;No title&quot;);
+-	}
+-	else if (title.length() &gt; 50)
+-	{
+ 		string truncatedTitle = title.substr(0, 47);
+ 		truncatedTitle += &quot;...&quot;;
+ 		title = truncatedTitle;
+
+Modified: trunk/UI/GTK2/src/MonitorHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MonitorHandler.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/MonitorHandler.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -27,7 +27,6 @@
+ #include &quot;Timer.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+-#include &quot;Url.h&quot;
+ #include &quot;FileCollector.h&quot;
+ #include &quot;XapianIndex.h&quot;
+ #include &quot;XapianEngine.h&quot;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -910,7 +910,6 @@
+ 	}
+ 	else
+ 	{
+-		Url urlObj(m_url);
+ 		unsigned int urlContentLen;
+ 		string docType = m_pDoc-&gt;getType();
+ 		const char *urlContent = m_pDoc-&gt;getData(urlContentLen);
+@@ -1488,6 +1487,10 @@
+ 				string fsLocation = fsIter-&gt;second;
+ 				struct stat fileStat;
+ 
++				if (m_done == true)
++				{
++					break;
++				}
+ 				if (stat(fsLocation.c_str(), &amp;fileStat) == -1)
+ 				{
+ 					continue;
+@@ -1653,14 +1656,21 @@
+ }
+ 
+ DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName,
+-			unsigned int maxLevel, Mutex *pMutex, Cond *pCondVar) :
++	unsigned int maxLevel, bool followSymLinks, Mutex *pMutex, Cond *pCondVar) :
+ 	WorkerThread(),
+ 	m_dirName(dirName),
+ 	m_maxLevel(maxLevel),
++	m_followSymLinks(followSymLinks),
+ 	m_pMutex(pMutex),
+ 	m_pCondVar(pCondVar),
+ 	m_currentLevel(0)
+ {
++#ifdef DEBUG
++	if (m_followSymLinks == true)
++	{
++		cout &lt;&lt; &quot;DirectoryScannerThread: following symlinks&quot; &lt;&lt; endl;
++	}
++#endif
+ }
+ 
+ DirectoryScannerThread::~DirectoryScannerThread()
+@@ -1728,16 +1738,32 @@
+ bool DirectoryScannerThread::scan_directory(const string &amp;dirName)
+ {
+ 	struct stat fileStat;
++	int statSuccess = 0;
+ 
+-	if ((dirName.empty() == true) ||
+-		(lstat(dirName.c_str(), &amp;fileStat) == -1))
++	if (dirName.empty() == true)
+ 	{
+ 		return false;
+ 	}
+ 
++	if (m_followSymLinks == false)
++	{
++		statSuccess = lstat(dirName.c_str(), &amp;fileStat);
++	}
++	else
++	{
++		// Stat the files pointed to by symlinks
++		statSuccess = stat(dirName.c_str(), &amp;fileStat);
++	}
++
++	if (statSuccess == -1)
++	{
++		return false;
++	}
++
+ 	// Is it a file or a directory ?
+ 	if (S_ISLNK(fileStat.st_mode))
+ 	{
++		// This won't happen when m_followSymLinks is true
+ 		return false;
+ 	}
+ 	else if (S_ISREG(fileStat.st_mode))
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-01-13 16:36:15 UTC (rev 58)
+@@ -434,8 +434,8 @@
+ {
+ 	public:
+ 		DirectoryScannerThread(const std::string &amp;dirName,
+-			unsigned int maxLevel, Glib::Mutex *pMutex,
+-			Glib::Cond *pCondVar);
++			unsigned int maxLevel, bool followSymLinks,
++			Glib::Mutex *pMutex, Glib::Cond *pCondVar);
+ 		virtual ~DirectoryScannerThread();
+ 
+ 		virtual Glib::Thread *start(void);
+@@ -449,6 +449,7 @@
+ 	protected:
+ 		std::string m_dirName;
+ 		unsigned int m_maxLevel;
++		bool m_followSymLinks;
+ 		Glib::Mutex *m_pMutex;
+ 		Glib::Cond *m_pCondVar;
+ 		unsigned int m_currentLevel;
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-01-13 16:36:15 UTC (rev 58)
+@@ -191,7 +191,7 @@
+ bool importDialog::on_import_url(const string &amp;location)
+ {
+ 	Url urlObj(location);
+-	string mimeType(MIMEScanner::scanUrl(location));
++	string mimeType(MIMEScanner::scanUrl(urlObj));
+ 	bool askForAnotherFile = false;
+ 
+ #ifdef DEBUG
+@@ -200,12 +200,13 @@
+ 	// Check the MIME type
+ 	if ((m_mimeTypesBlackList.find(mimeType) != m_mimeTypesBlackList.end()) ||
+ 		((m_mimeTypes.find(mimeType) == m_mimeTypes.end()) &amp;&amp;
+-		(strncasecmp(mimeType.c_str(), &quot;text&quot;, 4) != 0)))
++		((strncasecmp(mimeType.c_str(), &quot;text/x-&quot;, 7) == 0) ||
++		(strncasecmp(mimeType.c_str(), &quot;text&quot;, 4) != 0))))
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;importDialog::on_import_url: filtering out&quot; &lt;&lt; endl;
+ #endif
+-		// It's black-listed, or not authorized and not text
++		// It's black-listed, or not authorized and not plain-ish text
+ 		askForAnotherFile = true;
+ 	}
+ 	else
+@@ -486,6 +487,9 @@
+ 		&lt;&lt; &quot; types, &quot; &lt;&lt; m_mimeTypesBlackList.size() &lt;&lt; &quot; in blacklist&quot; &lt;&lt; endl;
+ #endif
+ 
++	m_timeoutConnection = Glib::signal_timeout().connect(SigC::slot(*this,
++		&amp;importDialog::on_activity_timeout), 1000);
++
+ 	// Title
+ 	m_title = titleEntry-&gt;get_text();
+ 	// Type
+@@ -494,12 +498,10 @@
+ 		// Maximum depth
+ 		unsigned int maxDirLevel = (unsigned int)depthSpinbutton-&gt;get_value();
+ 
+-		m_timeoutConnection = Glib::signal_timeout().connect(SigC::slot(*this,
+-			&amp;importDialog::on_activity_timeout), 1000);
+-
+ 		// Scan the directory and import all its files
+ 		m_pScannerThread = new DirectoryScannerThread(location,
+-			maxDirLevel, &amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
++			maxDirLevel, linksCheckbutton-&gt;get_active(),
++			&amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
+ 		m_pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;importDialog::on_import_url));
+ 		start_thread(m_pScannerThread);
+ 	}
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.cc	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/importDialog_glade.cc	2006-01-13 16:36:15 UTC (rev 58)
+@@ -1,4 +1,4 @@
+-// generated 2006/1/10 13:41:10 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2006/1/13 22:05:22 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.6.0
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+@@ -72,10 +72,12 @@
+    locationButton = Gtk::manage(new class Gtk::Button(_(&quot;...&quot;)));
+    
+    Gtk::HBox *locationHbox = Gtk::manage(new class Gtk::HBox(false, 4));
+-   depthLabel = Gtk::manage(new class Gtk::Label(_(&quot;Depth:&quot;)));
+-   
+    Gtk::Adjustment *depthSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(0, 0, 100, 1, 5, 5));
+    depthSpinbutton = Gtk::manage(new class Gtk::SpinButton(*depthSpinbutton_adj, 1, 0));
++   
++   Gtk::Label *depthLabel = Gtk::manage(new class Gtk::Label(_(&quot;Depth:&quot;)));
++   Gtk::Label *linksLabel = Gtk::manage(new class Gtk::Label(_(&quot;Symlinks:&quot;)));
++   linksCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Follow symlinks&quot;)));
+    docTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+    mimeTreeview = Gtk::manage(new class Gtk::TreeView());
+    
+@@ -129,17 +131,27 @@
+    locationButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+    locationHbox-&gt;pack_start(*locationEntry);
+    locationHbox-&gt;pack_start(*locationButton, Gtk::PACK_SHRINK, 0);
++   depthSpinbutton-&gt;set_flags(Gtk::CAN_FOCUS);
++   depthSpinbutton-&gt;set_update_policy(Gtk::UPDATE_ALWAYS);
++   depthSpinbutton-&gt;set_numeric(false);
++   depthSpinbutton-&gt;set_digits(0);
++   depthSpinbutton-&gt;set_wrap(false);
+    depthLabel-&gt;set_alignment(0,0.5);
+    depthLabel-&gt;set_padding(4,4);
+    depthLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+    depthLabel-&gt;set_line_wrap(false);
+    depthLabel-&gt;set_use_markup(false);
+    depthLabel-&gt;set_selectable(false);
+-   depthSpinbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   depthSpinbutton-&gt;set_update_policy(Gtk::UPDATE_ALWAYS);
+-   depthSpinbutton-&gt;set_numeric(false);
+-   depthSpinbutton-&gt;set_digits(0);
+-   depthSpinbutton-&gt;set_wrap(false);
++   linksLabel-&gt;set_alignment(0,0.5);
++   linksLabel-&gt;set_padding(4,4);
++   linksLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   linksLabel-&gt;set_line_wrap(false);
++   linksLabel-&gt;set_use_markup(false);
++   linksLabel-&gt;set_selectable(false);
++   linksCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
++   linksCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   linksCheckbutton-&gt;set_mode(true);
++   linksCheckbutton-&gt;set_active(false);
+    docTable-&gt;set_row_spacings(0);
+    docTable-&gt;set_col_spacings(0);
+    docTable-&gt;attach(*titleEntry, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+@@ -148,8 +160,10 @@
+    docTable-&gt;attach(*typeCombobox, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    docTable-&gt;attach(*typeLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 0, 0);
+    docTable-&gt;attach(*locationHbox, 1, 2, 2, 3, Gtk::FILL, Gtk::FILL, 4, 4);
+-   docTable-&gt;attach(*depthLabel, 0, 1, 3, 4, Gtk::FILL, Gtk::AttachOptions(), 0, 0);
+    docTable-&gt;attach(*depthSpinbutton, 1, 2, 3, 4, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   docTable-&gt;attach(*depthLabel, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 0, 0);
++   docTable-&gt;attach(*linksLabel, 0, 1, 4, 5, Gtk::FILL, Gtk::FILL, 0, 0);
++   docTable-&gt;attach(*linksCheckbutton, 1, 2, 4, 5, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    mimeTreeview-&gt;set_flags(Gtk::CAN_FOCUS);
+    mimeTreeview-&gt;set_headers_visible(true);
+    mimeTreeview-&gt;set_rules_hint(false);
+@@ -199,8 +213,10 @@
+    locationEntry-&gt;show();
+    locationButton-&gt;show();
+    locationHbox-&gt;show();
++   depthSpinbutton-&gt;show();
+    depthLabel-&gt;show();
+-   depthSpinbutton-&gt;show();
++   linksLabel-&gt;show();
++   linksCheckbutton-&gt;show();
+    docTable-&gt;show();
+    mimeTreeview-&gt;show();
+    mimeScrolledwindow-&gt;show();
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.hh	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/importDialog_glade.hh	2006-01-13 16:36:15 UTC (rev 58)
+@@ -1,4 +1,4 @@
+-// generated 2006/1/10 13:34:08 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2006/1/13 22:05:22 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.6.0
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+@@ -37,6 +37,7 @@
+ #include &lt;gtkmm/combobox.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/spinbutton.h&gt;
++#include &lt;gtkmm/checkbutton.h&gt;
+ #include &lt;gtkmm/table.h&gt;
+ #include &lt;gtkmm/treeview.h&gt;
+ #include &lt;gtkmm/progressbar.h&gt;
+@@ -51,8 +52,8 @@
+         class Gtk::ComboBox * typeCombobox;
+         class Gtk::Entry * locationEntry;
+         class Gtk::Button * locationButton;
+-        class Gtk::Label * depthLabel;
+         class Gtk::SpinButton * depthSpinbutton;
++        class Gtk::CheckButton * linksCheckbutton;
+         class Gtk::Table * docTable;
+         class Gtk::TreeView * mimeTreeview;
+         class Gtk::ProgressBar * importProgressbar;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-01-13 16:36:15 UTC (rev 58)
+@@ -1906,11 +1906,13 @@
+ 		vector&lt;IndexedDocument&gt;::const_iterator docIter = documentsList.begin();
+ 
+ 		// Get the document ID
+-		Url urlObj(docIter-&gt;getLocation());
+-		docId = (unsigned int)atoi(urlObj.getFile().c_str());
++		docId = docIter-&gt;getID();
+ 
+ 		if (index.isGood() == true)
+ 		{
++			// Get the properties from the index because they have been altered
++			// by the tree for display purposes
++			index.getDocumentInfo(docId, docInfo);
+ 			index.getDocumentLabels(docId, docLabels);
+ 
+ 			// Does it match the current label ?
+@@ -1920,10 +1922,6 @@
+ 				matchedLabel = true;
+ 			}
+ 		}
+-
+-		docInfo = DocumentInfo(docIter-&gt;getTitle(), docIter-&gt;getOriginalLocation(),
+-			docIter-&gt;getType(), docIter-&gt;getLanguage());
+-		docInfo.setTimestamp(docIter-&gt;getTimestamp());
+ 		editTitle = true;
+ 	}
+ 	// Else, start with a blank list
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2006-01-13 16:36:15 UTC (rev 58)
+@@ -25,7 +25,6 @@
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+-#include &quot;Url.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotUtils.h&quot;
+
+Modified: trunk/Utils/HtmlDocument.cpp
+===================================================================
+--- trunk/Utils/HtmlDocument.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Utils/HtmlDocument.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -61,7 +61,7 @@
+ 		int titleMatches = 3, httpEquivMatches = 3;
+ 
+ 		// Look for a title
+-		if (regcomp(&amp;titleRegex, &quot;&lt;title([^&gt;]*)&gt;(.*)&lt;/title&quot;, REG_EXTENDED|REG_ICASE) == 0)
++		if (regcomp(&amp;titleRegex, &quot;&lt;title([^&gt;]*)&gt;([^&lt;&gt;]*)&lt;/title&quot;, REG_EXTENDED|REG_ICASE) == 0)
+ 		{
+ 			if ((regexec(&amp;titleRegex, htmlHead.c_str(), titleMatches,
+ 					pTitleMatches, REG_NOTBOL|REG_NOTEOL) == 0) &amp;&amp;
+
+Modified: trunk/Utils/Url.cpp
+===================================================================
+--- trunk/Utils/Url.cpp	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Utils/Url.cpp	2006-01-13 16:36:15 UTC (rev 58)
+@@ -16,8 +16,11 @@
+ 
+ #include &lt;neon/ne_uri.h&gt;
+ 
++#include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ 
++using std::string;
++
+ Url::Url(const string &amp;url)
+ {
+ 	parse(url);
+@@ -38,19 +41,6 @@
+ {
+ }
+ 
+-Url&amp; Url::operator=(const Url&amp; other)
+-{
+-	m_protocol = other.m_protocol;
+-	m_user = other.m_user;
+-	m_password = other.m_password;
+-	m_host = other.m_host;
+-	m_location = other.m_location;
+-	m_file = other.m_file;
+-	m_parameters = other.m_parameters;
+-
+-	return *this;
+-}
+-
+ void Url::parse(const string &amp;url)
+ {
+ 	string::size_type pos1 =0, pos2 = 0;
+@@ -70,8 +60,7 @@
+ 		m_protocol = url.substr(0, pos1);
+ 		pos1 += 3;
+ 
+-		if ((m_protocol == &quot;file&quot;) ||
+-			(m_protocol == &quot;mailbox&quot;))
++		if (isLocal(m_protocol) == true)
+ 		{
+ 			hasHostName = false;
+ 		}
+@@ -170,41 +159,18 @@
+ 	}
+ }
+ 
+-string Url::getProtocol(void) const
++bool Url::isLocal(const string &amp;protocol) const
+ {
+-	return m_protocol;
+-}
++	if ((protocol == &quot;file&quot;) ||
++		(protocol == &quot;mailbox&quot;) ||
++		(protocol == &quot;xapian&quot;))
++	{
++		return true;
++	}
+ 
+-string Url::getUser(void) const
+-{
+-	return m_user;
++	return false;
+ }
+ 
+-string Url::getPassword(void) const
+-{
+-	return m_password;
+-}
+-
+-string Url::getHost(void) const
+-{
+-	return m_host;
+-}
+-
+-string Url::getLocation(void) const
+-{
+-	return m_location;
+-}
+-
+-string Url::getFile(void) const
+-{
+-	return m_file;
+-}
+-
+-string Url::getParameters(void) const
+-{
+-	return m_parameters;
+-}
+-
+ /// Canonicalizes an URL.
+ string Url::canonicalizeUrl(const string &amp;url)
+ {
+@@ -214,18 +180,25 @@
+ 	}
+ 
+ 	Url urlObj(url);
++	string canonicalUrl(url);
+ 	string location = urlObj.getLocation();
+ 	string file = urlObj.getFile();
+ 
++	if (urlObj.isLocal() == false)
++	{
++		// Lower-case it all
++		canonicalUrl = StringManip::toLowerCase(url);
++	}
++
+ 	// Get rid of the last directory's slash
+ 	if ((file.empty() == true) &amp;&amp;
+ 		(location.empty() == false) &amp;&amp;
+-		(url[url.length() - 1] == '/'))
++		(canonicalUrl[canonicalUrl.length() - 1] == '/'))
+ 	{
+-		return url.substr(0, url.length() - 1);
++		return canonicalUrl.substr(0, url.length() - 1);
+ 	}
+ 
+-	return url;
++	return canonicalUrl;
+ }
+ 
+ /// Truncates an URL to the given length by discarding characters in the middle.
+@@ -328,3 +301,56 @@
+ 
+ 	return unescapedUrlStr;
+ }
++
++string Url::getProtocol(void) const
++{
++	return m_protocol;
++}
++
++string Url::getUser(void) const
++{
++	return m_user;
++}
++
++string Url::getPassword(void) const
++{
++	return m_password;
++}
++
++string Url::getHost(void) const
++{
++	return m_host;
++}
++
++string Url::getLocation(void) const
++{
++	return m_location;
++}
++
++string Url::getFile(void) const
++{
++	return m_file;
++}
++
++string Url::getParameters(void) const
++{
++	return m_parameters;
++}
++
++bool Url::isLocal(void) const
++{
++	return isLocal(m_protocol);
++}
++
++Url&amp; Url::operator=(const Url&amp; other)
++{
++	m_protocol = other.m_protocol;
++	m_user = other.m_user;
++	m_password = other.m_password;
++	m_host = other.m_host;
++	m_location = other.m_location;
++	m_file = other.m_file;
++	m_parameters = other.m_parameters;
++
++	return *this;
++}
+
+Modified: trunk/Utils/Url.h
+===================================================================
+--- trunk/Utils/Url.h	2006-01-11 13:26:19 UTC (rev 57)
++++ trunk/Utils/Url.h	2006-01-13 16:36:15 UTC (rev 58)
+@@ -19,48 +19,49 @@
+ 
+ #include &lt;string&gt;
+ 
+-using std::string;
+-
+ class Url
+ {
+ 	public:
+-		Url(const string &amp;url);
++		Url(const std::string &amp;url);
+ 		Url(const Url &amp;other);
+ 		virtual ~Url();
+ 
+-		Url&amp; operator=(const Url&amp; other);
+-
+-		string getProtocol(void) const;
+-		string getUser(void) const;
+-		string getPassword(void) const;
+-		string getHost(void) const;
+-		string getLocation(void) const;
+-		string getFile(void) const;
+-		string getParameters(void) const;
+-
+ 		/// Canonicalizes an URL.
+-		static string canonicalizeUrl(const string &amp;url);
++		static std::string canonicalizeUrl(const std::string &amp;url);
+ 
+ 		/// Truncates an URL to the given length by discarding characters in the middle.
+-		static string prettifyUrl(const string &amp;url, unsigned int maxLen);
++		static std::string prettifyUrl(const std::string &amp;url, unsigned int maxLen);
+ 
+ 		/// Escapes an URL.
+-		static string escapeUrl(const string &amp;url);
++		static std::string escapeUrl(const std::string &amp;url);
+ 
+ 		/// Unescapes an URL.
+-		static string unescapeUrl(const string &amp;escapedUrl);
++		static std::string unescapeUrl(const std::string &amp;escapedUrl);
+ 
++		std::string getProtocol(void) const;
++		std::string getUser(void) const;
++		std::string getPassword(void) const;
++		std::string getHost(void) const;
++		std::string getLocation(void) const;
++		std::string getFile(void) const;
++		std::string getParameters(void) const;
++		bool isLocal(void) const ;
++
++		Url&amp; operator=(const Url&amp; other);
++
+ 	protected:
+-		string m_protocol;
+-		string m_user;
+-		string m_password;
+-		string m_host;
+-		string m_location;
+-		string m_file;
+-		string m_parameters;
++		std::string m_protocol;
++		std::string m_user;
++		std::string m_password;
++		std::string m_host;
++		std::string m_location;
++		std::string m_file;
++		std::string m_parameters;
+ 
+-		void parse(const string &amp;url);
++		void parse(const std::string &amp;url);
+ 
++		bool isLocal(const std::string &amp;protocol) const;
++
+ };
+ 
+ #endif // _URL_H
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000056.html">[Pinot-svn] r57 - in trunk: Index UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000058.html">[Pinot-svn] r59 - in trunk: Collect Index UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#57">[ date ]</a>
+              <a href="thread.html#57">[ thread ]</a>
+              <a href="subject.html#57">[ subject ]</a>
+              <a href="author.html#57">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

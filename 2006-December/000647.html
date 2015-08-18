@@ -1,0 +1,480 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r653 - in trunk: Index UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r653%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200612131249.kBDCnuhP004459%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000646.html">
+   <LINK REL="Next"  HREF="000648.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r653 - in trunk: Index UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r653%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200612131249.kBDCnuhP004459%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r653 - in trunk: Index UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Dec 13 13:49:56 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000646.html">[Pinot-svn] r652 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000648.html">[Pinot-svn] r654 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#647">[ date ]</a>
+              <a href="thread.html#647">[ thread ]</a>
+              <a href="subject.html#647">[ subject ]</a>
+              <a href="author.html#647">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-12-13 13:49:55 +0100 (Wed, 13 Dec 2006)
+New Revision: 653
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+Log:
+Added method setDocumentsLabels() to IndexInterface. DBusXapianIndex's version
+maps to a DBus method.
+This is definitely faster than calling SetDocumentLabels on each document.
+Note that DBusXapianIndex works around a problem with dbus_g_proxy_call(), which
+modifies the first argument's pointer.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/Index/DBusXapianIndex.cpp	2006-12-13 12:49:55 UTC (rev 653)
+@@ -412,6 +412,95 @@
+ 	return updatedLabels;
+ }
+ 
++/// Sets documents' labels.
++bool DBusXapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
++	const set&lt;string&gt; &amp;labels, bool resetLabels)
++{
++	bool updatedLabels = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	dbus_uint32_t idsCount = docIds.size();
++	dbus_uint32_t labelsCount = labels.size();
++	char *pDocIds[idsCount + 1];
++	char *pLabels[labelsCount + 1];
++	unsigned int idIndex = 0, labelIndex = 0;
++
++	for (set&lt;unsigned int&gt;::const_iterator idIter = docIds.begin();
++		idIter != docIds.end(); ++idIter)
++	{
++		pDocIds[idIndex] = g_strdup_printf(&quot;%u&quot;, *idIter); 
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: document &quot; &lt;&lt; pDocIds[idIndex] &lt;&lt; endl;
++#endif
++		++idIndex;
++	}
++	pDocIds[idIndex] = NULL;
++
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: label &quot; &lt;&lt; pLabels[labelIndex] &lt;&lt; endl;
++#endif
++		++labelIndex;
++	}
++	pLabels[labelIndex] = NULL;
++
++	// FIXME: for some reason the call to dbus_g_proxy_call() changes pDocIds ! Why !?
++	char **pOrigDocIds = pDocIds;
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentsLabels&quot;, &amp;pError,
++		G_TYPE_STRV, pDocIds,
++		G_TYPE_STRV, pLabels,
++		G_TYPE_BOOLEAN, resetLabels,
++		G_TYPE_INVALID,
++		G_TYPE_BOOLEAN, &amp;updatedLabels,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++		updatedLabels = false;
++	}
++
++	// Free the arrays
++	if (idsCount &gt; 0)
++	{
++		for (unsigned int idNum = 0; idNum &lt; idIndex; ++idNum)
++		{
++			g_free(pOrigDocIds[idNum]);
++		}
++	}
++	if (labelsCount &gt; 0)
++	{
++		for (unsigned int labelNum = 0; labelNum &lt; labelIndex; ++labelNum)
++		{
++			g_free(pLabels[labelNum]);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return updatedLabels;
++}
++
+ /// Unindexes the given document; true if success.
+ bool DBusXapianIndex::unindexDocument(unsigned int docId)
+ {
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/Index/DBusXapianIndex.h	2006-12-13 12:49:55 UTC (rev 653)
+@@ -90,6 +90,10 @@
+ 		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+ 			bool resetLabels = true);
+ 
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
++
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/Index/IndexInterface.h	2006-12-13 12:49:55 UTC (rev 653)
+@@ -97,6 +97,10 @@
+ 		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+ 			bool resetLabels = true) = 0;
+ 
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true) = 0;
++
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId) = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/Index/XapianIndex.cpp	2006-12-13 12:49:55 UTC (rev 653)
+@@ -1226,6 +1226,16 @@
+ bool XapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
+ 	bool resetLabels)
+ {
++	set&lt;unsigned int&gt; docIds;
++
++	docIds.insert(docId);
++	return setDocumentsLabels(docIds, labels, resetLabels);
++}
++
++/// Sets documents' labels.
++bool XapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
++	const set&lt;string&gt; &amp;labels, bool resetLabels)
++{
+ 	bool updatedLabels = false;
+ 
+ 	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+@@ -1235,11 +1245,18 @@
+ 		return false;
+ 	}
+ 
+-	try
++	for (set&lt;unsigned int&gt;::const_iterator docIter = docIds.begin();
++		docIter != docIds.end(); ++docIter)
+ 	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
++		try
+ 		{
++			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++			if (pIndex == NULL)
++			{
++				break;
++			}
++
++			unsigned int docId = (*docIter);
+ 			Xapian::Document doc = pIndex-&gt;get_document(docId);
+ 
+ 			// Reset existing labels ?
+@@ -1273,16 +1290,17 @@
+ 			pIndex-&gt;replace_document(docId, doc);
+ 			updatedLabels = true;
+ 		}
++		catch (const Xapian::Error &amp;error)
++		{
++			cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		}
++		catch (...)
++		{
++			cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
++		}
++
++		pDatabase-&gt;unlock();
+ 	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document's labels: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_errno() &lt;&lt; &quot; &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't update document's labels, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+ 
+ 	return updatedLabels;
+ }
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/Index/XapianIndex.h	2006-12-13 12:49:55 UTC (rev 653)
+@@ -88,6 +88,10 @@
+ 		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+ 			bool resetLabels = true);
+ 
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
++
+ 		/// Unindexes the given document.
+ 		virtual bool unindexDocument(unsigned int docId);
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2006-12-13 12:49:55 UTC (rev 653)
+@@ -916,8 +916,8 @@
+ 				labels.insert(ppLabels[labelIndex]);
+ 			}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusServletThread::doWork: received SetDocumentLabels &quot; &lt;&lt; docId &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels
+-				&lt;&lt; &quot; with &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received SetDocumentLabels on ID &quot; &lt;&lt; docId
++				&lt;&lt; &quot;, &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels &lt;&lt; endl;
+ #endif
+ 			// Set labels
+ 			flushIndex = index.setDocumentLabels(docId, labels, ((resetLabels == TRUE) ? true : false));
+@@ -935,6 +935,60 @@
+ 			}
+ 		}
+ 	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentsLabels&quot;) == TRUE)
++	{
++		char **ppDocIds = NULL;
++		char **ppLabels = NULL;
++		dbus_uint32_t idsCount = 0;
++		dbus_uint32_t labelsCount = 0;
++		gboolean resetLabels = TRUE;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppDocIds, &amp;idsCount,
++			DBUS_TYPE_ARRAY, DBUS_TYPE_STRING, &amp;ppLabels, &amp;labelsCount,
++			DBUS_TYPE_BOOLEAN, &amp;resetLabels,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			set&lt;unsigned int&gt; docIds;
++			set&lt;string&gt; labels;
++
++			for (dbus_uint32_t idIndex = 0; idIndex &lt; idsCount; ++idIndex)
++			{
++				if (ppDocIds[idIndex] == NULL)
++				{
++					break;
++				}
++				docIds.insert((unsigned int)atoi(ppDocIds[idIndex]));
++			}
++			for (dbus_uint32_t labelIndex = 0; labelIndex &lt; labelsCount; ++labelIndex)
++			{
++				if (ppLabels[labelIndex] == NULL)
++				{
++					break;
++				}
++				labels.insert(ppLabels[labelIndex]);
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received SetDocumentLabels on &quot; &lt;&lt; docIds.size()
++				&lt;&lt; &quot; IDs, &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels &lt;&lt; endl;
++#endif
++			// Set labels
++			flushIndex = index.setDocumentsLabels(docIds, labels, ((resetLabels == TRUE) ? true : false));
++
++			// Free container types
++			g_strfreev(ppDocIds);
++			g_strfreev(ppLabels);
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_BOOLEAN, &amp;flushIndex,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
+ 	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;SimpleQuery&quot;) == TRUE)
+ 	{
+ 		char *pSearchText = NULL;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-12-13 12:49:55 UTC (rev 653)
+@@ -994,6 +994,7 @@
+ 			IndexInterface *pDocsIndex = m_settings.getIndex(m_settings.m_docsIndexLocation);
+ 			IndexInterface *pDaemonIndex = m_settings.getIndex(m_settings.m_daemonIndexLocation);
+ 			set&lt;string&gt; labels;
++			set&lt;unsigned int&gt; docsIds, daemonIds;
+ 			string labelName(queryProps.getLabelName());
+ 
+ 			if (labelName.empty() == false)
+@@ -1016,8 +1017,7 @@
+ 				{
+ 					if (labelName.empty() == false)
+ 					{
+-						// Only apply the new label to the document
+-						pDocsIndex-&gt;setDocumentLabels(docId, labels, false);
++						docsIds.insert(docId);
+ 					}
+ 				}
+ 				// Is this a document the daemon indexed ?
+@@ -1027,8 +1027,7 @@
+ 				{
+ 					if (labelName.empty() == false)
+ 					{
+-						// Only apply the new label to the document
+-						pDaemonIndex-&gt;setDocumentLabels(docId, labels, false);
++						daemonIds.insert(docId);
+ 					}
+ 				}
+ 				else
+@@ -1042,6 +1041,19 @@
+ 					m_state.queue_index(docInfo);
+ 				}
+ 			}
++
++			// Apply the new label to existing documents
++			if (labelName.empty() == false)
++			{
++				if (pDocsIndex != NULL)
++				{
++					pDocsIndex-&gt;setDocumentsLabels(docsIds, labels, false);
++				}
++				if (pDaemonIndex != NULL)
++				{
++					pDaemonIndex-&gt;setDocumentsLabels(daemonIds, labels, false);
++				}
++			}
+ 		}
+ 	}
+ 	else if (type == &quot;ExpandQueryThread&quot;)
+@@ -2070,14 +2082,19 @@
+ 
+ 	// Now apply these labels to all the documents
+ 	if ((docLabels.empty() == false) ||
+-		(labels.empty() == false))
++		(labels.empty() == false) ||
++		(documentsList.size() &gt; 1))
+ 	{
++		set&lt;unsigned int&gt; docIds;
++
+ 		for (vector&lt;IndexedDocument&gt;::iterator docIter = documentsList.begin();
+ 			docIter != documentsList.end(); ++docIter)
+ 		{
+-			// Set the document's labels list
+-			pIndex-&gt;setDocumentLabels(docIter-&gt;getID(), labels);
++			docIds.insert(docIter-&gt;getID());
+ 		}
++
++		// Set the document's labels list
++		pIndex-&gt;setDocumentsLabels(docIds, labels);
+ 	}
+ 
+ 	if ((documentsList.size() == 1) &amp;&amp;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2006-12-12 13:47:49 UTC (rev 652)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2006-12-13 12:49:55 UTC (rev 653)
+@@ -89,6 +89,19 @@
+       &lt;arg type=&quot;u&quot; name=&quot;docId&quot; direction=&quot;out&quot;/&gt;
+     &lt;/method&gt;
+     &lt;!--
++	Sets a group of documents' labels.
++	 docIds: array of document IDs
++	 labels: array of labels to apply to the documents
++	 resetLabels: TRUE if existing labels should be unset
++	--&gt;
++    &lt;method name=&quot;SetDocumentLabels&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.SetDocumentLabels&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;as&quot; name=&quot;docIds&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;as&quot; name=&quot;labels&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;b&quot; name=&quot;resetLabels&quot; direction=&quot;in&quot;/&gt;
++      &lt;arg type=&quot;b&quot; name=&quot;status&quot; direction=&quot;out&quot;/&gt;
++    &lt;/method&gt;
++    &lt;!--
+ 	Queries the index.
+ 	 searchText : search text, as would be entered in Pinot's live query field
+ 	 maxHits: the maximum number of hits desired
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000646.html">[Pinot-svn] r652 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000648.html">[Pinot-svn] r654 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#647">[ date ]</a>
+              <a href="thread.html#647">[ thread ]</a>
+              <a href="subject.html#647">[ subject ]</a>
+              <a href="author.html#647">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

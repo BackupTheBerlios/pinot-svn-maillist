@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1469 - in trunk: IndexSearch/Xapian Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1469%20-%20in%20trunk%3A%20IndexSearch/Xapian%20Utils&In-Reply-To=%3C200901091203.n09C3u8W009816%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001458.html">
+   <LINK REL="Next"  HREF="001460.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1469 - in trunk: IndexSearch/Xapian Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1469%20-%20in%20trunk%3A%20IndexSearch/Xapian%20Utils&In-Reply-To=%3C200901091203.n09C3u8W009816%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1469 - in trunk: IndexSearch/Xapian Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan  9 13:03:56 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001458.html">[Pinot-svn] r1468 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001460.html">[Pinot-svn] r1470 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1459">[ date ]</a>
+              <a href="thread.html#1459">[ thread ]</a>
+              <a href="subject.html#1459">[ subject ]</a>
+              <a href="author.html#1459">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-09 13:03:47 +0100 (Fri, 09 Jan 2009)
+New Revision: 1469
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/Utils/DocumentInfo.cpp
+Log:
+Don't remove the charset declaration from the type. XapianIndex makes sure only
+the type is indexed with prefix T.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-01-09 12:01:20 UTC (rev 1468)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-01-09 12:03:47 UTC (rev 1469)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -56,6 +56,18 @@
+ using std::min;
+ using std::max;
+ 
++static string removeCharsetFromType(const string &amp;type)
++{
++	// Remove the charset, if any
++	string::size_type semiColonPos = type.find(&quot;;&quot;);
++	if (semiColonPos != string::npos)
++	{
++		return type.substr(0, semiColonPos);
++	}
++
++	return type;
++}
++
+ class TokensIndexer : public Dijon::CJKVTokenizer::TokensHandler
+ {
+ 	public:
+@@ -537,7 +549,7 @@
+ 	vector&lt;string&gt; paths;
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+-	string type(info.getType());
++	string type(removeCharsetFromType(info.getType()));
+ 	Url urlObj(location);
+ 
+ 	// Add a magic term :-)
+@@ -793,7 +805,7 @@
+ 	// Language code
+ 	commonTerms.insert(string(&quot;L&quot;) + Languages::toCode(language));
+ 	// MIME type
+-	string type(docInfo.getType());
++	string type(removeCharsetFromType(docInfo.getType()));
+ 	commonTerms.insert(string(&quot;T&quot;) + type);
+ 	string::size_type slashPos = type.find('/');
+ 	if (slashPos != string::npos)
+@@ -1738,11 +1750,8 @@
+ 	}
+ 
+ 	// Cache the document's properties
+-	DocumentInfo docInfo(document.getTitle(), document.getLocation(),
+-		document.getType(), document.getLanguage());
+-	docInfo.setTimestamp(document.getTimestamp());
+-	docInfo.setSize(document.getSize());
+-	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
++	DocumentInfo docInfo(document);
++	docInfo.setLocation(Url::canonicalizeUrl(document.getLocation()));
+ 
+ 	unsigned int dataLength = 0;
+ 	const char *pData = document.getData(dataLength);
+@@ -1814,11 +1823,8 @@
+ 	}
+ 
+ 	// Cache the document's properties
+-	DocumentInfo docInfo(document.getTitle(), document.getLocation(),
+-		document.getType(), document.getLanguage());
+-	docInfo.setTimestamp(document.getTimestamp());
+-	docInfo.setSize(document.getSize());
+-	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
++	DocumentInfo docInfo(document);
++	docInfo.setLocation(Url::canonicalizeUrl(document.getLocation()));
+ 
+ 	unsigned int dataLength = 0;
+ 	const char *pData = document.getData(dataLength);
+
+Modified: trunk/Utils/DocumentInfo.cpp
+===================================================================
+--- trunk/Utils/DocumentInfo.cpp	2009-01-09 12:01:20 UTC (rev 1468)
++++ trunk/Utils/DocumentInfo.cpp	2009-01-09 12:03:47 UTC (rev 1469)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -230,16 +230,7 @@
+ /// Returns the type of the document.
+ string DocumentInfo::getType(void) const
+ {
+-	string type(getField(&quot;type&quot;));
+-	string::size_type semiColonPos = type.find(&quot;;&quot;);
+-
+-	// Remove the charset, if any
+-	if (semiColonPos != string::npos)
+-	{
+-		return type.substr(0, semiColonPos);
+-	}
+-
+-	return type;
++	return getField(&quot;type&quot;);
+ }
+ 
+ /// Sets the language of the document.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001458.html">[Pinot-svn] r1468 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001460.html">[Pinot-svn] r1470 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1459">[ date ]</a>
+              <a href="thread.html#1459">[ thread ]</a>
+              <a href="subject.html#1459">[ subject ]</a>
+              <a href="author.html#1459">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

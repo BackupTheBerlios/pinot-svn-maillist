@@ -1,0 +1,215 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r16 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r16%20-%20trunk/Search&In-Reply-To=%3C200512170334.jBH3Y0de022898%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000014.html">
+   <LINK REL="Next"  HREF="000016.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r16 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r16%20-%20trunk/Search&In-Reply-To=%3C200512170334.jBH3Y0de022898%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r16 - trunk/Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Dec 17 04:34:00 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000014.html">[Pinot-svn] r15 - in trunk: Index Utils
+</A></li>
+        <LI>Next message: <A HREF="000016.html">[Pinot-svn] r17 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15">[ date ]</a>
+              <a href="thread.html#15">[ thread ]</a>
+              <a href="subject.html#15">[ subject ]</a>
+              <a href="author.html#15">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-17 04:33:44 +0100 (Sat, 17 Dec 2005)
+New Revision: 16
+
+Modified:
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+Log:
+Experimenting with multi-step search :
+1. follow operators and don't stem terms
+2. if no results, follow operators and stem terms
+3. if no results, don't follow operators and don't stem terms
+4. if no results, don't follow operators and stem terms
+Steps 2 and 4 depend on a language being defined for the query.
+
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2005-12-17 03:20:03 UTC (rev 15)
++++ trunk/Search/XapianEngine.cpp	2005-12-17 03:33:44 UTC (rev 16)
+@@ -183,9 +183,8 @@
+ }
+ 
+ void XapianEngine::stackQuery(const QueryProperties &amp;queryProps,
+-	stack&lt;Xapian::Query&gt; &amp;queryStack, bool followOperators)
++	stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;language, bool followOperators)
+ {
+-	string language = queryProps.getLanguage();
+ 	Xapian::Query::op queryOp = Xapian::Query::OP_OR;
+ 	string term;
+ 
+@@ -253,22 +252,16 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_AND_NOT &quot;  &lt;&lt; notTerms.size() &lt;&lt; endl;
+ #endif
+-			// An AND_NOT has to have two sub-queries
+-			if (followOperators == true)
+-			{
+-				queryOp = Xapian::Query::OP_AND;
+-			}
+-			Xapian::Query notQuery(queryOp, notTerms.begin(), notTerms.end());
+ 			// We need something to AND_NOT these terms against
++			// Not following the operator would make us return documents
++			// that have terms the user isn't interested in
++			Xapian::Query notQuery(Xapian::Query::OP_AND, notTerms.begin(), notTerms.end());
+ 			if (queryStack.empty() == false)
+ 			{
+ 				Xapian::Query topQuery = queryStack.top();
+ 				queryStack.pop();
+-				if (followOperators == true)
+-				{
+-					queryOp = Xapian::Query::OP_AND_NOT;
+-				}
+-				queryStack.push(Xapian::Query(queryOp, topQuery, notQuery));
++
++				queryStack.push(Xapian::Query(Xapian::Query::OP_AND_NOT, topQuery, notQuery));
+ 			}
+ 		}
+ 	}
+@@ -384,9 +377,17 @@
+ 	try
+ 	{
+ 		stack&lt;Xapian::Query&gt; queryStack;
++		string language;
++		unsigned int searchStep = 1;
+ 		bool followOperators = true;
+ 
+-		stackQuery(queryProps, queryStack, followOperators);
++		// Searches are run in this order :
++		// 1. follow operators and don't stem terms
++		// 2. if no results, follow operators and stem terms
++		// 3. if no results, don't follow operators and don't stem terms
++		// 4. if no results, don't follow operators and stem terms
++		// Steps 2 and 4 depend on a language being defined for the query
++		stackQuery(queryProps, queryStack, language, followOperators);
+ 		while (queryStack.empty() == false)
+ 		{
+ 			while (queryStack.size() &gt; 1)
+@@ -404,27 +405,50 @@
+ 				queryStack.push(query);
+ 			}
+ 
+-			// Query the database with the full query
++			// Query the database
+ 			if (queryDatabase(queryStack.top()) == true)
+ 			{
+-#if 0
+-				if ((m_resultsList.empty() == true) &amp;&amp;
+-					(followOperators == true))
++				if (m_resultsList.empty() == true)
+ 				{
+ 					// The search did succeed but didn't return anything
+-					// Try again by OR'ing terms together
++					// Try the next step
++					switch (++searchStep)
++					{
++						case 2:
++							followOperators = true;
++							language = queryProps.getLanguage();
++							if (language.empty() == false)
++							{
++								break;
++							}
++							++searchStep;
++						case 3:
++							followOperators = false;
++							language.clear();
++							break;
++						case 4:
++							followOperators = false;
++							language = queryProps.getLanguage();
++							if (language.empty() == false)
++							{
++								break;
++							}
++							++searchStep;
++						default:
++							return true;
++					}
++
++					// Empty the stack
+ 					while (queryStack.empty() == false)
+ 					{
+ 						queryStack.pop();
+ 					}
+-					followOperators = false;
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;XapianEngine::runQuery: trying with OR'ed terms&quot; &lt;&lt; endl;
++					cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
+ #endif
+-					stackQuery(queryProps, queryStack, followOperators);
++					stackQuery(queryProps, queryStack, language, followOperators);
+ 					continue;
+ 				}
+-#endif
+ 
+ 				return true;
+ 			}
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2005-12-17 03:20:03 UTC (rev 15)
++++ trunk/Search/XapianEngine.h	2005-12-17 03:33:44 UTC (rev 16)
+@@ -50,7 +50,8 @@
+ 		bool queryDatabase(Xapian::Query &amp;query);
+ 
+ 		void stackQuery(const QueryProperties &amp;queryProps,
+-			std::stack&lt;Xapian::Query&gt; &amp;queryStack, bool followOperators);
++			std::stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;language,
++			bool followOperators);
+ 
+ 	private:
+ 		XapianEngine(const XapianEngine &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000014.html">[Pinot-svn] r15 - in trunk: Index Utils
+</A></li>
+	<LI>Next message: <A HREF="000016.html">[Pinot-svn] r17 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15">[ date ]</a>
+              <a href="thread.html#15">[ thread ]</a>
+              <a href="subject.html#15">[ subject ]</a>
+              <a href="author.html#15">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

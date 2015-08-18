@@ -1,0 +1,1972 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r509 - in trunk: Search Search/Google UI/GTK2	UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r509%20-%20in%20trunk%3A%20Search%20Search/Google%20UI/GTK2%0A%09UI/GTK2/src&In-Reply-To=%3C200610140440.k9E4eDmb008441%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000501.html">
+   <LINK REL="Next"  HREF="000502.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r509 - in trunk: Search Search/Google UI/GTK2	UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r509%20-%20in%20trunk%3A%20Search%20Search/Google%20UI/GTK2%0A%09UI/GTK2/src&In-Reply-To=%3C200610140440.k9E4eDmb008441%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r509 - in trunk: Search Search/Google UI/GTK2	UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 14 06:40:13 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000501.html">[Pinot-svn] r508 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000502.html">[Pinot-svn] r510 - in trunk: Collect Index Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#503">[ date ]</a>
+              <a href="thread.html#503">[ thread ]</a>
+              <a href="subject.html#503">[ subject ]</a>
+              <a href="author.html#503">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-14 06:40:11 +0200 (Sat, 14 Oct 2006)
+New Revision: 509
+
+Modified:
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/queryDialog.cc
+   trunk/UI/GTK2/src/queryDialog.hh
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+   trunk/UI/GTK2/src/queryDialog_glade.hh
+Log:
+Extensive modifications to enable using Xapian::QueryParser and get rid of the
+straight-jacket of AND/OR/NOT/Phrase.
+The live and stored queries in the UI as well as SimpleSearch's searchText can
+be free queries mixing search terms and any number of filters, eg :
+&quot;type:text/html and lang:en and (tcp near ip)&quot;
+The downsides are that the host and file filters no longer apply to plugins
+or the Google SOAP API engine, and that generated abstracts are pretty much
+useless.
+Revamped the query dialog for easy adding of filters.
+
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2006-10-14 04:40:11 UTC (rev 509)
+@@ -85,8 +85,7 @@
+ /// Runs a query; true if success.
+ bool GoogleAPIEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+-	string queryString = queryProps.toString(false);
+-
++	string queryString(queryProps.getFreeQuery());
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
+ 
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/Search/PluginWebEngine.cpp	2006-10-14 04:40:11 UTC (rev 509)
+@@ -214,7 +214,7 @@
+ /// Runs a query; true if success.
+ bool PluginWebEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+-	string queryString = queryProps.toString(false);
++	string queryString(queryProps.getFreeQuery());
+ 	char countStr[64];
+ 	unsigned int currentIncrement = 0, count = 0;
+ 
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/Search/QueryProperties.cpp	2006-10-14 04:40:11 UTC (rev 509)
+@@ -19,40 +19,36 @@
+ 
+ #include &quot;Document.h&quot;
+ #include &quot;Languages.h&quot;
++#include &quot;StringManip.h&quot;
+ #include &quot;Tokenizer.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+-QueryProperties::QueryProperties()
++QueryProperties::QueryProperties() :
++	m_resultsCount(10),
++	m_indexResults(false)
+ {
+-	m_resultsCount = 10;
+-	m_indexResults = false;
+ }
+ 
+-QueryProperties::QueryProperties(string name, string andWords, string phrase, string anyWords, string notWords)
++QueryProperties::QueryProperties(const string &amp;name, const string &amp;freeQuery) :
++	m_name(name),
++	m_freeQuery(freeQuery),
++	m_resultsCount(10),
++	m_indexResults(false)
+ {
+-	m_name = name;
+-	m_andWords = andWords;
+-	m_phrase = phrase;
+-	m_anyWords = anyWords;
+-	m_notWords = notWords;
+-	m_resultsCount = 10;
+-	m_indexResults = false;
++	extractFilters();
+ }
+ 
+ QueryProperties::QueryProperties(const QueryProperties &amp;other) :
+ 	m_name(other.m_name),
+-	m_andWords(other.m_andWords),
+-	m_phrase(other.m_phrase),
+-	m_anyWords(other.m_anyWords),
+-	m_notWords(other.m_notWords),
++	m_freeQuery(other.m_freeQuery),
+ 	m_language(other.m_language),
+ 	m_hostFilter(other.m_hostFilter),
+ 	m_fileFilter(other.m_fileFilter),
+-	m_labelFilter(other.m_labelFilter),
+ 	m_resultsCount(other.m_resultsCount),
+ 	m_indexResults(other.m_indexResults),
+ 	m_labelName(other.m_labelName)
+ {
++	extractFilters();
+ }
+ 
+ QueryProperties::~QueryProperties()
+@@ -64,17 +60,14 @@
+ 	if (this != &amp;other)
+ 	{
+ 		m_name = other.m_name;
+-		m_andWords = other.m_andWords;
+-		m_phrase = other.m_phrase;
+-		m_anyWords = other.m_anyWords;
+-		m_notWords = other.m_notWords;
++		m_freeQuery = other.m_freeQuery;
+ 		m_language = other.m_language;
+ 		m_hostFilter = other.m_hostFilter;
+ 		m_fileFilter = other.m_fileFilter;
+-		m_labelFilter = other.m_labelFilter;
+ 		m_resultsCount = other.m_resultsCount;
+ 		m_indexResults = other.m_indexResults;
+ 		m_labelName = other.m_labelName;
++		extractFilters();
+ 	}
+ 
+ 	return *this;
+@@ -100,6 +93,26 @@
+ 	return false;
+ }
+ 
++void QueryProperties::extractFilters(void)
++{
++	if (m_freeQuery.empty() == true)
++	{
++		m_language.clear();
++		m_hostFilter.clear();
++		m_fileFilter.clear();
++		return;
++	}
++
++	string freeQuery = StringManip::replaceSubString(m_freeQuery, &quot;\n&quot;, &quot; &quot;);
++
++	m_language = StringManip::extractField(freeQuery, &quot;language:&quot;, &quot; )&quot;, true);
++	if (m_language.empty() == true)
++	{
++		m_language = StringManip::extractField(freeQuery, &quot;language:&quot;, &quot;&quot;);
++	}
++	// FIXME: do the same for host and file at the very least
++}
++
+ /// Sets the name.
+ void QueryProperties::setName(const string &amp;name)
+ {
+@@ -112,102 +125,36 @@
+ 	return m_name;
+ }
+ 
+-/// Sets AND words.
+-void QueryProperties::setAndWords(const string &amp;words)
++/// Sets the query string.
++void QueryProperties::setFreeQuery(const string &amp;freeQuery)
+ {
+-	m_andWords = words;
++	m_freeQuery = freeQuery;
+ }
+ 
+-/// Gets AND words.
+-string QueryProperties::getAndWords(void) const
++/// Gets the query string.
++string QueryProperties::getFreeQuery(void) const
+ {
+-	return m_andWords;
++	return m_freeQuery;
+ }
+ 
+-/// Sets phrase query.
+-void QueryProperties::setPhrase(const string &amp;phrase)
+-{
+-	m_phrase = phrase;
+-}
+-
+-/// Gets phrase query.
+-string QueryProperties::getPhrase(void) const
+-{
+-	return m_phrase;
+-}
+-
+-/// Sets ANY words.
+-void QueryProperties::setAnyWords(const string &amp;words)
+-{
+-	m_anyWords = words;
+-}
+-
+-/// Gets ANY words.
+-string QueryProperties::getAnyWords(void) const
+-{
+-	return m_anyWords;
+-}
+-
+-/// Sets NOT words.
+-void QueryProperties::setNotWords(const string &amp;words)
+-{
+-	m_notWords = words;
+-}
+-
+-/// Gets NOT words.
+-string QueryProperties::getNotWords(void) const
+-{
+-	return m_notWords;
+-}
+-
+-/// Sets the query's language.
+-void QueryProperties::setLanguage(const string &amp;language)
+-{
+-	m_language = language;
+-}
+-
+ /// Gets the query's language.
+ string QueryProperties::getLanguage(void) const
+ {
+ 	return m_language;
+ }
+ 
+-/// Sets host filter.
+-void QueryProperties::setHostFilter(const string &amp;filter)
+-{
+-	m_hostFilter = filter;
+-}
+-
+-/// Gets host filter.
++/// Gets the query's host filter.
+ string QueryProperties::getHostFilter(void) const
+ {
+-	return 	m_hostFilter;
++	return m_hostFilter;
+ }
+ 
+-/// Sets file filter.
+-void QueryProperties::setFileFilter(const string &amp;filter)
+-{
+-	m_fileFilter = filter;
+-}
+-
+-/// Gets file filter.
++/// Gets the query's file filter.
+ string QueryProperties::getFileFilter(void) const
+ {
+ 	return m_fileFilter;
+ }
+ 
+-/// Sets label filter.
+-void QueryProperties::setLabelFilter(const string &amp;filter)
+-{
+-	m_labelFilter = filter;
+-}
+-
+-/// Gets label filter.
+-string QueryProperties::getLabelFilter(void) const
+-{
+-	return m_labelFilter;
+-}
+-
+ /// Sets the maximum number of results.
+ void QueryProperties::setMaximumResultsCount(unsigned int count)
+ {
+@@ -248,9 +195,8 @@
+ void QueryProperties::getTerms(set&lt;string&gt; &amp;terms) const
+ {
+ 	Document doc;
+-	string termsString(m_andWords + m_phrase + m_anyWords + m_notWords);
+ 
+-	doc.setData(termsString.c_str(), termsString.length());
++	doc.setData(m_freeQuery.c_str(), m_freeQuery.length());
+ 	Tokenizer tokens(&amp;doc);
+ 
+ 	terms.clear();
+@@ -261,85 +207,3 @@
+ 		terms.insert(token);
+ 	}
+ }
+-
+-/// Returns a displayable representation of this query's properties.
+-string QueryProperties::toString(bool forPresentation) const
+-{
+-	string queryString;
+-	if (m_andWords.empty() == false)
+-	{
+-		string tmp = m_andWords;
+-		replace(tmp.begin(), tmp.end(), ' ', '+');
+-		queryString += tmp;
+-	}
+-	if (m_anyWords.empty() == false)
+-	{
+-		if (forPresentation == true)
+-		{
+-			string tmp = m_anyWords;
+-			replace(tmp.begin(), tmp.end(), ' ', '|');
+-			queryString += &quot; +(&quot;;
+-			queryString += tmp;
+-			queryString += &quot;)&quot;;
+-		}
+-		else
+-		{
+-			string tmp = m_anyWords;
+-			// FIXME: is this good enough ?
+-			replace(tmp.begin(), tmp.end(), ' ', '+');
+-			if (queryString.empty() == false)
+-			{
+-				queryString += &quot;+&quot;;
+-			}
+-			queryString += tmp;
+-		}
+-	}
+-	if (m_notWords.empty() == false)
+-	{
+-		string tmp = m_notWords;
+-		replace(tmp.begin(), tmp.end(), ' ', '-');
+-		if (queryString.empty() == false)
+-		{
+-			queryString += &quot; -&quot;;
+-		}
+-		queryString += tmp;
+-		queryString += &quot; &quot;;
+-	}
+-	if (m_phrase.empty() == false)
+-	{
+-		string tmp = m_phrase;
+-		replace(tmp.begin(), tmp.end(), ' ', '+');
+-		if (queryString.empty() == false)
+-		{
+-			queryString += &quot;+&quot;;
+-		}
+-		queryString += &quot;\&quot;&quot;;
+-		queryString += tmp;
+-		queryString += &quot;\&quot;&quot;;
+-	}
+-	if (forPresentation == true)
+-	{
+-		if (m_language.empty() == false)
+-		{
+-			queryString += &quot; +L&quot;;
+-			queryString += Languages::toCode(Languages::toEnglish(m_language));
+-		}
+-		if (m_hostFilter.empty() == false)
+-		{
+-			queryString += &quot; +H&quot;;
+-			queryString += m_hostFilter;
+-		}
+-		if (m_fileFilter.empty() == false)
+-		{
+-			queryString += &quot; +P&quot;;
+-			queryString += m_fileFilter;
+-		}
+-		if (m_labelFilter.empty() == false)
+-		{
+-			queryString += &quot; +XLABEL:&quot;;
+-			queryString += m_labelFilter;
+-		}
+-	}
+-
+-	return queryString;
+-}
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/Search/QueryProperties.h	2006-10-14 04:40:11 UTC (rev 509)
+@@ -28,7 +28,8 @@
+ {
+ 	public:
+ 		QueryProperties();
+-		QueryProperties(string name, string andWords, string phrase, string anyWords, string notWords);
++		QueryProperties(const string &amp;name, const string &amp;freeQuery);
++		QueryProperties(const string &amp;name, const string &amp;andWords, const string &amp;phrase, const string &amp;anyWords, const string &amp;notWords);
+ 		QueryProperties(const QueryProperties &amp;other);
+ 		~QueryProperties();
+ 
+@@ -41,46 +42,20 @@
+ 		/// Gets the name.
+ 		string getName(void) const;
+ 
+-		/// Sets AND words.
+-		void setAndWords(const string &amp;words);
+-		/// Gets AND words.
+-		string getAndWords(void) const;
++		/// Sets the query string.
++		void setFreeQuery(const string &amp;freeQuery);
++		/// Gets the query string.
++		string getFreeQuery(void) const;
+ 
+-		/// Sets phrase query.
+-		void setPhrase(const string &amp;phrase);
+-		/// Gets phrase query.
+-		string getPhrase(void) const;
+-
+-		/// Sets ANY words.
+-		void setAnyWords(const string &amp;words);
+-		/// Gets ANY words.
+-		string getAnyWords(void) const;
+-
+-		/// Sets NOT words.
+-		void setNotWords(const string &amp;words);
+-		/// Gets NOT words.
+-		string getNotWords(void) const;
+-
+-		/// Sets the query's language.
+-		void setLanguage(const string &amp;language);
+ 		/// Gets the query's language.
+ 		string getLanguage(void) const;
+ 
+-		/// Sets host filter.
+-		void setHostFilter(const string &amp;filter);
+-		/// Gets host filter.
++		/// Gets the query's host filter.
+ 		string getHostFilter(void) const;
+ 
+-		/// Sets file filter.
+-		void setFileFilter(const string &amp;filter);
+-		/// Gets file filter.
++		/// Gets the query's file filter.
+ 		string getFileFilter(void) const;
+ 
+-		/// Sets label filter.
+-		void setLabelFilter(const string &amp;filter);
+-		/// Gets label filter.
+-		string getLabelFilter(void) const;
+-
+ 		/// Sets the maximum number of results.
+ 		void setMaximumResultsCount(unsigned int count);
+ 		/// Gets the maximum number of results.
+@@ -99,23 +74,18 @@
+ 		/// Returns the query's terms.
+ 		void getTerms(std::set&lt;std::string&gt; &amp;terms) const;
+ 
+-		/// Returns a string representation of this query's properties.
+-		string toString(bool forPresentation = true) const;
+-
+ 	protected:
+ 		string m_name;
+-		string m_andWords;
+-		string m_phrase;
+-		string m_anyWords;
+-		string m_notWords;
++		string m_freeQuery;
+ 		string m_language;
+ 		string m_hostFilter;
+ 		string m_fileFilter;
+-		string m_labelFilter;
+ 		unsigned int m_resultsCount;
+ 		bool m_indexResults;
+ 		string m_labelName;
+ 
++		void extractFilters(void);
++
+ };
+ 
+ #endif // _QUERY_PROPERTIES_H
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/Search/XapianEngine.cpp	2006-10-14 04:40:11 UTC (rev 509)
+@@ -107,19 +107,10 @@
+ 	m_resultsList.clear();
+ }
+ 
+-bool XapianEngine::queryDatabase(Xapian::Query &amp;query)
++bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query)
+ {
+ 	bool bStatus = false;
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, true);
+-	if (pDatabase == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// Get the latest revision...
+-	pDatabase-&gt;reopen();
+-	Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 	if (pIndex != NULL)
+ 	{
+ 		try
+@@ -244,183 +235,52 @@
+ 			cerr &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 		}
+ 	}
+-	pDatabase-&gt;unlock();
+ 
+ 	return bStatus;
+ }
+ 
+-void XapianEngine::stackQuery(const QueryProperties &amp;queryProps,
+-	stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;stemLanguage, bool followOperators)
++Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
++	const string &amp;stemLanguage, bool followOperators)
+ {
+-	Xapian::Query::op queryOp = Xapian::Query::OP_OR;
+-	string term;
++	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
++	Xapian::QueryParser parser;
++	Xapian::Stem stemmer;
+ 
+-	// Get the terms to AND together
+-	if (queryProps.getAndWords().empty() == false)
++	if (stemLanguage.empty() == false)
+ 	{
+-		vector&lt;string&gt; andTerms;
+-
+-		if (extractWords(queryProps.getAndWords(), stemLanguage, andTerms) == true)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_AND &quot; &lt;&lt; andTerms.size() &lt;&lt; endl;
+-#endif
+-			if (followOperators == true)
+-			{
+-				queryOp = Xapian::Query::OP_AND;
+-			}
+-			queryStack.push(Xapian::Query(queryOp, andTerms.begin(), andTerms.end()));
+-		}
++		stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
+ 	}
+ 
+-	// Get the terms of the phrase
+-	if (queryProps.getPhrase().empty() == false)
++	// Set things up
++	parser.set_stemmer(stemmer);
++	if (followOperators == true)
+ 	{
+-		vector&lt;string&gt; phraseTerms;
+-
+-		if (extractWords(queryProps.getPhrase(), stemLanguage, phraseTerms) == true)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_PHRASE &quot; &lt;&lt; phraseTerms.size() &lt;&lt; endl;
+-#endif
+-			if (followOperators == true)
+-			{
+-				queryOp = Xapian::Query::OP_PHRASE;
+-			}
+-			queryStack.push(Xapian::Query(queryOp, phraseTerms.begin(), phraseTerms.end()));
+-		}
++		parser.set_default_op(Xapian::Query::OP_AND);
+ 	}
+-
+-	// Get the terms to OR together
+-	if (queryProps.getAnyWords().empty() == false)
++	else
+ 	{
+-		vector&lt;string&gt; orTerms;
+-
+-		if (extractWords(queryProps.getAnyWords(), stemLanguage, orTerms) == true)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_OR &quot; &lt;&lt; orTerms.size() &lt;&lt; endl;
+-#endif
+-			if (followOperators == true)
+-			{
+-				queryOp = Xapian::Query::OP_OR;
+-			}
+-			queryStack.push(Xapian::Query(queryOp, orTerms.begin(), orTerms.end()));
+-		}
++		parser.set_default_op(Xapian::Query::OP_OR);
+ 	}
+-
+-	// Get the terms to NOT together
+-	if (queryProps.getNotWords().empty() == false)
++	if (pIndex != NULL)
+ 	{
+-		vector&lt;string&gt; notTerms;
+-
+-		if (extractWords(queryProps.getNotWords(), stemLanguage, notTerms) == true)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_AND_NOT &quot; &lt;&lt; notTerms.size() &lt;&lt; endl;
+-#endif
+-			// We need something to AND_NOT these terms against
+-			// Not following the operator would make us return documents
+-			// that have terms the user isn't interested in
+-			Xapian::Query notQuery(Xapian::Query::OP_AND, notTerms.begin(), notTerms.end());
+-			if (queryStack.empty() == false)
+-			{
+-				Xapian::Query topQuery = queryStack.top();
+-				queryStack.pop();
+-
+-				queryStack.push(Xapian::Query(Xapian::Query::OP_AND_NOT, topQuery, notQuery));
+-			}
+-		}
++		// The database is required for wildcards
++		parser.set_database(*pIndex);
+ 	}
++	// ...including prefixes
++	parser.add_boolean_prefix(&quot;site&quot;, &quot;H&quot;);
++	parser.add_boolean_prefix(&quot;file&quot;, &quot;P&quot;);
++	parser.add_boolean_prefix(&quot;title&quot;, &quot;S&quot;);
++	parser.add_boolean_prefix(&quot;url&quot;, &quot;U&quot;);
++	parser.add_boolean_prefix(&quot;dir&quot;, &quot;XDIR&quot;);
++	parser.add_boolean_prefix(&quot;lang&quot;, &quot;L&quot;);
++	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
++	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL&quot;);
+ 
+-	// Get the host name filter
+-	if (queryProps.getHostFilter().empty() == false)
+-	{
+-		vector&lt;string&gt; hostTerms;
+-
+-		term = &quot;H&quot;;
+-		term += StringManip::toLowerCase(queryProps.getHostFilter());
+-		hostTerms.push_back(term);
+-		if (followOperators == true)
+-		{
+-			queryOp = Xapian::Query::OP_AND;
+-		}
+-		queryStack.push(Xapian::Query(queryOp, hostTerms.begin(), hostTerms.end()));
+-	}
+-
+-	// Get the file name filter
+-	if (queryProps.getFileFilter().empty() == false)
+-	{
+-		vector&lt;string&gt; fileTerms;
+-
+-		term = &quot;P&quot;;
+-		term += StringManip::toLowerCase(queryProps.getFileFilter());
+-		fileTerms.push_back(term);
+-		if (followOperators == true)
+-		{
+-			queryOp = Xapian::Query::OP_AND;
+-		}
+-		queryStack.push(Xapian::Query(queryOp, fileTerms.begin(), fileTerms.end()));
+-	}
+-
+-	// Get the label name filter
+-	if (queryProps.getLabelFilter().empty() == false)
+-	{
+-		vector&lt;string&gt; labelTerms;
+-
+-		term = &quot;XLABEL:&quot;;
+-		term += queryProps.getLabelFilter();
+-		labelTerms.push_back(term);
+-		if (followOperators == true)
+-		{
+-			queryOp = Xapian::Query::OP_AND;
+-		}
+-		queryStack.push(Xapian::Query(queryOp, labelTerms.begin(), labelTerms.end()));
+-	}
+-
+-	// Get the language filter
+-	string language = queryProps.getLanguage();
+-	if (language.empty() == false)
+-	{
+-		vector&lt;string&gt; languageTerms;
+-
+-		term = &quot;L&quot;;
+-		term += Languages::toCode(Languages::toEnglish(language));
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianEngine::stackQuery: filter &quot; &lt;&lt; term &lt;&lt; endl;
+-#endif
+-		languageTerms.push_back(term);
+-		if (followOperators == true)
+-		{
+-			queryOp = Xapian::Query::OP_AND;
+-		}
+-		queryStack.push(Xapian::Query(queryOp, languageTerms.begin(), languageTerms.end()));
+-	}
++	// Activate all options and parse
++	return parser.parse_query(freeQuery,
++		Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|Xapian::QueryParser::FLAG_WILDCARD);
+ }
+ 
+-/// Runs a boolean query; true if success.
+-bool XapianEngine::runQuery(const string &amp;keyword)
+-{
+-	// Clear the results list
+-	m_resultsList.clear();
+-
+-	try
+-	{
+-		vector&lt;string&gt; keywordTerms;
+-		keywordTerms.push_back(keyword);
+-		Xapian::Query keywordQuery(Xapian::Query::OP_AND, keywordTerms.begin(), keywordTerms.end());
+-
+-		// Query the database with the full query
+-		return queryDatabase(keywordQuery);
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;XapianEngine::runQuery: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-
+-	return false;
+-}
+-
+ //
+ // Implementation of SearchEngineInterface
+ //
+@@ -440,6 +300,15 @@
+ 	// Clear the results list
+ 	m_resultsList.clear();
+ 
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, true);
++	if (pDatabase == NULL)
++	{
++		return false;
++	}
++
++	// Get the latest revision...
++	pDatabase-&gt;reopen();
++	Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 	try
+ 	{
+ 		stack&lt;Xapian::Query&gt; queryStack;
+@@ -453,26 +322,11 @@
+ 		// 3. if no results, don't follow operators and don't stem terms
+ 		// 4. if no results, don't follow operators and stem terms
+ 		// Steps 2 and 4 depend on a language being defined for the query
+-		stackQuery(queryProps, queryStack, &quot;&quot;, followOperators);
+-		while (queryStack.empty() == false)
++		Xapian::Query freeQuery = parseQuery(pIndex, queryProps, &quot;&quot;, followOperators);
++		while (freeQuery.empty() == false)
+ 		{
+-			while (queryStack.size() &gt; 1)
+-			{
+-				Xapian::Query topQuery = queryStack.top();
+-				queryStack.pop();
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;XapianEngine::runQuery: popped query, left &quot; &lt;&lt; queryStack.size() &lt;&lt; endl;
+-#endif
+-				Xapian::Query query = Xapian::Query(Xapian::Query::OP_AND, queryStack.top(), topQuery);
+-				queryStack.pop();
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;XapianEngine::runQuery: popped query, left &quot; &lt;&lt; queryStack.size() &lt;&lt; endl;
+-#endif
+-				queryStack.push(query);
+-			}
+-
+ 			// Query the database
+-			if (queryDatabase(queryStack.top()) == false)
++			if (queryDatabase(pIndex, freeQuery) == false)
+ 			{
+ 				break;
+ 			}
+@@ -504,22 +358,19 @@
+ 						}
+ 						++searchStep;
+ 					default:
++						pDatabase-&gt;unlock();
+ 						return true;
+ 				}
+ 
+-				// Empty the stack
+-				while (queryStack.empty() == false)
+-				{
+-					queryStack.pop();
+-				}
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
+ #endif
+-				stackQuery(queryProps, queryStack,
++				freeQuery = parseQuery(pIndex, queryProps,
+ 					Languages::toEnglish(stemLanguage), followOperators);
+ 				continue;
+ 			}
+ 
++			pDatabase-&gt;unlock();
+ 			return true;
+ 		}
+ 	}
+@@ -527,6 +378,7 @@
+ 	{
+ 		cerr &lt;&lt; &quot;XapianEngine::runQuery: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
++	pDatabase-&gt;unlock();
+ 
+ 	return false;
+ }
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/Search/XapianEngine.h	2006-10-14 04:40:11 UTC (rev 509)
+@@ -36,9 +36,6 @@
+ 		/// Sets whether the query should be expanded.
+ 		bool setQueryExpansion(std::set&lt;unsigned int&gt; &amp;relevantDocuments);
+ 
+-		/// Runs a boolean query; true if success.
+-		virtual bool runQuery(const std::string &amp;keyword);
+-
+ 		/// Runs a query; true if success.
+ 		virtual bool runQuery(QueryProperties&amp; queryProps);
+ 
+@@ -49,11 +46,10 @@
+ 		std::string m_databaseName;
+ 		std::set&lt;unsigned int&gt; m_relevantDocuments;
+ 
+-		bool queryDatabase(Xapian::Query &amp;query);
++		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query);
+ 
+-		void stackQuery(const QueryProperties &amp;queryProps,
+-			std::stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;stemLanguage,
+-			bool followOperators);
++		Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
++			const string &amp;stemLanguage, bool followOperators);
+ 
+ 	private:
+ 		XapianEngine(const XapianEngine &amp;other);
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/metase-gtk2.glade	2006-10-14 04:40:11 UTC (rev 509)
+@@ -2041,7 +2041,7 @@
+ 	      &lt;child&gt;
+ 		&lt;widget class=&quot;GtkLabel&quot; id=&quot;filterLabel&quot;&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Filter:&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;New filter:&lt;/property&gt;
+ 		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
+@@ -2067,12 +2067,7 @@
+ 		&lt;widget class=&quot;GtkComboBox&quot; id=&quot;filterCombobox&quot;&gt;
+ 		  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;items&quot; translatable=&quot;yes&quot;&gt;Language
+-MIME Type
+-Host Name
+-Directory
+-File Name
+-Label&lt;/property&gt;
++		  &lt;property name=&quot;items&quot; translatable=&quot;yes&quot;&gt;&lt;/property&gt;
+ 		  &lt;property name=&quot;add_tearoffs&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;focus_on_click&quot;&gt;True&lt;/property&gt;
+ 		&lt;/widget&gt;
+@@ -2091,6 +2086,7 @@
+ 		  &lt;property name=&quot;use_stock&quot;&gt;True&lt;/property&gt;
+ 		  &lt;property name=&quot;relief&quot;&gt;GTK_RELIEF_NORMAL&lt;/property&gt;
+ 		  &lt;property name=&quot;focus_on_click&quot;&gt;True&lt;/property&gt;
++		  &lt;signal name=&quot;clicked&quot; handler=&quot;on_addFilterButton_clicked&quot; last_modification_time=&quot;Sat, 14 Oct 2006 01:28:04 GMT&quot;/&gt;
+ 		&lt;/widget&gt;
+ 		&lt;packing&gt;
+ 		  &lt;property name=&quot;padding&quot;&gt;4&lt;/property&gt;
+@@ -2136,13 +2132,14 @@
+ 
+ 		      &lt;child&gt;
+ 			&lt;widget class=&quot;GtkTextView&quot; id=&quot;queryTextview&quot;&gt;
++			  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 			  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+ 			  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+ 			  &lt;property name=&quot;editable&quot;&gt;True&lt;/property&gt;
+ 			  &lt;property name=&quot;overwrite&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;accepts_tab&quot;&gt;True&lt;/property&gt;
++			  &lt;property name=&quot;accepts_tab&quot;&gt;False&lt;/property&gt;
+ 			  &lt;property name=&quot;justification&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
+-			  &lt;property name=&quot;wrap_mode&quot;&gt;GTK_WRAP_NONE&lt;/property&gt;
++			  &lt;property name=&quot;wrap_mode&quot;&gt;GTK_WRAP_WORD&lt;/property&gt;
+ 			  &lt;property name=&quot;cursor_visible&quot;&gt;True&lt;/property&gt;
+ 			  &lt;property name=&quot;pixels_above_lines&quot;&gt;0&lt;/property&gt;
+ 			  &lt;property name=&quot;pixels_below_lines&quot;&gt;0&lt;/property&gt;
+@@ -2191,7 +2188,7 @@
+ 	  &lt;child&gt;
+ 	    &lt;widget class=&quot;GtkTable&quot; id=&quot;tersmTable&quot;&gt;
+ 	      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-	      &lt;property name=&quot;n_rows&quot;&gt;1&lt;/property&gt;
++	      &lt;property name=&quot;n_rows&quot;&gt;2&lt;/property&gt;
+ 	      &lt;property name=&quot;n_columns&quot;&gt;2&lt;/property&gt;
+ 	      &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+ 	      &lt;property name=&quot;row_spacing&quot;&gt;0&lt;/property&gt;
+@@ -2213,8 +2210,8 @@
+ 		&lt;packing&gt;
+ 		  &lt;property name=&quot;left_attach&quot;&gt;0&lt;/property&gt;
+ 		  &lt;property name=&quot;right_attach&quot;&gt;1&lt;/property&gt;
+-		  &lt;property name=&quot;top_attach&quot;&gt;0&lt;/property&gt;
+-		  &lt;property name=&quot;bottom_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;2&lt;/property&gt;
+ 		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;x_options&quot;&gt;fill&lt;/property&gt;
+@@ -2232,13 +2229,67 @@
+ 		&lt;packing&gt;
+ 		  &lt;property name=&quot;left_attach&quot;&gt;1&lt;/property&gt;
+ 		  &lt;property name=&quot;right_attach&quot;&gt;2&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;2&lt;/property&gt;
++		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
++		&lt;/packing&gt;
++	      &lt;/child&gt;
++
++	      &lt;child&gt;
++		&lt;widget class=&quot;GtkLabel&quot; id=&quot;resultsCountLabel&quot;&gt;
++		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Number of results:&lt;/property&gt;
++		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
++		  &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;selectable&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;xalign&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;yalign&quot;&gt;0.5&lt;/property&gt;
++		  &lt;property name=&quot;xpad&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;ypad&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;ellipsize&quot;&gt;PANGO_ELLIPSIZE_NONE&lt;/property&gt;
++		  &lt;property name=&quot;width_chars&quot;&gt;-1&lt;/property&gt;
++		  &lt;property name=&quot;single_line_mode&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;angle&quot;&gt;0&lt;/property&gt;
++		&lt;/widget&gt;
++		&lt;packing&gt;
++		  &lt;property name=&quot;left_attach&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;right_attach&quot;&gt;1&lt;/property&gt;
+ 		  &lt;property name=&quot;top_attach&quot;&gt;0&lt;/property&gt;
+ 		  &lt;property name=&quot;bottom_attach&quot;&gt;1&lt;/property&gt;
+ 		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;x_options&quot;&gt;fill&lt;/property&gt;
+ 		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
+ 		&lt;/packing&gt;
+ 	      &lt;/child&gt;
++
++	      &lt;child&gt;
++		&lt;widget class=&quot;GtkSpinButton&quot; id=&quot;resultsCountSpinbutton&quot;&gt;
++		  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
++		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
++		  &lt;property name=&quot;climb_rate&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;digits&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;numeric&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;update_policy&quot;&gt;GTK_UPDATE_ALWAYS&lt;/property&gt;
++		  &lt;property name=&quot;snap_to_ticks&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
++		  &lt;property name=&quot;adjustment&quot;&gt;10 10 100 10 20 20&lt;/property&gt;
++		&lt;/widget&gt;
++		&lt;packing&gt;
++		  &lt;property name=&quot;left_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;right_attach&quot;&gt;2&lt;/property&gt;
++		  &lt;property name=&quot;top_attach&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;bottom_attach&quot;&gt;1&lt;/property&gt;
++		  &lt;property name=&quot;x_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_padding&quot;&gt;4&lt;/property&gt;
++		  &lt;property name=&quot;y_options&quot;&gt;fill&lt;/property&gt;
++		&lt;/packing&gt;
++	      &lt;/child&gt;
+ 	    &lt;/widget&gt;
+ 	    &lt;packing&gt;
+ 	      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-10-14 04:40:11 UTC (rev 509)
+@@ -543,6 +543,7 @@
+ 	}
+ 
+ 	QueryProperties queryProps;
++	string backCompatString;
+ 
+ 	// Load the query's properties
+ 	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+@@ -560,38 +561,91 @@
+ 		{
+ 			queryProps.setName(nodeContent);
+ 		}
+-		else if (nodeName == &quot;and&quot;)
++		else if (nodeName == &quot;text&quot;)
+ 		{
+-			queryProps.setAndWords(nodeContent);
++			queryProps.setFreeQuery(nodeContent);
+ 		}
+-		else if (nodeName == &quot;phrase&quot;)
++		else if ((nodeName == &quot;and&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setPhrase(nodeContent);
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += nodeContent;
+ 		}
+-		else if (nodeName == &quot;any&quot;)
++		else if ((nodeName == &quot;phrase&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setAnyWords(nodeContent);
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += &quot;\&quot;&quot;;
++			backCompatString += nodeContent;
++			backCompatString += &quot;\&quot;&quot;;
+ 		}
+-		else if (nodeName == &quot;not&quot;)
++		else if ((nodeName == &quot;any&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setNotWords(nodeContent);
++			// FIXME: don't be lazy and add those correctly
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += nodeContent;
+ 		}
+-		else if (nodeName == &quot;language&quot;)
++		else if ((nodeName == &quot;not&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setLanguage(Languages::toLocale(nodeContent));
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += &quot;-(&quot;;
++			backCompatString += nodeContent;
++			backCompatString += &quot;)&quot;;
+ 		}
+-		else if (nodeName == &quot;hostfilter&quot;)
++		else if ((nodeName == &quot;language&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setHostFilter(nodeContent);
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += &quot;language:&quot;;
++			backCompatString += nodeContent;
+ 		}
+-		else if (nodeName == &quot;filefilter&quot;)
++		else if ((nodeName == &quot;hostfilter&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setFileFilter(nodeContent);
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += &quot;site:&quot;;
++			backCompatString += nodeContent;
+ 		}
+-		else if (nodeName == &quot;labelfilter&quot;)
++		else if ((nodeName == &quot;filefilter&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
+ 		{
+-			queryProps.setLabelFilter(nodeContent);
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += &quot;file:&quot;;
++			backCompatString += nodeContent;
+ 		}
++		else if ((nodeName == &quot;labelfilter&quot;) &amp;&amp;
++			(nodeContent.empty() == false))
++		{
++			if (backCompatString.empty() == false)
++			{
++				backCompatString += &quot; &quot;;
++			}
++			backCompatString += &quot;label:&quot;;
++			backCompatString += nodeContent;
++		}
+ 		else if (nodeName == &quot;maxresults&quot;)
+ 		{
+ 			int count = atoi(nodeContent.c_str());
+@@ -617,6 +671,10 @@
+ 	// We need at least a name
+ 	if (queryProps.getName().empty() == false)
+ 	{
++		if (backCompatString.empty() == false)
++		{
++			queryProps.setFreeQuery(backCompatString);
++		}
+ 		m_queries[queryProps.getName()] = queryProps;
+ 	}
+ 
+@@ -1000,14 +1058,7 @@
+ 			return false;
+ 		}
+ 		addChildElement(pElem, &quot;name&quot;, queryIter-&gt;first);
+-		addChildElement(pElem, &quot;and&quot;, queryIter-&gt;second.getAndWords());
+-		addChildElement(pElem, &quot;phrase&quot;, queryIter-&gt;second.getPhrase());
+-		addChildElement(pElem, &quot;any&quot;, queryIter-&gt;second.getAnyWords());
+-		addChildElement(pElem, &quot;not&quot;, queryIter-&gt;second.getNotWords());
+-		addChildElement(pElem, &quot;hostfilter&quot;, queryIter-&gt;second.getHostFilter());
+-		addChildElement(pElem, &quot;filefilter&quot;, queryIter-&gt;second.getFileFilter());
+-		addChildElement(pElem, &quot;labelfilter&quot;, queryIter-&gt;second.getLabelFilter());
+-		addChildElement(pElem, &quot;language&quot;, Languages::toEnglish(queryIter-&gt;second.getLanguage()));
++		addChildElement(pElem, &quot;text&quot;, queryIter-&gt;second.getFreeQuery());
+ 		sprintf(numStr, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
+ 		addChildElement(pElem, &quot;maxresults&quot;, numStr);
+ 		addChildElement(pElem, &quot;index&quot;, (queryIter-&gt;second.getIndexResults() ? &quot;ALL&quot; : &quot;NONE&quot;));
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-10-14 04:40:11 UTC (rev 509)
+@@ -35,6 +35,7 @@
+ #include &quot;CommandLine.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;IndexedDocument.h&quot;
++#include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+@@ -228,7 +229,7 @@
+ 			lastRun = _(&quot;N/A&quot;);
+ 		}
+ 		row[m_queryColumns.m_lastRun] = to_utf8(lastRun);
+-		string summary = queryIter-&gt;second.toString();
++		string summary(StringManip::replaceSubString(queryIter-&gt;second.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 		if (summary.empty() == false)
+ 		{
+ 			row[m_queryColumns.m_summary] = to_utf8(summary);
+@@ -1013,7 +1014,7 @@
+ 		}
+ 		queryProps.setName(queryName);
+ 
+-		if (queryProps.getAnyWords().empty() == false)
++		if (queryProps.getFreeQuery().empty() == false)
+ 		{
+ 			moreLike = &quot; &quot;;
+ 		}
+@@ -1042,7 +1043,7 @@
+ 		}
+ 
+ 		// Add these terms
+-		queryProps.setAnyWords(queryProps.getAnyWords() + moreLike);
++		queryProps.setFreeQuery(queryProps.getFreeQuery() + moreLike);
+ 
+ 		// Update everything
+ 		if (m_settings.addQuery(queryProps) == true)
+@@ -1522,8 +1523,7 @@
+ #endif
+ 		// Use whatever text is in the clipboard as query name
+ 		// FIXME: look for \n as query fields separators ?
+-		QueryProperties queryProps = QueryProperties(from_utf8(clipText),
+-			&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;);
++		QueryProperties queryProps = QueryProperties(from_utf8(clipText), from_utf8(clipText));
+ 		edit_query(queryProps, true);
+ 	}
+ 	else
+@@ -1685,7 +1685,7 @@
+ 	if (queryName == _(&quot;Live query&quot;))
+ 	{
+ 		queryProps.setName(queryName);
+-		queryProps.setAndWords(from_utf8(liveQueryEntry-&gt;get_text()));
++		queryProps.setFreeQuery(from_utf8(liveQueryEntry-&gt;get_text()));
+ 	}
+ 	else
+ 	{
+@@ -2332,14 +2332,8 @@
+ //
+ void mainWindow::on_findButton_clicked()
+ {
+-	QueryProperties queryProps;
++	QueryProperties queryProps(_(&quot;Live query&quot;), from_utf8(liveQueryEntry-&gt;get_text()));
+ 
+-	queryProps.setName(_(&quot;Live query&quot;));
+-	// FIXME: parse the query string !
+-	// Since we perform multi-step searches on the index, we might as well start with ANDing terms
+-	// For search plugins, this won't make a difference
+-	queryProps.setAndWords(from_utf8(liveQueryEntry-&gt;get_text()));
+-
+ 	run_search(queryProps);
+ }
+ 
+@@ -2350,7 +2344,7 @@
+ {
+ 	// Even though live queries terms are now ANDed together,
+ 	// use them as OR terms when creating a new stored query
+-	QueryProperties queryProps = QueryProperties(&quot;&quot;, &quot;&quot;, &quot;&quot;, from_utf8(liveQueryEntry-&gt;get_text()), &quot;&quot;);
++	QueryProperties queryProps = QueryProperties(&quot;&quot;, from_utf8(liveQueryEntry-&gt;get_text()));
+ 
+ 	edit_query(queryProps, true);
+ }
+@@ -2733,8 +2727,7 @@
+ //
+ void mainWindow::run_search(const QueryProperties &amp;queryProps)
+ {
+-	string querySummary = queryProps.toString();
+-	if (querySummary.empty() == true)
++	if (queryProps.getFreeQuery().empty() == true)
+ 	{
+ 		set_status(_(&quot;Query is not set&quot;));
+ 		return;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-10-14 04:40:11 UTC (rev 509)
+@@ -440,7 +440,6 @@
+ 			DBUS_TYPE_INVALID) == TRUE)
+ 		{
+ 			XapianEngine engine(PinotSettings::getInstance().m_daemonIndexLocation);
+-			QueryProperties queryProps;
+ 			bool replyWithError = true;
+ 
+ #ifdef DEBUG
+@@ -448,7 +447,7 @@
+ #endif
+ 			if (pSearchText != NULL)
+ 			{
+-				queryProps.setAndWords(pSearchText);
++				QueryProperties queryProps(&quot;DBUS&quot;, pSearchText);
+ 
+ 				// Run the query
+ 				engine.setMaxResultsCount(maxHits);
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/queryDialog.cc	2006-10-14 04:40:11 UTC (rev 509)
+@@ -36,24 +36,8 @@
+ 	m_labels(PinotSettings::getInstance().getLabels()),
+ 	m_badName(true)
+ {
+-	string name = m_properties.getName();
+-
+-	// Associate the columns model to the index label combo
+-	m_refLabelNameTree = ListStore::create(m_labelNameColumns);
+-	labelNameCombobox-&gt;set_model(m_refLabelNameTree);
+-	labelNameCombobox-&gt;pack_start(m_labelNameColumns.m_name);
+-	// ...and the label filter combo
+-	m_refLabelFilterTree = ListStore::create(m_labelFilterColumns);
+-	labelFilterCombobox-&gt;set_model(m_refLabelFilterTree);
+-	labelFilterCombobox-&gt;pack_start(m_labelFilterColumns.m_name);
+-	// Associate the columns model to the language combo
+-	m_refLanguageTree = ListStore::create(m_languageColumns);
+-	languageCombobox-&gt;set_model(m_refLanguageTree);
+-	languageCombobox-&gt;pack_start(m_languageColumns.m_name);
+-	// Populate
+-	populate_comboboxes();
+-
+ 	// Name
++	string name(m_properties.getName());
+ 	if (name.empty() == true)
+ 	{
+ 		queryOkbutton-&gt;set_sensitive(false);
+@@ -62,20 +46,24 @@
+ 	{
+ 		nameEntry-&gt;set_text(to_utf8(name));
+ 	}
+-	// Query terms
+-	andEntry-&gt;set_text(to_utf8(m_properties.getAndWords()));
+-	phraseEntry-&gt;set_text(to_utf8(m_properties.getPhrase()));
+-	anyEntry-&gt;set_text(to_utf8(m_properties.getAnyWords()));
+-	notEntry-&gt;set_text(to_utf8(m_properties.getNotWords()));
+-
+-	// Host name
+-	hostNameEntry-&gt;set_text(to_utf8(m_properties.getHostFilter()));
+-	// File name
+-	fileNameEntry-&gt;set_text(to_utf8(m_properties.getFileFilter()));
++	// Query text
++	RefPtr&lt;TextBuffer&gt; refBuffer = queryTextview-&gt;get_buffer();
++	refBuffer-&gt;set_text(to_utf8(m_properties.getFreeQuery()));
+ 	// Maximum number of results
+ 	resultsCountSpinbutton-&gt;set_value((double)m_properties.getMaximumResultsCount());
+ 	// Index all results
+ 	indexCheckbutton-&gt;set_active(m_properties.getIndexResults());
++
++	// Associate the columns model to the index label combo
++	m_refLabelNameTree = ListStore::create(m_labelNameColumns);
++	labelNameCombobox-&gt;set_model(m_refLabelNameTree);
++	labelNameCombobox-&gt;pack_start(m_labelNameColumns.m_name);
++	// ...and the filter combo
++	m_refFilterTree = ListStore::create(m_filterColumns);
++	filterCombobox-&gt;set_model(m_refFilterTree);
++	filterCombobox-&gt;pack_start(m_filterColumns.m_name);
++	// Populate
++	populate_comboboxes();
+ }
+ 
+ queryDialog::~queryDialog()
+@@ -91,12 +79,7 @@
+ 	row[m_labelNameColumns.m_name] = _(&quot;None&quot;);
+ 	labelNameCombobox-&gt;set_active(0);
+ 
+-	iter = m_refLabelFilterTree-&gt;append();
+-	row = *iter;
+-	row[m_labelFilterColumns.m_name] = _(&quot;Any&quot;);
+-	labelFilterCombobox-&gt;set_active(0);
+-
+-	// Add all labels to both label combos and select the one defined for the query
++	// Add all labels to the label combo and select the one defined for the query
+ 	for (set&lt;string&gt;::const_iterator labelIter = m_labels.begin(); labelIter != m_labels.end(); ++labelIter)
+ 	{
+ 		string labelName(*labelIter);
+@@ -109,35 +92,35 @@
+ 			labelNameCombobox-&gt;set_active(labelNum);
+ 		}
+ 
+-		iter = m_refLabelFilterTree-&gt;append();
+-		row = *iter;
+-		row[m_labelFilterColumns.m_name] = to_utf8(labelName);
+-		if (labelName == m_properties.getLabelFilter())
+-		{
+-			labelFilterCombobox-&gt;set_active(labelNum);
+-		}
+-
+ 		++labelNum;
+ 	}
+ 
+-	iter = m_refLanguageTree-&gt;append();
++	// All supported filters
++	iter = m_refFilterTree-&gt;append();
+ 	row = *iter;
+-	row[m_languageColumns.m_name] = _(&quot;Any&quot;);
+-	languageCombobox-&gt;set_active(0);
+-
+-	// Add all supported languages and select the one defined for the query
+-	for (unsigned int languageNum = 0; languageNum &lt; Languages::m_count; ++languageNum)
+-	{
+-		string languageName = Languages::getIntlName(languageNum);
+-		iter = m_refLanguageTree-&gt;append();
+-		row = *iter;
+-		row[m_languageColumns.m_name] = to_utf8(languageName);
+-
+-		if (languageName == m_properties.getLanguage())
+-		{
+-			languageCombobox-&gt;set_active(languageNum + 1);
+-		}
+-	}
++	row[m_filterColumns.m_name] = _(&quot;Host name&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;File name&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;Title&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;URL&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;Directory&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;Language code&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;MIME type&quot;);
++	iter = m_refFilterTree-&gt;append();
++	row = *iter;
++	row[m_filterColumns.m_name] = _(&quot;Label&quot;);
++	filterCombobox-&gt;set_active(0);
+ }
+ 
+ bool queryDialog::badName(void) const
+@@ -167,22 +150,9 @@
+ 		}
+ 	}
+ 
+-	// Query terms
+-	m_properties.setAndWords(from_utf8(andEntry-&gt;get_text()));
+-	m_properties.setPhrase(from_utf8(phraseEntry-&gt;get_text()));
+-	m_properties.setAnyWords(from_utf8(anyEntry-&gt;get_text()));
+-	m_properties.setNotWords(from_utf8(notEntry-&gt;get_text()));
+-	// Language
+-	m_properties.setLanguage(&quot;&quot;);
+-	int chosenLanguage = languageCombobox-&gt;get_active_row_number();
+-	if (chosenLanguage &gt; 0)
+-	{
+-		TreeModel::iterator iter = languageCombobox-&gt;get_active();
+-		TreeModel::Row row = *iter;
+-		string languageName = from_utf8(row[m_languageColumns.m_name]);
+-
+-		m_properties.setLanguage(languageName);
+-	}
++	// Query text
++	RefPtr&lt;TextBuffer&gt; refBuffer = queryTextview-&gt;get_buffer();
++	m_properties.setFreeQuery(from_utf8(refBuffer-&gt;get_text()));
+ 	// Maximum number of results
+ 	m_properties.setMaximumResultsCount((unsigned int)resultsCountSpinbutton-&gt;get_value());
+ 	// Index all results
+@@ -198,32 +168,6 @@
+ 
+ 		m_properties.setLabelName(labelName);
+ 	}
+-	// Filters
+-	m_properties.setHostFilter(from_utf8(hostNameEntry-&gt;get_text()));
+-	m_properties.setFileFilter(from_utf8(fileNameEntry-&gt;get_text()));
+-	// Label filter
+-	m_properties.setLabelFilter(&quot;&quot;);
+-	chosenLabel = labelFilterCombobox-&gt;get_active_row_number();
+-	if (chosenLabel &gt; 0)
+-	{
+-		TreeModel::iterator iter = labelFilterCombobox-&gt;get_active();
+-		TreeModel::Row row = *iter;
+-		string labelName = from_utf8(row[m_labelFilterColumns.m_name]);
+-
+-		m_properties.setLabelFilter(labelName);
+-	}
+-
+-	// Workaround for bizarre bug that would cause a crash when creating a query
+-	// that indexes and labels results based on a language filter
+-	if (queryNotebook-&gt;get_current_page() == 0)
+-	{
+-		queryNotebook-&gt;next_page();
+-	}
+-	else
+-	{
+-		queryNotebook-&gt;prev_page();
+-		queryNotebook-&gt;next_page();
+-	}
+ }
+ 
+ void queryDialog::on_nameEntry_changed()
+@@ -238,3 +182,49 @@
+ 		queryOkbutton-&gt;set_sensitive(false);
+ 	}
+ }
++
++void queryDialog::on_addFilterButton_clicked()
++{
++	ustring filter;
++
++	// What's the corresponding filter ?
++	int chosenFilter = filterCombobox-&gt;get_active_row_number();
++	// FIXME: should the filters be localized ?
++	switch (chosenFilter)
++	{
++		case 0:
++			filter = &quot;site&quot;;
++			break;
++		case 1:
++			filter = &quot;file&quot;;
++			break;
++		case 2:
++			filter = &quot;title&quot;;
++			break;
++		case 3:
++			filter = &quot;url&quot;;
++			break;
++		case 4:
++			filter = &quot;dir&quot;;
++			break;
++		case 5:
++			filter = &quot;lang&quot;;
++			break;
++		case 6:
++			filter = &quot;type&quot;;
++			break;
++		case 7:
++			filter = &quot;label&quot;;
++			break;
++		default:
++			break;
++	}
++
++	RefPtr&lt;TextBuffer&gt; refBuffer = queryTextview-&gt;get_buffer();
++	ustring queryText = refBuffer-&gt;get_text();
++	queryText += &quot; &quot;;
++	queryText += filter;
++	queryText += &quot;:xxx&quot;;
++	refBuffer-&gt;set_text(queryText);
++}
++
+
+Modified: trunk/UI/GTK2/src/queryDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.hh	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/queryDialog.hh	2006-10-14 04:40:11 UTC (rev 509)
+@@ -40,16 +40,15 @@
+ 	const std::set&lt;std::string&gt; &amp;m_labels;
+ 	ComboModelColumns m_labelNameColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelNameTree;
+-	ComboModelColumns m_languageColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLanguageTree;
+-	ComboModelColumns m_labelFilterColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLabelFilterTree;
++	ComboModelColumns m_filterColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refFilterTree;
+ 	bool m_badName;
+ 
+ 	void populate_comboboxes();
+ 
+ 	virtual void on_queryOkbutton_clicked();
+ 	virtual void on_nameEntry_changed();
++	virtual void on_addFilterButton_clicked();
+ 
+ };
+ #endif
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2006-10-14 04:40:11 UTC (rev 509)
+@@ -1,9 +1,9 @@
+-// generated 2006/6/27 12:45:50 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at fabrix.asgent-tech.com.</A>(none)
++// generated 2006/10/14 10:43:04 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+-// glade-- /home/fabrice/pinot-0.49/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.8.19 and gtkmm 2.8.3
++// glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
++// for gtk 2.8.20 and gtkmm 2.8.8
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.cc
+ 
+@@ -41,8 +41,11 @@
+ #include &lt;gtkmm/buttonbox.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/table.h&gt;
+-#include &lt;gtkmm/adjustment.h&gt;
+ #include &lt;gtkmm/box.h&gt;
++#include &lt;gtkmm/scrolledwindow.h&gt;
++#include &lt;gtkmm/alignment.h&gt;
++#include &lt;gtkmm/frame.h&gt;
++#include &lt;gtkmm/adjustment.h&gt;
+ #ifndef ENABLE_NLS
+ #  define textdomain(String) (String)
+ #  define gettext(String) (String)
+@@ -66,43 +69,25 @@
+    nameEntry = Gtk::manage(new class Gtk::Entry());
+    
+    Gtk::Table *table1 = Gtk::manage(new class Gtk::Table(2, 2, false));
+-   anyEntry = Gtk::manage(new class Gtk::Entry());
+-   hostNameEntry = Gtk::manage(new class Gtk::Entry());
+-   fileNameEntry = Gtk::manage(new class Gtk::Entry());
++   Gtk::Label *filterLabel = Gtk::manage(new class Gtk::Label(_(&quot;New filter:&quot;)));
++   filterCombobox = Gtk::manage(new class Gtk::ComboBox());
+    
+-   Gtk::Adjustment *resultsCountSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(10, 10, 100, 10, 20, 20));
+-   resultsCountSpinbutton = Gtk::manage(new class Gtk::SpinButton(*resultsCountSpinbutton_adj, 1, 0));
++   Gtk::Button *addFilterButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-add&quot;)));
++   Gtk::HBox *queryHbox = Gtk::manage(new class Gtk::HBox(false, 0));
++   queryTextview = Gtk::manage(new class Gtk::TextView());
++   
++   Gtk::ScrolledWindow *queryScrolledwindow = Gtk::manage(new class Gtk::ScrolledWindow());
++   Gtk::Alignment *queryFrameAlignment = Gtk::manage(new class Gtk::Alignment(0.5, 0.5, 1, 1));
++   Gtk::Label *queryFrameLabel = Gtk::manage(new class Gtk::Label(_(&quot;Query Text&quot;)));
++   Gtk::Frame *queryFrame = Gtk::manage(new class Gtk::Frame());
+    indexCheckbutton = Gtk::manage(new class Gtk::CheckButton(_(&quot;Index all results with label&quot;)));
++   labelNameCombobox = Gtk::manage(new class Gtk::ComboBox());
+    
+-   Gtk::Label *anyLabel = Gtk::manage(new class Gtk::Label(_(&quot;Any of the words:&quot;)));
+-   Gtk::Label *fileNameLabel = Gtk::manage(new class Gtk::Label(_(&quot;File name:&quot;)));
+    Gtk::Label *resultsCountLabel = Gtk::manage(new class Gtk::Label(_(&quot;Number of results:&quot;)));
+-   labelNameCombobox = Gtk::manage(new class Gtk::ComboBox());
++   Gtk::Adjustment *resultsCountSpinbutton_adj = Gtk::manage(new class Gtk::Adjustment(10, 10, 100, 10, 20, 20));
++   resultsCountSpinbutton = Gtk::manage(new class Gtk::SpinButton(*resultsCountSpinbutton_adj, 1, 0));
+    
+-   Gtk::Label *hostLabel = Gtk::manage(new class Gtk::Label(_(&quot;Host name:&quot;)));
+-   Gtk::Label *notLabel = Gtk::manage(new class Gtk::Label(_(&quot;None of the words:&quot;)));
+-   notEntry = Gtk::manage(new class Gtk::Entry());
+-   
+    Gtk::Table *tersmTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+-   Gtk::VBox *termsVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+-   Gtk::Label *commonLabel = Gtk::manage(new class Gtk::Label(_(&quot;All engines&quot;)));
+-   Gtk::Label *filtersLabel = Gtk::manage(new class Gtk::Label(_(&quot;Limit to documents that match&quot;)));
+-   phraseEntry = Gtk::manage(new class Gtk::Entry());
+-   
+-   Gtk::Label *phraseLabel = Gtk::manage(new class Gtk::Label(_(&quot;the exact phrase:&quot;)));
+-   Gtk::Label *languageLabel = Gtk::manage(new class Gtk::Label(_(&quot;the language:&quot;)));
+-   languageCombobox = Gtk::manage(new class Gtk::ComboBox());
+-   andEntry = Gtk::manage(new class Gtk::Entry());
+-   
+-   Gtk::Label *andLabel = Gtk::manage(new class Gtk::Label(_(&quot;all the words:&quot;)));
+-   Gtk::Label *labelLabel = Gtk::manage(new class Gtk::Label(_(&quot;the label:&quot;)));
+-   labelFilterCombobox = Gtk::manage(new class Gtk::ComboBox());
+-   
+-   Gtk::Table *advancedTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+-   Gtk::VBox *advancedVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+-   Gtk::Label *advancedLabel = Gtk::manage(new class Gtk::Label(_(&quot;Indexes only&quot;)));
+-   queryNotebook = Gtk::manage(new class Gtk::Notebook());
+-   
+    Gtk::VBox *queryVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    queryCancelbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+    queryCancelbutton-&gt;set_flags(Gtk::CAN_DEFAULT);
+@@ -127,161 +112,70 @@
+    table1-&gt;set_col_spacings(0);
+    table1-&gt;attach(*nameLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::AttachOptions(), 0, 0);
+    table1-&gt;attach(*nameEntry, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::AttachOptions(), 4, 4);
+-   anyEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   anyEntry-&gt;set_visibility(true);
+-   anyEntry-&gt;set_editable(true);
+-   anyEntry-&gt;set_max_length(0);
+-   anyEntry-&gt;set_has_frame(true);
+-   anyEntry-&gt;set_activates_default(false);
+-   hostNameEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   hostNameEntry-&gt;set_visibility(true);
+-   hostNameEntry-&gt;set_editable(true);
+-   hostNameEntry-&gt;set_max_length(0);
+-   hostNameEntry-&gt;set_has_frame(true);
+-   hostNameEntry-&gt;set_activates_default(false);
+-   fileNameEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   fileNameEntry-&gt;set_visibility(true);
+-   fileNameEntry-&gt;set_editable(true);
+-   fileNameEntry-&gt;set_max_length(0);
+-   fileNameEntry-&gt;set_has_frame(true);
+-   fileNameEntry-&gt;set_activates_default(false);
+-   resultsCountSpinbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   resultsCountSpinbutton-&gt;set_update_policy(Gtk::UPDATE_ALWAYS);
+-   resultsCountSpinbutton-&gt;set_numeric(false);
+-   resultsCountSpinbutton-&gt;set_digits(0);
+-   resultsCountSpinbutton-&gt;set_wrap(false);
++   filterLabel-&gt;set_alignment(0.5,0.5);
++   filterLabel-&gt;set_padding(4,4);
++   filterLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   filterLabel-&gt;set_line_wrap(false);
++   filterLabel-&gt;set_use_markup(false);
++   filterLabel-&gt;set_selectable(false);
++   addFilterButton-&gt;set_flags(Gtk::CAN_FOCUS);
++   addFilterButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
++   queryHbox-&gt;pack_start(*filterLabel, Gtk::PACK_SHRINK, 0);
++   queryHbox-&gt;pack_start(*filterCombobox, Gtk::PACK_EXPAND_WIDGET, 4);
++   queryHbox-&gt;pack_start(*addFilterButton, Gtk::PACK_SHRINK, 4);
++   queryTextview-&gt;set_flags(Gtk::CAN_FOCUS);
++   queryTextview-&gt;set_editable(true);
++   queryTextview-&gt;set_cursor_visible(true);
++   queryTextview-&gt;set_pixels_above_lines(0);
++   queryTextview-&gt;set_pixels_below_lines(0);
++   queryTextview-&gt;set_pixels_inside_wrap(0);
++   queryTextview-&gt;set_left_margin(0);
++   queryTextview-&gt;set_right_margin(0);
++   queryTextview-&gt;set_indent(0);
++   queryTextview-&gt;set_wrap_mode(Gtk::WRAP_WORD);
++   queryTextview-&gt;set_justification(Gtk::JUSTIFY_LEFT);
++   queryTextview-&gt;set_accepts_tab(false);
++   queryScrolledwindow-&gt;set_flags(Gtk::CAN_FOCUS);
++   queryScrolledwindow-&gt;set_shadow_type(Gtk::SHADOW_IN);
++   queryScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
++   queryScrolledwindow-&gt;property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
++   queryScrolledwindow-&gt;add(*queryTextview);
++   queryFrameAlignment-&gt;add(*queryScrolledwindow);
++   queryFrameLabel-&gt;set_alignment(0.5,0.5);
++   queryFrameLabel-&gt;set_padding(0,0);
++   queryFrameLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
++   queryFrameLabel-&gt;set_line_wrap(false);
++   queryFrameLabel-&gt;set_use_markup(true);
++   queryFrameLabel-&gt;set_selectable(false);
++   queryFrame-&gt;set_shadow_type(Gtk::SHADOW_NONE);
++   queryFrame-&gt;set_label_align(0,0.5);
++   queryFrame-&gt;add(*queryFrameAlignment);
++   queryFrame-&gt;set_label_widget(*queryFrameLabel);
+    indexCheckbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+    indexCheckbutton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+    indexCheckbutton-&gt;set_mode(true);
+    indexCheckbutton-&gt;set_active(false);
+-   anyLabel-&gt;set_alignment(0,0.5);
+-   anyLabel-&gt;set_padding(4,4);
+-   anyLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   anyLabel-&gt;set_line_wrap(false);
+-   anyLabel-&gt;set_use_markup(false);
+-   anyLabel-&gt;set_selectable(false);
+-   fileNameLabel-&gt;set_alignment(0,0.5);
+-   fileNameLabel-&gt;set_padding(4,4);
+-   fileNameLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   fileNameLabel-&gt;set_line_wrap(false);
+-   fileNameLabel-&gt;set_use_markup(false);
+-   fileNameLabel-&gt;set_selectable(false);
+    resultsCountLabel-&gt;set_alignment(0,0.5);
+-   resultsCountLabel-&gt;set_padding(4,4);
++   resultsCountLabel-&gt;set_padding(0,0);
+    resultsCountLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+    resultsCountLabel-&gt;set_line_wrap(false);
+    resultsCountLabel-&gt;set_use_markup(false);
+    resultsCountLabel-&gt;set_selectable(false);
+-   hostLabel-&gt;set_alignment(0,0.5);
+-   hostLabel-&gt;set_padding(4,4);
+-   hostLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   hostLabel-&gt;set_line_wrap(false);
+-   hostLabel-&gt;set_use_markup(false);
+-   hostLabel-&gt;set_selectable(false);
+-   notLabel-&gt;set_alignment(0,0.5);
+-   notLabel-&gt;set_padding(4,4);
+-   notLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   notLabel-&gt;set_line_wrap(false);
+-   notLabel-&gt;set_use_markup(false);
+-   notLabel-&gt;set_selectable(false);
+-   notEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   notEntry-&gt;set_visibility(true);
+-   notEntry-&gt;set_editable(true);
+-   notEntry-&gt;set_max_length(0);
+-   notEntry-&gt;set_has_frame(true);
+-   notEntry-&gt;set_activates_default(false);
++   resultsCountSpinbutton-&gt;set_flags(Gtk::CAN_FOCUS);
++   resultsCountSpinbutton-&gt;set_update_policy(Gtk::UPDATE_ALWAYS);
++   resultsCountSpinbutton-&gt;set_numeric(false);
++   resultsCountSpinbutton-&gt;set_digits(0);
++   resultsCountSpinbutton-&gt;set_wrap(false);
+    tersmTable-&gt;set_row_spacings(0);
+    tersmTable-&gt;set_col_spacings(0);
+-   tersmTable-&gt;attach(*anyEntry, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   tersmTable-&gt;attach(*hostNameEntry, 1, 2, 2, 3, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   tersmTable-&gt;attach(*fileNameEntry, 1, 2, 3, 4, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   tersmTable-&gt;attach(*resultsCountSpinbutton, 1, 2, 4, 5, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   tersmTable-&gt;attach(*indexCheckbutton, 0, 1, 5, 6, Gtk::FILL, Gtk::FILL, 4, 4);
+-   tersmTable-&gt;attach(*anyLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 0, 0);
+-   tersmTable-&gt;attach(*fileNameLabel, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 0, 0);
+-   tersmTable-&gt;attach(*resultsCountLabel, 0, 1, 4, 5, Gtk::FILL, Gtk::FILL, 0, 0);
+-   tersmTable-&gt;attach(*labelNameCombobox, 1, 2, 5, 6, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   tersmTable-&gt;attach(*hostLabel, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 0, 0);
+-   tersmTable-&gt;attach(*notLabel, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 0, 0);
+-   tersmTable-&gt;attach(*notEntry, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   termsVbox-&gt;pack_start(*tersmTable, Gtk::PACK_SHRINK, 4);
+-   commonLabel-&gt;set_alignment(0.5,0.5);
+-   commonLabel-&gt;set_padding(0,0);
+-   commonLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   commonLabel-&gt;set_line_wrap(false);
+-   commonLabel-&gt;set_use_markup(false);
+-   commonLabel-&gt;set_selectable(false);
+-   filtersLabel-&gt;set_alignment(0,0.5);
+-   filtersLabel-&gt;set_padding(4,4);
+-   filtersLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   filtersLabel-&gt;set_line_wrap(false);
+-   filtersLabel-&gt;set_use_markup(false);
+-   filtersLabel-&gt;set_selectable(false);
+-   phraseEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   phraseEntry-&gt;set_visibility(true);
+-   phraseEntry-&gt;set_editable(true);
+-   phraseEntry-&gt;set_max_length(0);
+-   phraseEntry-&gt;set_has_frame(true);
+-   phraseEntry-&gt;set_activates_default(false);
+-   phraseLabel-&gt;set_alignment(0,0.5);
+-   phraseLabel-&gt;set_padding(4,4);
+-   phraseLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   phraseLabel-&gt;set_line_wrap(false);
+-   phraseLabel-&gt;set_use_markup(false);
+-   phraseLabel-&gt;set_selectable(false);
+-   languageLabel-&gt;set_alignment(0,0.5);
+-   languageLabel-&gt;set_padding(4,4);
+-   languageLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   languageLabel-&gt;set_line_wrap(false);
+-   languageLabel-&gt;set_use_markup(false);
+-   languageLabel-&gt;set_selectable(false);
+-   andEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+-   andEntry-&gt;set_visibility(true);
+-   andEntry-&gt;set_editable(true);
+-   andEntry-&gt;set_max_length(0);
+-   andEntry-&gt;set_has_frame(true);
+-   andEntry-&gt;set_activates_default(false);
+-   andLabel-&gt;set_alignment(0,0.5);
+-   andLabel-&gt;set_padding(4,4);
+-   andLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   andLabel-&gt;set_line_wrap(false);
+-   andLabel-&gt;set_use_markup(false);
+-   andLabel-&gt;set_selectable(false);
+-   labelLabel-&gt;set_alignment(0,0.5);
+-   labelLabel-&gt;set_padding(4,4);
+-   labelLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   labelLabel-&gt;set_line_wrap(false);
+-   labelLabel-&gt;set_use_markup(false);
+-   labelLabel-&gt;set_selectable(false);
+-   advancedTable-&gt;set_row_spacings(0);
+-   advancedTable-&gt;set_col_spacings(0);
+-   advancedTable-&gt;attach(*phraseEntry, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   advancedTable-&gt;attach(*phraseLabel, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 0, 0);
+-   advancedTable-&gt;attach(*languageLabel, 0, 1, 2, 3, Gtk::FILL, Gtk::FILL, 0, 0);
+-   advancedTable-&gt;attach(*languageCombobox, 1, 2, 2, 3, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   advancedTable-&gt;attach(*andEntry, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   advancedTable-&gt;attach(*andLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 0, 0);
+-   advancedTable-&gt;attach(*labelLabel, 0, 1, 3, 4, Gtk::FILL, Gtk::FILL, 0, 0);
+-   advancedTable-&gt;attach(*labelFilterCombobox, 1, 2, 3, 4, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+-   advancedVbox-&gt;pack_start(*filtersLabel, Gtk::PACK_SHRINK, 4);
+-   advancedVbox-&gt;pack_start(*advancedTable, Gtk::PACK_SHRINK, 0);
+-   advancedLabel-&gt;set_alignment(0.5,0.5);
+-   advancedLabel-&gt;set_padding(0,0);
+-   advancedLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   advancedLabel-&gt;set_line_wrap(false);
+-   advancedLabel-&gt;set_use_markup(false);
+-   advancedLabel-&gt;set_selectable(false);
+-   queryNotebook-&gt;set_flags(Gtk::CAN_FOCUS);
+-   queryNotebook-&gt;set_show_tabs(true);
+-   queryNotebook-&gt;set_show_border(true);
+-   queryNotebook-&gt;set_tab_pos(Gtk::POS_TOP);
+-   queryNotebook-&gt;set_scrollable(false);
+-   queryNotebook-&gt;append_page(*termsVbox, *commonLabel);
+-   queryNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+-   queryNotebook-&gt;append_page(*advancedVbox, *advancedLabel);
+-   queryNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
++   tersmTable-&gt;attach(*indexCheckbutton, 0, 1, 1, 2, Gtk::FILL, Gtk::FILL, 4, 4);
++   tersmTable-&gt;attach(*labelNameCombobox, 1, 2, 1, 2, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
++   tersmTable-&gt;attach(*resultsCountLabel, 0, 1, 0, 1, Gtk::FILL, Gtk::FILL, 4, 4);
++   tersmTable-&gt;attach(*resultsCountSpinbutton, 1, 2, 0, 1, Gtk::EXPAND|Gtk::FILL, Gtk::FILL, 4, 4);
+    queryVbox-&gt;pack_start(*table1, Gtk::PACK_SHRINK, 0);
+-   queryVbox-&gt;pack_start(*queryNotebook);
++   queryVbox-&gt;pack_start(*queryHbox);
++   queryVbox-&gt;pack_start(*queryFrame, Gtk::PACK_EXPAND_WIDGET, 4);
++   queryVbox-&gt;pack_start(*tersmTable);
+    queryDialog-&gt;get_vbox()-&gt;set_homogeneous(false);
+    queryDialog-&gt;get_vbox()-&gt;set_spacing(0);
+    queryDialog-&gt;get_vbox()-&gt;pack_start(*queryVbox);
+@@ -298,38 +192,25 @@
+    nameLabel-&gt;show();
+    nameEntry-&gt;show();
+    table1-&gt;show();
+-   anyEntry-&gt;show();
+-   hostNameEntry-&gt;show();
+-   fileNameEntry-&gt;show();
+-   resultsCountSpinbutton-&gt;show();
++   filterLabel-&gt;show();
++   filterCombobox-&gt;show();
++   addFilterButton-&gt;show();
++   queryHbox-&gt;show();
++   queryTextview-&gt;show();
++   queryScrolledwindow-&gt;show();
++   queryFrameAlignment-&gt;show();
++   queryFrameLabel-&gt;show();
++   queryFrame-&gt;show();
+    indexCheckbutton-&gt;show();
+-   anyLabel-&gt;show();
+-   fileNameLabel-&gt;show();
+-   resultsCountLabel-&gt;show();
+    labelNameCombobox-&gt;show();
+-   hostLabel-&gt;show();
+-   notLabel-&gt;show();
+-   notEntry-&gt;show();
++   resultsCountLabel-&gt;show();
++   resultsCountSpinbutton-&gt;show();
+    tersmTable-&gt;show();
+-   termsVbox-&gt;show();
+-   commonLabel-&gt;show();
+-   filtersLabel-&gt;show();
+-   phraseEntry-&gt;show();
+-   phraseLabel-&gt;show();
+-   languageLabel-&gt;show();
+-   languageCombobox-&gt;show();
+-   andEntry-&gt;show();
+-   andLabel-&gt;show();
+-   labelLabel-&gt;show();
+-   labelFilterCombobox-&gt;show();
+-   advancedTable-&gt;show();
+-   advancedVbox-&gt;show();
+-   advancedLabel-&gt;show();
+-   queryNotebook-&gt;show();
+    queryVbox-&gt;show();
+    queryDialog-&gt;show();
+    queryOkbutton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;queryDialog_glade::on_queryOkbutton_clicked), false);
+    nameEntry-&gt;signal_changed().connect(SigC::slot(*this, &amp;queryDialog_glade::on_nameEntry_changed), false);
++   addFilterButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;queryDialog_glade::on_addFilterButton_clicked), false);
+ }
+ 
+ queryDialog_glade::~queryDialog_glade()
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.hh	2006-10-14 04:23:26 UTC (rev 508)
++++ trunk/UI/GTK2/src/queryDialog_glade.hh	2006-10-14 04:40:11 UTC (rev 509)
+@@ -1,9 +1,9 @@
+-// generated 2006/6/27 12:45:50 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at fabrix.asgent-tech.com.</A>(none)
++// generated 2006/10/14 9:28:11 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+-// glade-- /home/fabrice/pinot-0.49/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.8.19 and gtkmm 2.8.3
++// glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
++// for gtk 2.8.20 and gtkmm 2.8.8
+ //
+ // Please modify the corresponding derived classes in ./src/queryDialog.hh and./src/queryDialog.cc
+ 
+@@ -34,10 +34,10 @@
+ #include &lt;gtkmm/dialog.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/entry.h&gt;
+-#include &lt;gtkmm/spinbutton.h&gt;
+-#include &lt;gtkmm/checkbutton.h&gt;
+ #include &lt;gtkmm/combobox.h&gt;
+-#include &lt;gtkmm/notebook.h&gt;
++#include &lt;gtkmm/textview.h&gt;
++#include &lt;gtkmm/checkbutton.h&gt;
++#include &lt;gtkmm/spinbutton.h&gt;
+ 
+ class queryDialog_glade : public Gtk::Dialog
+ {  
+@@ -48,18 +48,11 @@
+ protected:
+         class Gtk::Button * queryOkbutton;
+         class Gtk::Entry * nameEntry;
+-        class Gtk::Entry * anyEntry;
+-        class Gtk::Entry * hostNameEntry;
+-        class Gtk::Entry * fileNameEntry;
+-        class Gtk::SpinButton * resultsCountSpinbutton;
++        class Gtk::ComboBox * filterCombobox;
++        class Gtk::TextView * queryTextview;
+         class Gtk::CheckButton * indexCheckbutton;
+         class Gtk::ComboBox * labelNameCombobox;
+-        class Gtk::Entry * notEntry;
+-        class Gtk::Entry * phraseEntry;
+-        class Gtk::ComboBox * languageCombobox;
+-        class Gtk::Entry * andEntry;
+-        class Gtk::ComboBox * labelFilterCombobox;
+-        class Gtk::Notebook * queryNotebook;
++        class Gtk::SpinButton * resultsCountSpinbutton;
+         
+         queryDialog_glade();
+         
+@@ -67,5 +60,6 @@
+ private:
+         virtual void on_queryOkbutton_clicked() = 0;
+         virtual void on_nameEntry_changed() = 0;
++        virtual void on_addFilterButton_clicked() = 0;
+ };
+ #endif
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000501.html">[Pinot-svn] r508 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000502.html">[Pinot-svn] r510 - in trunk: Collect Index Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#503">[ date ]</a>
+              <a href="thread.html#503">[ thread ]</a>
+              <a href="subject.html#503">[ subject ]</a>
+              <a href="author.html#503">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

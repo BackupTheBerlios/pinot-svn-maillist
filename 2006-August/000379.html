@@ -1,0 +1,701 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r386 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r386%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608091011.k79ABxfe006900%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000378.html">
+   <LINK REL="Next"  HREF="000380.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r386 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r386%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608091011.k79ABxfe006900%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r386 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  9 12:11:59 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000378.html">[Pinot-svn] r385 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000380.html">[Pinot-svn] r387 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#379">[ date ]</a>
+              <a href="thread.html#379">[ thread ]</a>
+              <a href="subject.html#379">[ subject ]</a>
+              <a href="author.html#379">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-09 12:11:58 +0200 (Wed, 09 Aug 2006)
+New Revision: 386
+
+Modified:
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+   trunk/UI/GTK2/src/ModelColumns.cpp
+   trunk/UI/GTK2/src/ModelColumns.h
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/prefsDialog.cc
+Log:
+MboxHandler uses CrawlHistory to record which files have been crawled and when.
+In PinotSettings, MailAccount and use of Gdk::Color were dropped.
+
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-08-09 10:11:58 UTC (rev 386)
+@@ -30,31 +30,38 @@
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;FileCollector.h&quot;
+ #include &quot;WritableXapianIndex.h&quot;
+-#include &quot;PinotUtils.h&quot;
+ #include &quot;MboxHandler.h&quot;
+ 
+ using namespace std;
+ using namespace SigC;
+ 
+ MboxHandler::MboxHandler() :
+-	MonitorHandler()
++	MonitorHandler(),
++	m_history(PinotSettings::getInstance().m_historyDatabase),
++	m_sourceId(0)
+ {
++	// Does the email source exist ?
++	if (m_history.hasSource(&quot;My Email&quot;, m_sourceId) == false)
++	{
++		// Create it
++		m_sourceId = m_history.insertSource(&quot;My Email&quot;);
++	}
+ }
+ 
+ MboxHandler::~MboxHandler()
+ {
+ }
+ 
+-bool MboxHandler::checkMailAccount(const string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
+-	off_t &amp;previousSize)
++bool MboxHandler::checkMailAccount(const string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount)
+ {
+ 	struct stat fileStat;
++	CrawlHistory::CrawlStatus status;
++	time_t lastModDate = 0;
++	mailAccount.m_name = fileName;
+ 
+-	mailAccount.m_name = to_utf8(fileName);
+-
+ 	// Ensure it's one of our mail accounts
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
++	set&lt;PinotSettings::TimestampedItem&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+ 	if (mailIter == mailAccounts.end())
+ 	{
+ 		// It doesn't seem to be
+@@ -72,30 +79,32 @@
+ 		return false;
+ 	}
+ 
+-	if (fileStat.st_mtime &lt;= mailIter-&gt;m_modTime)
++	// Is there a record for this mail account ?
++	if (m_history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, status, lastModDate) == true)
+ 	{
+-		// No change since last time...
++		if (fileStat.st_mtime &lt;= lastModDate)
++		{
++			// No change since last time...
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not modified since last time (&quot;
+-			&lt;&lt; mailIter-&gt;m_modTime &lt;&lt; &quot;&gt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not modified since last time (&quot;
++				&lt;&lt; lastModDate &lt;&lt; &quot;&gt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+ #endif
+-		return false;
++			return false;
++		}
+ 	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::checkMailAccount: modified since last time (&quot;
+-		&lt;&lt; mailIter-&gt;m_modTime &lt;&lt; &quot;&lt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
++	else
++	{
++		m_history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, CrawlHistory::CRAWLING, m_sourceId, time(NULL));
++	}
+ 
+ 	// Update this mail account's properties
+ 	mailAccount = (*mailIter);
+ 	mailAccount.m_modTime = fileStat.st_mtime;
+-	previousSize = mailAccount.m_size;
+-	mailAccount.m_size = fileStat.st_size;
+ 
+ 	return true;
+ }
+ 
+-bool MboxHandler::indexMessages(const string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
++bool MboxHandler::indexMessages(const string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount,
+ 	off_t mboxOffset)
+ {
+ 	string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+@@ -114,26 +123,19 @@
+ 	// Get a parser
+ 	MboxParser boxParser(fileName, mboxOffset);
+ 
+-	bool indexedFile = parseMailAccount(boxParser, &amp;index,
+-		mailAccount.m_lastMessageTime, sourceLabel);
++	bool indexedFile = parseMailAccount(boxParser, &amp;index, sourceLabel);
+ 
+ 	// Flush the index
+ 	index.flush();
+ 
+-	// Update this mail account in the list
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter != mailAccounts.end())
+-	{
+-		mailAccounts.erase(mailIter);
+-	}
+-	mailAccounts.insert(mailAccount);
++	// Update this mail account's record
++	m_history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, CrawlHistory::CRAWLED, mailAccount.m_modTime);
+ 
+ 	return indexedFile;
+ }
+ 
+ bool MboxHandler::parseMailAccount(MboxParser &amp;boxParser, WritableIndexInterface *pIndex,
+-	time_t &amp;lastMessageTime, const string &amp;sourceLabel)
++	const string &amp;sourceLabel)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
+ 	bool indexedFile = false;
+@@ -182,12 +184,6 @@
+ 			{
+ 				time_t messageDate = boxParser.getDate();
+ 
+-				if (messageDate &gt; lastMessageTime)
+-				{
+-					// This is the latest message so far
+-					lastMessageTime = messageDate;
+-				}
+-
+ 				pIndex-&gt;setDocumentLabels(docId, labels);
+ 
+ 				IndexedDocument docInfo(pMessage-&gt;getTitle(),
+@@ -279,8 +275,8 @@
+ 		inserter(locationsToRemove, locationsToRemove.begin()));
+ 
+ 	// Get the mail accounts map
+-	set&lt;PinotSettings::MailAccount&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	for (set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = mailAccounts.begin();
++	set&lt;PinotSettings::TimestampedItem&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
++	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = mailAccounts.begin();
+ 		mailIter != mailAccounts.end(); ++mailIter)
+ 	{
+ 		// Is this a known location ?
+@@ -329,13 +325,12 @@
+ 
+ bool MboxHandler::fileExists(const string &amp;fileName)
+ {
+-	PinotSettings::MailAccount mailAccount;
+-	off_t previousSize = 0;
++	PinotSettings::TimestampedItem mailAccount;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;MboxHandler::fileExists: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
+-	if (checkMailAccount(fileName, mailAccount, previousSize) == false)
++	if (checkMailAccount(fileName, mailAccount) == false)
+ 	{
+ 		return false;
+ 	}
+@@ -351,33 +346,18 @@
+ 
+ bool MboxHandler::fileModified(const string &amp;fileName)
+ {
+-	PinotSettings::MailAccount mailAccount;
+-	off_t previousSize = 0, mboxOffset = 0;
++	PinotSettings::TimestampedItem mailAccount;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;MboxHandler::fileModified: &quot; &lt;&lt; fileName &lt;&lt; &quot; changed&quot; &lt;&lt; endl;
+ #endif
+-	if (checkMailAccount(fileName, mailAccount, previousSize) == false)
++	if (checkMailAccount(fileName, mailAccount) == false)
+ 	{
+ 		return false;
+ 	}
+ 
+-	if (mailAccount.m_size &lt;= previousSize)
+-	{
+-		// Parse the file from the beginning...
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::fileModified: file smaller or same size&quot; &lt;&lt; endl;
+-#endif
+-		return fileExists(fileName);
+-	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;MboxHandler::fileModified: file now larger than &quot; &lt;&lt; previousSize &lt;&lt; endl;
+-#endif
+-
+-	// Chances are new messages were added but none removed
+-	mboxOffset = previousSize;
+-
+-	return indexMessages(fileName, mailAccount, mboxOffset);
++	// Parse the file in whole
++	return indexMessages(fileName, mailAccount, 0);
+ }
+ 
+ bool MboxHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName)
+@@ -389,7 +369,7 @@
+ bool MboxHandler::fileDeleted(const string &amp;fileName)
+ {
+ 	set&lt;unsigned int&gt; docIdList;
+-	string sourceLabel(string(&quot;<A HREF="mailbox://">mailbox://</A>&quot;));
++	string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+ 
+ 	sourceLabel += fileName;
+ 
+
+Modified: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/MboxHandler.h	2006-08-09 10:11:58 UTC (rev 386)
+@@ -24,6 +24,7 @@
+ 
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;MboxParser.h&quot;
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;IndexInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -55,16 +56,17 @@
+ 		virtual bool fileDeleted(const std::string &amp;fileName);
+ 
+ 	protected:
++		CrawlHistory m_history;
+ 		std::set&lt;std::string&gt; m_locations;
++		unsigned int m_sourceId;
+ 
+-		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
+-			off_t &amp;previousSize);
++		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount);
+ 
+-		bool indexMessages(const std::string &amp;fileName, PinotSettings::MailAccount &amp;mailAccount,
++		bool indexMessages(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount,
+ 			off_t mboxOffset);
+ 
+ 		bool parseMailAccount(MboxParser &amp;boxParser, WritableIndexInterface *pIndex,
+-			time_t &amp;lastMessageTime, const std::string &amp;sourceLabel);
++			const std::string &amp;sourceLabel);
+ 
+ 		bool deleteMessages(WritableIndexInterface *pIndex, std::set&lt;unsigned int&gt; &amp;docIdList);
+ 
+
+Modified: trunk/UI/GTK2/src/ModelColumns.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.cpp	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/ModelColumns.cpp	2006-08-09 10:11:58 UTC (rev 386)
+@@ -108,9 +108,7 @@
+ MailAccountModelColumns::MailAccountModelColumns()
+ {
+ 	add(m_location);
+-	add(m_type);
+ 	add(m_mTime);
+-	add(m_minDate);
+ }
+ 
+ MailAccountModelColumns::~MailAccountModelColumns()
+
+Modified: trunk/UI/GTK2/src/ModelColumns.h
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.h	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/ModelColumns.h	2006-08-09 10:11:58 UTC (rev 386)
+@@ -140,9 +140,7 @@
+ 	virtual ~MailAccountModelColumns();
+ 
+ 	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_location;
+-	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_type;
+ 	Gtk::TreeModelColumn&lt;time_t&gt; m_mTime;
+-	Gtk::TreeModelColumn&lt;time_t&gt; m_minDate;
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-08-09 10:11:58 UTC (rev 386)
+@@ -91,7 +91,9 @@
+ 	m_expandQueries(true),
+ 	m_ignoreRobotsDirectives(false),
+ 	m_suggestQueryTerms(true),
+-	m_newResultsColour(&quot;red&quot;),
++	m_newResultsColourRed(65535),
++	m_newResultsColourGreen(0),
++	m_newResultsColourBlue(0),
+ 	m_firstRun(false)
+ {
+ 	// Find out if there is a .pinot directory
+@@ -678,15 +680,15 @@
+ 
+ 		if (nodeName == &quot;red&quot;)
+ 		{
+-			m_newResultsColour.set_red(value);
++			m_newResultsColourRed = value;
+ 		}
+ 		else if (nodeName == &quot;green&quot;)
+ 		{
+-			m_newResultsColour.set_green(value);
++			m_newResultsColourGreen = value;
+ 		}
+ 		else if (nodeName == &quot;blue&quot;)
+ 		{
+-			m_newResultsColour.set_blue(value);
++			m_newResultsColourBlue = value;
+ 		}
+ 	}
+ 
+@@ -706,7 +708,7 @@
+ 		return false;
+ 	}
+ 
+-	MailAccount mailAccount;
++	TimestampedItem mailAccount;
+ 
+ 	// Load the mail account's properties
+ 	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+@@ -729,18 +731,6 @@
+ 		{
+ 			mailAccount.m_modTime = (time_t)atoi(nodeContent.c_str());
+ 		}
+-		else if (nodeName == &quot;type&quot;)
+-		{
+-			mailAccount.m_type = nodeContent;
+-		}
+-		else if (nodeName == &quot;mindate&quot;)
+-		{
+-			mailAccount.m_lastMessageTime = (time_t)atoi(nodeContent.c_str());
+-		}
+-		else if (nodeName == &quot;size&quot;)
+-		{
+-			mailAccount.m_size = (off_t)atoi(nodeContent.c_str());
+-		}
+ 	}
+ 
+ 	if (mailAccount.m_name.empty() == false)
+@@ -779,7 +769,7 @@
+ 		string nodeName = pElem-&gt;get_name();
+ 		string nodeContent = getElementContent(pElem);
+ 
+-		if (nodeName == &quot;location&quot;)
++		if (nodeName == &quot;name&quot;)
+ 		{
+ 			location.m_name = nodeContent;
+ 		}
+@@ -1026,16 +1016,16 @@
+ 	{
+ 		return false;
+ 	}
+-	sprintf(numStr, &quot;%u&quot;, m_newResultsColour.get_red());
++	sprintf(numStr, &quot;%u&quot;, m_newResultsColourRed);
+ 	addChildElement(pElem, &quot;red&quot;, numStr);
+-	sprintf(numStr, &quot;%u&quot;, m_newResultsColour.get_green());
++	sprintf(numStr, &quot;%u&quot;, m_newResultsColourGreen);
+ 	addChildElement(pElem, &quot;green&quot;, numStr);
+-	sprintf(numStr, &quot;%u&quot;, m_newResultsColour.get_blue());
++	sprintf(numStr, &quot;%u&quot;, m_newResultsColourBlue);
+ 	addChildElement(pElem, &quot;blue&quot;, numStr);
+ 	// Enable terms suggestion
+ 	addChildElement(pRootElem, &quot;suggestterms&quot;, (m_suggestQueryTerms ? &quot;YES&quot; : &quot;NO&quot;));
+ 	// Mail accounts
+-	for (set&lt;MailAccount&gt;::iterator mailIter = m_mailAccounts.begin(); mailIter != m_mailAccounts.end(); ++mailIter)
++	for (set&lt;TimestampedItem&gt;::iterator mailIter = m_mailAccounts.begin(); mailIter != m_mailAccounts.end(); ++mailIter)
+ 	{
+ 		pElem = pRootElem-&gt;add_child(&quot;mailaccount&quot;);
+ 		if (pElem == NULL)
+@@ -1043,13 +1033,8 @@
+ 			return false;
+ 		}
+ 		addChildElement(pElem, &quot;name&quot;, mailIter-&gt;m_name);
+-		addChildElement(pElem, &quot;type&quot;, mailIter-&gt;m_type);
+ 		sprintf(numStr, &quot;%ld&quot;, mailIter-&gt;m_modTime);
+ 		addChildElement(pElem, &quot;mtime&quot;, numStr);
+-		sprintf(numStr, &quot;%ld&quot;, mailIter-&gt;m_lastMessageTime);
+-		addChildElement(pElem, &quot;mindate&quot;, numStr);
+-		sprintf(numStr, &quot;%ld&quot;, mailIter-&gt;m_size);
+-		addChildElement(pElem, &quot;size&quot;, numStr);
+ 	}
+ 	// Locations to index 
+ 	for (set&lt;TimestampedItem&gt;::iterator locationIter = m_indexableLocations.begin(); locationIter != m_indexableLocations.end(); ++locationIter)
+@@ -1059,7 +1044,7 @@
+ 		{
+ 			return false;
+ 		}
+-		addChildElement(pElem, &quot;location&quot;, locationIter-&gt;m_name);
++		addChildElement(pElem, &quot;name&quot;, locationIter-&gt;m_name);
+ 		sprintf(numStr, &quot;%ld&quot;, locationIter-&gt;m_modTime);
+ 		addChildElement(pElem, &quot;mtime&quot;, numStr);
+ 	}
+@@ -1417,45 +1402,6 @@
+ 	return false;
+ }
+ 
+-PinotSettings::MailAccount::MailAccount() :
+-	TimestampedItem(),
+-	m_lastMessageTime(0),
+-	m_size(0)
+-{
+-}
+-
+-PinotSettings::MailAccount::MailAccount(const MailAccount &amp;other) :
+-	TimestampedItem(other),
+-	m_type(other.m_type),
+-	m_lastMessageTime(other.m_lastMessageTime),
+-	m_size(other.m_size)
+-{
+-}
+-
+-PinotSettings::MailAccount::~MailAccount()
+-{
+-}
+-
+-PinotSettings::MailAccount &amp;PinotSettings::MailAccount::operator=(const MailAccount &amp;other)
+-{
+-	TimestampedItem::operator=(other);
+-	m_type = other.m_type;
+-	m_lastMessageTime = other.m_lastMessageTime;
+-	m_size = other.m_size;
+-
+-	return *this;
+-}
+-
+-bool PinotSettings::MailAccount::operator&lt;(const MailAccount &amp;other) const
+-{
+-	return TimestampedItem::operator&lt;(other);
+-}
+-
+-bool PinotSettings::MailAccount::operator==(const MailAccount &amp;other) const
+-{
+-	return TimestampedItem::operator==(other);
+-}
+-
+ PinotSettings::CacheProvider::CacheProvider()
+ {
+ }
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-08-09 10:11:58 UTC (rev 386)
+@@ -24,7 +24,6 @@
+ #include &lt;set&gt;
+ #include &lt;vector&gt;
+ #include &lt;glibmm/ustring.h&gt;
+-#include &lt;gdkmm/color.h&gt;
+ #include &lt;libxml++/nodes/element.h&gt;
+ 
+ #include &quot;QueryProperties.h&quot;
+@@ -140,22 +139,6 @@
+ 				time_t m_modTime;
+ 		};
+ 
+-		class MailAccount : public TimestampedItem
+-		{
+-			public:
+-				MailAccount();
+-				MailAccount(const MailAccount &amp;other);
+-				~MailAccount();
+-
+-				MailAccount &amp;operator=(const MailAccount &amp;other);
+-				bool operator&lt;(const MailAccount &amp;other) const;
+-				bool operator==(const MailAccount &amp;other) const;
+-
+-				Glib::ustring m_type;
+-				time_t m_lastMessageTime;
+-				off_t m_size;
+-		};
+-
+ 		class CacheProvider
+ 		{
+ 			public:
+@@ -185,8 +168,10 @@
+ 		bool m_expandQueries;
+ 		bool m_ignoreRobotsDirectives;
+ 		bool m_suggestQueryTerms;
+-		Gdk::Color m_newResultsColour;
+-		std::set&lt;MailAccount&gt; m_mailAccounts;
++		unsigned short m_newResultsColourRed;
++		unsigned short m_newResultsColourGreen;
++		unsigned short m_newResultsColourBlue;
++		std::set&lt;TimestampedItem&gt; m_mailAccounts;
+ 		std::set&lt;TimestampedItem&gt; m_indexableLocations;
+ 		std::vector&lt;CacheProvider&gt; m_cacheProviders;
+ 		std::set&lt;Glib::ustring&gt; m_cacheProtocols;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-08-09 10:11:58 UTC (rev 386)
+@@ -16,6 +16,7 @@
+ 
+ #include &lt;ctype.h&gt;
+ #include &lt;iostream&gt;
++#include &lt;gdkmm/color.h&gt;
+ #include &lt;gtkmm/alignment.h&gt;
+ #include &lt;gtkmm/box.h&gt;
+ #include &lt;gtkmm/buttonbox.h&gt;
+@@ -275,8 +276,14 @@
+ 		// Is this result new ?
+ 		if (row[m_resultsColumns.m_rankDiff] == 666)
+ 		{
++			Color newColour;
++
++			newColour.set_red(m_settings.m_newResultsColourRed);
++			newColour.set_green(m_settings.m_newResultsColourGreen);
++			newColour.set_blue(m_settings.m_newResultsColourBlue);
++
+ 			// Change the row's background
+-			pTextRenderer-&gt;property_background_gdk() = m_settings.m_newResultsColour;
++			pTextRenderer-&gt;property_background_gdk() = newColour;
+ 		}
+ 		else
+ 		{
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2006-08-09 10:09:02 UTC (rev 385)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2006-08-09 10:11:58 UTC (rev 386)
+@@ -41,6 +41,12 @@
+ 	prefsDialog_glade(),
+ 	m_settings(PinotSettings::getInstance())
+ {
++	Color newColour;
++
++	newColour.set_red(m_settings.m_newResultsColourRed);
++	newColour.set_green(m_settings.m_newResultsColourGreen);
++	newColour.set_blue(m_settings.m_newResultsColourBlue);
++
+ 	// Initialize widgets
+ 	// Ignore robots directives
+ 	ignoreRobotsCheckbutton-&gt;set_active(m_settings.m_ignoreRobotsDirectives);
+@@ -50,7 +56,7 @@
+ 		apiKeyEntry-&gt;set_text(m_settings.m_googleAPIKey);
+ 	}
+ 	// New results colour
+-	newResultsColorbutton-&gt;set_color(m_settings.m_newResultsColour);
++	newResultsColorbutton-&gt;set_color(newColour);
+ 	// Enable terms suggestion
+ 	enableCompletionCheckbutton-&gt;set_active(m_settings.m_suggestQueryTerms);
+ 
+@@ -66,7 +72,6 @@
+ 	m_refMailTree = ListStore::create(m_mailColumns);
+ 	mailTreeview-&gt;set_model(m_refMailTree);
+ 	mailTreeview-&gt;append_column(_(&quot;Location&quot;), m_mailColumns.m_location);
+-	mailTreeview-&gt;append_column(_(&quot;MIME Type&quot;), m_mailColumns.m_type);
+ 	// Allow only single selection
+ 	mailTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	populate_mailTreeview();
+@@ -184,7 +189,7 @@
+ 	}
+ 
+ 	// Populate the tree
+-	for (set&lt;PinotSettings::MailAccount&gt;::iterator mailIter = m_settings.m_mailAccounts.begin();
++	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = m_settings.m_mailAccounts.begin();
+ 		mailIter != m_settings.m_mailAccounts.end();
+ 		++mailIter)
+ 	{
+@@ -193,9 +198,7 @@
+ 		row = *iter;
+ 		// Set its name, type and minium date
+ 		row[m_mailColumns.m_location] = mailIter-&gt;m_name;
+-		row[m_mailColumns.m_type] = mailIter-&gt;m_type;
+ 		row[m_mailColumns.m_mTime] = mailIter-&gt;m_modTime;
+-		row[m_mailColumns.m_minDate] = mailIter-&gt;m_lastMessageTime;
+ 	}
+ 
+ 	editAccountButton-&gt;set_sensitive(true);
+@@ -215,15 +218,13 @@
+ 		for (; iter != children.end(); ++iter)
+ 		{
+ 			TreeModel::Row row = *iter;
+-			PinotSettings::MailAccount mailAccount;
++			PinotSettings::TimestampedItem mailAccount;
+ 
+ 			// FIXME: unlike libmagic, shared-mime-info fails to identify most mbox files
+ 			// as being of type text/x-mail
+ 			// Add this new mail account to the settings
+ 			mailAccount.m_name = row[m_mailColumns.m_location];
+-			mailAccount.m_type = row[m_mailColumns.m_type];
+ 			mailAccount.m_modTime = row[m_mailColumns.m_mTime];
+-			mailAccount.m_lastMessageTime = row[m_mailColumns.m_minDate];
+ 
+ 			string mailLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+ 			mailLabel += from_utf8(mailAccount.m_name);
+@@ -249,7 +250,10 @@
+ {
+ 	// Synchronise widgets with settings
+ 	m_settings.m_ignoreRobotsDirectives = ignoreRobotsCheckbutton-&gt;get_active();
+-	m_settings.m_newResultsColour = newResultsColorbutton-&gt;get_color();
++	Color newColour = newResultsColorbutton-&gt;get_color();
++	m_settings.m_newResultsColourRed = newColour.get_red();
++	m_settings.m_newResultsColourGreen = newColour.get_green();
++	m_settings.m_newResultsColourBlue = newColour.get_blue();
+ 	m_settings.m_suggestQueryTerms = enableCompletionCheckbutton-&gt;get_active();
+ 	m_settings.m_googleAPIKey = apiKeyEntry-&gt;get_text();
+ 
+@@ -330,9 +334,7 @@
+ 		TreeModel::Row row = *iter;
+ 	
+ 		row[m_mailColumns.m_location] = to_utf8(fileName);
+-		row[m_mailColumns.m_type] = to_utf8(mimeType);
+-		row[m_mailColumns.m_mTime] = 0;
+-		row[m_mailColumns.m_minDate] = 0;
++		row[m_mailColumns.m_mTime] = time(NULL);
+ 
+ 		if (wasEmpty == true)
+ 		{
+@@ -355,7 +357,6 @@
+ 		if (select_file_name(*this, _(&quot;Mbox File Location&quot;), fileName, true) == true)
+ 		{
+ 			row[m_mailColumns.m_location] = fileName;
+-			row[m_mailColumns.m_type] = to_utf8(MIMEScanner::scanFile(fileName));
+ 		}
+ 	}
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000378.html">[Pinot-svn] r385 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000380.html">[Pinot-svn] r387 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#379">[ date ]</a>
+              <a href="thread.html#379">[ thread ]</a>
+              <a href="subject.html#379">[ subject ]</a>
+              <a href="author.html#379">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

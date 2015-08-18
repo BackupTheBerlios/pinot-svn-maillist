@@ -1,0 +1,300 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1505 - trunk/IndexSearch
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1505%20-%20trunk/IndexSearch&In-Reply-To=%3C200901240332.n0O3WPB2016503%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001494.html">
+   <LINK REL="Next"  HREF="001496.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1505 - trunk/IndexSearch</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1505%20-%20trunk/IndexSearch&In-Reply-To=%3C200901240332.n0O3WPB2016503%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1505 - trunk/IndexSearch">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jan 24 04:32:25 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001494.html">[Pinot-svn] r1504 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001496.html">[Pinot-svn] r1506 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1495">[ date ]</a>
+              <a href="thread.html#1495">[ thread ]</a>
+              <a href="subject.html#1495">[ subject ]</a>
+              <a href="author.html#1495">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-24 04:32:13 +0100 (Sat, 24 Jan 2009)
+New Revision: 1505
+
+Modified:
+   trunk/IndexSearch/OpenSearchParser.cpp
+   trunk/IndexSearch/OpenSearchParser.h
+   trunk/IndexSearch/PluginParsers.h
+   trunk/IndexSearch/PluginWebEngine.cpp
+   trunk/IndexSearch/SherlockParser.cpp
+   trunk/IndexSearch/SherlockParser.h
+   trunk/IndexSearch/WebEngine.cpp
+Log:
+The response parsers have a go at determining the charset.
+
+
+Modified: trunk/IndexSearch/OpenSearchParser.cpp
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.cpp	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/OpenSearchParser.cpp	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -29,7 +29,6 @@
+ #include &lt;libxml++/nodes/cdatanode.h&gt;
+ 
+ #include &quot;StringManip.h&quot;
+-#include &quot;HtmlFilter.h&quot;
+ #include &quot;FilterUtils.h&quot;
+ #include &quot;OpenSearchParser.h&quot;
+ 
+@@ -87,7 +86,7 @@
+ }
+ 
+ bool OpenSearchResponseParser::parse(const ::Document *pResponseDoc, vector&lt;DocumentInfo&gt; &amp;resultsList,
+-	unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const
++	unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex, string &amp;charset) const
+ {
+ 	float pseudoScore = 100;
+ 	unsigned int contentLen = 0;
+@@ -123,6 +122,15 @@
+ 			return false;
+ 		}
+ 
++		ustring encoding(pDocument-&gt;get_encoding());
++		if (encoding.empty() == false)
++		{
++			charset = encoding;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;OpenSearchResponseParser::parse: response charset is &quot; &lt;&lt; charset &lt;&lt; endl;
++#endif
++		}
++
+ 		Node *pNode = pDocument-&gt;get_root_node();
+ 		Element *pRootElem = dynamic_cast&lt;Element *&gt;(pNode);
+ 		if (pRootElem == NULL)
+
+Modified: trunk/IndexSearch/OpenSearchParser.h
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.h	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/OpenSearchParser.h	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -33,7 +33,8 @@
+ 
+ 		/// Parses the response; false if not all could be parsed.
+ 		virtual bool parse(const Document *pResponseDoc, std::vector&lt;DocumentInfo&gt; &amp;resultsList,
+-			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const;
++			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex,
++			std::string &amp;charset) const;
+ 
+ 	protected:
+ 		bool m_rssResponse;
+
+Modified: trunk/IndexSearch/PluginParsers.h
+===================================================================
+--- trunk/IndexSearch/PluginParsers.h	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/PluginParsers.h	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -35,7 +35,8 @@
+ 
+ 		/// Parses the response; false if not all could be parsed.
+ 		virtual bool parse(const Document *pResponseDoc, std::vector&lt;DocumentInfo&gt; &amp;resultsList,
+-			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const = 0;
++			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex,
++			std::string &amp;charset) const = 0;
+ 
+ 	protected:
+ 		ResponseParserInterface()
+
+Modified: trunk/IndexSearch/PluginWebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.cpp	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/PluginWebEngine.cpp	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -106,8 +106,17 @@
+ 	pageBackup.close();
+ #endif
+ 
++	string responseCharset;
+ 	bool success = m_pResponseParser-&gt;parse(pResponseDoc, m_resultsList,
+-		maxResultsCount, m_properties.m_nextBase);
++		maxResultsCount, m_properties.m_nextBase, responseCharset);
++	if (m_charset.empty() == true)
++	{
++		m_charset = responseCharset;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;PluginWebEngine::getPage: page charset is &quot; &lt;&lt; m_charset &lt;&lt; endl;
++#endif
++	}
++
+ 	vector&lt;DocumentInfo&gt;::iterator resultIter = m_resultsList.begin();
+ 	while (resultIter != m_resultsList.end())
+ 	{
+
+Modified: trunk/IndexSearch/SherlockParser.cpp
+===================================================================
+--- trunk/IndexSearch/SherlockParser.cpp	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/SherlockParser.cpp	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -220,7 +220,7 @@
+ }
+ 
+ bool SherlockResponseParser::parse(const Document *pResponseDoc, vector&lt;DocumentInfo&gt; &amp;resultsList,
+-	unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const
++	unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex, string &amp;charset) const
+ {
+ 	float pseudoScore = 100;
+ 	unsigned int contentLen = 0;
+@@ -233,6 +233,22 @@
+ 		return false;
+ 	}
+ 
++	// Can we get the charset ?
++	Dijon::HtmlFilter htmlFilter(&quot;text/html&quot;);
++	if (FilterUtils::feedFilter(*pResponseDoc, &amp;htmlFilter) == true)
++	{
++		const map&lt;string, string&gt; &amp;metaData = htmlFilter.get_meta_data();
++		map&lt;string, string&gt;::const_iterator charsetIter = metaData.find(&quot;charset&quot;);
++
++		if (charsetIter != metaData.end())
++		{
++			charset = charsetIter-&gt;second;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;SherlockResponseParser::parse: response charset is &quot; &lt;&lt; charset &lt;&lt; endl;
++#endif
++		}
++	}
++
+ 	// These two are the minimum we need
+ 	if ((m_resultItemStart.empty() == true) ||
+ 		(m_resultItemEnd.empty() == true))
+
+Modified: trunk/IndexSearch/SherlockParser.h
+===================================================================
+--- trunk/IndexSearch/SherlockParser.h	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/SherlockParser.h	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -35,7 +35,8 @@
+ 
+ 		/// Parses the response; false if not all could be parsed.
+ 		virtual bool parse(const Document *pResponseDoc, std::vector&lt;DocumentInfo&gt; &amp;resultsList,
+-			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex) const;
++			unsigned int &amp;totalResults, unsigned int &amp;firstResultIndex,
++			std::string &amp;charset) const;
+ 
+ 		std::string m_resultListStart;
+ 		std::string m_resultListEnd;
+
+Modified: trunk/IndexSearch/WebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/WebEngine.cpp	2009-01-22 14:24:53 UTC (rev 1504)
++++ trunk/IndexSearch/WebEngine.cpp	2009-01-24 03:32:13 UTC (rev 1505)
+@@ -25,7 +25,6 @@
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;HtmlFilter.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;FilterUtils.h&quot;
+ #include &quot;CJKVTokenizer.h&quot;
+@@ -36,6 +35,7 @@
+ using std::endl;
+ using std::string;
+ using std::set;
++using std::map;
+ using std::vector;
+ 
+ class TermHighlighter : public Dijon::CJKVTokenizer::TokensHandler
+@@ -156,25 +156,10 @@
+ 		if (pos != string::npos)
+ 		{
+ 			m_charset = StringManip::removeQuotes(contentType.substr(pos + 8));
+-		}
+-		if (m_charset.empty() == true)
+-		{
+-			Dijon::HtmlFilter htmlFilter(&quot;text/html&quot;);
+-
+-			if (FilterUtils::feedFilter(*pDoc, &amp;htmlFilter) == true)
+-			{
+-				const map&lt;string, string&gt; &amp;metaData = htmlFilter.get_meta_data();
+-				map&lt;string, string&gt;::const_iterator charsetIter = metaData.find(&quot;charset&quot;);
+-
+-				if (charsetIter != metaData.end())
+-				{
+-					m_charset = charsetIter-&gt;second;
+-				}
+-			}
+-		}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;WebEngine::downloadPage: charset is &quot; &lt;&lt; m_charset &lt;&lt; endl;
++			cout &lt;&lt; &quot;WebEngine::downloadPage: page charset is &quot; &lt;&lt; m_charset &lt;&lt; endl;
+ #endif
++		}
+ 	}
+ 
+ 	return pDoc;
+@@ -303,7 +288,7 @@
+ }
+ 
+ /// Specifies values for editable parameters.
+-void WebEngine::setEditableValues(const std::map&lt;std::string, std::string&gt; &amp;editableValues)
++void WebEngine::setEditableValues(const map&lt;string, string&gt; &amp;editableValues)
+ {
+ 	m_editableValues = editableValues;
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001494.html">[Pinot-svn] r1504 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001496.html">[Pinot-svn] r1506 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1495">[ date ]</a>
+              <a href="thread.html#1495">[ thread ]</a>
+              <a href="subject.html#1495">[ subject ]</a>
+              <a href="author.html#1495">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

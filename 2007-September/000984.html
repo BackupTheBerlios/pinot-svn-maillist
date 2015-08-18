@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r990 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r990%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200709251332.l8PDWFg3014496%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000983.html">
+   <LINK REL="Next"  HREF="000985.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r990 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r990%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200709251332.l8PDWFg3014496%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r990 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 25 15:32:15 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000983.html">[Pinot-svn] r989 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000985.html">[Pinot-svn] r991 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#984">[ date ]</a>
+              <a href="thread.html#984">[ thread ]</a>
+              <a href="subject.html#984">[ subject ]</a>
+              <a href="author.html#984">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-25 15:32:14 +0200 (Tue, 25 Sep 2007)
+New Revision: 990
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Synced with changes to query expansion.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-25 13:29:33 UTC (rev 989)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-25 13:32:14 UTC (rev 990)
+@@ -69,6 +69,34 @@
+ 	}
+ };
+ 
++static string locationsToMergedIndexIds(const set&lt;string&gt; &amp;locations, set&lt;unsigned int&gt; &amp;docIds)
++{
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(&quot;MERGED&quot;);
++
++	if ((pIndex == NULL) ||
++		(pIndex-&gt;isGood() == false))
++	{
++		string status(_(&quot;Index error on&quot;));
++		status += &quot; MERGED&quot;;
++		if (pIndex != NULL)
++		{
++			delete pIndex;
++		}
++		return status;
++	}
++
++	for (set&lt;string&gt;::iterator locationIter = locations.begin();
++		locationIter != locations.end(); ++locationIter)
++	{
++		unsigned int docId = pIndex-&gt;hasDocument(*locationIter);
++		docIds.insert(docId);
++	}
++
++	delete pIndex;
++
++	return &quot;&quot;;
++}
++
+ Dispatcher WorkerThread::m_dispatcher;
+ pthread_mutex_t WorkerThread::m_dispatcherMutex = PTHREAD_MUTEX_INITIALIZER;
+ bool WorkerThread::m_immediateFlush = true;
+@@ -764,7 +792,7 @@
+ 	m_correctedSpelling(false)
+ {
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;QueryingThread::QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; engineOption
++	cout &lt;&lt; &quot;QueryingThread::QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
+ 		&lt;&lt; &quot;, mode &quot; &lt;&lt; m_listingIndex &lt;&lt; endl;
+ #endif
+ }
+@@ -1007,12 +1035,12 @@
+ }
+ 
+ ExpandQueryThread::ExpandQueryThread(const QueryProperties &amp;queryProps,
+-	const set&lt;string&gt; &amp;relevantDocs) :
++	const set&lt;string&gt; &amp;expandFromDocsSet) :
+ 	WorkerThread(),
+ 	m_queryProps(queryProps)
+ {
+-	copy(relevantDocs.begin(), relevantDocs.end(),
+-		inserter(m_relevantDocs, m_relevantDocs.begin()));
++	// Get the IDs of the documents to expand from
++	m_status = locationsToMergedIndexIds(expandFromDocsSet, m_docIdsSet);
+ }
+ 
+ ExpandQueryThread::~ExpandQueryThread()
+@@ -1042,29 +1070,12 @@
+ 
+ void ExpandQueryThread::doWork(void)
+ {
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(&quot;MERGED&quot;);
+-	set&lt;unsigned int&gt; relevantDocIds;
+-
+-	if ((pIndex == NULL) ||
+-		(pIndex-&gt;isGood() == false))
++	// Did locationsToMergedIndexIds() fail ?
++	if (m_status.empty() == false)
+ 	{
+-		m_status = _(&quot;Index error on&quot;);
+-		m_status += &quot; MERGED&quot;;
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+ 		return;
+ 	}
+ 
+-	for (set&lt;string&gt;::iterator locationIter = m_relevantDocs.begin();
+-		locationIter != m_relevantDocs.end(); ++locationIter)
+-	{
+-		relevantDocIds.insert(pIndex-&gt;hasDocument(*locationIter));
+-	}
+-
+-	delete pIndex;
+-
+ 	// Get the SearchEngine
+ 	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;, &quot;MERGED&quot;);
+ 	if (pEngine == NULL)
+@@ -1075,8 +1086,8 @@
+ 		return;
+ 	}
+ 
+-	// Set whether to expand the query
+-	pEngine-&gt;setQueryExpansion(relevantDocIds);
++	// Expand the query
++	pEngine-&gt;setExpandSet(m_docIdsSet);
+ 
+ 	// Run the query
+ 	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-09-25 13:29:33 UTC (rev 989)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-09-25 13:32:14 UTC (rev 990)
+@@ -249,7 +249,7 @@
+ {
+ 	public:
+ 		ExpandQueryThread(const QueryProperties &amp;queryProps,
+-			const std::set&lt;std::string&gt; &amp;relevantDocs);
++			const std::set&lt;std::string&gt; &amp;expandFromDocsSet);
+ 		virtual ~ExpandQueryThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -262,7 +262,7 @@
+ 
+ 	protected:
+ 		QueryProperties m_queryProps;
+-		std::set&lt;std::string&gt; m_relevantDocs;
++		std::set&lt;unsigned int&gt; m_docIdsSet;
+ 		std::set&lt;std::string&gt; m_expandTerms;
+ 
+ 		virtual void doWork(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000983.html">[Pinot-svn] r989 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000985.html">[Pinot-svn] r991 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#984">[ date ]</a>
+              <a href="thread.html#984">[ thread ]</a>
+              <a href="subject.html#984">[ subject ]</a>
+              <a href="author.html#984">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

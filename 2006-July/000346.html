@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r353 - in trunk: Index Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r353%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200607151334.k6FDYFjr021080%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000345.html">
+   <LINK REL="Next"  HREF="000347.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r353 - in trunk: Index Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r353%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200607151334.k6FDYFjr021080%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r353 - in trunk: Index Search UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 15 15:34:15 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000345.html">[Pinot-svn] r352 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000347.html">[Pinot-svn] r354 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#346">[ date ]</a>
+              <a href="thread.html#346">[ thread ]</a>
+              <a href="subject.html#346">[ subject ]</a>
+              <a href="author.html#346">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-15 15:34:12 +0200 (Sat, 15 Jul 2006)
+New Revision: 353
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/src/indexDialog.cc
+   trunk/Utils/XapianDatabase.cpp
+Log:
+In XapianIndex::listDocuments*(), don't limit the number of document IDs if
+maxDocsCount is 0.
+In XapianEngine, use OP_FILTER for filters when possible so that weights are
+not skewed.
+In XapianDatabase and indexDialog, remote indexes have a location with no slash,
+rather than one that doesn't start with a slash !
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-07-14 16:18:21 UTC (rev 352)
++++ trunk/Index/XapianIndex.cpp	2006-07-15 13:34:12 UTC (rev 353)
+@@ -324,7 +324,8 @@
+ #endif
+ 			// Get a list of documents that have the term
+ 			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+-				(postingIter != pIndex-&gt;postlist_end(term)) &amp;&amp; (docIds.size() &lt; maxDocsCount);
++				(postingIter != pIndex-&gt;postlist_end(term)) &amp;&amp;
++					((maxDocsCount == 0) || (docIds.size() &lt; maxDocsCount));
+ 				++postingIter)
+ 			{
+ 				Xapian::docid docId = *postingIter;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-07-14 16:18:21 UTC (rev 352)
++++ trunk/Search/XapianEngine.cpp	2006-07-15 13:34:12 UTC (rev 353)
+@@ -341,7 +341,14 @@
+ 		hostTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+-			queryOp = Xapian::Query::OP_AND;
++			if (queryStack.empty() == false)
++			{
++				queryOp = Xapian::Query::OP_FILTER;
++			}
++			else
++			{
++				queryOp = Xapian::Query::OP_AND;
++			}
+ 		}
+ 		queryStack.push(Xapian::Query(queryOp, hostTerms.begin(), hostTerms.end()));
+ 	}
+@@ -356,7 +363,14 @@
+ 		fileTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+-			queryOp = Xapian::Query::OP_AND;
++			if (queryStack.empty() == false)
++			{
++				queryOp = Xapian::Query::OP_FILTER;
++			}
++			else
++			{
++				queryOp = Xapian::Query::OP_AND;
++			}
+ 		}
+ 		queryStack.push(Xapian::Query(queryOp, fileTerms.begin(), fileTerms.end()));
+ 	}
+@@ -371,7 +385,14 @@
+ 		labelTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+-			queryOp = Xapian::Query::OP_AND;
++			if (queryStack.empty() == false)
++			{
++				queryOp = Xapian::Query::OP_FILTER;
++			}
++			else
++			{
++				queryOp = Xapian::Query::OP_AND;
++			}
+ 		}
+ 		queryStack.push(Xapian::Query(queryOp, labelTerms.begin(), labelTerms.end()));
+ 	}
+@@ -390,7 +411,14 @@
+ 		languageTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+-			queryOp = Xapian::Query::OP_AND;
++			if (queryStack.empty() == false)
++			{
++				queryOp = Xapian::Query::OP_FILTER;
++			}
++			else
++			{
++				queryOp = Xapian::Query::OP_AND;
++			}
+ 		}
+ 		queryStack.push(Xapian::Query(queryOp, languageTerms.begin(), languageTerms.end()));
+ 	}
+
+Modified: trunk/UI/GTK2/src/indexDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/indexDialog.cc	2006-07-14 16:18:21 UTC (rev 352)
++++ trunk/UI/GTK2/src/indexDialog.cc	2006-07-15 13:34:12 UTC (rev 353)
+@@ -66,8 +66,9 @@
+ 	nameEntry-&gt;set_text(name);
+ 
+ 	// Type and location
++	ustring::size_type slashPos = location.find(&quot;/&quot;);
+ 	ustring::size_type colonPos = location.find(&quot;:&quot;);
+-	if ((location[0] != '/') &amp;&amp;
++	if ((slashPos == ustring::npos) &amp;&amp;
+ 		(colonPos != ustring::npos))
+ 	{
+ 		// This is a remote index
+@@ -125,18 +126,19 @@
+ 	ustring location = locationEntry-&gt;get_text();
+ 	if (location.empty() == false)
+ 	{
+-		bool startsWithSlash = false;
++		bool hasSlash = true;
+ 
+-		if (location[0] == '/')
++		ustring::size_type slashPos = location.find(&quot;/&quot;);
++		if (slashPos == ustring::npos)
+ 		{
+-			startsWithSlash = true;
++			hasSlash = false;
+ 		}
+ 
+ 		// Disable the OK button if the type+location pair doesn't make sense
+ 		// or if name is empty
+ 		ustring name = nameEntry-&gt;get_text();
+ 		if ((name.empty() == false) &amp;&amp;
+-			(startsWithSlash == isLocal))
++			(hasSlash == isLocal))
+ 		{
+ 			enableOkButton = true;
+ 		}
+
+Modified: trunk/Utils/XapianDatabase.cpp
+===================================================================
+--- trunk/Utils/XapianDatabase.cpp	2006-07-14 16:18:21 UTC (rev 352)
++++ trunk/Utils/XapianDatabase.cpp	2006-07-15 13:34:12 UTC (rev 353)
+@@ -89,8 +89,9 @@
+ 	}
+ 
+ 	// Is it a remote database ?
++	string::size_type slashPos = m_databaseName.find(&quot;/&quot;);
+ 	string::size_type colonPos = m_databaseName.find(&quot;:&quot;);
+-	if ((m_databaseName[0] != '/') &amp;&amp;
++	if ((slashPos == string::npos) &amp;&amp;
+ 		(colonPos != string::npos))
+ 	{
+ 		string hostName = m_databaseName.substr(0, colonPos);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000345.html">[Pinot-svn] r352 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000347.html">[Pinot-svn] r354 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#346">[ date ]</a>
+              <a href="thread.html#346">[ thread ]</a>
+              <a href="subject.html#346">[ subject ]</a>
+              <a href="author.html#346">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

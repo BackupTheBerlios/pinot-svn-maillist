@@ -1,0 +1,2390 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r707 - in trunk/Tokenize: . filters
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r707%20-%20in%20trunk/Tokenize%3A%20.%20filters&In-Reply-To=%3C200702091402.l19E2c5I027556%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000700.html">
+   <LINK REL="Next"  HREF="000702.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r707 - in trunk/Tokenize: . filters</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r707%20-%20in%20trunk/Tokenize%3A%20.%20filters&In-Reply-To=%3C200702091402.l19E2c5I027556%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r707 - in trunk/Tokenize: . filters">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb  9 15:02:38 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000700.html">[Pinot-svn] r706 - in trunk: . Collect Index Monitor Search	Search/Google Tokenize UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000702.html">[Pinot-svn] r708 - in trunk: Index Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#701">[ date ]</a>
+              <a href="thread.html#701">[ thread ]</a>
+              <a href="subject.html#701">[ subject ]</a>
+              <a href="author.html#701">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-09 15:02:37 +0100 (Fri, 09 Feb 2007)
+New Revision: 707
+
+Added:
+   trunk/Tokenize/filters/
+   trunk/Tokenize/filters/README
+Removed:
+   trunk/Tokenize/HtmlTokenizer.cpp
+   trunk/Tokenize/HtmlTokenizer.h
+   trunk/Tokenize/OpenDocumentTokenizer.cpp
+   trunk/Tokenize/OpenDocumentTokenizer.h
+   trunk/Tokenize/PdfTokenizer.cpp
+   trunk/Tokenize/PdfTokenizer.h
+   trunk/Tokenize/RtfTokenizer.cpp
+   trunk/Tokenize/RtfTokenizer.h
+   trunk/Tokenize/TagLibTokenizer.cpp
+   trunk/Tokenize/TagLibTokenizer.h
+   trunk/Tokenize/TokenizerFactory.cpp
+   trunk/Tokenize/TokenizerFactory.h
+   trunk/Tokenize/UnknownTypeTokenizer.cpp
+   trunk/Tokenize/UnknownTypeTokenizer.h
+   trunk/Tokenize/WordTokenizer.cpp
+   trunk/Tokenize/WordTokenizer.h
+   trunk/Tokenize/XmlTokenizer.cpp
+   trunk/Tokenize/XmlTokenizer.h
+Log:
+Specialized tokenizers are replaced by Dijon's filters.
+
+
+Deleted: trunk/Tokenize/HtmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/HtmlTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,679 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;strings.h&gt;
+-#include &lt;sys/types.h&gt;
+-#include &lt;libxml/xmlerror.h&gt;
+-#include &lt;libxml/HTMLparser.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;StringManip.h&quot;
+-#include &quot;Url.h&quot;
+-#include &quot;XmlTokenizer.h&quot;
+-#include &quot;HtmlTokenizer.h&quot;
+-
+-using std::cout;
+-using std::cerr;
+-using std::endl;
+-using std::string;
+-using std::map;
+-using std::set;
+-
+-static bool getInBetweenLinksText(HtmlTokenizer::ParserState *pState,
+-	unsigned int currentLinkIndex)
+-{
+-	if (pState == NULL)
+-	{
+-		return false;
+-	}
+-
+-	if ((pState-&gt;m_links.empty() == true) ||
+-		(pState-&gt;m_currentLink.m_index == 0))
+-	{
+-		string abstract(pState-&gt;m_text);
+-
+-		StringManip::trimSpaces(abstract);
+-
+-		pState-&gt;m_abstract = abstract;
+-
+-		return true;
+-	}
+-
+-	// Get the text between the current link and the previous one
+-	for (set&lt;Link&gt;::const_iterator linkIter = pState-&gt;m_links.begin();
+-		linkIter != pState-&gt;m_links.end(); ++linkIter)
+-	{
+-		// Is this the previous link ?
+-		if (linkIter-&gt;m_index == currentLinkIndex - 1)
+-		{
+-			// Is there text in between ?
+-			if (linkIter-&gt;m_endPos + 1 &lt; pState-&gt;m_textPos)
+-			{
+-				unsigned int abstractLen = pState-&gt;m_textPos - linkIter-&gt;m_endPos - 1;
+-				string abstract(pState-&gt;m_text.substr(linkIter-&gt;m_endPos, abstractLen));
+-
+-				StringManip::trimSpaces(abstract);
+-
+-				// The longer, the better
+-				if (abstract.length() &gt; pState-&gt;m_abstract.length())
+-				{
+-					pState-&gt;m_abstract = abstract;
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;HtmlTokenizer::getInBetweenLinksText: abstract after link &quot;
+-						&lt;&lt; linkIter-&gt;m_index &lt;&lt; endl;
+-#endif
+-
+-					return true;
+-				}
+-			}
+-
+-			break;
+-		}
+-	}
+-
+-	return false;
+-}
+-
+-static void startHandler(void *pData, const char *pElementName, const char **pAttributes)
+-{
+-	if ((pData == NULL) ||
+-		(pElementName == NULL) ||
+-		(strlen(pElementName) == 0))
+-	{
+-		return;
+-	}
+-
+-	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
+-	if (pState == NULL)
+-	{
+-		return;
+-	}
+-
+-	// Reset the text hash
+-	pState-&gt;m_lastHash.clear();
+-
+-	// What tag is this ?
+-	string tagName(StringManip::toLowerCase(pElementName));
+-	if ((pState-&gt;m_foundHead == false) &amp;&amp;
+-		(tagName == &quot;head&quot;))
+-	{
+-		// Expect to find META tags and a title
+-		pState-&gt;m_inHead = true;
+-		// One head is enough :-)
+-		pState-&gt;m_foundHead = true;
+-	}
+-	else if ((pState-&gt;m_inHead == true) &amp;&amp;
+-		(tagName == &quot;meta&quot;) &amp;&amp;
+-		(pAttributes != NULL))
+-	{
+-		string metaName, metaContent;
+-
+-		// Get the META tag's name and content
+-		for (unsigned int attrNum = 0;
+-			(pAttributes[attrNum] != NULL) &amp;&amp; (pAttributes[attrNum + 1]); attrNum += 2)
+-		{
+-			if (strncasecmp(pAttributes[attrNum], &quot;name&quot;, 4) == 0)
+-			{
+-				metaName = pAttributes[attrNum + 1];
+-			}
+-			else if (strncasecmp(pAttributes[attrNum], &quot;content&quot;, 7) == 0)
+-			{
+-				metaContent = pAttributes[attrNum + 1];
+-			}
+-			else if (strncasecmp(pAttributes[attrNum], &quot;http-equiv&quot;, 10) == 0)
+-			{
+-				metaName = pAttributes[attrNum + 1];
+-			}
+-		}
+-
+-		if ((metaName.empty() == false) &amp;&amp;
+-			(metaContent.empty() == false))
+-		{
+-			// Store this META tag
+-			pState-&gt;m_metaTags[StringManip::toLowerCase(metaName)] = metaContent;
+-		}
+-	}
+-	else if ((pState-&gt;m_inHead == true) &amp;&amp;
+-		(tagName == &quot;title&quot;))
+-	{
+-		// Extract title
+-		pState-&gt;m_appendToTitle = true;
+-	}
+-	else if (tagName == &quot;body&quot;)
+-	{
+-		// Index text
+-		pState-&gt;m_appendToText = true;
+-	}
+-	else if ((tagName == &quot;a&quot;) &amp;&amp;
+-		(pAttributes != NULL))
+-	{
+-		pState-&gt;m_currentLink.m_url.clear();
+-		pState-&gt;m_currentLink.m_name.clear();
+-
+-		// Get the href
+-		for (unsigned int attrNum = 0;
+-			(pAttributes[attrNum] != NULL) &amp;&amp; (pAttributes[attrNum + 1]); attrNum += 2)
+-		{
+-			if (strncasecmp(pAttributes[attrNum], &quot;href&quot;, 4) == 0)
+-			{
+-				pState-&gt;m_currentLink.m_url = pAttributes[attrNum + 1];
+-				break;
+-			}
+-		}
+-
+-		if (pState-&gt;m_currentLink.m_url.empty() == false)
+-		{
+-			// FIXME: get the NodeInfo to find out the position of this link
+-			pState-&gt;m_currentLink.m_startPos = pState-&gt;m_textPos;
+-
+-			// Find abstract ?
+-			if (pState-&gt;m_findAbstract == true)
+-			{
+-				getInBetweenLinksText(pState, pState-&gt;m_currentLink.m_index);
+-			}
+-
+-			// Extract link
+-			pState-&gt;m_appendToLink = true;
+-		}
+-	}
+-	else if ((tagName == &quot;frame&quot;) &amp;&amp;
+-		(pAttributes != NULL))
+-	{
+-		Link frame;
+-
+-		// Get the name and source
+-		for (unsigned int attrNum = 0;
+-			(pAttributes[attrNum] != NULL) &amp;&amp; (pAttributes[attrNum + 1]); attrNum += 2)
+-		{
+-			if (strncasecmp(pAttributes[attrNum], &quot;name&quot;, 4) == 0)
+-			{
+-				frame.m_name = pAttributes[attrNum + 1];
+-			}
+-			else if (strncasecmp(pAttributes[attrNum], &quot;src&quot;, 3) == 0)
+-			{
+-				frame.m_url = pAttributes[attrNum + 1];
+-			}
+-		}
+-
+-		if (frame.m_url.empty() == false)
+-		{
+-			// Store this frame
+-			pState-&gt;m_frames.insert(frame);
+-		}
+-	}
+-	else if ((tagName == &quot;frameset&quot;) ||
+-		(tagName == &quot;script&quot;) ||
+-		(tagName == &quot;style&quot;))
+-	{
+-		// Skip
+-		++pState-&gt;m_skip;
+-	}
+-}
+-
+-static void endHandler(void *pData, const char *pElementName)
+-{
+-	if ((pData == NULL) ||
+-		(pElementName == NULL) ||
+-		(strlen(pElementName) == 0))
+-	{
+-		return;
+-	}
+-
+-	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
+-	if (pState == NULL)
+-	{
+-		return;
+-	}
+-
+-	// Reset state
+-	string tagName(StringManip::toLowerCase(pElementName));
+-	if (tagName == &quot;head&quot;)
+-	{
+-		pState-&gt;m_inHead = false;
+-	}
+-	else if (tagName == &quot;title&quot;)
+-	{
+-		StringManip::trimSpaces(pState-&gt;m_title);
+-		StringManip::removeCharacters(pState-&gt;m_title, &quot;\r\n&quot;);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;HtmlTokenizer::endHandler: title is &quot; &lt;&lt; pState-&gt;m_title &lt;&lt; endl;
+-#endif
+-		pState-&gt;m_appendToTitle = false;
+-	}
+-	else if (tagName == &quot;body&quot;)
+-	{
+-		pState-&gt;m_appendToText = false;
+-	}
+-	else if (tagName == &quot;a&quot;)
+-	{
+-		if (pState-&gt;m_currentLink.m_url.empty() == false)
+-		{
+-			StringManip::trimSpaces(pState-&gt;m_currentLink.m_name);
+-			StringManip::removeCharacters(pState-&gt;m_currentLink.m_name, &quot;\r\n&quot;);
+-
+-			pState-&gt;m_currentLink.m_endPos = pState-&gt;m_textPos;
+-
+-			// Store this link
+-			pState-&gt;m_links.insert(pState-&gt;m_currentLink);
+-			++pState-&gt;m_currentLink.m_index;
+-		}
+-
+-		pState-&gt;m_appendToLink = false;
+-	}
+-	else if ((tagName == &quot;frameset&quot;) ||
+-		(tagName == &quot;script&quot;) ||
+-		(tagName == &quot;style&quot;))
+-	{
+-		--pState-&gt;m_skip;
+-	}
+-}
+-
+-static void charactersHandler(void *pData, const char *pText, int textLen)
+-{
+-	if ((pData == NULL) ||
+-		(pText == NULL) ||
+-		(textLen == 0))
+-	{
+-		return;
+-	}
+-
+-	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
+-	if (pState == NULL)
+-	{
+-		return;
+-	}
+-
+-	if (pState-&gt;m_skip &gt; 0)
+-	{
+-		// Skip this
+-		return;
+-	}
+-
+-	string text(pText, textLen);
+-
+-	// For some reason, this handler might be called twice for the same text !
+-	// See <A HREF="http://mail.gnome.org/archives/xml/2002-September/msg00089.html">http://mail.gnome.org/archives/xml/2002-September/msg00089.html</A>
+-	string textHash(StringManip::hashString(text));
+-	if (pState-&gt;m_lastHash == textHash)
+-	{
+-		// Ignore this
+-		return;
+-	}
+-	pState-&gt;m_lastHash = textHash;
+-
+-	// Append current text
+-	// FIXME: convert to UTF-8 or Latin 1 ?
+-	if (pState-&gt;m_appendToTitle == true)
+-	{
+-		pState-&gt;m_title += text;
+-	}
+-	else
+-	{
+-		if (pState-&gt;m_appendToText == true)
+-		{
+-			pState-&gt;m_text += text;
+-			pState-&gt;m_textPos += textLen;
+-		}
+-
+-		// Appending to text and to link are not mutually exclusive operations
+-		if (pState-&gt;m_appendToLink == true)
+-		{
+-			pState-&gt;m_currentLink.m_name += text;
+-		}
+-	}
+-}
+-
+-static void cDataHandler(void *pData, const char *pText, int textLen)
+-{
+-	// Nothing to do
+-}
+-
+-static void whitespaceHandler(void *pData, const xmlChar *pText, int txtLen)
+-{
+-	if (pData == NULL)
+-	{
+-		return;
+-	}
+-
+-	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
+-	if (pState == NULL)
+-	{
+-		return;
+-	}
+-
+-	if (pState-&gt;m_skip &gt; 0)
+-	{
+-		// Skip this
+-		return;
+-	}
+-
+-	// Append a single space
+-	if (pState-&gt;m_appendToTitle == true)
+-	{
+-		pState-&gt;m_title += &quot; &quot;;
+-	}
+-	else
+-	{
+-		if (pState-&gt;m_appendToText == true)
+-		{
+-			pState-&gt;m_text += &quot; &quot;;
+-		}
+-
+-		// Appending to text and to link are not mutually exclusive operations
+-		if (pState-&gt;m_appendToLink == true)
+-		{
+-			pState-&gt;m_currentLink.m_name += &quot; &quot;;
+-		}
+-	}
+-}
+-
+-static void commentHandler(void *pData, const char *pText)
+-{
+-	// FIXME: take comments into account, eg on terms position ?
+-}
+-
+-static void errorHandler(void *pData, const char *pMsg, ...)
+-{
+-	if (pData == NULL)
+-	{
+-		return;
+-	}
+-
+-	HtmlTokenizer::ParserState *pState = (HtmlTokenizer::ParserState *)pData;
+-	if (pState == NULL)
+-	{
+-		return;
+-	}
+-
+-	va_list args;
+-	char pErr[1000];
+-
+-	va_start(args, pMsg);
+-	vsnprintf(pErr, 1000, pMsg, args );
+-	va_end(args);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;HtmlTokenizer::errorHandler: &quot; &lt;&lt; pErr &lt;&lt; endl;
+-#endif
+-
+-	// Be lenient as much as possible
+-	xmlResetLastError();
+-	// ...but remember the document had errors
+-	pState-&gt;m_isValid = false;
+-}
+-
+-static void warningHandler(void *pData, const char *pMsg, ...)
+-{
+-	va_list args;
+-	char pErr[1000];
+-
+-	va_start(args, pMsg);
+-	vsnprintf(pErr, 1000, pMsg, args );
+-	va_end(args);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;HtmlTokenizer::warningHandler: &quot; &lt;&lt; pErr &lt;&lt; endl;
+-#endif
+-}
+-
+-Link::Link() :
+-	m_index(0),
+-	m_startPos(0),
+-	m_endPos(0)
+-{
+-}
+-
+-Link::Link(const Link &amp;other) :
+-	m_url(other.m_url),
+-	m_name(other.m_name),
+-	m_index(other.m_index),
+-	m_startPos(other.m_startPos),
+-	m_endPos(other.m_endPos)
+-{
+-}
+-
+-Link::~Link()
+-{
+-}
+-
+-Link&amp; Link::operator=(const Link&amp; other)
+-{
+-	if (this != &amp;other)
+-	{
+-		m_url = other.m_url;
+-		m_name = other.m_name;
+-		m_index = other.m_index;
+-		m_startPos = other.m_startPos;
+-		m_endPos = other.m_endPos;
+-	}
+-
+-	return *this;
+-}
+-
+-bool Link::operator==(const Link &amp;other) const
+-{
+-	return m_url == other.m_url;
+-}
+-
+-bool Link::operator&lt;(const Link &amp;other) const
+-{
+-	return m_index &lt; other.m_index;
+-}
+-
+-HtmlTokenizer::ParserState::ParserState() :
+-	m_isValid(true),
+-	m_findAbstract(false),
+-	m_textPos(0),
+-	m_inHead(false),
+-	m_foundHead(false),
+-	m_appendToTitle(false),
+-	m_appendToText(false),
+-	m_appendToLink(false),
+-	m_skip(0)
+-{
+-}
+-
+-HtmlTokenizer::ParserState::~ParserState()
+-{
+-}
+-
+-HtmlTokenizer::HtmlTokenizer(const Document *pDocument,
+-	bool validateOnly, bool findAbstract) :
+-	Tokenizer(NULL),
+-	m_pStrippedDocument(NULL)
+-{
+-	if (validateOnly == true)
+-	{
+-		// This will ensure text is skipped
+-		++m_state.m_skip;
+-	}
+-	else
+-	{
+-		// Attempt to find an abstract ?
+-		m_state.m_findAbstract = findAbstract;
+-	}
+-
+-	if (parseHTML(pDocument) == true)
+-	{
+-		// Did we find a title ?
+-		if (m_state.m_title.empty() == true)
+-		{
+-			m_state.m_title = pDocument-&gt;getTitle();
+-		}
+-
+-		// Pass the result to the parent class
+-		m_pStrippedDocument = new Document(m_state.m_title,
+-			pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-			pDocument-&gt;getLanguage());
+-		m_pStrippedDocument-&gt;setData(m_state.m_text.c_str(), m_state.m_text.length());
+-		m_pStrippedDocument-&gt;setTimestamp(pDocument-&gt;getTimestamp());
+-		m_pStrippedDocument-&gt;setSize(pDocument-&gt;getSize());
+-
+-		setDocument(m_pStrippedDocument);
+-	}
+-}
+-
+-HtmlTokenizer::~HtmlTokenizer()
+-{
+-	if (m_pStrippedDocument != NULL)
+-	{
+-		delete m_pStrippedDocument;
+-	}
+-}
+-
+-void HtmlTokenizer::initialize(void)
+-{
+-	xmlInitParser();
+-}
+-
+-void HtmlTokenizer::shutdown(void)
+-{
+-	xmlCleanupParser();
+-}
+-
+-bool HtmlTokenizer::parseHTML(const Document *pDocument)
+-{
+-	if (pDocument == NULL)
+-	{
+-		return false;
+-	}
+-
+-	unsigned int dataLength = 0;
+-	const char *pData = pDocument-&gt;getData(dataLength);
+-	if ((pData == NULL) ||
+-		(dataLength == 0))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: no input&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	string htmlChunk(pData, dataLength);
+-	htmlSAXHandler saxHandler;
+-
+-	// Setup the SAX handler
+-	memset((void*)&amp;saxHandler, 0, sizeof(htmlSAXHandler));
+-	saxHandler.startElement = (startElementSAXFunc)&startHandler;
+-	saxHandler.endElement = (endElementSAXFunc)&endHandler;
+-	saxHandler.characters = (charactersSAXFunc)&charactersHandler;
+-	saxHandler.cdataBlock = (charactersSAXFunc)&cDataHandler;
+-	saxHandler.ignorableWhitespace = (ignorableWhitespaceSAXFunc)&whitespaceHandler;
+-	saxHandler.comment = (commentSAXFunc)&commentHandler;
+-	saxHandler.fatalError = (fatalErrorSAXFunc)&errorHandler;
+-	saxHandler.error = (errorSAXFunc)&errorHandler;
+-	saxHandler.warning = (warningSAXFunc)&warningHandler;
+-
+-	// Try to cope with pages that have scripts or other rubbish prepended
+-	string::size_type htmlPos = htmlChunk.find(&quot;&lt;!DOCTYPE&quot;);
+-	if (htmlPos == string::npos)
+-	{
+-		htmlPos = htmlChunk.find(&quot;&lt;!doctype&quot;);
+-	}
+-	if ((htmlPos != string::npos) &amp;&amp;
+-		(htmlPos &gt; 0))
+-	{
+-		htmlChunk.erase(0, htmlPos);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: removed &quot; &lt;&lt; htmlPos &lt;&lt; &quot; characters&quot; &lt;&lt; endl;
+-#endif
+-	}
+-
+-#if 1
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: &quot; &lt;&lt; pDocument-&gt;getLocation() &lt;&lt; endl;
+-#endif
+-	htmlParserCtxtPtr pContext = htmlCreatePushParserCtxt(&amp;saxHandler, (void*)&amp;m_state,
+-		htmlChunk.c_str(), (int)htmlChunk.length(), &quot;&quot;, XML_CHAR_ENCODING_NONE);
+-	if (pContext != NULL)
+-	{
+-		xmlCtxtUseOptions(pContext, 0);
+-
+-		// Parse
+-		htmlParseChunk(pContext, htmlChunk.c_str(), (int)htmlChunk.length(), 0);
+-
+-		// Free
+-		htmlParseChunk(pContext, htmlChunk.c_str(), 0, 1);
+-		xmlDocPtr pDoc = pContext-&gt;myDoc;
+-		int ret = pContext-&gt;wellFormed;
+-		xmlFreeParserCtxt(pContext);
+-		if (!ret)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: freeing document&quot; &lt;&lt; endl;
+-#endif
+-			xmlFreeDoc(pDoc);
+-		}
+-	}
+-#else
+-	htmlDocPtr pDoc = htmlSAXParseDoc((xmlChar *)htmlChunk.c_str(), &quot;&quot;, &amp;saxHandler, (void*)&amp;m_state);
+-	if (pDoc != NULL)
+-	{
+-		xmlFreeDoc(pDoc);
+-	}
+-#endif
+-	else
+-	{
+-		cerr &lt;&lt; &quot;Couldn't create HTML parser&quot; &lt;&lt; endl;
+-	}
+-
+-	// The text after the last link might make a good abstract
+-	if (m_state.m_findAbstract == true)
+-	{
+-		getInBetweenLinksText(&amp;m_state, m_state.m_currentLink.m_index);
+-	}
+-
+-	// Append META keywords, if any were found
+-	m_state.m_text += getMetaTag(&quot;keywords&quot;);
+-
+-	return true;
+-}
+-
+-/// Determines whether the document is properly formed.
+-bool HtmlTokenizer::isDocumentValid(void) const
+-{
+-	return m_state.m_isValid;
+-}
+-
+-/// Gets the specified META tag content.
+-string HtmlTokenizer::getMetaTag(const string &amp;name) const
+-{
+-	if (name.empty() == true)
+-	{
+-		return &quot;&quot;;
+-	}
+-
+-	map&lt;string, string&gt;::const_iterator iter = m_state.m_metaTags.find(StringManip::toLowerCase(name));
+-	if (iter != m_state.m_metaTags.end())
+-	{
+-		return iter-&gt;second;
+-	}
+-
+-	return &quot;&quot;;
+-}
+-
+-/// Gets the links map.
+-set&lt;Link&gt; &amp;HtmlTokenizer::getLinks(void)
+-{
+-	return m_state.m_links;
+-}
+-
+-/// Gets the abstract.
+-std::string HtmlTokenizer::getAbstract(void) const
+-{
+-	return m_state.m_abstract;
+-}
+
+Deleted: trunk/Tokenize/HtmlTokenizer.h
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/HtmlTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,109 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _HTML_TOKENIZER_H
+-#define _HTML_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-#include &lt;map&gt;
+-#include &lt;utility&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;Tokenizer.h&quot;
+-
+-/// A link in an HTML page.
+-class Link
+-{
+-	public:
+-		Link();
+-		Link(const Link &amp;other);
+-		~Link();
+-
+-		Link&amp; operator=(const Link&amp; other);
+-		bool operator==(const Link &amp;other) const;
+-		bool operator&lt;(const Link &amp;other) const;
+-
+-		std::string m_url;
+-		std::string m_name;
+-		unsigned int m_index;
+-		unsigned int m_startPos;
+-		unsigned int m_endPos;
+-
+-};
+-
+-/// Tokenizer for HTML.
+-class HtmlTokenizer : public Tokenizer
+-{
+-	public:
+-		HtmlTokenizer(const Document *pDocument,
+-			bool validateOnly, bool findAbstract = false);
+-		virtual ~HtmlTokenizer();
+-
+-		/// Initializes the HTML tokenizer.
+-		static void initialize(void);
+-
+-		/// Shutdowns the HTML tokenizer.
+-		static void shutdown(void);
+-
+-		/// Determines whether the document is properly formed.
+-		bool isDocumentValid(void) const;
+-
+-		/// Gets the specified META tag content; an empty string if it wasn't found.
+-		std::string getMetaTag(const std::string &amp;name) const;
+-
+-		/// Gets the links map.
+-		std::set&lt;Link&gt; &amp;getLinks(void);
+-
+-		/// Gets the abstract.
+-		std::string getAbstract(void) const;
+-
+-		class ParserState
+-		{
+-			public:
+-				ParserState();
+-				~ParserState();
+-
+-				bool m_isValid;
+-				bool m_findAbstract;
+-				unsigned int m_textPos;
+-				std::string m_lastHash;
+-				bool m_inHead;
+-				bool m_foundHead;
+-				bool m_appendToTitle;
+-				bool m_appendToText;
+-				bool m_appendToLink;
+-				unsigned int m_skip;
+-				std::string m_title;
+-				std::string m_text;
+-				std::string m_abstract;
+-				Link m_currentLink;
+-				std::set&lt;Link&gt; m_links;
+-				std::set&lt;Link&gt; m_frames;
+-				std::map&lt;std::string, std::string&gt; m_metaTags;
+-		};
+-
+-	protected:
+-		ParserState m_state;
+-		Document *m_pStrippedDocument;
+-
+-		bool parseHTML(const Document *pDocument);
+-
+-};
+-
+-#endif // _HTML_TOKENIZER_H
+
+Deleted: trunk/Tokenize/OpenDocumentTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/OpenDocumentTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/OpenDocumentTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,105 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;OpenDocumentTokenizer.h&quot;
+-
+-using std::string;
+-using std::set;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(set&lt;string&gt; &amp;types)
+-{
+-	types.clear();
+-	types.insert(&quot;application/vnd.sun.xml.writer&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.writer.template&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.calc&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.calc.template&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.draw&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.draw.template&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.impress&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.impress.template&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.writer.global&quot;);
+-	types.insert(&quot;application/vnd.sun.xml.math&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.chart&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.database&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.formula&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.graphics&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.graphics-template&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.image&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.presentation&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.presentation-template&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.spreadsheet&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.spreadsheet-template&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.text&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.text-master&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.text-template&quot;);
+-	types.insert(&quot;application/vnd.oasis.opendocument.text-web&quot;);
+-
+-	return true;
+-}
+-
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void)
+-{
+-	return Tokenizer::ALL_BUT_FILES;
+-}
+-
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument)
+-{
+-	return new OpenDocumentTokenizer(pDocument);
+-}
+-
+-OpenDocumentTokenizer::OpenDocumentTokenizer(const Document *pDocument) :
+-	XmlTokenizer(NULL)
+-{
+-	Document *pXmlDocument = runHelperProgram(pDocument, &quot;unzip -p&quot;, &quot;content.xml&quot;);
+-	if (pXmlDocument != NULL)
+-	{
+-		unsigned int length = 0;
+-		const char *data = pXmlDocument-&gt;getData(length);
+-
+-		if ((data != NULL) &amp;&amp;
+-			(length &gt; 0))
+-		{
+-			// Remove XML tags
+-			string strippedData = parseXML(data);
+-
+-			// Pass the result to the parent class
+-			m_pStrippedDocument = new Document(pDocument-&gt;getTitle(),
+-				pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-				pDocument-&gt;getLanguage());
+-			m_pStrippedDocument-&gt;setData(strippedData.c_str(), strippedData.length());
+-			m_pStrippedDocument-&gt;setTimestamp(pDocument-&gt;getTimestamp());
+-			m_pStrippedDocument-&gt;setSize(pDocument-&gt;getSize());
+-
+-			setDocument(m_pStrippedDocument);
+-		}
+-
+-		delete pXmlDocument;
+-	}
+-	// FIXME: unzip meta.xml and extract document information
+-}
+-
+-OpenDocumentTokenizer::~OpenDocumentTokenizer()
+-{
+-	// ~XmlTokenizer will delete m_pStrippedDocument
+-}
+
+Deleted: trunk/Tokenize/OpenDocumentTokenizer.h
+===================================================================
+--- trunk/Tokenize/OpenDocumentTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/OpenDocumentTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,48 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _OPENDOCUMENT_TOKENIZER_H
+-#define _OPENDOCUMENT_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;XmlTokenizer.h&quot;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(std::set&lt;std::string&gt; &amp;types);
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void);
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument);
+-
+-/// A tokenizer for OpenDocument and other OpenOffice.org file formats.
+-class OpenDocumentTokenizer : public XmlTokenizer
+-{
+-	public:
+-		OpenDocumentTokenizer(const Document *pDocument);
+-		virtual ~OpenDocumentTokenizer();
+-
+-	private:
+-		OpenDocumentTokenizer(const OpenDocumentTokenizer &amp;other);
+-		OpenDocumentTokenizer&amp; operator=(const OpenDocumentTokenizer&amp; other);
+-
+-};
+-
+-#endif // _OPENDOCUMENT_TOKENIZER_H
+
+Deleted: trunk/Tokenize/PdfTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/PdfTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/PdfTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,74 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;PdfTokenizer.h&quot;
+-
+-using std::string;
+-using std::set;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(set&lt;string&gt; &amp;types)
+-{
+-	types.clear();
+-	types.insert(&quot;application/pdf&quot;);
+-
+-	return true;
+-}
+-
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void)
+-{
+-	return Tokenizer::ALL_BUT_FILES;
+-}
+-
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument)
+-{
+-	return new PdfTokenizer(pDocument);
+-}
+-
+-PdfTokenizer::PdfTokenizer(const Document *pDocument) :
+-	HtmlTokenizer(NULL, false)
+-{
+-	Document *pHtmlDocument = runHelperProgram(pDocument, &quot;pdftotext -htmlmeta&quot;, &quot;-&quot;);
+-	if (pHtmlDocument != NULL)
+-	{
+-		if (parseHTML(pHtmlDocument) == true)
+-		{
+-			// Pass the result to the parent class
+-			m_pStrippedDocument = new Document(pHtmlDocument-&gt;getTitle(),
+-				pHtmlDocument-&gt;getLocation(), pHtmlDocument-&gt;getType(),
+-				pHtmlDocument-&gt;getLanguage());
+-			m_pStrippedDocument-&gt;setData(m_state.m_text.c_str(), m_state.m_text.length());
+-			m_pStrippedDocument-&gt;setTimestamp(pHtmlDocument-&gt;getTimestamp());
+-			m_pStrippedDocument-&gt;setSize(pHtmlDocument-&gt;getSize());
+-
+-			setDocument(m_pStrippedDocument);
+-		}
+-
+-		delete pHtmlDocument;
+-	}
+-}
+-
+-PdfTokenizer::~PdfTokenizer()
+-{
+-	// ~HtmlTokenizer will delete m_pStrippedDocument
+-}
+
+Deleted: trunk/Tokenize/PdfTokenizer.h
+===================================================================
+--- trunk/Tokenize/PdfTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/PdfTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,48 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _PDF_TOKENIZER_H
+-#define _PDF_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;HtmlTokenizer.h&quot;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(std::set&lt;std::string&gt; &amp;types);
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void);
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument);
+-
+-/// PDF tokenizer.
+-class PdfTokenizer : public HtmlTokenizer
+-{
+-	public:
+-		PdfTokenizer(const Document *pDocument);
+-		virtual ~PdfTokenizer();
+-
+-	private:
+-		PdfTokenizer(const PdfTokenizer &amp;other);
+-		PdfTokenizer&amp; operator=(const PdfTokenizer&amp; other);
+-
+-};
+-
+-#endif // _PDF_TOKENIZER_H
+
+Deleted: trunk/Tokenize/RtfTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/RtfTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/RtfTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,75 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;RtfTokenizer.h&quot;
+-
+-using std::string;
+-using std::set;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(set&lt;string&gt; &amp;types)
+-{
+-	types.clear();
+-	types.insert(&quot;text/rtf&quot;);
+-	types.insert(&quot;application/rtf&quot;);
+-
+-	return true;
+-}
+-
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void)
+-{
+-	return Tokenizer::ALL_BUT_FILES;
+-}
+-
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument)
+-{
+-	return new RtfTokenizer(pDocument);
+-}
+-
+-RtfTokenizer::RtfTokenizer(const Document *pDocument) :
+-	HtmlTokenizer(NULL, false)
+-{
+-	Document *pHtmlDocument = runHelperProgram(pDocument, &quot;unrtf --nopict --html&quot;);
+-	if (pHtmlDocument != NULL)
+-	{
+-		if (parseHTML(pHtmlDocument) == true)
+-		{
+-			// Pass the result to the parent class
+-			m_pStrippedDocument = new Document(pHtmlDocument-&gt;getTitle(),
+-				pHtmlDocument-&gt;getLocation(), pHtmlDocument-&gt;getType(),
+-				pHtmlDocument-&gt;getLanguage());
+-			m_pStrippedDocument-&gt;setData(m_state.m_text.c_str(), m_state.m_text.length());
+-			m_pStrippedDocument-&gt;setTimestamp(pHtmlDocument-&gt;getTimestamp());
+-			m_pStrippedDocument-&gt;setSize(pHtmlDocument-&gt;getSize());
+-
+-			setDocument(m_pStrippedDocument);
+-		}
+-
+-		delete pHtmlDocument;
+-	}
+-}
+-
+-RtfTokenizer::~RtfTokenizer()
+-{
+-	// ~HtmlTokenizer will delete m_pStrippedDocument
+-}
+
+Deleted: trunk/Tokenize/RtfTokenizer.h
+===================================================================
+--- trunk/Tokenize/RtfTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/RtfTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,49 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _RTF_TOKENIZER_H
+-#define _RTF_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;HtmlTokenizer.h&quot;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(std::set&lt;std::string&gt; &amp;types);
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void);
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument);
+-
+-/// Rich Text Format tokenizer.
+-class RtfTokenizer : public HtmlTokenizer
+-{
+-	public:
+-		RtfTokenizer(const Document *pDocument);
+-		virtual ~RtfTokenizer();
+-
+-	protected:
+-		RtfTokenizer();
+-		RtfTokenizer(const RtfTokenizer &amp;other);
+-		RtfTokenizer&amp; operator=(const RtfTokenizer&amp; other);
+-
+-};
+-
+-#endif // _RTF_TOKENIZER_H
+
+Deleted: trunk/Tokenize/TagLibTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/TagLibTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/TagLibTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,151 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &lt;fileref.h&gt;
+-#include &lt;tfile.h&gt;
+-#include &lt;tag.h&gt;
+-
+-#include &quot;Url.h&quot;
+-#include &quot;TagLibTokenizer.h&quot;
+-
+-using std::string;
+-using std::set;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(set&lt;string&gt; &amp;types)
+-{
+-	types.clear();
+-	types.insert(&quot;audio/mpeg&quot;);
+-	types.insert(&quot;audio/x-mp3&quot;);
+-	types.insert(&quot;application/ogg&quot;);
+-	types.insert(&quot;audio/x-flac+ogg&quot;);
+-	types.insert(&quot;audio/x-flac&quot;);
+-
+-	return true;
+-}
+-
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void)
+-{
+-	return Tokenizer::ALL_BUT_FILES;
+-}
+-
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument)
+-{
+-	return new TagLibTokenizer(pDocument);
+-}
+-
+-TagLibTokenizer::TagLibTokenizer(const Document *pDocument) :
+-	Tokenizer(NULL),
+-	m_pTagDocument(NULL)
+-{
+-	if (pDocument != NULL)
+-	{
+-		Url urlObj(pDocument-&gt;getLocation());
+-		string location;
+-		unsigned int dataLength = 0;
+-		const char *pData = pDocument-&gt;getData(dataLength);
+-		char inTemplate[15] = &quot;/tmp/tokXXXXXX&quot;;
+-		bool deleteInFile = false;
+-
+-		// Is this a file ?
+-		if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
+-			(urlObj.getFile().empty() == false))
+-		{
+-			location = urlObj.getLocation();
+-			location += &quot;/&quot;;
+-			location += urlObj.getFile();
+-		}
+-		else
+-		{
+-			int inFd = mkstemp(inTemplate);
+-			if (inFd != -1)
+-			{
+-				// Save the data into a temporary file
+-				if (write(inFd, (const void*)pData, dataLength) != -1)
+-				{
+-					location = inTemplate;
+-				}
+-
+-				deleteInFile = true;
+-				close(inFd);
+-			}
+-		}
+-
+-		if (location.empty() == false)
+-		{
+-			TagLib::FileRef fileRef(location.c_str(), false);
+-			string trackTitle, pseudoContent;
+-
+-			if (fileRef.isNull() == false)
+-			{
+-				TagLib::Tag *pTag = fileRef.tag();
+-				if ((pTag != NULL) &amp;&amp;
+-					(pTag-&gt;isEmpty() == false))
+-				{
+-					char yearStr[64];
+-
+-					trackTitle = pTag-&gt;title().to8Bit(); 
+-					trackTitle += &quot; &quot;;
+-					trackTitle += pTag-&gt;artist().to8Bit();
+-
+-					pseudoContent = trackTitle;
+-					pseudoContent += &quot; &quot;;
+-					pseudoContent += pTag-&gt;album().to8Bit();
+-					pseudoContent += &quot; &quot;;
+-					pseudoContent += pTag-&gt;comment().to8Bit();
+-					pseudoContent += &quot; &quot;;
+-					pseudoContent += pTag-&gt;genre().to8Bit();
+-					snprintf(yearStr, 64, &quot; %u&quot;, pTag-&gt;year());
+-					pseudoContent += yearStr;
+-				}
+-			}
+-			else
+-			{
+-				trackTitle = pseudoContent = pDocument-&gt;getTitle();
+-			}
+-
+-			m_pTagDocument = new Document(trackTitle, pDocument-&gt;getLocation(),
+-				pDocument-&gt;getType(), pDocument-&gt;getLanguage());
+-			m_pTagDocument-&gt;setData(pseudoContent.c_str(), pseudoContent.length());
+-			m_pTagDocument-&gt;setTimestamp(pDocument-&gt;getTimestamp());
+-			m_pTagDocument-&gt;setSize(pDocument-&gt;getSize());
+-
+-			// Give the result to the parent class
+-			setDocument(m_pTagDocument);
+-		}
+-
+-		// Delete the temporary file ?
+-		if (deleteInFile == true)
+-		{
+-			unlink(inTemplate);
+-		}
+-	}
+-}
+-
+-TagLibTokenizer::~TagLibTokenizer()
+-{
+-	if (m_pTagDocument != NULL)
+-	{
+-		delete m_pTagDocument;
+-	}
+-}
+
+Deleted: trunk/Tokenize/TagLibTokenizer.h
+===================================================================
+--- trunk/Tokenize/TagLibTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/TagLibTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,51 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _TAGLIB_TOKENIZER_H
+-#define _TAGLIB_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;Tokenizer.h&quot;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(std::set&lt;std::string&gt; &amp;types);
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void);
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument);
+-
+-/// Taglib-based tokenizer for MP3, OOgg Vorbis etc...
+-class TagLibTokenizer : public Tokenizer
+-{
+-	public:
+-		TagLibTokenizer(const Document *pDocument);
+-		virtual ~TagLibTokenizer();
+-
+-	protected:
+-		Document *m_pTagDocument;
+-
+-	private:
+-		TagLibTokenizer(const TagLibTokenizer &amp;other);
+-		TagLibTokenizer&amp; operator=(const TagLibTokenizer&amp; other);
+-
+-};
+-
+-#endif // _TAGLIB_TOKENIZER_H
+
+Deleted: trunk/Tokenize/TokenizerFactory.cpp
+===================================================================
+--- trunk/Tokenize/TokenizerFactory.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/TokenizerFactory.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,354 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;ctype.h&gt;
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;dirent.h&gt;
+-#include &lt;stdlib.h&gt;
+-#include &lt;unistd.h&gt;
+-#include &lt;strings.h&gt;
+-#include &lt;dlfcn.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;MIMEScanner.h&quot;
+-#include &quot;Tokenizer.h&quot;
+-#include &quot;HtmlTokenizer.h&quot;
+-#include &quot;UnknownTypeTokenizer.h&quot;
+-#include &quot;XmlTokenizer.h&quot;
+-#include &quot;Url.h&quot;
+-#include &quot;TokenizerFactory.h&quot;
+-
+-#ifdef __CYGWIN__
+-#define DLOPEN_FLAGS RTLD_LAZY
+-#else
+-#define DLOPEN_FLAGS (RTLD_LAZY|RTLD_LOCAL)
+-#endif
+-
+-#define GETTOKENIZERTYPES	&quot;_Z17getTokenizerTypesRSt3setISsSt4lessISsESaISsEE&quot;
+-#define GETTOKENIZERDATANEEDS	&quot;_Z21getTokenizerDataNeedsv&quot;
+-#define GETTOKENIZER		&quot;_Z12getTokenizerPK8Document&quot;
+-
+-using std::cout;
+-using std::cerr;
+-using std::endl;
+-using std::string;
+-using std::map;
+-using std::set;
+-
+-map&lt;string, string&gt; TokenizerFactory::m_types;
+-map&lt;string, void *&gt; TokenizerFactory::m_handles;
+-map&lt;string, Tokenizer::DataNeeds&gt; TokenizerFactory::m_dataNeeds;
+-
+-TokenizerFactory::TokenizerFactory()
+-{
+-}
+-
+-TokenizerFactory::~TokenizerFactory()
+-{
+-}
+-
+-Tokenizer *TokenizerFactory::getLibraryTokenizer(const string &amp;type, const Document *pDocument)
+-{
+-	void *pHandle = NULL;
+-
+-	if (m_handles.empty() == true)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;TokenizerFactory::getLibraryTokenizer: no libraries&quot; &lt;&lt; endl;
+-#endif
+-		return NULL;
+-	}
+-
+-	map&lt;string, string&gt;::iterator typeIter = m_types.find(type);
+-	if (typeIter == m_types.end())
+-	{
+-		// We don't know about this type
+-		return NULL;
+-	}
+-	map&lt;string, void *&gt;::iterator handleIter = m_handles.find(typeIter-&gt;second);
+-	if (handleIter == m_handles.end())
+-	{
+-		// We don't know about this library
+-		return NULL;
+-	}
+-	pHandle = handleIter-&gt;second;
+-	if (pHandle == NULL)
+-	{
+-		return NULL;
+-	}
+-
+-	// Get a tokenizer object then
+-	getTokenizerFunc *pFunc = (getTokenizerFunc *)dlsym(pHandle,
+-		GETTOKENIZER);
+-	if (pFunc != NULL)
+-	{
+-		return (*pFunc)(pDocument);
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;TokenizerFactory::getLibraryTokenizer: couldn't find export getTokenizer&quot; &lt;&lt; endl;
+-#endif
+-
+-	return NULL;
+-}
+-
+-/// Loads the tokenizer libraries in the given directory.
+-unsigned int TokenizerFactory::loadTokenizers(const string &amp;dirName)
+-{
+-	struct stat fileStat;
+-	unsigned int count = 0;
+-
+-	if (dirName.empty() == true)
+-	{
+-		return 0;
+-	}
+-
+-	if (stat(dirName.c_str(), &amp;fileStat) == -1)
+-	{
+-		cerr &lt;&lt; &quot;TokenizerFactory::loadTokenizers: &quot; &lt;&lt; dirName &lt;&lt; &quot; doesn't exist&quot; &lt;&lt; endl;
+-		return 0;
+-	}
+-
+-	// Is it a file or a directory ?
+-	if (S_ISDIR(fileStat.st_mode))
+-	{
+-		// A directory : scan it
+-		DIR *pDir = opendir(dirName.c_str());
+-		if (pDir == NULL)
+-		{
+-			return 0;
+-		}
+-
+-		// Iterate through this directory's entries
+-		struct dirent *pDirEntry = readdir(pDir);
+-		while (pDirEntry != NULL)
+-		{
+-			char *pEntryName = pDirEntry-&gt;d_name;
+-			if (pEntryName != NULL)
+-			{
+-				string fileName = pEntryName;
+-				string::size_type extPos = fileName.find_last_of(&quot;.&quot;);
+-
+-				if ((extPos == string::npos) ||
+-					(fileName.substr(extPos) != &quot;.so&quot;))
+-				{
+-					// Next entry
+-					pDirEntry = readdir(pDir);
+-					continue;
+-				}
+-
+-				fileName = dirName;
+-				fileName += &quot;/&quot;;
+-				fileName += pEntryName;
+-
+-				// Check this entry
+-				if ((stat(fileName.c_str(), &amp;fileStat) == 0) &amp;&amp;
+-					(S_ISREG(fileStat.st_mode)))
+-				{
+-					void *pHandle = dlopen(fileName.c_str(), DLOPEN_FLAGS);
+-					if (pHandle != NULL)
+-					{
+-						Tokenizer::DataNeeds dataNeeds = Tokenizer::ALL_DOCUMENTS;
+-
+-						// What documents's data does it need ?
+-						getTokenizerDataNeedsFunc *pDataFunc = (getTokenizerDataNeedsFunc *)dlsym(pHandle,
+-							GETTOKENIZERDATANEEDS);
+-						if (pDataFunc != NULL)
+-						{
+-							dataNeeds = (Tokenizer::DataNeeds )(*pDataFunc)();
+-						}
+-
+-						// What type(s) does this support ?
+-						getTokenizerTypesFunc *pTypesFunc = (getTokenizerTypesFunc *)dlsym(pHandle,
+-								GETTOKENIZERTYPES);
+-						if (pTypesFunc != NULL)
+-						{
+-							set&lt;string&gt; types;
+-							bool tokenizerOkay = (*pTypesFunc)(types);
+-
+-							if (tokenizerOkay == true)
+-							{
+-								for (set&lt;string&gt;::iterator typeIter = types.begin();
+-									typeIter != types.end(); ++typeIter)
+-								{
+-									// Add a record for this tokenizer
+-									m_types[*typeIter] = fileName;
+-#ifdef DEBUG
+-									cout &lt;&lt; &quot;TokenizerFactory::loadTokenizers: type &quot;
+-										&lt;&lt; *typeIter &lt;&lt; &quot;, &quot; &lt;&lt; dataNeeds
+-										&lt;&lt; &quot; is supported by &quot; &lt;&lt; pEntryName &lt;&lt; endl;
+-#endif
+-								}
+-
+-								m_handles[fileName] = pHandle;
+-								m_dataNeeds[fileName] = dataNeeds;
+-							}
+-						}
+-						else cerr &lt;&lt; &quot;TokenizerFactory::loadTokenizers: &quot; &lt;&lt; dlerror() &lt;&lt; endl;
+-					}
+-					else cerr &lt;&lt; &quot;TokenizerFactory::loadTokenizers: &quot; &lt;&lt; dlerror() &lt;&lt; endl;
+-				}
+-#ifdef DEBUG
+-				else cout &lt;&lt; &quot;TokenizerFactory::loadTokenizers: &quot;
+-					&lt;&lt; pEntryName &lt;&lt; &quot; is not a file&quot; &lt;&lt; endl;
+-#endif
+-			}
+-
+-			// Next entry
+-			pDirEntry = readdir(pDir);
+-		}
+-
+-		closedir(pDir);
+-	}
+-	else cerr &lt;&lt; &quot;TokenizerFactory::loadTokenizers: &quot; &lt;&lt; dirName &lt;&lt; &quot; is not a directory&quot; &lt;&lt; endl;
+-
+-	return count;
+-}
+-
+-/// Unloads all tokenizer libraries.
+-void TokenizerFactory::unloadTokenizers(void)
+-{
+-	for (map&lt;string, void*&gt;::iterator iter = m_handles.begin(); iter != m_handles.end(); ++iter)
+-	{
+-		if (dlclose(iter-&gt;second) != 0)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;TokenizerFactory::unloadTokenizers: failed on &quot; &lt;&lt; iter-&gt;first &lt;&lt; endl;
+-#endif
+-		}
+-	}
+-
+-	m_types.clear();
+-	m_handles.clear();
+-}
+-
+-/// Returns a Tokenizer that handles the given file's type; NULL if unavailable.
+-Tokenizer *TokenizerFactory::getTokenizer(const string &amp;fileName, const Document *pDocument)
+-{
+-	string type = MIMEScanner::scanFile(fileName);
+-
+-	return getTokenizerByType(type, pDocument);
+-}
+-
+-/// Returns a Tokenizer that handles the given MIME type; NULL if unavailable.
+-Tokenizer *TokenizerFactory::getTokenizerByType(const string &amp;type, const Document *pDocument)
+-{
+-	string typeOnly = type;
+-	string::size_type semiColonPos = type.find(&quot;;&quot;);
+-
+-	// Remove the charset, if any
+-	if (semiColonPos != string::npos)
+-	{
+-		typeOnly = type.substr(0, semiColonPos);
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;TokenizerFactory::getTokenizerByType: file type is &quot; &lt;&lt; typeOnly &lt;&lt; endl;
+-#endif
+-
+-	if (typeOnly == &quot;text/html&quot;)
+-	{
+-		return new HtmlTokenizer(pDocument, false);
+-	}
+-	else if (typeOnly == &quot;text/plain&quot;)
+-	{
+-		return new Tokenizer(pDocument);
+-	}
+-	else if ((typeOnly == &quot;text/xml&quot;) ||
+-		(typeOnly == &quot;application/xml&quot;))
+-	{
+-		return new XmlTokenizer(pDocument);
+-	}
+-
+-	Tokenizer *pTokenizer = getLibraryTokenizer(typeOnly, pDocument);
+-	if (pTokenizer == NULL)
+-	{
+-		if (strncasecmp(typeOnly.c_str(), &quot;text&quot;, 4) == 0)
+-		{
+-			// Use this by default for text documents
+-			return new Tokenizer(pDocument);
+-		}
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;TokenizerFactory::getTokenizerByType: unknown file type&quot; &lt;&lt; endl;
+-#endif
+-		return new UnknownTypeTokenizer(pDocument);
+-	}
+-
+-	return pTokenizer;
+-}
+-
+-void TokenizerFactory::getSupportedTypes(set&lt;string&gt; &amp;types)
+-{
+-	types.clear();
+-
+-	// List supported types
+-	types.insert(&quot;text/plain&quot;);
+-	types.insert(&quot;text/html&quot;);
+-	types.insert(&quot;text/xml&quot;);
+-	types.insert(&quot;application/xml&quot;);
+-	for (map&lt;string, string&gt;::iterator iter = m_types.begin(); iter != m_types.end(); ++iter)
+-	{
+-		types.insert(iter-&gt;first);
+-	}
+-}
+-
+-bool TokenizerFactory::isSupportedType(const string &amp;type, Tokenizer::DataNeeds &amp;dataNeeds)
+-{
+-	string typeOnly = type;
+-	string::size_type semiColonPos = type.find(&quot;;&quot;);
+-
+-	dataNeeds = Tokenizer::ALL_DOCUMENTS;
+-
+-	// Remove the charset, if any
+-	if (semiColonPos != string::npos)
+-	{
+-		typeOnly = type.substr(0, semiColonPos);
+-	}
+-
+-	// Is it a built-in type ?
+-	if ((typeOnly == &quot;text/html&quot;) ||
+-		(typeOnly == &quot;text/xml&quot;) ||
+-		(typeOnly == &quot;application/xml&quot;) ||
+-		(strncasecmp(typeOnly.c_str(), &quot;text&quot;, 4) == 0))
+-	{
+-		return true;
+-	}
+-
+-	// Is it a type supported by a library ?
+-	map&lt;string, string&gt;::iterator typeIter = m_types.find(typeOnly);
+-	if (typeIter != m_types.end())
+-	{
+-		// What does it need ?
+-		map&lt;string, Tokenizer::DataNeeds&gt;::iterator dataNeedsIter = m_dataNeeds.find(typeIter-&gt;second);
+-		if (dataNeedsIter != m_dataNeeds.end())
+-		{
+-			dataNeeds = dataNeedsIter-&gt;second;
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;TokenizerFactory::isSupportedType: library-handled type &quot;
+-			&lt;&lt; typeOnly &lt;&lt; &quot; &quot; &lt;&lt; dataNeeds &lt;&lt; endl;
+-#endif
+-
+-		return true;
+-	}
+-
+-	// This type is not supported, so don't bother loading anything
+-	dataNeeds = Tokenizer::NO_DOCUMENTS;
+-
+-	return false;
+-}
+
+Deleted: trunk/Tokenize/TokenizerFactory.h
+===================================================================
+--- trunk/Tokenize/TokenizerFactory.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/TokenizerFactory.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,77 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _TOKENIZER_FACTORY_H
+-#define _TOKENIZER_FACTORY_H
+-
+-#include &lt;string&gt;
+-#include &lt;map&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Tokenizer.h&quot;
+-
+-/// Factory for tokenizers with related utility methods.
+-class TokenizerFactory
+-{
+-	public:
+-		virtual ~TokenizerFactory();
+-
+-		/**
+-		  * This returns the MIME type supported by the library's tokenizer.
+-		  * The character string is allocated with new[].
+-		  */
+-		typedef bool (getTokenizerTypesFunc)(std::set&lt;std::string&gt; &amp;);
+-		/// This returns the data needs of the provided Tokenizer(s).
+-		typedef int (getTokenizerDataNeedsFunc)(void);
+-		/// This returns a pointer to a Tokenizer, allocated with new.
+-		typedef Tokenizer *(getTokenizerFunc)(const Document *);
+-
+-		/// Loads the tokenizer libraries in the given directory.
+-		static unsigned int loadTokenizers(const std::string &amp;dirName);
+-
+-		/// Returns a Tokenizer that handles the given file's type; NULL if unavailable.
+-		static Tokenizer *getTokenizer(const std::string &amp;fileName, const Document *pDocument);
+-
+-		/// Returns a Tokenizer that handles the given MIME type; NULL if unavailable.
+-		static Tokenizer *getTokenizerByType(const std::string &amp;type, const Document *pDocument);
+-
+-		/// Returns all supported MIME types.
+-		static void getSupportedTypes(std::set&lt;std::string&gt; &amp;types);
+-
+-		/// Indicates whether a MIME type is supported or not.
+-		static bool isSupportedType(const std::string &amp;type, Tokenizer::DataNeeds &amp;dataNeeds);
+-
+-		/// Unloads all tokenizer libraries.
+-		static void unloadTokenizers(void);
+-
+-	protected:
+-		static std::map&lt;std::string, std::string&gt; m_types;
+-		static std::map&lt;std::string, void *&gt; m_handles;
+-		static std::map&lt;std::string, Tokenizer::DataNeeds&gt; m_dataNeeds;
+-
+-		TokenizerFactory();
+-
+-		static Tokenizer *getLibraryTokenizer(const std::string &amp;type, const Document *pDocument);
+-
+-	private:
+-		TokenizerFactory(const TokenizerFactory &amp;other);
+-		TokenizerFactory&amp; operator=(const TokenizerFactory&amp; other);
+-
+-};
+-
+-#endif // _TOKENIZER_FACTORY_H
+
+Deleted: trunk/Tokenize/UnknownTypeTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/UnknownTypeTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/UnknownTypeTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,44 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;iostream&gt;
+-
+-#include &quot;UnknownTypeTokenizer.h&quot;
+-
+-using namespace std;
+-
+-UnknownTypeTokenizer::UnknownTypeTokenizer(const Document *pDocument) :
+-	Tokenizer(NULL),
+-	m_pStrippedDocument(NULL)
+-{
+-	// Run strings
+-	m_pStrippedDocument = runHelperProgram(pDocument, &quot;strings --bytes=6&quot;);
+-	if (m_pStrippedDocument != NULL)
+-	{
+-		// Give the result to the parent class
+-		setDocument(m_pStrippedDocument);
+-	}
+-}
+-
+-UnknownTypeTokenizer::~UnknownTypeTokenizer()
+-{
+-	if (m_pStrippedDocument != NULL)
+-	{
+-		delete m_pStrippedDocument;
+-	}
+-}
+
+Deleted: trunk/Tokenize/UnknownTypeTokenizer.h
+===================================================================
+--- trunk/Tokenize/UnknownTypeTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/UnknownTypeTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,41 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _UNKNOWN_TYPE_TOKENIZER_H
+-#define _UNKNOWN_TYPE_TOKENIZER_H
+-
+-#include &quot;Document.h&quot;
+-#include &quot;Tokenizer.h&quot;
+-
+-/// Tokenizer for unknown types.
+-class UnknownTypeTokenizer : public Tokenizer
+-{
+-	public:
+-		UnknownTypeTokenizer(const Document *pDocument);
+-		virtual ~UnknownTypeTokenizer();
+-
+-	protected:
+-		Document *m_pStrippedDocument;
+-
+-	private:
+-		UnknownTypeTokenizer(const UnknownTypeTokenizer &amp;other);
+-		UnknownTypeTokenizer&amp; operator=(const UnknownTypeTokenizer&amp; other);
+-
+-};
+-
+-#endif // _UNKNOWN_TYPE_TOKENIZER_H
+
+Deleted: trunk/Tokenize/WordTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/WordTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/WordTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,67 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;WordTokenizer.h&quot;
+-
+-using std::string;
+-using std::set;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(set&lt;string&gt; &amp;types)
+-{
+-	types.clear();
+-	types.insert(&quot;application/msword&quot;);
+-
+-	return true;
+-}
+-
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void)
+-{
+-	return Tokenizer::ALL_BUT_FILES;
+-}
+-
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument)
+-{
+-	return new WordTokenizer(pDocument);
+-}
+-
+-WordTokenizer::WordTokenizer(const Document *pDocument) :
+-	Tokenizer(NULL),
+-	m_pStrippedDocument(NULL)
+-{
+-	// Run antiword
+-	m_pStrippedDocument = runHelperProgram(pDocument, &quot;antiword&quot;);
+-	if (m_pStrippedDocument != NULL)
+-	{
+-		// Give the result to the parent class
+-		setDocument(m_pStrippedDocument);
+-	}
+-}
+-
+-WordTokenizer::~WordTokenizer()
+-{
+-	if (m_pStrippedDocument != NULL)
+-	{
+-		delete m_pStrippedDocument;
+-	}
+-}
+
+Deleted: trunk/Tokenize/WordTokenizer.h
+===================================================================
+--- trunk/Tokenize/WordTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/WordTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,51 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _WORD_TOKENIZER_H
+-#define _WORD_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;Tokenizer.h&quot;
+-
+-/// This returns the MIME types supported by the library's tokenizer.
+-bool getTokenizerTypes(std::set&lt;std::string&gt; &amp;types);
+-/// This returns the data needs of the provided Tokenizer(s).
+-int getTokenizerDataNeeds(void);
+-/// This returns a pointer to a Tokenizer, allocated with new.
+-Tokenizer *getTokenizer(const Document *pDocument);
+-
+-/// Tokenizer for MS Word documents.
+-class WordTokenizer : public Tokenizer
+-{
+-	public:
+-		WordTokenizer(const Document *pDocument);
+-		virtual ~WordTokenizer();
+-
+-	protected:
+-		Document *m_pStrippedDocument;
+-
+-	private:
+-		WordTokenizer(const WordTokenizer &amp;other);
+-		WordTokenizer&amp; operator=(const WordTokenizer&amp; other);
+-
+-};
+-
+-#endif // _WORD_TOKENIZER_H
+
+Deleted: trunk/Tokenize/XmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/XmlTokenizer.cpp	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/XmlTokenizer.cpp	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,112 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;strings.h&gt;
+-#include &lt;sys/types.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;StringManip.h&quot;
+-#include &quot;XmlTokenizer.h&quot;
+-
+-//#define DEBUG_TOKENIZER
+-
+-using std::string;
+-
+-XmlTokenizer::XmlTokenizer(const Document *pDocument) :
+-	Tokenizer(NULL),
+-	m_pStrippedDocument(NULL)
+-{
+-	if (pDocument != NULL)
+-	{
+-		unsigned int length = 0;
+-		const char *data = pDocument-&gt;getData(length);
+-
+-		if ((data != NULL) &amp;&amp;
+-			(length &gt; 0))
+-		{
+-			// Remove XML tags
+-			string strippedData = parseXML(data);
+-
+-			// Pass the result to the parent class
+-			m_pStrippedDocument = new Document(pDocument-&gt;getTitle(),
+-				pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+-				pDocument-&gt;getLanguage());
+-			m_pStrippedDocument-&gt;setData(strippedData.c_str(), strippedData.length());
+-			m_pStrippedDocument-&gt;setTimestamp(pDocument-&gt;getTimestamp());
+-			m_pStrippedDocument-&gt;setSize(pDocument-&gt;getSize());
+-
+-			setDocument(m_pStrippedDocument);
+-		}
+-	}
+-}
+-
+-XmlTokenizer::~XmlTokenizer()
+-{
+-	if (m_pStrippedDocument != NULL)
+-	{
+-		delete m_pStrippedDocument;
+-	}
+-}
+-
+-/// Parses XML; the string without tags.
+-string XmlTokenizer::parseXML(const string &amp;str)
+-{
+-	if (str.empty() == true)
+-	{
+-		return &quot;&quot;;
+-	}
+-
+-	string stripped(StringManip::replaceEntities(str));
+-
+-	// Tag start
+-	string::size_type startPos = stripped.find(&quot;&lt;&quot;);
+-	while (startPos != string::npos)
+-	{
+-		string::size_type endPos = stripped.find(&quot;&gt;&quot;, startPos);
+-		if (endPos == string::npos)
+-		{
+-			break;
+-		}
+-
+-		stripped.erase(startPos, endPos - startPos + 1);
+-
+-		// Next
+-		startPos = stripped.find(&quot;&lt;&quot;);
+-	}
+-
+-	// The input may contain partial tags, eg &quot;a&gt;...&lt;/a&gt;&lt;b&gt;...&lt;/b&gt;...&lt;c&quot;
+-	string::size_type pos = stripped.find(&quot;&gt;&quot;);
+-	if (pos != string::npos)
+-	{
+-		stripped.erase(0, pos + 1);
+-	}
+-	pos = stripped.find(&quot;&lt;&quot;);
+-	if (pos != string::npos)
+-	{
+-		stripped.erase(pos);
+-	}
+-
+-	return stripped;
+-}
+-
+-/// Utility method that strips XML tags off; the string without tags.
+-string XmlTokenizer::stripTags(const string &amp;str)
+-{
+-	return parseXML(str);
+-}
+
+Deleted: trunk/Tokenize/XmlTokenizer.h
+===================================================================
+--- trunk/Tokenize/XmlTokenizer.h	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/XmlTokenizer.h	2007-02-09 14:02:37 UTC (rev 707)
+@@ -1,45 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _XML_TOKENIZER_H
+-#define _XML_TOKENIZER_H
+-
+-#include &lt;string&gt;
+-
+-#include &quot;Document.h&quot;
+-#include &quot;Tokenizer.h&quot;
+-
+-/// XML tokenizer that strips all tags and only preserves text.
+-class XmlTokenizer : public Tokenizer
+-{
+-	public:
+-		XmlTokenizer(const Document *pDocument);
+-		virtual ~XmlTokenizer();
+-
+-		/// Utility method that strips XML tags off; the string without tags.
+-		static std::string stripTags(const std::string &amp;str);
+-
+-	protected:
+-		Document *m_pStrippedDocument;
+-
+-		/// Parses XML; the string without tags.
+-		static std::string parseXML(const std::string &amp;str);
+-
+-};
+-
+-#endif // _XML_TOKENIZER_H
+
+Added: trunk/Tokenize/filters/README
+===================================================================
+--- trunk/Tokenize/filters/README	2007-02-08 15:28:51 UTC (rev 706)
++++ trunk/Tokenize/filters/README	2007-02-09 14:02:37 UTC (rev 707)
+@@ -0,0 +1,5 @@
++Here go the filters from the Dijon project (<A HREF="http://dijon.berlios.de/">http://dijon.berlios.de/</A>).
++
++Check out <A HREF="svn://svn.berlios.de/svnroot/repos/dijon/branches/pinot">svn://svn.berlios.de/svnroot/repos/dijon/branches/pinot</A>
++and copy the contents of filters here.
++
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000700.html">[Pinot-svn] r706 - in trunk: . Collect Index Monitor Search	Search/Google Tokenize UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000702.html">[Pinot-svn] r708 - in trunk: Index Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#701">[ date ]</a>
+              <a href="thread.html#701">[ thread ]</a>
+              <a href="subject.html#701">[ subject ]</a>
+              <a href="author.html#701">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

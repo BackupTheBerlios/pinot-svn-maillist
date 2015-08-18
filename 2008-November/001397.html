@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1406 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1406%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811111420.mABEK4Gh023518%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001396.html">
+   <LINK REL="Next"  HREF="001398.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1406 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1406%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811111420.mABEK4Gh023518%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1406 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Nov 11 15:20:04 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001396.html">[Pinot-svn] r1405 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001398.html">[Pinot-svn] r1407 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1397">[ date ]</a>
+              <a href="thread.html#1397">[ thread ]</a>
+              <a href="subject.html#1397">[ subject ]</a>
+              <a href="author.html#1397">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-11 15:19:58 +0100 (Tue, 11 Nov 2008)
+New Revision: 1406
+
+Modified:
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+Log:
+Only make new labels editable, since existing labels can't be renamed.
+
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2008-11-09 15:47:01 UTC (rev 1405)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2008-11-11 14:19:58 UTC (rev 1406)
+@@ -25,7 +25,7 @@
+ #include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/entry.h&gt;
+ #include &lt;gtkmm/menu.h&gt;
+-#include &lt;gtkmm/messagedialog.h&gt;
++#include &lt;gtkmm/cellrenderertext.h&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -102,7 +102,15 @@
+ 	// Associate the columns model to the labels tree
+ 	m_refLabelsTree = ListStore::create(m_labelsColumns);
+ 	labelsTreeview-&gt;set_model(m_refLabelsTree);
+-	labelsTreeview-&gt;append_column(_(&quot;Name&quot;), m_labelsColumns.m_name);
++	TreeViewColumn *pColumn = new TreeViewColumn(_(&quot;Name&quot;));
++	CellRendererText *pTextRenderer = new CellRendererText();
++	pTextRenderer-&gt;signal_edited().connect(sigc::mem_fun(*this, &amp;prefsDialog::updateLabelRow));
++	pColumn-&gt;pack_start(*manage(pTextRenderer));
++	pColumn-&gt;set_cell_data_func(*pTextRenderer, sigc::mem_fun(*this, &amp;prefsDialog::renderLabelNameColumn));
++	pColumn-&gt;add_attribute(pTextRenderer-&gt;property_text(), m_labelsColumns.m_name);
++	pColumn-&gt;set_resizable(true);
++	pColumn-&gt;set_sort_column(m_labelsColumns.m_name);
++	labelsTreeview-&gt;append_column(*manage(pColumn));
+ 	// Allow only single selection
+ 	labelsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	populate_labelsTreeview();
+@@ -716,3 +724,50 @@
+ 	populate_patternsTreeview(defaultPatterns, isBlackList);
+ }
+ 
++void prefsDialog::updateLabelRow(const ustring &amp;path_string, const ustring &amp;text)
++{
++	Gtk::TreePath path(path_string);
++
++	// Get the row
++	TreeModel::iterator iter = m_refLabelsTree-&gt;get_iter(path);
++	if (iter)
++	{
++		TreeRow row = *iter;
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog::updateLabelRow: set label to &quot; &lt;&lt; text &lt;&lt; endl;
++#endif
++		// Set the value of the name column
++		row.set_value(m_labelsColumns.m_name, (ustring)text);
++	}
++}
++
++void prefsDialog::renderLabelNameColumn(CellRenderer *pRenderer, const TreeModel::iterator &amp;iter)
++{
++	TreeModel::Row row = *iter;
++
++	if (pRenderer == NULL)
++	{
++		return;
++	}
++
++	CellRendererText *pTextRenderer = dynamic_cast&lt;CellRendererText*&gt;(pRenderer);
++	if (pTextRenderer != NULL)
++	{
++		bool isNewLabel = false;
++
++		// Is this a new label ?
++		if (row[m_labelsColumns.m_enabled] == false)
++		{
++			isNewLabel = true;
++		}
++
++		// Set the editable property
++#ifdef GLIBMM_PROPERTIES_ENABLED
++		pTextRenderer-&gt;property_editable() = isNewLabel;
++#else
++		pTextRenderer-&gt;set_property(&quot;editable&quot;, isNewLabel);
++#endif
++	}
++}
++
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2008-11-09 15:47:01 UTC (rev 1405)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2008-11-11 14:19:58 UTC (rev 1406)
+@@ -72,6 +72,9 @@
+ 	virtual void on_removePatternButton_clicked();
+ 	virtual void on_resetPatternsButton_clicked();
+ 
++	void updateLabelRow(const Glib::ustring &amp;path_string, const Glib::ustring &amp;text);
++	void renderLabelNameColumn(Gtk::CellRenderer *pRenderer, const Gtk::TreeModel::iterator &amp;iter);
++
+ 	void attach_value_widgets(const std::string &amp;name, const std::string &amp;value, guint rowNumber);
+ 	void populate_proxyTypeCombobox();
+ 	void populate_labelsTreeview();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001396.html">[Pinot-svn] r1405 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001398.html">[Pinot-svn] r1407 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1397">[ date ]</a>
+              <a href="thread.html#1397">[ thread ]</a>
+              <a href="subject.html#1397">[ subject ]</a>
+              <a href="author.html#1397">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

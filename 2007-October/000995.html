@@ -1,0 +1,760 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1001 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1001%20-%20trunk/Index&In-Reply-To=%3C200710021425.l92EP5LJ008435%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000994.html">
+   <LINK REL="Next"  HREF="000996.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1001 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1001%20-%20trunk/Index&In-Reply-To=%3C200710021425.l92EP5LJ008435%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1001 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct  2 16:25:05 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000994.html">[Pinot-svn] r1000 - in trunk: Index Search
+</A></li>
+        <LI>Next message: <A HREF="000996.html">[Pinot-svn] r1002 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#995">[ date ]</a>
+              <a href="thread.html#995">[ thread ]</a>
+              <a href="subject.html#995">[ subject ]</a>
+              <a href="author.html#995">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-02 16:25:04 +0200 (Tue, 02 Oct 2007)
+New Revision: 1001
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Actually, a new addLabel() method, together with the existing rename and
+deleteLabel() methods, is more suitable to label management over D-Bus.
+Removed the D-Bus'ified setLabels() and overloaded getLabels() for clients
+that want to get the list directly from the daemon.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-10-01 12:43:31 UTC (rev 1000)
++++ trunk/Index/DBusXapianIndex.cpp	2007-10-02 14:25:04 UTC (rev 1001)
+@@ -355,8 +355,29 @@
+ /// Sets the list of known labels.
+ bool DBusXapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
+ {
+-	gboolean updatedLabels = FALSE;
++	// Not allowed here
++	return false;
++}
+ 
++/// Gets the list of known labels.
++bool DBusXapianIndex::getLabels(set&lt;string&gt; &amp;labels) const
++{
++	reopen();
++
++	return XapianIndex::getLabels(labels);
++}
++
++/// Gets the list of known labels.
++bool DBusXapianIndex::getLabels(set&lt;string&gt; &amp;labels, bool forceDBus) const
++{
++	bool gotLabels = false;
++
++	if (forceDBus == false)
++	{
++		// Call overload
++		return getLabels(labels);
++	}
++
+ 	DBusGConnection *pBus = getBusConnection();
+ 	if (pBus == NULL)
+ 	{
+@@ -366,58 +387,176 @@
+ 	DBusGProxy *pBusProxy = getBusProxy(pBus);
+ 	if (pBusProxy == NULL)
+ 	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::setLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;DBusXapianIndex::getLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
+ 	GError *pError = NULL;
+-	dbus_uint32_t labelsCount = labels.size();
+ 	char **pLabels;
+-	unsigned int labelIndex = 0;
+ 
+-	pLabels = g_new(char *, labelsCount + 1);
+-	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-		labelIter != labels.end(); ++labelIter)
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;GetLabels&quot;, &amp;pError,
++		G_TYPE_INVALID,
++		G_TYPE_STRV, &amp;pLabels,
++		G_TYPE_INVALID) == TRUE)
+ 	{
+-		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
+-		++labelIndex;
++		for (char **pLabel = pLabels; (*pLabel) != NULL; ++pLabel)
++		{
++			labels.insert(*pLabel);
++		}
++
++		// Free the array
++		g_strfreev(pLabels);
++
++		gotLabels = true;
+ 	}
+-	pLabels[labelIndex] = NULL;
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::getLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
+ 
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;SetLabels&quot;, &amp;pError,
+-		G_TYPE_STRV, pLabels,
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return gotLabels;
++}
++
++/// Adds a label.
++bool DBusXapianIndex::addLabel(const string &amp;name)
++{
++	bool addedLabel = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::addLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	const char *pLabel = name.c_str();
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;AddLabel&quot;, &amp;pError,
++		G_TYPE_STRING, pLabel,
+ 		G_TYPE_INVALID,
+-		G_TYPE_BOOLEAN, &amp;updatedLabels,
+-		G_TYPE_INVALID) == FALSE)
++		G_TYPE_STRING, &amp;pLabel,
++		G_TYPE_INVALID) == TRUE)
+ 	{
++		addedLabel = true;
++	}
++	else
++	{
+ 		if (pError != NULL)
+ 		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			cerr &lt;&lt; &quot;DBusXapianIndex::addLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+ 			g_error_free(pError);
+ 		}
+ 	}
+ 
+-	// Free the array
+-	g_strfreev(pLabels);
+-
+ 	g_object_unref(pBusProxy);
+ 	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+ 
+-	if (updatedLabels == TRUE)
++	return addedLabel;
++}
++
++/// Renames a label.
++bool DBusXapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
++{
++	bool renamedLabel = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
+ 	{
+-		return true;
++		return false;
+ 	}
+ 
+-	return false;
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::renameLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	const char *pOldLabel = name.c_str();
++	const char *pNewLabel = newName.c_str();
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;RenameLabel&quot;, &amp;pError,
++		G_TYPE_STRING, pOldLabel,
++		G_TYPE_STRING, pNewLabel,
++		G_TYPE_INVALID,
++		G_TYPE_STRING, &amp;pNewLabel,
++		G_TYPE_INVALID) == TRUE)
++	{
++		renamedLabel = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::renameLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return renamedLabel;
+ }
+ 
+-/// Gets the list of known labels.
+-bool DBusXapianIndex::getLabels(set&lt;string&gt; &amp;labels) const
++/// Deletes all references to a label.
++bool DBusXapianIndex::deleteLabel(const string &amp;name)
+ {
+-	reopen();
++	bool deletedLabel = false;
+ 
+-	return XapianIndex::getLabels(labels);
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::deleteLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	const char *pLabel = name.c_str();
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;DeleteLabel&quot;, &amp;pError,
++		G_TYPE_STRING, pLabel,
++		G_TYPE_INVALID,
++		G_TYPE_STRING, &amp;pLabel,
++		G_TYPE_INVALID) == TRUE)
++	{
++		deletedLabel = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::deleteLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return deletedLabel;
+ }
+ 
+ /// Determines whether a document has a label.
+@@ -758,96 +897,6 @@
+ 	return false;
+ }
+ 
+-/// Renames a label.
+-bool DBusXapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+-{
+-	bool renamedLabel = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::renameLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	const char *pOldLabel = name.c_str();
+-	const char *pNewLabel = newName.c_str();
+-
+-	if (dbus_g_proxy_call(pBusProxy, &quot;RenameLabel&quot;, &amp;pError,
+-		G_TYPE_STRING, pOldLabel,
+-		G_TYPE_STRING, pNewLabel,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRING, &amp;pNewLabel,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		renamedLabel = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::renameLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return renamedLabel;
+-}
+-
+-/// Deletes all references to a label.
+-bool DBusXapianIndex::deleteLabel(const string &amp;name)
+-{
+-	bool deletedLabel = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::deleteLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	const char *pLabel = name.c_str();
+-
+-	if (dbus_g_proxy_call(pBusProxy, &quot;DeleteLabel&quot;, &amp;pError,
+-		G_TYPE_STRING, pLabel,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRING, &amp;pLabel,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		deletedLabel = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::deleteLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return deletedLabel;
+-}
+-
+ /// Flushes recent changes to the disk.
+ bool DBusXapianIndex::flush(void)
+ {
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-10-01 12:43:31 UTC (rev 1000)
++++ trunk/Index/DBusXapianIndex.h	2007-10-02 14:25:04 UTC (rev 1001)
+@@ -67,6 +67,18 @@
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
+ 
++		/// Gets the list of known labels.
++		bool getLabels(std::set&lt;std::string&gt; &amp;labels, bool forceDBus) const;
++
++		/// Adds a label.
++		virtual bool addLabel(const std::string &amp;name);
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name);
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+ 
+@@ -120,12 +132,6 @@
+ 		/// Unindexes all documents.
+ 		virtual bool unindexAllDocuments(void);
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+-
+-		/// Deletes all references to a label.
+-		virtual bool deleteLabel(const std::string &amp;name);
+-
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void);
+ 
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-10-01 12:43:31 UTC (rev 1000)
++++ trunk/Index/IndexInterface.h	2007-10-02 14:25:04 UTC (rev 1001)
+@@ -57,6 +57,15 @@
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const = 0;
+ 
++		/// Adds a label.
++		virtual bool addLabel(const std::string &amp;name) = 0;
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name) = 0;
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const = 0;
+ 
+@@ -65,11 +74,11 @@
+ 
+ 		/// Sets a document's labels.
+ 		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+-			bool resetLabels = true) = 0;
++			bool readdLabel = true) = 0;
+ 
+ 		/// Sets documents' labels.
+ 		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
+-			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true) = 0;
++			const std::set&lt;std::string&gt; &amp;labels, bool readdLabel = true) = 0;
+ 
+ 		/// Checks whether the given URL is in the index.
+ 		virtual unsigned int hasDocument(const std::string &amp;url) const = 0;
+@@ -113,12 +122,6 @@
+ 		/// Unindexes all documents.
+ 		virtual bool unindexAllDocuments(void) = 0;
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
+-
+-		/// Deletes all references to a label.
+-		virtual bool deleteLabel(const std::string &amp;name) = 0;
+-
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void) = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-10-01 12:43:31 UTC (rev 1000)
++++ trunk/Index/XapianIndex.cpp	2007-10-02 14:25:04 UTC (rev 1001)
+@@ -1000,6 +1000,114 @@
+ 	return false;
+ }
+ 
++/// Adds a label.
++bool XapianIndex::addLabel(const string &amp;name)
++{
++	// Nothing to do here
++	return false;
++}
++
++/// Renames a label.
++bool XapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
++{
++	bool renamedLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;XLABEL:&quot;);
++
++			// Get documents that have this label
++			term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// Get the document
++				Xapian::Document doc = pIndex-&gt;get_document(docId);
++				// Remove the term
++				doc.remove_term(term);
++				// ...add the new one
++				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(newName)));
++				// ...and update the document
++				pIndex-&gt;replace_document(docId, doc);
++			}
++
++			renamedLabel = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return renamedLabel;
++}
++
++/// Deletes all references to a label.
++bool XapianIndex::deleteLabel(const string &amp;name)
++{
++	bool deletedLabel = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
++		if (pIndex != NULL)
++		{
++			string term(&quot;XLABEL:&quot;);
++
++			// Get documents that have this label
++			term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// Get the document
++				Xapian::Document doc = pIndex-&gt;get_document(docId);
++				// Remove the term
++				doc.remove_term(term);
++				// ...and update the document
++				pIndex-&gt;replace_document(docId, doc);
++			}
++			deletedLabel = true;
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return deletedLabel;
++}
++
+ /// Determines whether a document has a label.
+ bool XapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+ {
+@@ -1680,107 +1788,6 @@
+ 	return deleteDocuments(MAGIC_TERM);
+ }
+ 
+-/// Renames a label.
+-bool XapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+-{
+-	bool renamedLabel = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term(&quot;XLABEL:&quot;);
+-
+-			// Get documents that have this label
+-			term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
+-			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+-				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				// Get the document
+-				Xapian::Document doc = pIndex-&gt;get_document(docId);
+-				// Remove the term
+-				doc.remove_term(term);
+-				// ...add the new one
+-				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(newName)));
+-				// ...and update the document
+-				pIndex-&gt;replace_document(docId, doc);
+-			}
+-
+-			renamedLabel = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return renamedLabel;
+-}
+-
+-/// Deletes all references to a label.
+-bool XapianIndex::deleteLabel(const string &amp;name)
+-{
+-	bool deletedLabel = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term(&quot;XLABEL:&quot;);
+-
+-			// Get documents that have this label
+-			term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
+-			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+-				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				// Get the document
+-				Xapian::Document doc = pIndex-&gt;get_document(docId);
+-				// Remove the term
+-				doc.remove_term(term);
+-				// ...and update the document
+-				pIndex-&gt;replace_document(docId, doc);
+-			}
+-			deletedLabel = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return deletedLabel;
+-}
+-
+ /// Flushes recent changes to the disk.
+ bool XapianIndex::flush(void)
+ {
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-10-01 12:43:31 UTC (rev 1000)
++++ trunk/Index/XapianIndex.h	2007-10-02 14:25:04 UTC (rev 1001)
+@@ -69,6 +69,15 @@
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
+ 
++		/// Adds a label.
++		virtual bool addLabel(const std::string &amp;name);
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name);
++
+ 		/// Determines whether a document has a label.
+ 		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+ 
+@@ -125,12 +134,6 @@
+ 		/// Unindexes all documents.
+ 		virtual bool unindexAllDocuments(void);
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+-
+-		/// Deletes all references to a label.
+-		virtual bool deleteLabel(const std::string &amp;name);
+-
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000994.html">[Pinot-svn] r1000 - in trunk: Index Search
+</A></li>
+	<LI>Next message: <A HREF="000996.html">[Pinot-svn] r1002 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#995">[ date ]</a>
+              <a href="thread.html#995">[ thread ]</a>
+              <a href="subject.html#995">[ subject ]</a>
+              <a href="author.html#995">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

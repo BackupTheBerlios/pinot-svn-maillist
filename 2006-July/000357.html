@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r364 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r364%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201403.k6KE369h014164%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000356.html">
+   <LINK REL="Next"  HREF="000358.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r364 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r364%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201403.k6KE369h014164%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r364 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 20 16:03:06 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000356.html">[Pinot-svn] r363 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000358.html">[Pinot-svn] r365 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#357">[ date ]</a>
+              <a href="thread.html#357">[ thread ]</a>
+              <a href="subject.html#357">[ subject ]</a>
+              <a href="author.html#357">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-20 16:03:04 +0200 (Thu, 20 Jul 2006)
+New Revision: 364
+
+Modified:
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+Log:
+Make use of the Threadsmanager queue.
+
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-07-20 14:01:55 UTC (rev 363)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-07-20 14:03:04 UTC (rev 364)
+@@ -27,7 +27,7 @@
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;XapianIndex.h&quot;
++#include &quot;WritableXapianIndex.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;importDialog.hh&quot;
+@@ -39,7 +39,7 @@
+ string importDialog::InternalState::m_defaultDirectory = &quot;&quot;;
+ 
+ importDialog::InternalState::InternalState(unsigned int maxIndexThreads, importDialog *pWindow) :
+-	ThreadsManager(maxIndexThreads),
++	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
+ 	m_importing(false)
+ {
+ 	m_onThreadEndSignal.connect(SigC::slot(*pWindow, &amp;importDialog::on_thread_end));
+@@ -133,21 +133,6 @@
+ 	}
+ }
+ 
+-bool importDialog::start_thread(WorkerThread *pNewThread)
+-{
+-	if (m_state.start_thread(pNewThread, false) == false)
+-	{
+-		// Delete the object
+-		delete pNewThread;
+-		return false;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;importDialog::start_thread: started thread &quot; &lt;&lt; pNewThread-&gt;getId() &lt;&lt; endl;
+-#endif
+-
+-	return true;
+-}
+-
+ void importDialog::signal_scanner(void)
+ {
+ 	// Ask the scanner for another file
+@@ -168,17 +153,20 @@
+ 
+ bool importDialog::on_import_url(const string &amp;location)
+ {
+-	XapianIndex index(PinotSettings::getInstance().m_indexLocation);
+-	IndexingThread *pThread = NULL;
++	WritableXapianIndex index(PinotSettings::getInstance().m_docsIndexLocation);
+ 	Url urlObj(location);
+ 	set&lt;string&gt; labels;
+-	string title = from_utf8(m_title);
+-	unsigned int docId = 0;
++	string title(from_utf8(m_title));
+ 
+ 	if (index.isGood() == true)
+ 	{
+-		docId = index.hasDocument(location);
+-		index.getDocumentLabels(docId, labels);
++		unsigned int docId = index.hasDocument(location);
++
++		// if the document exists, get its labels list
++		if (docId &gt; 0)
++		{
++			index.getDocumentLabels(docId, labels);
++		}
+ 	}
+ 	labels.insert(m_labelName);
+ 
+@@ -194,20 +182,8 @@
+ 	DocumentInfo docInfo(title, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+ 	docInfo.setLabels(labels);
+ 
+-	if (docId &gt; 0)
+-	{
+-		// This document needs updating
+-		index.getDocumentInfo(docId, docInfo);
+-		pThread = new IndexingThread(docInfo, docId);
+-	}
+-	else
+-	{
+-		pThread = new IndexingThread(docInfo);
+-	}
++	m_state.queue_index(docInfo);
+ 
+-	// Launch the new thread
+-	start_thread(pThread);
+-
+ 	return false;
+ }
+ 
+@@ -270,6 +246,9 @@
+ 	// Delete the thread
+ 	delete pThread;
+ 
++	// We might be able to run a queued action
++	m_state.pop_queue();
++
+ 	if (m_state.m_importing == false)
+ 	{
+ 		double fractionFilled = 1.0;
+@@ -424,7 +403,7 @@
+ 			maxDirLevel, linksCheckbutton-&gt;get_active(),
+ 			&amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
+ 		m_pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;importDialog::on_import_url));
+-		start_thread(m_pScannerThread);
++		m_state.start_thread(m_pScannerThread);
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-07-20 14:01:55 UTC (rev 363)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-07-20 14:03:04 UTC (rev 364)
+@@ -44,7 +44,6 @@
+ 
+ protected:
+ 	void populate_comboboxes(bool localOnly);
+-	bool start_thread(WorkerThread *pNewThread);
+ 	void signal_scanner(void);
+ 
+ 	bool on_activity_timeout(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000356.html">[Pinot-svn] r363 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000358.html">[Pinot-svn] r365 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#357">[ date ]</a>
+              <a href="thread.html#357">[ thread ]</a>
+              <a href="subject.html#357">[ subject ]</a>
+              <a href="author.html#357">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

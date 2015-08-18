@@ -1,0 +1,411 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r262 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r262%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200605231111.k4NBBsIW019990%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000255.html">
+   <LINK REL="Next"  HREF="000257.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r262 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r262%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200605231111.k4NBBsIW019990%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r262 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue May 23 13:11:54 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000255.html">[Pinot-svn] r261 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000257.html">[Pinot-svn] r263 - in trunk: . Collect Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#256">[ date ]</a>
+              <a href="thread.html#256">[ thread ]</a>
+              <a href="subject.html#256">[ subject ]</a>
+              <a href="author.html#256">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-23 13:11:49 +0200 (Tue, 23 May 2006)
+New Revision: 262
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Changed threads termination signal handling slightly so that the main window
+can process threads that finished while the import dialog was up.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-23 11:11:49 UTC (rev 262)
+@@ -161,6 +161,7 @@
+ }
+ 
+ ThreadsManager::ThreadsManager() :
++	SigC::Object(),
+ 	m_nextId(1),
+ 	m_backgroundThreadsCount(0)
+ {
+@@ -199,7 +200,7 @@
+ 	pthread_rwlock_unlock(&amp;m_rwLock);
+ }
+ 
+-WorkerThread *ThreadsManager::on_thread_end(void)
++WorkerThread *ThreadsManager::get_thread(void)
+ {
+ 	WorkerThread *pWorkerThread = NULL;
+ 
+@@ -219,7 +220,7 @@
+ 				break;
+ 			}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;ThreadsManager::on_thread_end: thread &quot;
++			cout &lt;&lt; &quot;ThreadsManager::get_thread: thread &quot;
+ 				&lt;&lt; threadIter-&gt;first-&gt;getId() &lt;&lt; &quot; is not done&quot; &lt;&lt; endl;
+ #endif
+ 		}
+@@ -316,6 +317,29 @@
+ 	}
+ }
+ 
++void ThreadsManager::connect(void)
++{
++	// The previous manager may have been signalled by our threads
++	WorkerThread *pThread = get_thread();
++	while (pThread != NULL)
++	{
++		m_onThreadEndSignal.emit(pThread);
++
++		// Next
++		pThread = get_thread();
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ThreadsManager::connect: connecting&quot; &lt;&lt; endl;
++#endif
++
++	// Connect the dispatcher
++	m_threadsEndConnection = WorkerThread::getDispatcher().connect(
++		SigC::slot(*this, &amp;ThreadsManager::on_thread_end));
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ThreadsManager::connect: connected&quot; &lt;&lt; endl;
++#endif
++}
++
+ void ThreadsManager::disconnect(void)
+ {
+ 	m_threadsEndConnection.block();
+@@ -325,6 +349,19 @@
+ #endif
+ }
+ 
++void ThreadsManager::on_thread_end()
++{
++	WorkerThread *pThread = get_thread();
++	if (pThread == NULL)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::on_thread_end: foreign thread&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++	m_onThreadEndSignal.emit(pThread);
++}
++
+ IndexBrowserThread::IndexBrowserThread(const string &amp;indexName,
+ 	const string &amp;labelName, unsigned int maxDocsCount, unsigned int startDoc) :
+ 	WorkerThread(),
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-05-23 11:11:49 UTC (rev 262)
+@@ -23,6 +23,7 @@
+ #include &lt;set&gt;
+ #include &lt;map&gt;
+ #include &lt;pthread.h&gt;
++#include &lt;sigc++/object.h&gt;
+ #include &lt;sigc++/slot.h&gt;
+ #include &lt;sigc++/connection.h&gt;
+ #include &lt;glibmm/dispatcher.h&gt;
+@@ -87,7 +88,7 @@
+ 
+ };
+ 
+-class ThreadsManager
++class ThreadsManager : public SigC::Object
+ {
+ 	public:
+ 		ThreadsManager();
+@@ -95,16 +96,18 @@
+ 
+ 		bool start_thread(WorkerThread *pWorkerThread, bool inBackground);
+ 
+-		WorkerThread *on_thread_end(void);
+-
+ 		unsigned int get_threads_count(void);
+ 
+ 		bool has_threads(void);
+ 
+ 		void stop_threads(void);
+ 
++		virtual void connect(void);
++
+ 		virtual void disconnect(void);
+ 
++		void on_thread_end();
++
+ 	protected:
+ 		SigC::Connection m_threadsEndConnection;
+ 		// Read/write lock
+@@ -112,10 +115,12 @@
+ 		std::map&lt;WorkerThread *, Glib::Thread *&gt; m_threads;
+ 		unsigned int m_nextId;
+ 		unsigned int m_backgroundThreadsCount;
++		SigC::Signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+ 
+ 		bool read_lock(void);
+ 		bool write_lock(void);
+ 		void unlock(void);
++		WorkerThread *get_thread(void);
+ 
+ 	private:
+ 		ThreadsManager(const ThreadsManager &amp;other);
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-05-23 11:11:49 UTC (rev 262)
+@@ -40,28 +40,15 @@
+ 
+ importDialog::InternalState::InternalState(importDialog *pWindow) :
+ 	ThreadsManager(),
+-	m_importing(false),
+-	m_pImportWindow(pWindow)
++	m_importing(false)
+ {
++	m_onThreadEndSignal.connect(SigC::slot(*pWindow, &amp;importDialog::on_thread_end));
+ }
+ 
+ importDialog::InternalState::~InternalState()
+ {
+ }
+ 
+-void importDialog::InternalState::connect(void)
+-{
+-	if (m_pImportWindow != NULL)
+-	{
+-		// Connect the dispatcher
+-		m_threadsEndConnection = WorkerThread::getDispatcher().connect(
+-			SigC::slot(*m_pImportWindow, &amp;importDialog::on_thread_end));
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;importDialog::InternalState::connect: connected&quot; &lt;&lt; endl;
+-#endif
+-	}
+-}
+-
+ importDialog::importDialog(const Glib::ustring &amp;title,
+ 	const set&lt;string&gt; &amp;mimeTypes) :
+ 	importDialog_glade(),
+@@ -123,6 +110,7 @@
+ 
+ importDialog::~importDialog()
+ {
++	m_state.disconnect();
+ }
+ 
+ void importDialog::populate_comboboxes(bool localOnly)
+@@ -268,18 +256,13 @@
+ 	return askForAnotherFile;
+ }
+ 
+-void importDialog::on_thread_end()
++void importDialog::on_thread_end(WorkerThread *pThread)
+ {
+ 	ustring status;
+ 	bool success = true;
+ 
+-	WorkerThread *pThread = m_state.on_thread_end();
+ 	if (pThread == NULL)
+ 	{
+-		// It's likely to be a thread that was started by the main window
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;importDialog::on_thread_end: foreign thread&quot; &lt;&lt; endl;
+-#endif
+ 		return;
+ 	}
+ 
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-05-23 11:11:49 UTC (rev 262)
+@@ -51,7 +51,7 @@
+ 
+ 	bool on_activity_timeout(void);
+ 	bool on_import_url(const std::string &amp;location);
+-	void on_thread_end(void);
++	void on_thread_end(WorkerThread *pThread);
+ 
+ private:
+ 	std::set&lt;std::string&gt; m_mimeTypes;
+@@ -80,8 +80,6 @@
+ 			InternalState(importDialog *pWindow);
+ 			~InternalState();
+ 
+-			void connect(void);
+-
+ 			// Directory scanning
+ 			bool m_importing;
+ 			Glib::Mutex m_scanMutex;
+@@ -89,9 +87,6 @@
+ 			// The default directory
+ 			static std::string m_defaultDirectory;
+ 
+-		protected:
+-			importDialog *m_pImportWindow;
+-
+ 	} m_state;
+ 
+ 	virtual void on_typeCombobox_changed();
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-05-23 11:11:49 UTC (rev 262)
+@@ -67,10 +67,10 @@
+ 	ThreadsManager(),
+ 	m_liveQueryLength(0),
+ 	m_currentPage(0),
+-	m_browsingIndex(false),
+-	m_pMainWindow(pWindow)
++	m_browsingIndex(false)
+ {
+ 	pthread_rwlock_init(&amp;m_listsLock, NULL);
++	m_onThreadEndSignal.connect(SigC::slot(*pWindow, &amp;mainWindow::on_thread_end));
+ }
+ 
+ mainWindow::InternalState::~InternalState()
+@@ -112,19 +112,6 @@
+ #endif
+ }
+ 
+-void mainWindow::InternalState::connect(void)
+-{
+-	if (m_pMainWindow != NULL)
+-	{
+-		// Connect the dispatcher
+-		m_threadsEndConnection = WorkerThread::getDispatcher().connect(
+-			SigC::slot(*m_pMainWindow, &amp;mainWindow::on_thread_end));
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::InternalState::connect: connected&quot; &lt;&lt; endl;
+-#endif
+-	}
+-}
+-
+ //
+ // Constructor
+ //
+@@ -748,16 +735,12 @@
+ //
+ // End of worker thread
+ //
+-void mainWindow::on_thread_end()
++void mainWindow::on_thread_end(WorkerThread *pThread)
+ {
+ 	ustring status;
+ 
+-	WorkerThread *pThread = m_state.on_thread_end();
+ 	if (pThread == NULL)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_thread_end: signalled but couldn't find any thread&quot; &lt;&lt; endl;
+-#endif
+ 		return;
+ 	}
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-05-23 11:11:49 UTC (rev 262)
+@@ -71,7 +71,7 @@
+ 	void on_label_changed(Glib::ustring indexName, Glib::ustring labelName);
+ 	void on_switch_page(GtkNotebookPage *p0, guint p1);
+ 	void on_close_page(Glib::ustring title, NotebookPageBox::PageType type);
+-	void on_thread_end();
++	void on_thread_end(WorkerThread *pThread);
+ 	void on_editindex(Glib::ustring indexName, Glib::ustring location);
+ 	void on_message_reception(DocumentInfo docInfo, std::string labelName);
+ 	void on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, std::string indexName);
+@@ -176,7 +176,6 @@
+ 			bool read_lock_lists(unsigned int where);
+ 			bool write_lock_lists(unsigned int where);
+ 			void unlock_lists(void);
+-			void connect(void);
+ 
+ 			// Query
+ 			unsigned int m_liveQueryLength;
+@@ -190,7 +189,6 @@
+ 
+ 		protected:
+ 			pthread_rwlock_t m_listsLock;
+-			mainWindow *m_pMainWindow;
+ 
+ 	} m_state;
+ 	static unsigned int m_maxDocsCount;
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-05-22 13:25:09 UTC (rev 261)
++++ trunk/UI/GTK2/src/pinot.cc	2006-05-23 11:11:49 UTC (rev 262)
+@@ -232,6 +232,7 @@
+ 	}
+ 	catch (...)
+ 	{
++		cerr &lt;&lt; &quot;Unknown exception&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000255.html">[Pinot-svn] r261 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000257.html">[Pinot-svn] r263 - in trunk: . Collect Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#256">[ date ]</a>
+              <a href="thread.html#256">[ thread ]</a>
+              <a href="subject.html#256">[ subject ]</a>
+              <a href="author.html#256">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

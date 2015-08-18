@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1156 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1156%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200801050452.m054qbsC004437%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001149.html">
+   <LINK REL="Next"  HREF="001151.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1156 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1156%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200801050452.m054qbsC004437%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1156 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jan  5 05:52:37 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001149.html">[Pinot-svn] r1155 - trunk/po
+</A></li>
+        <LI>Next message: <A HREF="001151.html">[Pinot-svn] r1157 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1150">[ date ]</a>
+              <a href="thread.html#1150">[ thread ]</a>
+              <a href="subject.html#1150">[ subject ]</a>
+              <a href="author.html#1150">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-01-05 05:52:37 +0100 (Sat, 05 Jan 2008)
+New Revision: 1156
+
+Added:
+   trunk/IndexSearch/Xapian/ModuleExports.cpp
+Log:
+This should have been checked in some time ago.
+
+
+Added: trunk/IndexSearch/Xapian/ModuleExports.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/ModuleExports.cpp	2008-01-01 04:28:20 UTC (rev 1155)
++++ trunk/IndexSearch/Xapian/ModuleExports.cpp	2008-01-05 04:52:37 UTC (rev 1156)
+@@ -0,0 +1,95 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;string&gt;
++#include &lt;map&gt;
++
++#include &quot;config.h&quot;
++#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;XapianEngine.h&quot;
++#include &quot;XapianIndex.h&quot;
++
++using std::string;
++
++extern &quot;C&quot;
++{
++	string getModuleType(void);
++	bool openOrCreateIndex(const string &amp;databaseName, bool &amp;obsoleteFormat,
++		bool readOnly, bool overwrite);
++	bool mergeIndexes(const string &amp;mergedDatabaseName,
++		const string &amp;firstDatabaseName, const string &amp;secondDatabaseName);
++	IndexInterface *getIndex(const string &amp;databaseName);
++	SearchEngineInterface *getSearchEngine(const string &amp;databaseName);
++	void closeAll(void);
++}
++
++string getModuleType(void)
++{
++	return&quot;xapian&quot;;
++}
++
++bool openOrCreateIndex(const string &amp;databaseName, bool &amp;obsoleteFormat,
++	bool readOnly, bool overwrite)
++{
++	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(databaseName, readOnly, overwrite);
++	if (pDb == NULL)
++	{
++		obsoleteFormat = false;
++		return false;
++	}
++	obsoleteFormat = pDb-&gt;wasObsoleteFormat();
++
++	return true;
++}
++
++bool mergeIndexes(const string &amp;mergedDatabaseName,
++	const string &amp;firstDatabaseName, const string &amp;secondDatabaseName)
++{
++	// Assume both have already been open
++	XapianDatabase *pFirstDb = XapianDatabaseFactory::getDatabase(firstDatabaseName);
++	if ((pFirstDb == NULL) ||
++		(pFirstDb-&gt;isOpen() == false))
++	{
++		return false;
++	}
++	XapianDatabase *pSecondDb = XapianDatabaseFactory::getDatabase(secondDatabaseName);
++	if ((pSecondDb == NULL) ||
++		(pSecondDb-&gt;isOpen() == false))
++	{
++		return false;
++	}
++
++	// Merge them
++	return XapianDatabaseFactory::mergeDatabases(mergedDatabaseName, pFirstDb, pSecondDb);
++}
++
++IndexInterface *getIndex(const string &amp;databaseName)
++{
++	return new XapianIndex(databaseName);
++}
++
++SearchEngineInterface *getSearchEngine(const string &amp;databaseName)
++{
++	return new XapianEngine(databaseName);
++}
++
++void closeAll(void)
++{
++	XapianDatabaseFactory::closeAll();
++}
++
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001149.html">[Pinot-svn] r1155 - trunk/po
+</A></li>
+	<LI>Next message: <A HREF="001151.html">[Pinot-svn] r1157 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1150">[ date ]</a>
+              <a href="thread.html#1150">[ thread ]</a>
+              <a href="subject.html#1150">[ subject ]</a>
+              <a href="author.html#1150">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

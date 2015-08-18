@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1428 - in trunk: . IndexSearch/Xapian SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1428%20-%20in%20trunk%3A%20.%20IndexSearch/Xapian%20SQL&In-Reply-To=%3C200812021554.mB2FsvRS006285%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001418.html">
+   <LINK REL="Next"  HREF="001420.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1428 - in trunk: . IndexSearch/Xapian SQL</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1428%20-%20in%20trunk%3A%20.%20IndexSearch/Xapian%20SQL&In-Reply-To=%3C200812021554.mB2FsvRS006285%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1428 - in trunk: . IndexSearch/Xapian SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec  2 16:54:57 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001418.html">[Pinot-svn] r1427 - in trunk: Collect Utils
+</A></li>
+        <LI>Next message: <A HREF="001420.html">[Pinot-svn] r1429 - in trunk: . Collect UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1419">[ date ]</a>
+              <a href="thread.html#1419">[ thread ]</a>
+              <a href="subject.html#1419">[ subject ]</a>
+              <a href="author.html#1419">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-02 16:54:50 +0100 (Tue, 02 Dec 2008)
+New Revision: 1428
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianDatabase.cpp
+   trunk/SQL/QueryHistory.cpp
+   trunk/configure.in
+Log:
+Header fixes.
+Do without regex.h in XapianDatabase if not available.
+In configure.in, libcrypt should no longer be required.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.cpp	2008-12-01 13:51:32 UTC (rev 1427)
++++ trunk/IndexSearch/Xapian/XapianDatabase.cpp	2008-12-02 15:54:50 UTC (rev 1428)
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &quot;config.h&quot;
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;fcntl.h&gt;
+@@ -23,7 +24,9 @@
+ #include &lt;stdlib.h&gt;
+ #include &lt;string.h&gt;
+ #include &lt;strings.h&gt;
++#ifdef HAVE_REGEX_H
+ #include &lt;regex.h&gt;
++#endif
+ #include &lt;stdio.h&gt;
+ #include &lt;sstream&gt;
+ #include &lt;iostream&gt;
+@@ -272,8 +275,12 @@
+ 			&lt;&lt; &quot; doesn't exist&quot; &lt;&lt; endl;
+ #endif
+ 
+-		// Database directory doesn't exist, create it (mode 755)
+-		if (mkdir(m_databaseName.c_str(), (mode_t)S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) != 0)
++		// Database directory doesn't exist, create it
++#ifdef WIN32
++		if (mkdir(m_databaseName.c_str()) != 0)
++#else
++		if (mkdir(m_databaseName.c_str(), (mode_t)(S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) != 0)
++#endif
+ 		{
+ 			cerr &lt;&lt; &quot;XapianDatabase::openDatabase: couldn't create database directory &quot;
+ 				&lt;&lt; m_databaseName &lt;&lt; endl;
+@@ -507,9 +514,10 @@
+ 
+ bool XapianDatabase::badRecordField(const string &amp;field)
+ {
++	bool isBadField = false;
++#ifdef HAVE_REGEX_H
+ 	regex_t fieldRegex;
+ 	regmatch_t pFieldMatches[1];
+-	bool isBadField = false;
+ 
+ 	// A bad field is one that includes one of our field delimiters
+ 	if (regcomp(&amp;fieldRegex,
+@@ -523,6 +531,19 @@
+ 		}
+ 	}
+ 	regfree(&amp;fieldRegex);
++#else
++	// A bad field is one that includes one of our field delimiters
++	if ((field.find(&quot;url&quot;) != string::npos) ||
++		(field.find(&quot;sample&quot;) != string::npos) ||
++		(field.find(&quot;caption&quot;) != string::npos) ||
++		(field.find(&quot;type&quot;) != string::npos) ||
++		(field.find(&quot;modtime&quot;) != string::npos) ||
++		(field.find(&quot;language&quot;) != string::npos) ||
++		(field.find(&quot;size&quot;) != string::npos))
++	{
++		isBadField = true;
++	}
++#endif
+ 
+ 	return isBadField;
+ }
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2008-12-01 13:51:32 UTC (rev 1427)
++++ trunk/SQL/QueryHistory.cpp	2008-12-02 15:54:50 UTC (rev 1428)
+@@ -18,9 +18,10 @@
+ 
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
++#include &lt;stdlib.h&gt;
+ #include &lt;unistd.h&gt;
++#include &lt;time.h&gt;
+ #include &lt;iostream&gt;
+-#include &lt;cstdlib&gt;
+ 
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2008-12-01 13:51:32 UTC (rev 1427)
++++ trunk/configure.in	2008-12-02 15:54:50 UTC (rev 1428)
+@@ -351,10 +351,10 @@
+ 
+ dnl Other libraries
+ MISC_CFLAGS=&quot;$PTHREAD_CFLAGS $VISIB_CFLAGS&quot;
+-MISC_LIBS=&quot;-lcrypt $PTHREAD_LIBS&quot;
++MISC_LIBS=&quot;$PTHREAD_LIBS&quot;
+ AC_SUBST(MISC_CFLAGS)
+ AC_SUBST(MISC_LIBS)
+-AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h dlfcn.h])
++AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h dlfcn.h regex.h])
+ PKG_CHECK_MODULES(MIMEINFO, shared-mime-info )
+ SHARED_MIME_INFO_PREFIX=`pkg-config --variable=prefix shared-mime-info`
+ AC_SUBST(SHARED_MIME_INFO_PREFIX)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001418.html">[Pinot-svn] r1427 - in trunk: Collect Utils
+</A></li>
+	<LI>Next message: <A HREF="001420.html">[Pinot-svn] r1429 - in trunk: . Collect UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1419">[ date ]</a>
+              <a href="thread.html#1419">[ thread ]</a>
+              <a href="subject.html#1419">[ subject ]</a>
+              <a href="author.html#1419">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1399 - in trunk: SQL Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1399%20-%20in%20trunk%3A%20SQL%20Utils&In-Reply-To=%3C200811020842.mA28gltI009970%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001389.html">
+   <LINK REL="Next"  HREF="001391.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1399 - in trunk: SQL Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1399%20-%20in%20trunk%3A%20SQL%20Utils&In-Reply-To=%3C200811020842.mA28gltI009970%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1399 - in trunk: SQL Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov  2 09:42:47 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001389.html">[Pinot-svn] r1398 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="001391.html">[Pinot-svn] r1400 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1390">[ date ]</a>
+              <a href="thread.html#1390">[ thread ]</a>
+              <a href="subject.html#1390">[ subject ]</a>
+              <a href="author.html#1390">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-02 09:42:24 +0100 (Sun, 02 Nov 2008)
+New Revision: 1399
+
+Modified:
+   trunk/SQL/MetaDataBackup.cpp
+   trunk/SQL/MetaDataBackup.h
+   trunk/Utils/Document.cpp
+Log:
+Fixed xattr.h check. Added MetaDataBackup::getItems().
+
+
+Modified: trunk/SQL/MetaDataBackup.cpp
+===================================================================
+--- trunk/SQL/MetaDataBackup.cpp	2008-11-02 08:35:29 UTC (rev 1398)
++++ trunk/SQL/MetaDataBackup.cpp	2008-11-02 08:42:24 UTC (rev 1399)
+@@ -19,15 +19,17 @@
+ #include &quot;config.h&quot;
+ #include &lt;stdio.h&gt;
+ #include &lt;stdlib.h&gt;
++#include &lt;string.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;errno.h&gt;
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ #include &lt;attr/xattr.h&gt;
+ #endif
+ #include &lt;set&gt;
+ #include &lt;iostream&gt;
++#include &lt;sstream&gt;
+ 
+ #include &quot;Url.h&quot;
+ #include &quot;StringManip.h&quot;
+@@ -51,7 +53,7 @@
+ bool MetaDataBackup::setAttribute(const string &amp;url,
+ 	const string &amp;name, const string &amp;value, bool noXAttr)
+ {
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ 	Url urlObj(url);
+ 
+ 	// If the file is local and isn't a nested document, use an extended attribute
+@@ -62,16 +64,14 @@
+ 		string fileName(url.substr(urlObj.getProtocol().length() + 3));
+ 		string attrName(&quot;pinot.&quot; + name);
+ 
++		// Set an attribute, and add an entry in the table
+ 		if (setxattr(fileName.c_str(), attrName.c_str(),
+-			value.c_str(), (size_t)value.length(), 0) == 0)
++			value.c_str(), (size_t)value.length(), 0) != 0)
+ 		{
+-			return true;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MetaDataBackup::setAttribute: setxattr failed with &quot; &lt;&lt; strerror(errno) &lt;&lt; endl;
++#endif
+ 		}
+-		else if (errno != ENOTSUP)
+-		{
+-			// Extended attributes are supported, but some error occured 
+-			return false;
+-		}
+ 	}
+ #endif
+ 	bool update = false, success = false;
+@@ -121,7 +121,7 @@
+ 	const string &amp;name, string &amp;value, bool noXAttr)
+ {
+ 	bool success = false;
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ 	Url urlObj(url);
+ 
+ 	// If the file is local and isn't a nested document, use an extended attribute
+@@ -261,7 +261,7 @@
+ {
+ 	bool success = false;
+ 
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ 	Url urlObj(url);
+ 
+ 	// If the file is local and isn't a nested document, use an extended attribute
+@@ -273,7 +273,7 @@
+ 		string fileName(url.substr(urlObj.getProtocol().length() + 3));
+ 		string attrName(&quot;pinot.&quot; + name);
+ 
+-		if (removeattr(fileName.c_str(), attrName.c_str()) &gt; 0)
++		if (removexattr(fileName.c_str(), attrName.c_str()) &gt; 0)
+ 		{
+ 			return true;
+ 		}
+@@ -427,6 +427,48 @@
+ 	return success;
+ }
+ 
++/// Gets items.
++bool MetaDataBackup::getItems(const string &amp;protocol, set&lt;string&gt; &amp;urls,
++	unsigned long min, unsigned long max)
++{
++	SQLResults *results = NULL;
++	bool success = false;
++
++	// Even when attributes are used, an entry is always added to the table
++	if (protocol.empty() == true)
++	{
++		results = executeStatement(&quot;SELECT Url FROM MetaDataBackup \
++			LIMIT %u OFFSET %u;&quot;,
++			max - min, min);
++	}
++	else
++	{
++		results = executeStatement(&quot;SELECT Url FROM MetaDataBackup \
++			WHERE Url LIKE '%q%' LIMIT %u OFFSET %u;&quot;,
++			protocol.c_str(), max - min, min);
++	}
++	if (results != NULL)
++	{
++		while (results-&gt;hasMoreRows() == true)
++                {
++			SQLRow *row = results-&gt;nextRow();
++			if (row == NULL)
++			{
++				continue;
++			}
++
++			urls.insert(row-&gt;getColumn(0));
++			success = true;
++
++			delete row;
++		}
++
++		delete results;
++	}
++
++	return success;
++}
++
+ /// Deletes an item.
+ bool MetaDataBackup::deleteItem(const DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent,
+ 	const string &amp;value)
+
+Modified: trunk/SQL/MetaDataBackup.h
+===================================================================
+--- trunk/SQL/MetaDataBackup.h	2008-11-02 08:35:29 UTC (rev 1398)
++++ trunk/SQL/MetaDataBackup.h	2008-11-02 08:42:24 UTC (rev 1399)
+@@ -42,6 +42,11 @@
+ 		/// Gets an item.
+ 		bool getItem(DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent);
+ 
++		/// Gets items.
++		bool getItems(const std::string &amp;protocol,
++			std::set&lt;std::string&gt; &amp;urls,
++			unsigned long min, unsigned long max);
++
+ 		/// Deletes an item.
+ 		bool deleteItem(const DocumentInfo &amp;docInfo, DocumentInfo::SerialExtent extent,
+ 			const std::string &amp;value = &quot;&quot;);
+
+Modified: trunk/Utils/Document.cpp
+===================================================================
+--- trunk/Utils/Document.cpp	2008-11-02 08:35:29 UTC (rev 1398)
++++ trunk/Utils/Document.cpp	2008-11-02 08:42:24 UTC (rev 1399)
+@@ -23,13 +23,14 @@
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;sys/mman.h&gt;
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ #include &lt;attr/xattr.h&gt;
+ #endif
+ #include &lt;unistd.h&gt;
+ #include &lt;fcntl.h&gt;
+ #include &lt;errno.h&gt;
+ #include &lt;iostream&gt;
++#include &lt;set&gt;
+ 
+ #include &quot;Document.h&quot;
+ #include &quot;TimeConverter.h&quot;
+@@ -38,8 +39,9 @@
+ using std::cerr;
+ using std::endl;
+ using std::string;
++using std::set;
+ 
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ static char *getXAttr(int fd, const string &amp;attrName)
+ {
+ 	ssize_t attrSize = fgetxattr(fd, attrName.c_str(), NULL, 0);
+@@ -221,7 +223,7 @@
+ 		cerr &lt;&lt; &quot;Document::setDataFromFile: mapping failed&quot; &lt;&lt; endl;
+ 	}
+ 
+-#ifdef HAVE_ATTR_XATTR
++#ifdef HAVE_ATTR_XATTR_H
+ 	// Any extended attributes ?
+ 	ssize_t listSize = flistxattr(fd, NULL, 0);
+ 	if (listSize &gt; 0)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001389.html">[Pinot-svn] r1398 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="001391.html">[Pinot-svn] r1400 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1390">[ date ]</a>
+              <a href="thread.html#1390">[ thread ]</a>
+              <a href="subject.html#1390">[ subject ]</a>
+              <a href="author.html#1390">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

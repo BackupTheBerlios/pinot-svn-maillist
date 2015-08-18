@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r715 - in trunk: Search Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r715%20-%20in%20trunk%3A%20Search%20Tokenize&In-Reply-To=%3C200702170417.l1H4H8Cl016157%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000708.html">
+   <LINK REL="Next"  HREF="000710.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r715 - in trunk: Search Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r715%20-%20in%20trunk%3A%20Search%20Tokenize&In-Reply-To=%3C200702170417.l1H4H8Cl016157%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r715 - in trunk: Search Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb 17 05:17:08 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000708.html">[Pinot-svn] r714 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000710.html">[Pinot-svn] r716 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#709">[ date ]</a>
+              <a href="thread.html#709">[ thread ]</a>
+              <a href="subject.html#709">[ subject ]</a>
+              <a href="author.html#709">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-17 05:17:08 +0100 (Sat, 17 Feb 2007)
+New Revision: 715
+
+Modified:
+   trunk/Search/SherlockParser.cpp
+   trunk/Tokenize/FilterUtils.cpp
+Log:
+Fixed link and abstract extraction, both broken following the move to Filter.
+
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2007-02-16 15:03:36 UTC (rev 714)
++++ trunk/Search/SherlockParser.cpp	2007-02-17 04:17:08 UTC (rev 715)
+@@ -363,13 +363,13 @@
+ 
+ 			// Feed this chunk to the filter
+ 			Dijon::HtmlFilter chunkFilter(&quot;text/html&quot;);
++			set&lt;Dijon::Link&gt; chunkLinks;
+ 			if ((FilterUtils::feedFilter(chunkDoc, &amp;chunkFilter) == true) &amp;&amp;
++				(chunkFilter.get_links(chunkLinks) == true) &amp;&amp;
+ 				(chunkFilter.next_document() == true))
+ 			{
+-				set&lt;Dijon::Link&gt; chunkLinks;
+ 				unsigned int endOfFirstLink = 0, startOfSecondLink = 0, endOfSecondLink = 0, startOfThirdLink = 0;
+ 
+-				chunkFilter.get_links(chunkLinks);
+ 
+ 				// The result's URL and title should be given by the first link
+ 				for (set&lt;Dijon::Link&gt;::iterator linkIter = chunkLinks.begin(); linkIter != chunkLinks.end(); ++linkIter)
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2007-02-16 15:03:36 UTC (rev 714)
++++ trunk/Tokenize/FilterUtils.cpp	2007-02-17 04:17:08 UTC (rev 715)
+@@ -74,7 +74,7 @@
+ 		(pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_DATA) == true))
+ 	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterUtils::getFilter: feeding data&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;FilterUtils::feedFilter: feeding data&quot; &lt;&lt; endl;
+ #endif
+ 		fedInput = pFilter-&gt;set_document_data(pData, dataLength);
+ 	}
+@@ -85,7 +85,7 @@
+ 		if (pFilter-&gt;is_data_input_ok(Filter::DOCUMENT_FILE_NAME) == true)
+ 		{
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;FilterUtils::getFilter: feeding file &quot; &lt;&lt; fileName &lt;&lt; endl;
++			cout &lt;&lt; &quot;FilterUtils::feedFilter: feeding file &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
+ 			fedInput = pFilter-&gt;set_document_file(fileName);
+ 		}
+@@ -102,7 +102,7 @@
+ 				return false;
+ 			}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;FilterUtils::getFilter: feeding contents of file &quot; &lt;&lt; fileName &lt;&lt; endl;
++			cout &lt;&lt; &quot;FilterUtils::feedFilter: feeding contents of file &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
+ 
+ 			pData = docCopy.getData(dataLength);
+@@ -185,8 +185,12 @@
+ 
+ string FilterUtils::stripMarkup(const string &amp;text)
+ {
++	if (text.empty() == true)
++	{
++		return &quot;&quot;;
++	}
++
+ 	Dijon::Filter *pFilter = Dijon::FilterFactory::getFilter(&quot;text/xml&quot;);
+-	string strippedText;
+ 
+ 	if (pFilter == NULL)
+ 	{
+@@ -194,6 +198,8 @@
+ 	}
+ 
+ 	Document doc;
++	string strippedText;
++
+ 	doc.setData(text.c_str(), text.length());
+ 	if ((feedFilter(doc, pFilter) == true) &amp;&amp;
+ 		(pFilter-&gt;next_document() == true))
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000708.html">[Pinot-svn] r714 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000710.html">[Pinot-svn] r716 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#709">[ date ]</a>
+              <a href="thread.html#709">[ thread ]</a>
+              <a href="subject.html#709">[ subject ]</a>
+              <a href="author.html#709">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

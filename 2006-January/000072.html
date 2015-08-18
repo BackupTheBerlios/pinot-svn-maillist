@@ -1,0 +1,1346 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r73 - in trunk: Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r73%20-%20in%20trunk%3A%20Search%20Utils&In-Reply-To=%3C200601220916.k0M9G1aw013833%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000071.html">
+   <LINK REL="Next"  HREF="000073.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r73 - in trunk: Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r73%20-%20in%20trunk%3A%20Search%20Utils&In-Reply-To=%3C200601220916.k0M9G1aw013833%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r73 - in trunk: Search Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun Jan 22 10:16:01 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000071.html">[Pinot-svn] r72 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000073.html">[Pinot-svn] r74 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#72">[ date ]</a>
+              <a href="thread.html#72">[ thread ]</a>
+              <a href="subject.html#72">[ subject ]</a>
+              <a href="author.html#72">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-22 10:16:00 +0100 (Sun, 22 Jan 2006)
+New Revision: 73
+
+Added:
+   trunk/Search/SearchPluginProperties.cpp
+   trunk/Search/SearchPluginProperties.h
+   trunk/Search/SherlockParser.cpp
+   trunk/Search/SherlockParser.h
+   trunk/Search/plugintest.cpp
+Removed:
+   trunk/Utils/PluginParser.cpp
+   trunk/Utils/PluginParser.h
+   trunk/Utils/plugintest.cpp
+Modified:
+   trunk/Search/Makefile
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/PluginWebEngine.h
+   trunk/Utils/Makefile
+Log:
+Renamed PluginParser to SherlockParser, moved to Search with plugintest program.
+Added rudimentary OpenSearch Description and Query Syntax parser.
+
+
+Modified: trunk/Search/Makefile
+===================================================================
+--- trunk/Search/Makefile	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Search/Makefile	2006-01-22 09:16:00 UTC (rev 73)
+@@ -2,20 +2,22 @@
+ ROOT_DIR = ..
+ include ${ROOT_DIR}/variables.mk
+ 
+-SE_SRCS = PluginWebEngine.cpp QueryProperties.cpp SearchEngineFactory.cpp \
+-	SearchEngineInterface.cpp WebEngine.cpp XapianEngine.cpp
++SE_SRCS = OpenSearchParser.cpp PluginWebEngine.cpp QueryProperties.cpp \
++	SherlockParser.cpp SearchEngineFactory.cpp SearchEngineInterface.cpp \
++	SearchPluginProperties.cpp WebEngine.cpp XapianEngine.cpp
+ SE_OBJS := $(patsubst %.cpp,${OBJ_DIR}/%.o,${SE_SRCS})
+ ifeq (${NEEDS_SOAP},yes)
+ SOAPENV_OBJS = ${OBJ_DIR}/stdsoap.o ${OBJ_DIR}/SOAPEnvNS.o ${OBJ_DIR}/SOAPEnvC.o
+ else
+ SOAPENV_OBJS = 
+ endif
++PLUGIN_TEST = ${BIN_DIR}/plugintest
+ SE_TEST = ${BIN_DIR}/senginetest
+ 
+-targets : dirs ${SE_LIB} ${SOAPENV_LIB} ${SE_TEST}
++targets : dirs ${SE_LIB} ${SOAPENV_LIB} ${PLUGIN_TEST} ${SE_TEST}
+ 
+ clean :
+-	@rm -f ${OBJ_DIR}/* ${SE_LIB} ${SOAPENV_LIB} ${SE_TEST}
++	@rm -f ${OBJ_DIR}/* ${SE_LIB} ${SOAPENV_LIB} ${PLUGIN_TEST} ${SE_TEST}
+ 
+ # SOAP environment
+ 
+@@ -35,6 +37,12 @@
+ ${OBJ_DIR}/SOAPEnvC.o : SOAPEnvC.cpp
+ 	${CXX} -o ${OBJ_DIR}/SOAPEnvC.o -c SOAPEnvC.cpp ${CXXFLAGS}
+ 
++# Parser tester
++
++${PLUGIN_TEST} : ${OBJ_DIR}/plugintest.o ${SE_LIBS} ${DL_LIB} ${TOKENIZE_LIB} ${UTILS_LIB}
++	@echo Building ${PLUGIN_TEST}
++	${LINK} -o $@ ${OBJ_DIR}/plugintest.o ${SE_LIBS} ${DL_LIB} ${TOKENIZE_LIB} ${UTILS_LIB} ${LIBS}
++
+ # SearchEngine tester
+ 
+ ${SE_TEST} : ${OBJ_DIR}/senginetest.o ${SE_LIBS} ${DL_LIB} ${TOKENIZE_LIB} ${UTILS_LIB}
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Search/PluginWebEngine.cpp	2006-01-22 09:16:00 UTC (rev 73)
+@@ -20,7 +20,7 @@
+ 
+ #include &quot;Document.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+-#include &quot;PluginParser.h&quot;
++#include &quot;SherlockParser.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;FileCollector.h&quot;
+@@ -79,7 +79,7 @@
+ 		return false;
+ 	}
+ 
+-	PluginParser parser(pPluginDoc);
++	SherlockParser parser(pPluginDoc);
+ 	if (parser.parse() == false)
+ 	{
+ 		delete pPluginDoc;
+@@ -432,7 +432,7 @@
+ 		return false;
+ 	}
+ 
+-	PluginParser parser(pPluginDoc);
++	SherlockParser parser(pPluginDoc);
+ 	if (parser.parse(true) == false)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/Search/PluginWebEngine.h
+===================================================================
+--- trunk/Search/PluginWebEngine.h	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Search/PluginWebEngine.h	2006-01-22 09:16:00 UTC (rev 73)
+@@ -29,7 +29,7 @@
+   * A class that implements the Sherlock search plugin standard.
+   * See <A HREF="http://developer.apple.com/technotes/tn/tn1141.html">http://developer.apple.com/technotes/tn/tn1141.html</A>
+   * and <A HREF="http://mycroft.mozdev.org/deepdocs/deepdocs.html">http://mycroft.mozdev.org/deepdocs/deepdocs.html</A>
+-  */	  
++  */
+ class PluginWebEngine : public WebEngine
+ {
+ 	public:
+
+Added: trunk/Search/SearchPluginProperties.cpp
+===================================================================
+--- trunk/Search/SearchPluginProperties.cpp	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Search/SearchPluginProperties.cpp	2006-01-22 09:16:00 UTC (rev 73)
+@@ -0,0 +1,90 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &quot;SearchPluginProperties.h&quot;
++
++using std::string;
++using std::map;
++using std::set;
++
++SearchPluginProperties::SearchPluginProperties() :
++	m_method(GET_METHOD)
++{
++}
++
++SearchPluginProperties::SearchPluginProperties(const SearchPluginProperties &amp;other) :
++	m_name(other.m_name),
++	m_longName(other.m_longName),
++	m_description(other.m_description),
++	m_channel(other.m_channel),
++	m_baseUrl(other.m_baseUrl),
++	m_method(other.m_method),
++	m_parametersRemainder(other.m_parametersRemainder),
++	m_outputType(other.m_outputType)
++{
++	copy(other.m_languages.begin(), other.m_languages.end(),
++		inserter(m_languages, m_languages.begin()));
++	copy(other.m_outputEncodings.begin(), other.m_outputEncodings.end(),
++		inserter(m_outputEncodings, m_outputEncodings.begin()));
++	copy(other.m_inputEncodings.begin(), other.m_inputEncodings.end(),
++		inserter(m_inputEncodings, m_inputEncodings.begin()));
++	copy(other.m_parameters.begin(), other.m_parameters.end(),
++		inserter(m_parameters, m_parameters.begin()));
++}
++
++SearchPluginProperties::~SearchPluginProperties()
++{
++}
++
++SearchPluginProperties&amp; SearchPluginProperties::operator=(const SearchPluginProperties&amp; other)
++{
++	m_name = other.m_name;
++	m_longName = other.m_longName;
++	m_description = other.m_description;
++	m_channel = other.m_channel;
++	m_baseUrl = other.m_baseUrl;
++	m_method = other.m_method;
++	m_parametersRemainder = other.m_parametersRemainder;
++	m_outputType = other.m_outputType;
++	copy(other.m_languages.begin(), other.m_languages.end(),
++		inserter(m_languages, m_languages.begin()));
++	copy(other.m_outputEncodings.begin(), other.m_outputEncodings.end(),
++		inserter(m_outputEncodings, m_outputEncodings.begin()));
++	copy(other.m_inputEncodings.begin(), other.m_inputEncodings.end(),
++		inserter(m_inputEncodings, m_inputEncodings.begin()));
++	copy(other.m_parameters.begin(), other.m_parameters.end(),
++		inserter(m_parameters, m_parameters.begin()));
++}
++
++bool SearchPluginProperties::operator==(const SearchPluginProperties &amp;other) const
++{
++	if (m_name == other.m_name)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++bool SearchPluginProperties::operator&lt;(const SearchPluginProperties &amp;other) const
++{
++	if (m_name &lt; other.m_name)
++	{
++		return true;
++	}
++
++	return false;
++}
+
+Added: trunk/Search/SearchPluginProperties.h
+===================================================================
+--- trunk/Search/SearchPluginProperties.h	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Search/SearchPluginProperties.h	2006-01-22 09:16:00 UTC (rev 73)
+@@ -0,0 +1,58 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _SEARCH_PLUGIN_PROPERTIES_H
++#define _SEARCH_PLUGIN_PROPERTIES_H
++
++#include &lt;string&gt;
++#include &lt;map&gt;
++#include &lt;set&gt;
++
++class SearchPluginProperties
++{
++	public:
++		SearchPluginProperties();
++		SearchPluginProperties(const SearchPluginProperties &amp;other);
++		virtual ~SearchPluginProperties();
++
++		SearchPluginProperties&amp; operator=(const SearchPluginProperties&amp; other);
++		bool operator==(const SearchPluginProperties &amp;other) const;
++		bool operator&lt;(const SearchPluginProperties &amp;other) const;
++
++		typedef enum { GET_METHOD = 0, POST_METHOD } Method;
++
++		typedef enum { UNKNOWN_PARAM = 0, SEARCH_TERMS_PARAM,
++			 COUNT_PARAM,START_INDEX_PARAM, START_PAGE_PARAM, LANGUAGE_PARAM,
++			OUTPUT_ENCODING_PARAM, INPUT_ENCODING_PARAM } Parameter;
++
++		// Description
++		std::string m_name;
++		std::string m_longName;
++		std::string m_description;
++		std::string m_channel;
++		std::set&lt;std::string&gt; m_languages;
++		std::set&lt;std::string&gt; m_outputEncodings;
++		std::set&lt;std::string&gt; m_inputEncodings;
++		// Query
++		std::string m_baseUrl;
++		Method m_method;
++		std::map&lt;Parameter, std::string&gt; m_parameters;
++		std::string m_parametersRemainder;
++		std::string m_outputType;
++
++};
++
++#endif // _SEARCH_PLUGIN_PROPERTIES_H
+
+Copied: trunk/Search/SherlockParser.cpp (from rev 69, trunk/Utils/PluginParser.cpp)
+===================================================================
+--- trunk/Utils/PluginParser.cpp	2006-01-20 12:07:01 UTC (rev 69)
++++ trunk/Search/SherlockParser.cpp	2006-01-22 09:16:00 UTC (rev 73)
+@@ -0,0 +1,264 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;stdlib.h&gt;
++#include &lt;iostream&gt;
++#include &lt;boost/spirit/core.hpp&gt;
++#include &lt;boost/spirit/actor/push_back_actor.hpp&gt;
++#include &lt;boost/spirit/actor/insert_at_actor.hpp&gt;
++#include &lt;boost/spirit/utility/confix.hpp&gt;
++
++#include &quot;SherlockParser.h&quot;
++
++using namespace std;
++using namespace boost::spirit;
++
++struct skip_grammar : public grammar&lt;skip_grammar&gt;
++{
++	template &lt;typename ScannerT&gt;
++	struct definition
++	{
++		definition(skip_grammar const &amp;self)
++		{
++			// Skip all spaces and comments, starting with a #
++			// FIXME: make sure comments start at the beginning of the line !
++			skip = space_p | (ch_p('#') &gt;&gt; *(anychar_p - ch_p('\n')) &gt;&gt; ch_p('\n'));
++		}
++	
++		rule&lt;ScannerT&gt; skip;
++	
++		rule&lt;ScannerT&gt; const&amp; start() const
++		{
++			return skip;
++		}
++	};
++};
++
++/**
++  * A minimal grammar for Sherlock plugins.
++  * This only checks for the existence of the SEARCH tag.
++  * It is used to quickly extract SEARCH attributes.
++  */
++struct plugin_min_grammar : public grammar&lt;plugin_min_grammar&gt;
++{
++	 plugin_min_grammar(PluginProperties &amp;properties)
++        : m_properties(properties)
++	{
++	}
++
++	template &lt;typename ScannerT&gt;
++	struct definition
++	{
++		definition(plugin_min_grammar const &amp;self)
++		{
++			// Start
++			search_plugin = search_header &gt;&gt; rest;
++
++			// All items have a name and an optionally-quoted value, separated by =
++			end_of_name = ch_p('=');
++			any_name = *(~ch_p('&gt;') - end_of_name);
++			any_value_without_quotes = lexeme_d[*(~ch_p('&gt;') - ch_p('\n'))];
++			any_value = ch_p('\'') &gt;&gt; (*(~ch_p('\'')))[assign_a(unquotedValue)] &gt;&gt; ch_p('\'') |
++				ch_p('&quot;') &gt;&gt; (*(~ch_p('&quot;')))[assign_a(unquotedValue)] &gt;&gt; ch_p('&quot;') |
++				any_value_without_quotes[assign_a(unquotedValue)];
++
++			// SEARCH attributes are items
++			// There should be only one SEARCH tag
++			search_item = (any_name[assign_a(itemName)]
++				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
++				[insert_at_a(self.m_properties.m_searchParams, itemName, itemValue)];
++
++			// SEARCH may have any number of attributes
++			search_header = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; *search_item &gt;&gt; ch_p('&gt;');
++
++			// Rest
++			rest = *anychar_p;
++		}
++
++		string unquotedValue, itemName, itemValue;		
++		rule&lt;ScannerT&gt; search_plugin, search_header, rest;
++		rule&lt;ScannerT&gt; end_of_name, any_name, any_value_without_quotes, any_value, search_item;
++
++		rule&lt;ScannerT&gt; const&amp; start() const
++		{
++			return search_plugin;
++		}
++	};
++
++	PluginProperties &amp;m_properties;
++
++};
++
++/**
++  * A complete but lax grammar for Sherlock plugins.
++  * For instance, it doesn't mind if INPUT has a NAME but no VALUE.
++  * More importantly, it doesn't enforce types, eg FACTOR should be an integer.
++  */
++struct plugin_grammar : public grammar&lt;plugin_grammar&gt;
++{
++	 plugin_grammar(PluginProperties &amp;properties)
++        : m_properties(properties)
++	{
++	}
++
++	template &lt;typename ScannerT&gt;
++	struct definition
++	{
++		definition(plugin_grammar const &amp;self)
++		{
++			// Start
++			search_plugin = search_header &gt;&gt; input_elements &gt;&gt; search_footer;
++
++			// All items have a name and an optionally-quoted value, separated by =
++			end_of_name = ch_p('=');
++			any_name = *(~ch_p('&gt;') - end_of_name);
++			any_value_without_quotes = lexeme_d[*(~ch_p('&gt;') - ch_p('\n'))];
++			any_value = ch_p('\'') &gt;&gt; (*(~ch_p('\'')))[assign_a(unquotedValue)] &gt;&gt; ch_p('\'') |
++				ch_p('&quot;') &gt;&gt; (*(~ch_p('&quot;')))[assign_a(unquotedValue)] &gt;&gt; ch_p('&quot;') |
++				any_value_without_quotes[assign_a(unquotedValue)];
++
++			// SEARCH attributes are items
++			// There should be only one SEARCH tag
++			search_item = (any_name[assign_a(itemName)]
++				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
++				[insert_at_a(self.m_properties.m_searchParams, itemName, itemValue)];
++
++			// SEARCH may have any number of attributes
++			search_header = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; *search_item &gt;&gt; ch_p('&gt;');
++
++			// INPUT
++			input_item_name = as_lower_d[str_p(&quot;name&quot;)] &gt;&gt; ch_p('=')
++				&gt;&gt; any_value[assign_a(itemName, unquotedValue)];
++			input_item_value = as_lower_d[str_p(&quot;value&quot;)] &gt;&gt; ch_p('=')
++				&gt;&gt; any_value[assign_a(itemValue, unquotedValue)];
++			input_item_user = as_lower_d[str_p(&quot;user&quot;)];
++			input_item_factor = as_lower_d[str_p(&quot;factor&quot;)]
++				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)];
++
++			// INPUT tags have name and value items; one is marked with USER
++			input_item = input_item_name |
++				input_item_value |
++				input_item_user[assign_a(self.m_properties.m_userInput, itemName)];
++
++			input_element = (ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;input&quot;)] &gt;&gt; *input_item &gt;&gt; ch_p('&gt;'))
++				[insert_at_a(self.m_properties.m_inputItems, itemName, itemValue)];
++
++			// INPUTPREV tags have name and either factor or value items
++			// There should be only one INPUTPREV tag
++			// FIXME: save those
++			inputprev_item = input_item_name |
++				input_item_factor |
++				input_item_value;
++
++			inputprev_element = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;inputprev&quot;)] &gt;&gt; *inputprev_item &gt;&gt; ch_p('&gt;');
++
++			// INPUTNEXT tags have name and either factor or value items
++			// There should be only one INPUTNEXT tag
++			inputnext_item = input_item_name[assign_a(self.m_properties.m_nextInput, itemName)] |
++				input_item_factor[assign_a(self.m_properties.m_nextFactor, itemValue)] |
++				input_item_value[assign_a(self.m_properties.m_nextValue, itemValue)];
++
++			inputnext_element = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;inputnext&quot;)] &gt;&gt; *inputnext_item &gt;&gt; ch_p('&gt;');
++
++			// INTERPRET tags have varied types of items
++			// There should be only one INTERPRET tag
++			interpret_item = (any_name[assign_a(itemName)]
++				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
++				[insert_at_a(self.m_properties.m_interpretParams, itemName, itemValue)];
++
++			interpret_element = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;interpret&quot;)] &gt;&gt; *interpret_item &gt;&gt; ch_p('&gt;');
++
++			// INPUT, INPUTNEXT and INTERPRET may appear in any order
++			input_elements = *(input_element |
++				inputprev_element |
++				inputnext_element |
++				interpret_element);
++
++			// SEARCH has a closing tag
++			search_footer =  ch_p('&lt;') &gt;&gt; ch_p('/') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; ch_p('&gt;');
++		}
++
++		string unquotedValue, itemName, itemValue;		
++		rule&lt;ScannerT&gt; search_plugin, search_header, search_footer;
++		rule&lt;ScannerT&gt; end_of_name, any_name, any_value_without_quotes, any_value, search_item;
++		rule&lt;ScannerT&gt; input_elements, input_element, inputprev_element, inputnext_element, interpret_element;
++		rule&lt;ScannerT&gt; input_item_name, input_item_value, input_item_user, input_item_factor;
++		rule&lt;ScannerT&gt; input_item, inputprev_item, inputnext_item, interpret_item;
++
++		rule&lt;ScannerT&gt; const&amp; start() const
++		{
++			return search_plugin;
++		}
++	};
++
++	PluginProperties &amp;m_properties;
++
++};
++
++SherlockParser::SherlockParser(const Document *pDocument) :
++	m_pDocument(pDocument)
++{
++}
++
++SherlockParser::~SherlockParser()
++{
++}
++
++bool SherlockParser::parse(bool extractSearchParams)
++{
++	if (m_pDocument == NULL)
++	{
++		return false;
++	}
++
++	unsigned int dataLength;
++	const char *pData = m_pDocument-&gt;getData(dataLength);
++	if ((pData == NULL) ||
++		(dataLength == 0))
++	{
++		return false;
++	}
++
++	skip_grammar skip;
++	parse_info&lt;&gt; parseInfo;
++
++	if (extractSearchParams == false)
++	{
++		plugin_grammar plugin(m_properties);
++
++		parseInfo = boost::spirit::parse(pData, plugin, skip);
++	}
++	else
++	{
++		plugin_min_grammar plugin(m_properties);
++
++		parseInfo = boost::spirit::parse(pData, plugin, skip);
++	}
++#ifdef DEBUG
++	if (parseInfo.full == false)
++	{
++		cout &lt;&lt; &quot;SherlockParser::parse: syntax error near &quot; &lt;&lt; parseInfo.stop &lt;&lt; endl;
++	}
++#endif
++
++	return parseInfo.hit;
++}
++
++/// Returns the plugin's properties.
++PluginProperties &amp;SherlockParser::getProperties(void)
++{
++	return m_properties;
++}
+
+Copied: trunk/Search/SherlockParser.h (from rev 69, trunk/Utils/PluginParser.h)
+===================================================================
+--- trunk/Utils/PluginParser.h	2006-01-20 12:07:01 UTC (rev 69)
++++ trunk/Search/SherlockParser.h	2006-01-22 09:16:00 UTC (rev 73)
+@@ -0,0 +1,77 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _SHERLOCK_PARSER_H
++#define _SHERLOCK_PARSER_H
++
++#include &lt;string&gt;
++#include &lt;map&gt;
++
++#include &quot;Document.h&quot;
++
++class PluginProperties
++{
++	public:
++		PluginProperties()
++		{
++		}
++		virtual ~PluginProperties()
++		{
++		}
++
++
++		std::map&lt;std::string, std::string&gt; m_searchParams;
++		std::map&lt;std::string, std::string&gt; m_inputItems;
++		std::string m_userInput;
++		std::string m_nextInput;
++		std::string m_nextFactor;
++		std::string m_nextValue;
++		std::map&lt;std::string, std::string&gt; m_interpretParams;
++
++	private:
++		PluginProperties(const PluginProperties &amp;other);
++		PluginProperties&amp; operator=(const PluginProperties&amp; other);
++
++};
++
++/**
++  * A parser for Sherlock plugin files.
++  * See <A HREF="http://developer.apple.com/technotes/tn/tn1141.html">http://developer.apple.com/technotes/tn/tn1141.html</A>
++  * and <A HREF="http://mycroft.mozdev.org/deepdocs/deepdocs.html">http://mycroft.mozdev.org/deepdocs/deepdocs.html</A>
++  */
++class SherlockParser
++{
++	public:
++		SherlockParser(const Document *pDocument);
++		virtual ~SherlockParser();
++
++		/// Parses the plugin; false if not all could be parsed.
++		bool parse(bool extractSearchParams = false);
++
++		/// Returns the plugin's properties.
++		virtual PluginProperties &amp;getProperties(void);
++
++	protected:
++		const Document *m_pDocument;
++		PluginProperties m_properties;
++
++	private:
++		SherlockParser(const SherlockParser &amp;other);
++		SherlockParser&amp; operator=(const SherlockParser&amp; other);
++
++};
++
++#endif // _SHERLOCK_PARSER_H
+
+Copied: trunk/Search/plugintest.cpp (from rev 69, trunk/Utils/plugintest.cpp)
+===================================================================
+--- trunk/Utils/plugintest.cpp	2006-01-20 12:07:01 UTC (rev 69)
++++ trunk/Search/plugintest.cpp	2006-01-22 09:16:00 UTC (rev 73)
+@@ -0,0 +1,137 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;strings.h&gt;
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;fcntl.h&gt;
++#include &lt;unistd.h&gt;
++#include &lt;iostream&gt;
++#include &lt;string&gt;
++
++#include &quot;OpenSearchParser.h&quot;
++#include &quot;SherlockParser.h&quot;
++
++using namespace std;
++
++int main(int argc, char **argv)
++{
++	if (argc &lt; 3)
++	{
++		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; SHERLOCK|OPENSEARCH &lt;file name&gt; [MIN]&quot; &lt;&lt; endl;
++		return EXIT_FAILURE;
++	}
++
++	struct stat fileStat;
++	if ((stat(argv[2], &amp;fileStat) == 0) &amp;&amp;
++		(S_ISREG(fileStat.st_mode)))
++	{
++		bool minParser = false;
++
++		if ((argc &gt;= 4) &amp;&amp;
++			(strncasecmp(argv[3], &quot;MIN&quot;, 3) == 0))
++		{
++			minParser = true;
++		}
++
++		if (strncasecmp(argv[1], &quot;SHERLOCK&quot;, 8) == 0)
++		{
++			char *buffer = new char[fileStat.st_size + 1];
++			int fd = open(argv[2], O_RDONLY);
++
++			// Read the file
++			ssize_t readBytes = read(fd, buffer, fileStat.st_size);
++			if (readBytes == -1)
++			{
++				cerr &lt;&lt; &quot;Couldn't read &quot; &lt;&lt; argv[2] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
++				return EXIT_FAILURE;
++			}
++
++			// Put that data into a document
++			Document doc;
++			doc.setData(buffer, readBytes);
++			delete[] buffer;
++
++			SherlockParser parser(&amp;doc);
++			if (parser.parse(minParser) == true)
++			{
++				cout &lt;&lt; &quot;Successfully parsed &quot; &lt;&lt; argv[2] &lt;&lt; endl;
++			}
++
++			PluginProperties &amp;properties = parser.getProperties();
++
++			cout &lt;&lt; &quot;SEARCH parameters are :&quot; &lt;&lt; endl;
++			for (map&lt;string, string&gt;::iterator iter = properties.m_searchParams.begin();
++				iter != properties.m_searchParams.end(); ++iter)
++			{
++				cout &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
++			}
++			cout &lt;&lt; &quot;End of SEARCH parameters&quot; &lt;&lt; endl;
++
++			cout &lt;&lt; &quot;INPUT items are :&quot; &lt;&lt; endl;
++			for (map&lt;string, string&gt;::iterator iter = properties.m_inputItems.begin();
++				iter != properties.m_inputItems.end(); ++iter)
++			{
++				if (iter-&gt;first != properties.m_userInput)
++				{
++					cout &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
++				}
++				else
++				{
++					cout &lt;&lt; iter-&gt;first &lt;&lt; &quot; USER&quot; &lt;&lt; endl;
++				}
++			}
++			cout &lt;&lt; &quot;NEXT &quot; &lt;&lt; properties.m_nextInput &lt;&lt; &quot;=&quot; &lt;&lt; properties.m_nextFactor &lt;&lt; endl;
++			cout &lt;&lt; &quot;End of INPUT items&quot; &lt;&lt; endl;
++
++			cout &lt;&lt; &quot;INTERPRET parameters are :&quot; &lt;&lt; endl;
++			for (map&lt;string, string&gt;::iterator iter = properties.m_interpretParams.begin();
++				iter != properties.m_interpretParams.end(); ++iter)
++			{
++				cout &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
++			}
++			cout &lt;&lt; &quot;End of INTERPRET parameters&quot; &lt;&lt; endl;
++		}
++		else if (strncasecmp(argv[1], &quot;OPENSEARCH&quot;, 10) == 0)
++		{
++			OpenSearchParser parser(argv[2]);
++
++			if (parser.parse(minParser) == true)
++			{
++				cout &lt;&lt; &quot;Successfully parsed &quot; &lt;&lt; argv[2] &lt;&lt; endl;
++			}
++
++			SearchPluginProperties &amp;properties = parser.getProperties();
++
++			cout &lt;&lt; &quot;Plugin &quot; &lt;&lt; properties.m_name &lt;&lt; &quot;: &quot; &lt;&lt; properties.m_description &lt;&lt; endl;
++			cout &lt;&lt; &quot;Channel: &quot; &lt;&lt; properties.m_channel &lt;&lt; endl;
++			cout &lt;&lt; &quot;URL: &quot; &lt;&lt; properties.m_baseUrl &lt;&lt; endl;
++			cout &lt;&lt; &quot;Input parameters are:&quot; &lt;&lt; endl;
++			for (map&lt;SearchPluginProperties::Parameter, string&gt;::iterator iter = properties.m_parameters.begin();
++				iter != properties.m_parameters.end(); ++iter)
++			{
++				cout &lt;&lt; iter-&gt;second &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;first &lt;&lt; endl;
++			}
++			cout &lt;&lt; &quot;Remainder:&quot; &lt;&lt; properties.m_parametersRemainder &lt;&lt; endl;
++		}
++	}
++	else
++	{
++		cerr &lt;&lt; &quot;Couldn't stat &quot; &lt;&lt; argv[2] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
++	}
++
++	return EXIT_SUCCESS;
++}
+
+Modified: trunk/Utils/Makefile
+===================================================================
+--- trunk/Utils/Makefile	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Utils/Makefile	2006-01-22 09:16:00 UTC (rev 73)
+@@ -5,25 +5,15 @@
+ 
+ UTILS_SRCS = DocumentInfo.cpp Document.cpp HtmlDocument.cpp \
+ 	IndexedDocument.cpp Languages.cpp MIMEScanner.cpp MboxParser.cpp \
+-	PluginParser.cpp Result.cpp StringManip.cpp TimeConverter.cpp \
+-	Timer.cpp Url.cpp XapianDatabase.cpp XapianDatabaseFactory.cpp
++	Result.cpp StringManip.cpp TimeConverter.cpp Timer.cpp Url.cpp \
++	XapianDatabase.cpp XapianDatabaseFactory.cpp
+ UTILS_OBJS := $(patsubst %.cpp,${OBJ_DIR}/%.o,${UTILS_SRCS})
+ 
+-PLUGIN_TEST = ${BIN_DIR}/plugintest
++targets : dirs ${UTILS_LIB}
+ 
+-targets : dirs ${UTILS_LIB} ${TOKENIZER_TEST} ${PLUGIN_TEST} \
+-	${PDF_TOKENIZER_DL} ${WORD_TOKENIZER_DL}
+-
+ clean :
+-	@rm -f ${OBJ_DIR}/* ${UTILS_LIB} ${TOKENIZER_TEST} \
+-	${PLUGIN_TEST} ${PDF_TOKENIZER_DL} ${WORD_TOKENIZER_DL}
++	@rm -f ${OBJ_DIR}/* ${UTILS_LIB}
+ 
+-# Utils tester
+-
+-${PLUGIN_TEST} : ${OBJ_DIR}/plugintest.o ${UTILS_LIB}
+-	@echo Building ${PLUGIN_TEST}
+-	${LINK} -o ${PLUGIN_TEST} ${OBJ_DIR}/plugintest.o ${UTILS_LIB} ${LIBS}
+-
+ # Library
+ 
+ ${UTILS_LIB} : ${UTILS_OBJS}
+
+Deleted: trunk/Utils/PluginParser.cpp
+===================================================================
+--- trunk/Utils/PluginParser.cpp	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Utils/PluginParser.cpp	2006-01-22 09:16:00 UTC (rev 73)
+@@ -1,272 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;stdlib.h&gt;
+-#include &lt;string&gt;
+-#include &lt;map&gt;
+-#include &lt;iostream&gt;
+-#include &lt;boost/spirit/core.hpp&gt;
+-#include &lt;boost/spirit/actor/push_back_actor.hpp&gt;
+-#include &lt;boost/spirit/actor/insert_at_actor.hpp&gt;
+-#include &lt;boost/spirit/utility/confix.hpp&gt;
+-
+-#include &quot;PluginParser.h&quot;
+-
+-using namespace std;
+-using namespace boost::spirit;
+-
+-struct skip_grammar : public grammar&lt;skip_grammar&gt;
+-{
+-	template &lt;typename ScannerT&gt;
+-	struct definition
+-	{
+-		definition(skip_grammar const &amp;self)
+-		{
+-			// Skip all spaces and comments, starting with a #
+-			// FIXME: make sure comments start at the beginning of the line !
+-			skip = space_p | (ch_p('#') &gt;&gt; *(anychar_p - ch_p('\n')) &gt;&gt; ch_p('\n'));
+-		}
+-	
+-		rule&lt;ScannerT&gt; skip;
+-	
+-		rule&lt;ScannerT&gt; const&amp; start() const
+-		{
+-			return skip;
+-		}
+-	};
+-};
+-
+-/**
+-  * A minimal grammar for Sherlock plugins.
+-  * This only checks for the existence of the SEARCH tag.
+-  * It is used to quickly extract SEARCH attributes.
+-  */
+-struct plugin_min_grammar : public grammar&lt;plugin_min_grammar&gt;
+-{
+-	 plugin_min_grammar(PluginProperties &amp;properties)
+-        : m_properties(properties)
+-	{
+-	}
+-
+-	template &lt;typename ScannerT&gt;
+-	struct definition
+-	{
+-		definition(plugin_min_grammar const &amp;self)
+-		{
+-			// Start
+-			search_plugin = search_header &gt;&gt; rest;
+-
+-			// All items have a name and an optionally-quoted value, separated by =
+-			end_of_name = ch_p('=');
+-			any_name = *(~ch_p('&gt;') - end_of_name);
+-			any_value_without_quotes = lexeme_d[*(~ch_p('&gt;') - ch_p('\n'))];
+-			any_value = ch_p('\'') &gt;&gt; (*(~ch_p('\'')))[assign_a(unquotedValue)] &gt;&gt; ch_p('\'') |
+-				ch_p('&quot;') &gt;&gt; (*(~ch_p('&quot;')))[assign_a(unquotedValue)] &gt;&gt; ch_p('&quot;') |
+-				any_value_without_quotes[assign_a(unquotedValue)];
+-
+-			// SEARCH attributes are items
+-			// There should be only one SEARCH tag
+-			search_item = (any_name[assign_a(itemName)]
+-				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
+-				[insert_at_a(self.m_properties.m_searchParams, itemName, itemValue)];
+-
+-			// SEARCH may have any number of attributes
+-			search_header = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; *search_item &gt;&gt; ch_p('&gt;');
+-
+-			// Rest
+-			rest = *anychar_p;
+-		}
+-
+-		string unquotedValue, itemName, itemValue;		
+-		rule&lt;ScannerT&gt; search_plugin, search_header, rest;
+-		rule&lt;ScannerT&gt; end_of_name, any_name, any_value_without_quotes, any_value, search_item;
+-
+-		rule&lt;ScannerT&gt; const&amp; start() const
+-		{
+-			return search_plugin;
+-		}
+-	};
+-
+-	PluginProperties &amp;m_properties;
+-
+-};
+-
+-/**
+-  * A complete but lax grammar for Sherlock plugins.
+-  * For instance, it doesn't mind if INPUT has a NAME but no VALUE.
+-  * More importantly, it doesn't enforce types, eg FACTOR should be an integer.
+-  */
+-struct plugin_grammar : public grammar&lt;plugin_grammar&gt;
+-{
+-	 plugin_grammar(PluginProperties &amp;properties)
+-        : m_properties(properties)
+-	{
+-	}
+-
+-	template &lt;typename ScannerT&gt;
+-	struct definition
+-	{
+-		definition(plugin_grammar const &amp;self)
+-		{
+-			// Start
+-			search_plugin = search_header &gt;&gt; input_elements &gt;&gt; search_footer;
+-
+-			// All items have a name and an optionally-quoted value, separated by =
+-			end_of_name = ch_p('=');
+-			any_name = *(~ch_p('&gt;') - end_of_name);
+-			any_value_without_quotes = lexeme_d[*(~ch_p('&gt;') - ch_p('\n'))];
+-			any_value = ch_p('\'') &gt;&gt; (*(~ch_p('\'')))[assign_a(unquotedValue)] &gt;&gt; ch_p('\'') |
+-				ch_p('&quot;') &gt;&gt; (*(~ch_p('&quot;')))[assign_a(unquotedValue)] &gt;&gt; ch_p('&quot;') |
+-				any_value_without_quotes[assign_a(unquotedValue)];
+-
+-			// SEARCH attributes are items
+-			// There should be only one SEARCH tag
+-			search_item = (any_name[assign_a(itemName)]
+-				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
+-				[insert_at_a(self.m_properties.m_searchParams, itemName, itemValue)];
+-
+-			// SEARCH may have any number of attributes
+-			search_header = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; *search_item &gt;&gt; ch_p('&gt;');
+-
+-			// INPUT
+-			input_item_name = as_lower_d[str_p(&quot;name&quot;)] &gt;&gt; ch_p('=')
+-				&gt;&gt; any_value[assign_a(itemName, unquotedValue)];
+-			input_item_value = as_lower_d[str_p(&quot;value&quot;)] &gt;&gt; ch_p('=')
+-				&gt;&gt; any_value[assign_a(itemValue, unquotedValue)];
+-			input_item_user = as_lower_d[str_p(&quot;user&quot;)];
+-			input_item_factor = as_lower_d[str_p(&quot;factor&quot;)]
+-				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)];
+-
+-			// INPUT tags have name and value items; one is marked with USER
+-			input_item = input_item_name |
+-				input_item_value |
+-				input_item_user[assign_a(self.m_properties.m_userInput, itemName)];
+-
+-			input_element = (ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;input&quot;)] &gt;&gt; *input_item &gt;&gt; ch_p('&gt;'))
+-				[insert_at_a(self.m_properties.m_inputItems, itemName, itemValue)];
+-
+-			// INPUTPREV tags have name and either factor or value items
+-			// There should be only one INPUTPREV tag
+-			// FIXME: save those
+-			inputprev_item = input_item_name |
+-				input_item_factor |
+-				input_item_value;
+-
+-			inputprev_element = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;inputprev&quot;)] &gt;&gt; *inputprev_item &gt;&gt; ch_p('&gt;');
+-
+-			// INPUTNEXT tags have name and either factor or value items
+-			// There should be only one INPUTNEXT tag
+-			inputnext_item = input_item_name[assign_a(self.m_properties.m_nextInput, itemName)] |
+-				input_item_factor[assign_a(self.m_properties.m_nextFactor, itemValue)] |
+-				input_item_value[assign_a(self.m_properties.m_nextValue, itemValue)];
+-
+-			inputnext_element = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;inputnext&quot;)] &gt;&gt; *inputnext_item &gt;&gt; ch_p('&gt;');
+-
+-			// INTERPRET tags have varied types of items
+-			// There should be only one INTERPRET tag
+-			interpret_item = (any_name[assign_a(itemName)]
+-				&gt;&gt; ch_p('=') &gt;&gt; any_value[assign_a(itemValue, unquotedValue)])
+-				[insert_at_a(self.m_properties.m_interpretParams, itemName, itemValue)];
+-
+-			interpret_element = ch_p('&lt;') &gt;&gt; as_lower_d[str_p(&quot;interpret&quot;)] &gt;&gt; *interpret_item &gt;&gt; ch_p('&gt;');
+-
+-			// INPUT, INPUTNEXT and INTERPRET may appear in any order
+-			input_elements = *(input_element |
+-				inputprev_element |
+-				inputnext_element |
+-				interpret_element);
+-
+-			// SEARCH has a closing tag
+-			search_footer =  ch_p('&lt;') &gt;&gt; ch_p('/') &gt;&gt; as_lower_d[str_p(&quot;search&quot;)] &gt;&gt; ch_p('&gt;');
+-		}
+-
+-		string unquotedValue, itemName, itemValue;		
+-		rule&lt;ScannerT&gt; search_plugin, search_header, search_footer;
+-		rule&lt;ScannerT&gt; end_of_name, any_name, any_value_without_quotes, any_value, search_item;
+-		rule&lt;ScannerT&gt; input_elements, input_element, inputprev_element, inputnext_element, interpret_element;
+-		rule&lt;ScannerT&gt; input_item_name, input_item_value, input_item_user, input_item_factor;
+-		rule&lt;ScannerT&gt; input_item, inputprev_item, inputnext_item, interpret_item;
+-
+-		rule&lt;ScannerT&gt; const&amp; start() const
+-		{
+-			return search_plugin;
+-		}
+-	};
+-
+-	PluginProperties &amp;m_properties;
+-
+-};
+-
+-PluginParser::PluginParser(const Document *pDocument)
+-{
+-	m_pDocument = pDocument;
+-}
+-
+-PluginParser::~PluginParser()
+-{
+-}
+-
+-bool PluginParser::parse(bool extractSearchParams)
+-{
+-	if (m_pDocument == NULL)
+-	{
+-		return false;
+-	}
+-
+-	unsigned int dataLength;
+-	const char *pData = m_pDocument-&gt;getData(dataLength);
+-	if ((pData == NULL) ||
+-		(dataLength == 0))
+-	{
+-		return false;
+-	}
+-
+-	skip_grammar skip;
+-	parse_info&lt;&gt; parseInfo;
+-
+-	if (extractSearchParams == false)
+-	{
+-		plugin_grammar plugin(m_properties);
+-
+-		parseInfo = boost::spirit::parse(pData, plugin, skip);
+-	}
+-	else
+-	{
+-		plugin_min_grammar plugin(m_properties);
+-
+-		parseInfo = boost::spirit::parse(pData, plugin, skip);
+-	}
+-#ifdef DEBUG
+-	if (parseInfo.full == false)
+-	{
+-		cout &lt;&lt; &quot;PluginParser::parse: syntax error near &quot; &lt;&lt; parseInfo.stop &lt;&lt; endl;
+-	}
+-#endif
+-
+-	return parseInfo.hit;
+-}
+-
+-/// Returns the plugin's properties.
+-PluginProperties &amp;PluginParser::getProperties(void)
+-{
+-	return m_properties;
+-}
+-
+-/// Returns a pointer to the plugin file's document.
+-const Document *PluginParser::getDocument(void)
+-{
+-	return m_pDocument;
+-}
+
+Deleted: trunk/Utils/PluginParser.h
+===================================================================
+--- trunk/Utils/PluginParser.h	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Utils/PluginParser.h	2006-01-22 09:16:00 UTC (rev 73)
+@@ -1,78 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _PLUGIN_PARSER_H
+-#define _PLUGIN_PARSER_H
+-
+-#include &lt;string&gt;
+-#include &lt;map&gt;
+-
+-#include &quot;Document.h&quot;
+-
+-using namespace std;
+-
+-class PluginProperties
+-{
+-	public:
+-		PluginProperties()
+-		{
+-		}
+-		virtual ~PluginProperties()
+-		{
+-		}
+-
+-
+-		map&lt;string, string&gt; m_searchParams;
+-		map&lt;string, string&gt; m_inputItems;
+-		string m_userInput;
+-		string m_nextInput;
+-		string m_nextFactor;
+-		string m_nextValue;
+-		map&lt;string, string&gt; m_interpretParams;
+-
+-	private:
+-		PluginProperties(const PluginProperties &amp;other);
+-		PluginProperties&amp; operator=(const PluginProperties&amp; other);
+-
+-};
+-
+-/// A parser for Sherlock plugin files.
+-class PluginParser
+-{
+-	public:
+-		PluginParser(const Document *pDocument);
+-		virtual ~PluginParser();
+-
+-		/// Parses the plugin; false if not all could be parsed.
+-		bool parse(bool extractSearchParams = false);
+-
+-		/// Returns the plugin's properties.
+-		virtual PluginProperties &amp;getProperties(void);
+-
+-		/// Returns a pointer to the plugin file's document.
+-		virtual const Document *getDocument(void);
+-
+-	protected:
+-		const Document *m_pDocument;
+-		PluginProperties m_properties;
+-
+-	private:
+-		PluginParser(const PluginParser &amp;other);
+-		PluginParser&amp; operator=(const PluginParser&amp; other);
+-
+-};
+-
+-#endif // _PLUGIN_PARSER_H
+
+Deleted: trunk/Utils/plugintest.cpp
+===================================================================
+--- trunk/Utils/plugintest.cpp	2006-01-22 08:25:19 UTC (rev 72)
++++ trunk/Utils/plugintest.cpp	2006-01-22 09:16:00 UTC (rev 73)
+@@ -1,111 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;strings.h&gt;
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;fcntl.h&gt;
+-#include &lt;unistd.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;string&gt;
+-
+-#include &quot;PluginParser.h&quot;
+-
+-using namespace std;
+-
+-int main(int argc, char **argv)
+-{
+-	if (argc &lt; 2)
+-	{
+-		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; &lt;file name&gt; [MIN]&quot; &lt;&lt; endl;
+-		return EXIT_FAILURE;
+-	}
+-
+-	struct stat fileStat;
+-	if ((stat(argv[1], &amp;fileStat) == 0) &amp;&amp;
+-		(S_ISREG(fileStat.st_mode)))
+-	{
+-		char *buffer = new char[fileStat.st_size + 1];
+-		int fd = open(argv[1], O_RDONLY);
+-		// Read the file
+-		ssize_t readBytes = read(fd, buffer, fileStat.st_size);
+-		if (readBytes == -1)
+-		{
+-			cerr &lt;&lt; &quot;Couldn't read &quot; &lt;&lt; argv[1] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-			return EXIT_FAILURE;
+-		}
+-
+-		// Put that data into a document
+-		Document doc;
+-		doc.setData(buffer, readBytes);
+-		delete[] buffer;
+-
+-		bool minParser = false;
+-		PluginParser parser(&amp;doc);
+-
+-		if ((argc &gt;= 3) &amp;&amp;
+-			(strncasecmp(argv[2], &quot;MIN&quot;, 3) == 0))
+-		{
+-			minParser = true;
+-		}
+-
+-		if (parser.parse(minParser) == true)
+-		{
+-			cout &lt;&lt; &quot;Successfully parsed &quot; &lt;&lt; argv[1] &lt;&lt; endl;
+-		}
+-
+-		PluginProperties &amp;properties = parser.getProperties();
+-
+-		cout &lt;&lt; &quot;SEARCH parameters are :&quot; &lt;&lt; endl;
+-		for (map&lt;string, string&gt;::iterator iter = properties.m_searchParams.begin();
+-			iter != properties.m_searchParams.end(); ++iter)
+-		{
+-			cout &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
+-		}
+-		cout &lt;&lt; &quot;End of SEARCH parameters&quot; &lt;&lt; endl;
+-
+-		cout &lt;&lt; &quot;INPUT items are :&quot; &lt;&lt; endl;
+-		for (map&lt;string, string&gt;::iterator iter = properties.m_inputItems.begin();
+-			iter != properties.m_inputItems.end(); ++iter)
+-		{
+-			if (iter-&gt;first != properties.m_userInput)
+-			{
+-				cout &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
+-			}
+-			else
+-			{
+-				cout &lt;&lt; iter-&gt;first &lt;&lt; &quot; USER&quot; &lt;&lt; endl;
+-			}
+-		}
+-		cout &lt;&lt; &quot;NEXT &quot; &lt;&lt; properties.m_nextInput &lt;&lt; &quot;=&quot; &lt;&lt; properties.m_nextFactor &lt;&lt; endl;
+-		cout &lt;&lt; &quot;End of INPUT items&quot; &lt;&lt; endl;
+-
+-		cout &lt;&lt; &quot;INTERPRET parameters are :&quot; &lt;&lt; endl;
+-		for (map&lt;string, string&gt;::iterator iter = properties.m_interpretParams.begin();
+-			iter != properties.m_interpretParams.end(); ++iter)
+-		{
+-			cout &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
+-		}
+-		cout &lt;&lt; &quot;End of INTERPRET parameters&quot; &lt;&lt; endl;
+-
+-	}
+-	else
+-	{
+-		cerr &lt;&lt; &quot;Couldn't stat &quot; &lt;&lt; argv[1] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-	}
+-
+-	return EXIT_SUCCESS;
+-}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000071.html">[Pinot-svn] r72 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000073.html">[Pinot-svn] r74 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#72">[ date ]</a>
+              <a href="thread.html#72">[ thread ]</a>
+              <a href="subject.html#72">[ subject ]</a>
+              <a href="author.html#72">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

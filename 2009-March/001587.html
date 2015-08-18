@@ -1,0 +1,258 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1597 - in trunk: IndexSearch IndexSearch/Xapian Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1597%20-%20in%20trunk%3A%20IndexSearch%20IndexSearch/Xapian%20Utils&In-Reply-To=%3C200903251341.n2PDfA1b000882%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001586.html">
+   <LINK REL="Next"  HREF="001588.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1597 - in trunk: IndexSearch IndexSearch/Xapian Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1597%20-%20in%20trunk%3A%20IndexSearch%20IndexSearch/Xapian%20Utils&In-Reply-To=%3C200903251341.n2PDfA1b000882%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1597 - in trunk: IndexSearch IndexSearch/Xapian Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 25 14:41:10 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001586.html">[Pinot-svn] r1596 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001588.html">[Pinot-svn] r1598 - in trunk: IndexSearch Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1587">[ date ]</a>
+              <a href="thread.html#1587">[ thread ]</a>
+              <a href="subject.html#1587">[ subject ]</a>
+              <a href="author.html#1587">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-25 14:41:00 +0100 (Wed, 25 Mar 2009)
+New Revision: 1597
+
+Modified:
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/Xapian/XapianDatabase.cpp
+   trunk/Utils/DocumentInfo.cpp
+   trunk/Utils/DocumentInfo.h
+Log:
+ipath is a property of DocumentInfo.
+
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2009-03-22 14:07:25 UTC (rev 1596)
++++ trunk/IndexSearch/DBusIndex.cpp	2009-03-25 13:41:00 UTC (rev 1597)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007-2008 Fabrice Colin
++ *  Copyright 2007-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -243,7 +243,7 @@
+ 				value = docInfo.getTitle();
+ 				break;
+ 			case 1:
+-				value = docInfo.getLocation();
++				value = docInfo.getLocation(true);
+ 				break;
+ 			case 2:
+ 				value = docInfo.getType();
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.cpp	2009-03-22 14:07:25 UTC (rev 1596)
++++ trunk/IndexSearch/Xapian/XapianDatabase.cpp	2009-03-25 13:41:00 UTC (rev 1597)
+@@ -542,7 +542,7 @@
+ 
+ 	// A bad field is one that includes one of our field delimiters
+ 	if (regcomp(&amp;fieldRegex,
+-		&quot;(url|sample|caption|type|modtime|language|size)=&quot;,
++		&quot;(url|ipath|sample|caption|type|modtime|language|size)=&quot;,
+ 		REG_EXTENDED|REG_ICASE) == 0)
+ 	{
+ 		if (regexec(&amp;fieldRegex, field.c_str(), 1,
+@@ -554,13 +554,14 @@
+ 	regfree(&amp;fieldRegex);
+ #else
+ 	// A bad field is one that includes one of our field delimiters
+-	if ((field.find(&quot;url&quot;) != string::npos) ||
+-		(field.find(&quot;sample&quot;) != string::npos) ||
+-		(field.find(&quot;caption&quot;) != string::npos) ||
+-		(field.find(&quot;type&quot;) != string::npos) ||
+-		(field.find(&quot;modtime&quot;) != string::npos) ||
+-		(field.find(&quot;language&quot;) != string::npos) ||
+-		(field.find(&quot;size&quot;) != string::npos))
++	if ((field.find(&quot;url=&quot;) != string::npos) ||
++		(field.find(&quot;ipath=&quot;) != string::npos) ||
++		(field.find(&quot;sample=&quot;) != string::npos) ||
++		(field.find(&quot;caption=&quot;) != string::npos) ||
++		(field.find(&quot;type=&quot;) != string::npos) ||
++		(field.find(&quot;modtime=&quot;) != string::npos) ||
++		(field.find(&quot;language=&quot;) != string::npos) ||
++		(field.find(&quot;size=&quot;) != string::npos))
+ 	{
+ 		isBadField = true;
+ 	}
+@@ -584,6 +585,8 @@
+ 
+ 	// Set the document data omindex-style
+ 	record += pDoc-&gt;getLocation();
++	record += &quot;\nipath=&quot;;
++	record += Url::escapeUrl(pDoc-&gt;getInternalPath());
+ 	// The sample will be generated at query time
+ 	record += &quot;\nsample=&quot;;
+ 	record += &quot;\ncaption=&quot;;
+@@ -640,6 +643,13 @@
+ 		url = Url::canonicalizeUrl(url);
+ 	}
+ 	pDoc-&gt;setLocation(url);
++	// Get the internal path 
++	string ipath(StringManip::extractField(record, &quot;ipath=&quot;, &quot;\n&quot;));
++	if (ipath.empty() == false)
++	{
++		ipath = Url::unescapeUrl(ipath);
++	}
++	pDoc-&gt;setInternalPath(ipath);
+ 	// Get the type
+ 	pDoc-&gt;setType(StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;));
+ 	// ... the language, if available
+
+Modified: trunk/Utils/DocumentInfo.cpp
+===================================================================
+--- trunk/Utils/DocumentInfo.cpp	2009-03-22 14:07:25 UTC (rev 1596)
++++ trunk/Utils/DocumentInfo.cpp	2009-03-25 13:41:00 UTC (rev 1597)
+@@ -91,10 +91,20 @@
+ 
+ bool DocumentInfo::operator&lt;(const DocumentInfo&amp; other) const
+ {
+-	if (getField(&quot;url&quot;) &lt; other.getField(&quot;url&quot;))
++	string thisUrl(getField(&quot;url&quot;));
++	string otherUrl(other.getField(&quot;url&quot;));
++
++	if (thisUrl &lt; otherUrl)
+ 	{
+ 		return true;
+ 	}
++	else if (thisUrl == otherUrl)
++	{
++		if (getField(&quot;ipath&quot;) &lt; other.getField(&quot;ipath&quot;))
++		{
++			return true;
++		}
++	}
+ 
+ 	return false;
+ }
+@@ -160,6 +170,7 @@
+ 	{
+ 		setField(&quot;caption&quot;, StringManip::extractField(unescapedInfo, &quot;caption=&quot;, &quot;\n&quot;));
+ 		setField(&quot;url&quot;, StringManip::extractField(unescapedInfo, &quot;url=&quot;, &quot;\n&quot;));
++		setField(&quot;ipath&quot;, StringManip::extractField(unescapedInfo, &quot;ipath=&quot;, &quot;\n&quot;));
+ 		setField(&quot;type&quot;, StringManip::extractField(unescapedInfo, &quot;type=&quot;, &quot;\n&quot;));
+ 		setField(&quot;language&quot;, StringManip::extractField(unescapedInfo, &quot;language=&quot;, &quot;\n&quot;));
+ 		setField(&quot;modtime&quot;, StringManip::extractField(unescapedInfo, &quot;modtime=&quot;, &quot;\n&quot;));
+@@ -217,11 +228,38 @@
+ }
+ 
+ /// Returns the original location of the document.
+-string DocumentInfo::getLocation(void) const
++string DocumentInfo::getLocation(bool withIPath) const
+ {
+-	return getField(&quot;url&quot;);
++	string url(getField(&quot;url&quot;));
++
++	if (withIPath == false)
++	{
++		return url;
++	}
++
++	string ipath(getField(&quot;ipath&quot;));
++
++	if (ipath.empty() == false)
++	{
++		url += &quot;?&quot;;
++		url += ipath;
++	}
++
++	return url;
+ }
+ 
++/// Sets the internal path to the document.
++void DocumentInfo::setInternalPath(const string &amp;ipath)
++{
++	setField(&quot;ipath&quot;, ipath);
++}
++
++/// Returns the internal path to the document.
++string DocumentInfo::getInternalPath(void) const
++{
++	return getField(&quot;ipath&quot;);
++}
++
+ /// Sets the type of the document.
+ void DocumentInfo::setType(const string &amp;type)
+ {
+
+Modified: trunk/Utils/DocumentInfo.h
+===================================================================
+--- trunk/Utils/DocumentInfo.h	2009-03-22 14:07:25 UTC (rev 1596)
++++ trunk/Utils/DocumentInfo.h	2009-03-25 13:41:00 UTC (rev 1597)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -58,8 +58,14 @@
+ 		virtual void setLocation(const std::string &amp;location);
+ 
+ 		/// Returns the original location of the document.
+-		virtual std::string getLocation(void) const;
++		virtual std::string getLocation(bool withIPath = false) const;
+ 
++		/// Sets the internal path to the document.
++		void setInternalPath(const std::string &amp;ipath);
++
++		/// Returns the internal path to the document.
++		std::string getInternalPath(void) const;
++
+ 		/// Sets the type of the document.
+ 		virtual void setType(const std::string &amp;type);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001586.html">[Pinot-svn] r1596 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001588.html">[Pinot-svn] r1598 - in trunk: IndexSearch Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1587">[ date ]</a>
+              <a href="thread.html#1587">[ thread ]</a>
+              <a href="subject.html#1587">[ subject ]</a>
+              <a href="author.html#1587">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

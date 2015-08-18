@@ -1,0 +1,485 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r59 - in trunk: Collect Index UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r59%20-%20in%20trunk%3A%20Collect%20Index%20UI/GTK2/src&In-Reply-To=%3C200601140646.k0E6kG36001168%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000057.html">
+   <LINK REL="Next"  HREF="000059.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r59 - in trunk: Collect Index UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r59%20-%20in%20trunk%3A%20Collect%20Index%20UI/GTK2/src&In-Reply-To=%3C200601140646.k0E6kG36001168%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r59 - in trunk: Collect Index UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Jan 14 07:46:16 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000057.html">[Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000059.html">[Pinot-svn] r60 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#58">[ date ]</a>
+              <a href="thread.html#58">[ thread ]</a>
+              <a href="subject.html#58">[ subject ]</a>
+              <a href="author.html#58">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-14 07:45:15 +0100 (Sat, 14 Jan 2006)
+New Revision: 59
+
+Modified:
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Collect/NeonDownloader.h
+   trunk/Collect/dloadtest.cpp
+   trunk/Index/Summarizer.cpp
+   trunk/Index/Summarizer.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/UI/GTK2/src/IndexTree.cpp
+   trunk/UI/GTK2/src/IndexTree.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Minor fix and change to NeonDownloader initialization. Capped length of
+summary and added sanity checks on extract and title, which means that they
+may be modified before being saved when updating a document's properties.
+
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Collect/NeonDownloader.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -64,8 +64,6 @@
+ 	}
+ }
+ 
+-bool NeonDownloader::m_initialized = false;
+-
+ #ifdef NE_SSL_H
+ // OpenSSL multi-thread support, required by Neon
+ static pthread_mutex_t locksTable[CRYPTO_NUM_LOCKS];
+@@ -120,7 +118,10 @@
+ 	// Set the callbacks
+ 	CRYPTO_set_locking_callback(lockingCallback);
+ 	CRYPTO_set_id_callback(idCallback);
++
++	pthread_mutexattr_destroy(&amp;mutexAttr);
+ #endif	// NE_SSL_H
++	ne_sock_init();
+ }
+ 
+ /// Shutdown the downloader.
+@@ -136,6 +137,7 @@
+ 		pthread_mutex_destroy(&amp;(locksTable[lockNum]));
+ 	}
+ #endif	// NE_SSL_H
++	ne_sock_exit();
+ }
+ 
+ NeonDownloader::NeonDownloader() :
+@@ -145,11 +147,6 @@
+ {
+ 	// Pretend to be Mozilla
+ 	m_userAgent = &quot;Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020&quot;;
+-	if (m_initialized == false)
+-	{
+-		ne_sock_init();
+-		m_initialized = true;
+-	}
+ }
+ 
+ NeonDownloader::~NeonDownloader()
+
+Modified: trunk/Collect/NeonDownloader.h
+===================================================================
+--- trunk/Collect/NeonDownloader.h	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Collect/NeonDownloader.h	2006-01-14 06:45:15 UTC (rev 59)
+@@ -47,7 +47,6 @@
+ 		virtual bool stop(void);
+ 
+ 	protected:
+-		static bool m_initialized;
+ 		std::string m_userAgent;
+ 		ne_session *m_pSession;
+ 		ne_request *m_pRequest;
+
+Modified: trunk/Collect/dloadtest.cpp
+===================================================================
+--- trunk/Collect/dloadtest.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Collect/dloadtest.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -23,6 +23,7 @@
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
++#include &quot;NeonDownloader.h&quot;
+ 
+ using namespace std;
+ 
+@@ -34,6 +35,8 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
++	NeonDownloader::initialize();
++
+ 	string downloaderName = argv[1];
+ 	
+ 	Url thisUrl(argv[2]);
+@@ -45,17 +48,12 @@
+ 	cout &lt;&lt; &quot;File: &quot; &lt;&lt; thisUrl.getFile() &lt;&lt; endl;
+ 	cout &lt;&lt; &quot;Parameters: &quot; &lt;&lt; thisUrl.getParameters() &lt;&lt; endl;
+ 
+-	if (downloaderName == &quot;-&quot;)
+-	{
+-		// Don't go further
+-		return EXIT_SUCCESS;
+-	}
+-
+ 	// Which Downloader ?
+ 	DownloaderInterface *myDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol(),
+ 		downloaderName);
+ 	if (myDownloader == NULL)
+ 	{
++		NeonDownloader::shutdown();
+ 		cerr &lt;&lt; &quot;Couldn't obtain downloader instance (&quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; &quot;,&quot; &lt;&lt; downloaderName &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
+@@ -111,5 +109,7 @@
+ 
+ 	delete myDownloader;
+ 
++	NeonDownloader::shutdown();
++
+ 	return EXIT_SUCCESS;
+ }
+
+Modified: trunk/Index/Summarizer.cpp
+===================================================================
+--- trunk/Index/Summarizer.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Index/Summarizer.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -35,6 +35,7 @@
+ using std::min;
+ 
+ unsigned int Summarizer::m_maxTextSize = 50000;
++unsigned int Summarizer::m_maxSummarySize = 1000;
+ 
+ Summarizer::Summarizer(const std::string &amp;language, unsigned int wordsCount) :
+ 	m_wordsCount(wordsCount),
+@@ -80,7 +81,7 @@
+ 	if ((pArticle != NULL) &amp;&amp;
+ 		(ots_load_xml_dictionary(pArticle, m_dictionaryCode.c_str())))
+ 	{
+-		// OTS may take too much time with long documents
++		// OTS may take too long with long documents
+ 		ots_parse_stream((const unsigned char*)pText,
+ 			min(textLen, m_maxTextSize), pArticle);
+ 
+@@ -104,7 +105,8 @@
+ 
+ 	if (pSummary != NULL)
+ 	{
+-		string sum((const char *)pSummary, outputLen);
++		string sum((const char *)pSummary,
++			min(outputLen, m_maxSummarySize));
+ 
+ 		free(pSummary);
+ 
+
+Modified: trunk/Index/Summarizer.h
+===================================================================
+--- trunk/Index/Summarizer.h	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Index/Summarizer.h	2006-01-14 06:45:15 UTC (rev 59)
+@@ -33,6 +33,7 @@
+ 
+ 	protected:
+ 		static unsigned int m_maxTextSize;
++		static unsigned int m_maxSummarySize;
+ 		unsigned int m_wordsCount;
+ 		std::string m_dictionaryCode;
+ 		std::string m_title;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Index/XapianIndex.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -21,6 +21,7 @@
+ #include &lt;stdio.h&gt;
+ #include &lt;stdarg.h&gt;
+ #include &lt;time.h&gt;
++#include &lt;regex.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;algorithm&gt;
+@@ -71,6 +72,28 @@
+ 	return term;
+ }
+ 
++bool XapianIndex::badField(const string &amp;field)
++{
++	regex_t fieldRegex;
++	regmatch_t pFieldMatches[1];
++	bool isBadField = false;
++
++	// A bad field is one that includes one of our field delimiters
++	if (regcomp(&amp;fieldRegex,
++		&quot;(url|sample|caption|type|timestamp|language)=&quot;,
++		REG_EXTENDED|REG_ICASE) == 0)
++	{
++		if (regexec(&amp;fieldRegex, field.c_str(), 1,
++			pFieldMatches, REG_NOTBOL|REG_NOTEOL) == 0)
++		{
++			isBadField = true;
++		}
++	}
++	regfree(&amp;fieldRegex);
++
++	return isBadField;
++}
++
+ void XapianIndex::addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+ 	const string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const
+ {
+@@ -207,7 +230,7 @@
+ 		// Fall back on English
+ 		language = &quot;english&quot;;
+ 	}
+-	Summarizer sum(language, 100);
++	Summarizer sum(language, 50);
+ 	summary = sum.summarize(pData, dataLength);
+ 
+ 	// Update the document's properties
+@@ -231,16 +254,37 @@
+ void XapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info, const string &amp;extract,
+ 	const string &amp;language) const
+ {
++	string title(info.getTitle());
++	string timestamp(info.getTimestamp());
+ 	char timeStr[64];
+-	string timestamp = info.getTimestamp();
+ 
+ 	// Set the document data omindex-style
+ 	string record = &quot;url=&quot;;
+ 	record += info.getLocation();
+ 	record += &quot;\nsample=&quot;;
+-	record += extract;
++	// Ignore the extract if it contains any of our field delimiters
++	if (badField(extract) == false)
++	{
++		record += extract;
++	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;XapianIndex::setDocumentData: bad extract&quot; &lt;&lt; endl;
++#endif
+ 	record += &quot;\ncaption=&quot;;
+-	record += info.getTitle();
++	if (badField(title) == true)
++	{
++		// Modify the title if necessary
++		string::size_type pos = title.find(&quot;=&quot;);
++		while (pos != string::npos)
++		{
++			title[pos] = ' ';
++			pos = title.find(&quot;=&quot;, pos + 1);
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianIndex::setDocumentData: modified title&quot; &lt;&lt; endl;
++#endif
++	}
++	record += title;
+ 	record += &quot;\ntype=&quot;;
+ 	record += info.getType();
+ 	// Append a timestamp
+@@ -310,12 +354,12 @@
+ 
+ 		string summary = scanDocument(pData, dataLength, docInfo);
+ 
++		Xapian::Document doc;
++		Xapian::termcount termPos = 0;
++
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianIndex::indexDocument: adding terms&quot; &lt;&lt; endl;
+ #endif
+-		Xapian::Document doc;
+-		Xapian::termcount termPos = 0;
+-
+ 		// Add the tokenizer's terms to the Xapian document
+ 		addTermsToDocument(tokens, doc, &quot;&quot;, termPos, m_stemMode);
+ 		// Add labels
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/Index/XapianIndex.h	2006-01-14 06:45:15 UTC (rev 59)
+@@ -96,6 +96,8 @@
+ 
+ 		static std::string limitTermLength(const std::string &amp;term);
+ 
++		static bool badField(const std::string &amp;field);
++
+ 		void addTermsToDocument(Tokenizer &amp;tokens, Xapian::Document &amp;doc,
+ 			const std::string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const;
+ 
+
+Modified: trunk/UI/GTK2/src/IndexTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/UI/GTK2/src/IndexTree.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -453,7 +453,7 @@
+ 		empty = true;
+ 	}
+ 
+-	columns_autosize();
++	refresh();
+ 
+ 	return empty;
+ }
+@@ -495,7 +495,7 @@
+ }
+ 
+ //
+-// Clear the tree.
++// Clears the tree.
+ //
+ void IndexTree::clear(void)
+ {
+
+Modified: trunk/UI/GTK2/src/IndexTree.h
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.h	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/UI/GTK2/src/IndexTree.h	2006-01-14 06:45:15 UTC (rev 59)
+@@ -88,7 +88,7 @@
+ 		/// Returns true if the tree is empty.
+ 		bool isEmpty(void);
+ 
+-		/// Clear the tree.
++		/// Clears the tree.
+ 		void clear(void);
+ 
+ 		/// Returns the document edit signal.
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -893,14 +893,23 @@
+ 	TreeModel::Children children = m_refStore-&gt;children();
+ 	empty = children.empty();
+ 
+-	columns_autosize();
++	refresh();
+ 
+ 	return empty;
+ }
+ 
+ //
+-// Clear the tree.
++// Refreshes the tree.
+ //
++void ResultsTree::refresh(void)
++{
++	// FIXME: not sure why, but this helps with refreshing the tree
++	columns_autosize();
++}
++
++//
++// Clears the tree.
++//
+ void ResultsTree::clear(void)
+ {
+ 	// Unselect results
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/UI/GTK2/src/ResultsTree.h	2006-01-14 06:45:15 UTC (rev 59)
+@@ -80,7 +80,10 @@
+ 		  */
+ 		bool deleteSelection(void);
+ 
+-		/// Clear the tree.
++		/// Refreshes the tree.
++		void refresh(void);
++
++		/// Clears the tree.
+ 		void clear(void);
+ 
+ 		/// Shows or hides the extract field.
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-14 06:45:15 UTC (rev 59)
+@@ -1232,10 +1232,10 @@
+ 		}
+ 		else
+ 		{
+-			// OK
+-			m_status = &quot;&quot;;
+ 			// Flush the index
+ 			index.flush();
++			// The document properties may have changed
++			index.getDocumentInfo(m_docId, m_docInfo);
+ 		}
+ 	}
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-01-13 16:36:15 UTC (rev 58)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-01-14 06:45:15 UTC (rev 59)
+@@ -1155,6 +1155,8 @@
+ 			{
+ 				pIndexTree-&gt;updateDocumentInfo(pUpdateThread-&gt;getDocumentID(),
+ 					pUpdateThread-&gt;getDocumentInfo());
++				// Refresh the tree
++				pIndexTree-&gt;refresh();
+ 			}
+ 		}
+ 
+@@ -1485,7 +1487,7 @@
+ 					}
+ 					text += docIter-&gt;getTitle();
+ 					text += &quot; &quot;;
+-					text += docIter-&gt;getLocation();
++					text += docIter-&gt;getOriginalLocation();
+ 					firstItem = false;
+ 				}
+ 			}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000057.html">[Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000059.html">[Pinot-svn] r60 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#58">[ date ]</a>
+              <a href="thread.html#58">[ thread ]</a>
+              <a href="subject.html#58">[ subject ]</a>
+              <a href="author.html#58">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

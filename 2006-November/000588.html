@@ -1,0 +1,341 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r595 - in trunk: Collect Index SQL UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r595%20-%20in%20trunk%3A%20Collect%20Index%20SQL%20UI/GTK2/src%20Utils&In-Reply-To=%3C200611231302.kAND2vJg009892%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000587.html">
+   <LINK REL="Next"  HREF="000589.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r595 - in trunk: Collect Index SQL UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r595%20-%20in%20trunk%3A%20Collect%20Index%20SQL%20UI/GTK2/src%20Utils&In-Reply-To=%3C200611231302.kAND2vJg009892%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r595 - in trunk: Collect Index SQL UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov 23 14:02:57 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000587.html">[Pinot-svn] r594 - in trunk/Search: . Google
+</A></li>
+        <LI>Next message: <A HREF="000589.html">[Pinot-svn] r596 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#588">[ date ]</a>
+              <a href="thread.html#588">[ thread ]</a>
+              <a href="subject.html#588">[ subject ]</a>
+              <a href="author.html#588">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-23 14:02:56 +0100 (Thu, 23 Nov 2006)
+New Revision: 595
+
+Modified:
+   trunk/Collect/XapianCollector.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/pinot-index.cpp
+   trunk/SQL/ActionQueue.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/Utils/DocumentInfo.cpp
+Log:
+Added file size to DocumentInfo and the index (as data).
+
+
+Modified: trunk/Collect/XapianCollector.cpp
+===================================================================
+--- trunk/Collect/XapianCollector.cpp	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/Collect/XapianCollector.cpp	2006-11-23 13:02:56 UTC (rev 595)
+@@ -171,12 +171,17 @@
+ 		string type = StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;);
+ 		string timestamp = StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;);
+ 		string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
++		string bytesSize = StringManip::extractField(record, &quot;size=&quot;, &quot;\n&quot;);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;XapianCollector::retrieveUrl: &quot; &lt;&lt; docId &lt;&lt; &quot; was indexed from &quot; &lt;&lt; location &lt;&lt; &quot; at &quot; &lt;&lt; timestamp &lt;&lt; endl;
+ #endif
+ 
+ 		pIndexedDoc = new IndexedDocument(title, url, location, type, language);
+ 		pIndexedDoc-&gt;setTimestamp(timestamp);
++		if (bytesSize.empty() == false)
++		{
++			pIndexedDoc-&gt;setSize((off_t)atol(bytesSize.c_str()));
++		}
+ 
+ 		// Extract document's data ?
+ 		if (m_getDocData == true)
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/Index/XapianIndex.cpp	2006-11-23 13:02:56 UTC (rev 595)
+@@ -423,6 +423,11 @@
+ 		}
+ 	}
+ 	docInfo.setTimestamp(timestamp);
++	string bytesSize(StringManip::extractField(record, &quot;size=&quot;, &quot;\n&quot;));
++	if (bytesSize.empty() == false)
++	{
++		docInfo.setSize((off_t )atol(bytesSize.c_str()));
++	}
+ 	Url urlObj(docInfo.getLocation());
+ 
+ 	// FIXME: remove terms extracted from the title if they don't have more than one posting
+@@ -525,7 +530,7 @@
+ {
+ 	string title(info.getTitle());
+ 	string timestamp(info.getTimestamp());
+-	char timeStr[64];
++	char tmpStr[64];
+ 	time_t timeT = TimeConverter::fromTimestamp(timestamp);
+ 
+ 	// Add this value to allow sorting by date
+@@ -555,11 +560,15 @@
+ 	record += info.getType();
+ 	// Append a timestamp, in a format compatible with Omega
+ 	record += &quot;\nmodtime=&quot;;
+-	snprintf(timeStr, 64, &quot;%ld&quot;, timeT);
+-	record += timeStr;
++	snprintf(tmpStr, 64, &quot;%ld&quot;, timeT);
++	record += tmpStr;
+ 	// ...and the language
+ 	record += &quot;\nlanguage=&quot;;
+ 	record += StringManip::toLowerCase(language);
++	// ...and the file size
++	record += &quot;\nsize=&quot;;
++	snprintf(tmpStr, 64, &quot;%ld&quot;, info.getSize());
++	record += tmpStr;
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;XapianIndex::setDocumentData: document data is &quot; &lt;&lt; record &lt;&lt; endl;
+ #endif
+@@ -629,6 +638,11 @@
+ 					}
+ 				}
+ 				docInfo.setTimestamp(timestamp);
++				string bytesSize(StringManip::extractField(record, &quot;size=&quot;, &quot;\n&quot;));
++				if (bytesSize.empty() == false)
++				{
++					docInfo.setSize((off_t )atol(bytesSize.c_str()));
++				}
+ 				foundDocument = true;
+ 			}
+ 		}
+@@ -1008,6 +1022,7 @@
+ 		DocumentInfo docInfo(pDocument-&gt;getTitle(), pDocument-&gt;getLocation(),
+ 			pDocument-&gt;getType(), pDocument-&gt;getLanguage());
+ 		docInfo.setTimestamp(pDocument-&gt;getTimestamp());
++		docInfo.setSize(pDocument-&gt;getSize());
+ 		docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+ 
+ 		const char *pData = pDocument-&gt;getData(dataLength);
+@@ -1085,6 +1100,7 @@
+ 	DocumentInfo docInfo(pDocument-&gt;getTitle(), pDocument-&gt;getLocation(),
+ 		pDocument-&gt;getType(), pDocument-&gt;getLanguage());
+ 	docInfo.setTimestamp(pDocument-&gt;getTimestamp());
++	docInfo.setSize(pDocument-&gt;getSize());
+ 	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+ 
+ 	// Don't scan the document if a language is specified
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/Index/pinot-index.cpp	2006-11-23 13:02:56 UTC (rev 595)
+@@ -236,6 +236,7 @@
+ 			cout &lt;&lt; &quot;Type: &quot; &lt;&lt; docInfo.getType() &lt;&lt; endl;
+ 			cout &lt;&lt; &quot;Language: &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
+ 			cout &lt;&lt; &quot;Timestamp: &quot; &lt;&lt; docInfo.getTimestamp() &lt;&lt; endl;
++			cout &lt;&lt; &quot;Size: &quot; &lt;&lt; docInfo.getSize() &lt;&lt; endl;
+ 		}
+ 		if (pIndex-&gt;getDocumentLabels(docId, labels) == true)
+ 		{
+
+Modified: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/SQL/ActionQueue.cpp	2006-11-23 13:02:56 UTC (rev 595)
+@@ -18,6 +18,8 @@
+ 
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
++#include &lt;stdio.h&gt;
++#include &lt;stdlib.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;iostream&gt;
+ 
+@@ -145,6 +147,11 @@
+ 	info += &quot;modtime=&quot;;
+ 	info += docInfo.getTimestamp();
+ 	info += &quot;\n&quot;;
++	info += &quot;size=&quot;;
++	char sizeStr[64];
++	snprintf(sizeStr, 64, &quot;%ld&quot;, docInfo.getSize());
++	info += sizeStr;
++	info += &quot;\n&quot;;
+ 
+ 	if (update == false)
+ 	{
+@@ -230,12 +237,18 @@
+ 			docInfo.setType(StringManip::extractField(info, &quot;type=&quot;, &quot;\n&quot;));
+ 			docInfo.setLanguage(StringManip::extractField(info, &quot;language=&quot;, &quot;\n&quot;));
+ 			docInfo.setTimestamp(StringManip::extractField(info, &quot;modtime=&quot;, &quot;\n&quot;));
++			string bytesSize(StringManip::extractField(info, &quot;size=&quot;, &quot;\n&quot;));
++			if (bytesSize.empty() == false)
++			{
++				docInfo.setSize((off_t )atol(bytesSize.c_str()));
++			}
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;ActionQueue::getOldestItem: &quot; &lt;&lt; docInfo.getTitle() &lt;&lt; &quot;, &quot;
+ 				&lt;&lt; docInfo.getLocation() &lt;&lt; &quot;, &quot;
+ 				&lt;&lt; docInfo.getType() &lt;&lt; &quot;, &quot;
+ 				&lt;&lt; docInfo.getLanguage() &lt;&lt; &quot;, &quot;
+-				&lt;&lt; docInfo.getTimestamp() &lt;&lt; endl;
++				&lt;&lt; docInfo.getTimestamp() &lt;&lt; &quot;, &quot;
++				&lt;&lt; docInfo.getSize() &lt;&lt; endl;
+ #endif
+ 
+ 			delete row;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-11-23 13:02:56 UTC (rev 595)
+@@ -742,10 +742,10 @@
+ 				type = &quot;text/html&quot;;
+ 			}
+ 
+-			string date = docInfo.getTimestamp();
+ 			IndexedDocument indexedDoc(docInfo.getTitle(), url, docInfo.getLocation(),
+ 				type, docInfo.getLanguage());
+-			indexedDoc.setTimestamp(date);
++			indexedDoc.setTimestamp(docInfo.getTimestamp());
++			indexedDoc.setSize(docInfo.getSize());
+ 
+ 			// Signal
+ 			m_signalUpdate(indexedDoc, docId, m_indexName);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-11-23 13:02:56 UTC (rev 595)
+@@ -1188,6 +1188,7 @@
+ 						docInfo.getLocation(), docInfo.getType(),
+ 						docInfo.getLanguage());
+ 					indexedDoc.setTimestamp(docInfo.getTimestamp());
++					indexedDoc.setSize(docInfo.getSize());
+ 
+ 					append_document(pIndexPage, _(&quot;My Web Pages&quot;), indexedDoc);
+ 				}
+@@ -1913,6 +1914,8 @@
+ 		DocumentInfo docInfo(docIter-&gt;getTitle(), url,
+ 			docIter-&gt;getType(), docIter-&gt;getLanguage());
+ 		docInfo.setTimestamp(docIter-&gt;getTimestamp());
++		docInfo.setSize(docIter-&gt;getSize());
++
+ 		ustring status = m_state.queue_index(docInfo);
+ 		if (status.empty() == false)
+ 		{
+
+Modified: trunk/Utils/DocumentInfo.cpp
+===================================================================
+--- trunk/Utils/DocumentInfo.cpp	2006-11-22 13:13:41 UTC (rev 594)
++++ trunk/Utils/DocumentInfo.cpp	2006-11-23 13:02:56 UTC (rev 595)
+@@ -24,18 +24,20 @@
+ using std::copy;
+ using std::inserter;
+ 
+-DocumentInfo::DocumentInfo()
++DocumentInfo::DocumentInfo() :
++	m_size(0)
+ {
+ 	m_timestamp = TimeConverter::toTimestamp(time(NULL));
+ }
+ 
+ DocumentInfo::DocumentInfo(const string &amp;title, const string &amp;location,
+-	const string &amp;type, const string &amp;language)
++	const string &amp;type, const string &amp;language) :
++	m_title(title),
++	m_location(location),
++	m_type(type),
++	m_language(language),
++	m_size(0)
+ {
+-	m_title = title;
+-	m_location = location;
+-	m_type = type;
+-	m_language = language;
+ 	m_timestamp = TimeConverter::toTimestamp(time(NULL));
+ }
+ 
+@@ -44,7 +46,8 @@
+ 	m_location(other.m_location),
+ 	m_type(other.m_type),
+ 	m_language(other.m_language),
+-	m_timestamp(other.m_timestamp)
++	m_timestamp(other.m_timestamp),
++	m_size(other.m_size)
+ {
+ 	copy(other.m_labels.begin(), other.m_labels.end(),
+ 		inserter(m_labels, m_labels.begin()));
+@@ -63,6 +66,7 @@
+ 		m_type = other.m_type;
+ 		m_language = other.m_language;
+ 		m_timestamp = other.m_timestamp;
++		m_size = other.m_size;
+ 		m_labels.clear();
+ 		copy(other.m_labels.begin(), other.m_labels.end(),
+ 			inserter(m_labels, m_labels.begin()));
+@@ -140,6 +144,19 @@
+ {
+ 	return m_timestamp;
+ }
++
++/// Sets the document's size in bytes.
++void DocumentInfo::setSize(off_t size)
++{
++	m_size = size;
++}
++
++/// Returns the document's size in bytes.
++off_t DocumentInfo::getSize(void) const
++{
++	return m_size;
++}
++
+ /// Sets the document's labels.
+ void DocumentInfo::setLabels(const set&lt;string&gt; &amp;labels)
+ {
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000587.html">[Pinot-svn] r594 - in trunk/Search: . Google
+</A></li>
+	<LI>Next message: <A HREF="000589.html">[Pinot-svn] r596 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#588">[ date ]</a>
+              <a href="thread.html#588">[ thread ]</a>
+              <a href="subject.html#588">[ subject ]</a>
+              <a href="author.html#588">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

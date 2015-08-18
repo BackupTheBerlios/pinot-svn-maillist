@@ -1,0 +1,421 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1684 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1684%20-%20trunk/Core&In-Reply-To=%3C200911021422.nA2EMnDX009874%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001673.html">
+   <LINK REL="Next"  HREF="001675.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1684 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1684%20-%20trunk/Core&In-Reply-To=%3C200911021422.nA2EMnDX009874%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1684 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Nov  2 15:22:49 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001673.html">[Pinot-svn] r1683 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="001675.html">[Pinot-svn] r1685 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1674">[ date ]</a>
+              <a href="thread.html#1674">[ thread ]</a>
+              <a href="subject.html#1674">[ subject ]</a>
+              <a href="author.html#1674">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-11-02 15:22:26 +0100 (Mon, 02 Nov 2009)
+New Revision: 1684
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/DaemonState.h
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/ServerThreads.h
+   trunk/Core/WorkerThreads.cpp
+   trunk/Core/WorkerThreads.h
+Log:
+DaemonState and MonitorThread use one CrawlHistory object from start to finish,
+ThreadsManager one ActionQueue object.
+CrawlerThread's cache applies to all updates.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-11-02 14:17:41 UTC (rev 1683)
++++ trunk/Core/DaemonState.cpp	2009-11-02 14:22:26 UTC (rev 1684)
+@@ -321,6 +321,7 @@
+ 	m_isReindex(false),
+ 	m_reload(false),
+ 	m_flush(false),
++	m_crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName()),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+ 	m_pDiskHandler(NULL),
+ 	m_crawlers(0)
+@@ -527,12 +528,10 @@
+ 	cout &lt;&lt; &quot;DaemonState::start: &quot; &lt;&lt; m_crawlQueue.size() &lt;&lt; &quot; locations to crawl&quot; &lt;&lt; endl;
+ #endif
+ 
+-	CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+-
+ 	// Update all items status so that we can get rid of files from deleted sources
+-	crawlHistory.updateItemsStatus(CrawlHistory::CRAWLING, CrawlHistory::TO_CRAWL, 0, true);
+-	crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, 0, true);
+-	crawlHistory.updateItemsStatus(CrawlHistory::CRAWL_ERROR, CrawlHistory::TO_CRAWL, 0, true);
++	m_crawlHistory.updateItemsStatus(CrawlHistory::CRAWLING, CrawlHistory::TO_CRAWL, 0, true);
++	m_crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, 0, true);
++	m_crawlHistory.updateItemsStatus(CrawlHistory::CRAWL_ERROR, CrawlHistory::TO_CRAWL, 0, true);
+ 
+ 	// Initiate crawling
+ 	start_crawling();
+@@ -567,12 +566,11 @@
+ 			}
+ 			else
+ 			{
+-				CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 				set&lt;string&gt; deletedFiles;
+ 
+ 				// All files left with status TO_CRAWL belong to deleted sources
+ 				if ((m_pDiskHandler != NULL) &amp;&amp;
+-					(crawlHistory.getItems(CrawlHistory::TO_CRAWL, deletedFiles) &gt; 0))
++					(m_crawlHistory.getItems(CrawlHistory::TO_CRAWL, deletedFiles) &gt; 0))
+ 				{
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;DaemonState::start_crawling: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; orphaned files&quot; &lt;&lt; endl;
+@@ -584,7 +582,7 @@
+ 						m_pDiskHandler-&gt;fileDeleted(fileIter-&gt;substr(7));
+ 
+ 						// Delete this item
+-						crawlHistory.deleteItem(*fileIter);
++						m_crawlHistory.deleteItem(*fileIter);
+ 					}
+ 				}
+ 			}
+@@ -668,10 +666,8 @@
+ 		if ((errorNum &gt; 0) &amp;&amp;
+ 			(indexedUrl.empty() == false))
+ 		{
+-			CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+-
+ 			// An entry should already exist for this
+-			crawlHistory.updateItem(indexedUrl, CrawlHistory::CRAWL_ERROR, time(NULL), errorNum);
++			m_crawlHistory.updateItem(indexedUrl, CrawlHistory::CRAWL_ERROR, time(NULL), errorNum);
+ 		}
+ 	}
+ 	else if (type == &quot;UnindexingThread&quot;)
+
+Modified: trunk/Core/DaemonState.h
+===================================================================
+--- trunk/Core/DaemonState.h	2009-11-02 14:17:41 UTC (rev 1683)
++++ trunk/Core/DaemonState.h	2009-11-02 14:22:26 UTC (rev 1684)
+@@ -25,6 +25,7 @@
+ #include &lt;set&gt;
+ #include &lt;sigc++/sigc++.h&gt;
+ 
++#include &quot;CrawlHistory.h&quot;
+ #ifdef HAVE_DBUS
+ #include &quot;DBusIndex.h&quot;
+ #endif
+@@ -97,6 +98,7 @@
+ 		bool m_reload;
+ 		bool m_flush;
+ 		fd_set m_flagsSet;
++		CrawlHistory m_crawlHistory;
+ 		MonitorInterface *m_pDiskMonitor;
+ 		MonitorHandler *m_pDiskHandler;
+ 		sigc::connection m_timeoutConnection;
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-11-02 14:17:41 UTC (rev 1683)
++++ trunk/Core/ServerThreads.cpp	2009-11-02 14:22:26 UTC (rev 1684)
+@@ -167,13 +167,22 @@
+ 	return &quot;CrawlerThread&quot;;
+ }
+ 
+-void CrawlerThread::cacheUpdate(const string &amp;location, time_t itemDate)
++void CrawlerThread::recordCrawled(const string &amp;location, time_t itemDate)
+ {
+-	m_updateCache[location] = itemDate;
+-	if (m_updateCache.size() &gt; 500)
++	// It may still be in the cache
++	map&lt;string, CrawlItem&gt;::iterator updateIter = m_crawlCache.find(location);
++	if (updateIter != m_crawlCache.end())
+ 	{
+-		flushUpdates();
++		updateIter-&gt;second.m_itemStatus = CrawlHistory::CRAWLED;
+ 	}
++	else
++	{
++		m_crawlCache[location] = CrawlItem(CrawlHistory::CRAWLED, itemDate, 0);
++		if (m_crawlCache.size() &gt; 500)
++		{
++			flushUpdates();
++		}
++	}
+ }
+ 
+ bool CrawlerThread::isIndexable(const string &amp;entryName) const
+@@ -204,6 +213,16 @@
+ {
+ 	CrawlHistory::CrawlStatus itemStatus = CrawlHistory::UNKNOWN;
+ 
++	// Is it in the cache ?
++	map&lt;string, CrawlItem&gt;::const_iterator updateIter = m_crawlCache.find(location);
++	if (updateIter != m_crawlCache.end())
++	{
++		itemStatus = updateIter-&gt;second.m_itemStatus;
++		itemDate = updateIter-&gt;second.m_itemDate;
++
++		return true;
++	}
++
+ 	return m_crawlHistory.hasItem(location, itemStatus, itemDate);
+ }
+ 
+@@ -217,13 +236,32 @@
+ 	else
+ 	{
+ 		// Change the status from TO_CRAWL to CRAWLING
+-		m_crawlHistory.updateItem(location, CrawlHistory::CRAWLING, itemDate);
++		m_crawlCache[location] = CrawlItem(CrawlHistory::CRAWLING, itemDate, 0);
++		if (m_crawlCache.size() &gt; 500)
++		{
++			flushUpdates();
++		}
+ 	}
+ }
+ 
+ void CrawlerThread::recordError(const string &amp;location, int errorCode)
+ {
+-	m_crawlHistory.updateItem(location, CrawlHistory::CRAWL_ERROR, time(NULL), errorCode);
++	// It may still be in the cache
++	map&lt;string, CrawlItem&gt;::iterator updateIter = m_crawlCache.find(location);
++	if (updateIter != m_crawlCache.end())
++	{
++		updateIter-&gt;second.m_itemStatus = CrawlHistory::CRAWL_ERROR;
++		updateIter-&gt;second.m_itemDate = time(NULL);
++		updateIter-&gt;second.m_errNum = errorCode;
++	}
++	else
++	{
++		m_crawlCache[location] = CrawlItem(CrawlHistory::CRAWL_ERROR, time(NULL), errorCode);
++		if (m_crawlCache.size() &gt; 500)
++		{
++			flushUpdates();
++		}
++	}
+ }
+ 
+ void CrawlerThread::recordSymlink(const string &amp;location, time_t itemDate)
+@@ -262,8 +300,8 @@
+ #endif
+ 
+ 	// Update these records
+-	m_crawlHistory.updateItems(m_updateCache, CrawlHistory::CRAWLED);
+-	m_updateCache.clear();
++	m_crawlHistory.updateItems(m_crawlCache);
++	m_crawlCache.clear();
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;CrawlerThread::flushUpdates: flushed updates&quot; &lt;&lt; endl;
+
+Modified: trunk/Core/ServerThreads.h
+===================================================================
+--- trunk/Core/ServerThreads.h	2009-11-02 14:17:41 UTC (rev 1683)
++++ trunk/Core/ServerThreads.h	2009-11-02 14:22:26 UTC (rev 1684)
+@@ -51,11 +51,11 @@
+ 		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+ 		CrawlHistory m_crawlHistory;
+-		std::map&lt;std::string, time_t&gt; m_updateCache;
++		std::map&lt;std::string, CrawlItem&gt; m_crawlCache;
+ 		std::stack&lt;std::string&gt; m_currentLinks;
+ 		std::stack&lt;std::string&gt; m_currentLinkReferrees;
+ 
+-		virtual void cacheUpdate(const std::string &amp;location, time_t itemDate);
++		virtual void recordCrawled(const std::string &amp;location, time_t itemDate);
+ 		virtual bool isIndexable(const std::string &amp;entryName) const;
+ 		virtual bool wasCrawled(const std::string &amp;location, time_t &amp;itemDate);
+ 		virtual void recordCrawling(const std::string &amp;location, bool itemExists, time_t &amp;itemDate);
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2009-11-02 14:17:41 UTC (rev 1683)
++++ trunk/Core/WorkerThreads.cpp	2009-11-02 14:22:26 UTC (rev 1684)
+@@ -49,8 +49,6 @@
+ #include &quot;Url.h&quot;
+ #include &quot;HtmlFilter.h&quot;
+ #include &quot;FilterUtils.h&quot;
+-#include &quot;ActionQueue.h&quot;
+-#include &quot;CrawlHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ #include &quot;ModuleFactory.h&quot;
+@@ -278,6 +276,7 @@
+ ThreadsManager::ThreadsManager(const string &amp;defaultIndexLocation,
+ 	unsigned int maxIndexThreads, unsigned int maxThreadsTime,
+ 	bool scanLocalFiles) :
++	m_actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name()),
+ 	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+ 	m_backgroundThreadsCount(0),
+@@ -508,9 +507,7 @@
+ 
+ 		unlock_lists();
+ 
+-		ActionQueue actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
+-
+-		actionQueue.expireItems(time(NULL));
++		m_actionQueue.expireItems(time(NULL));
+ 	}
+ }
+ 
+@@ -699,10 +696,8 @@
+ 
+ 	if (addToQueue == true)
+ 	{
+-		ActionQueue actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
++		m_actionQueue.pushItem(ActionQueue::INDEX, docInfo);
+ 
+-		actionQueue.pushItem(ActionQueue::INDEX, docInfo);
+-
+ 		return &quot;&quot;;
+ 	}
+ 
+@@ -742,7 +737,6 @@
+ 		// Get an item ?
+ 		if (getItem == true)
+ 		{
+-			ActionQueue actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
+ 			ActionQueue::ActionType type;
+ 			DocumentInfo docInfo;
+ 			string previousLocation;
+@@ -750,7 +744,7 @@
+ 			// Assume the queue is empty
+ 			emptyQueue = true;
+ 
+-			while (actionQueue.popItem(type, docInfo) == true)
++			while (m_actionQueue.popItem(type, docInfo) == true)
+ 			{
+ 				ustring status;
+ 
+@@ -1730,6 +1724,7 @@
+ 	WorkerThread(),
+ 	m_ctrlReadPipe(-1),
+ 	m_ctrlWritePipe(-1),
++	m_crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName()),
+ 	m_pMonitor(pMonitor),
+ 	m_pHandler(pHandler),
+ 	m_checkHistory(checkHistory)
+@@ -1774,7 +1769,6 @@
+ 
+ void MonitorThread::processEvents(void)
+ {
+-	CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 	queue&lt;MonitorEvent&gt; events;
+ 
+ #ifdef DEBUG
+@@ -1850,7 +1844,7 @@
+ 				{
+ 					m_pHandler-&gt;fileModified(event.m_location);
+ 				}
+-				else if (crawlHistory.hasItem(&quot;<A HREF="file://">file://</A>&quot; + event.m_location, status, itemDate) == true)
++				else if (m_crawlHistory.hasItem(&quot;<A HREF="file://">file://</A>&quot; + event.m_location, status, itemDate) == true)
+ 				{
+ 					// Was the file actually modified ?
+ 					if ((stat(event.m_location.c_str(), &amp;fileStat) == 0) &amp;&amp;
+@@ -2015,7 +2009,7 @@
+ 	return m_signalFileFound;
+ }
+ 
+-void DirectoryScannerThread::cacheUpdate(const string &amp;location, time_t itemDate)
++void DirectoryScannerThread::recordCrawled(const string &amp;location, time_t itemDate)
+ {
+ 	// Nothing to do by default
+ }
+@@ -2378,7 +2372,7 @@
+ 	else if ((itemExists == false) ||
+ 		(reportFile == true))
+ 	{
+-		cacheUpdate(location, fileStat.st_mtime);
++		recordCrawled(location, fileStat.st_mtime);
+ 	}
+ 
+ 	// If a major error occured, this won't be true
+
+Modified: trunk/Core/WorkerThreads.h
+===================================================================
+--- trunk/Core/WorkerThreads.h	2009-11-02 14:17:41 UTC (rev 1683)
++++ trunk/Core/WorkerThreads.h	2009-11-02 14:22:26 UTC (rev 1684)
+@@ -33,6 +33,8 @@
+ #include &lt;glibmm/ustring.h&gt;
+ 
+ #include &quot;Document.h&quot;
++#include &quot;ActionQueue.h&quot;
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+ #include &quot;MonitorInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+@@ -145,6 +147,7 @@
+ 		pthread_rwlock_t m_threadsLock;
+ 		pthread_rwlock_t m_listsLock;
+ 		std::map&lt;unsigned int, WorkerThread *&gt; m_threads;
++		ActionQueue m_actionQueue;
+ 		std::string m_defaultIndexLocation;
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_backgroundThreadsCount;
+@@ -375,6 +378,7 @@
+ 	protected:
+ 		int m_ctrlReadPipe;
+ 		int m_ctrlWritePipe;
++		CrawlHistory m_crawlHistory;
+ 		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+ 		bool m_checkHistory;
+@@ -414,7 +418,7 @@
+ 		std::stack&lt;std::string&gt; m_currentLinks;
+ 		std::stack&lt;std::string&gt; m_currentLinkReferrees;
+ 
+-		virtual void cacheUpdate(const std::string &amp;location, time_t itemDate);
++		virtual void recordCrawled(const std::string &amp;location, time_t itemDate);
+ 		virtual bool isIndexable(const std::string &amp;entryName) const;
+ 		virtual bool wasCrawled(const std::string &amp;location, time_t &amp;itemDate);
+ 		virtual void recordCrawling(const std::string &amp;location, bool itemExists, time_t &amp;itemDate);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001673.html">[Pinot-svn] r1683 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="001675.html">[Pinot-svn] r1685 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1674">[ date ]</a>
+              <a href="thread.html#1674">[ thread ]</a>
+              <a href="subject.html#1674">[ subject ]</a>
+              <a href="author.html#1674">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

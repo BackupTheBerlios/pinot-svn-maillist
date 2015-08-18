@@ -1,0 +1,3720 @@
+From fabricecolin at mail.berlios.de  Wed Oct  1 11:33:21 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Wed, 1 Oct 2008 11:33:21 +0200
+Subject: [Pinot-svn] r1379 - trunk/IndexSearch/Xapian
+Message-ID: <200810010933.m919XLDE001300@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-01 11:33:13 +0200 (Wed, 01 Oct 2008)
+New Revision: 1379
+
+Modified:
+   trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+Log:
+Record the position of all terms not just the first m_maxSeedTerm to ensure all
+terms are highlighted in the abstract. 
+
+
+Modified: trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-09-30 13:54:07 UTC (rev 1378)
++++ trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-10-01 09:33:13 UTC (rev 1379)
+@@ -70,6 +70,7 @@
+ {
+ 	CJKVTokenizer tokenizer;
+ 	map<Xapian::termpos, PositionWindow> abstractWindows;
++	set<Xapian::termpos> seedTermsPositions;
+ 	map<Xapian::termpos, string> wordsBuffer;
+ 	string summary;
+ 	Xapian::termpos bestPosition = 0, startPosition = 0;
+@@ -91,12 +92,6 @@
+ 	{
+ 		string termName(*termIter);
+ 
+-		if (seedTermsCount >= m_maxSeedTerms)
+-		{
+-			// Enough terms
+-			break;
+-		}
+-
+ #ifdef DEBUG
+ 		cout << "AbstractGenerator::generateAbstract: term " << termName << endl;
+ #endif
+@@ -111,7 +106,14 @@
+ 				Xapian::termpos termPos = *positionIter;
+ 
+ 				positions.insert(termPos);
++				seedTermsPositions.insert(termPos);
+ 
++				if (seedTermsCount >= m_maxSeedTerms)
++				{
++					// Enough windows already 
++					continue;
++				}
++
+ 				// Take all the top term's positions into account, and some of 
+ 				// the other terms' too if the minimum number is not reached
+ 				if ((m_minTermPositions > abstractWindows.size()) ||
+@@ -145,8 +147,8 @@
+ 				}
+ 			}
+ 
+-			topTerm = false;
+ 			++seedTermsCount;
++			topTerm = false;
+ 		}
+ 		catch (const Xapian::Error &error)
+ 		{
+@@ -158,7 +160,7 @@
+ 
+ #ifdef DEBUG
+ 		cout << "AbstractGenerator::generateAbstract: " << abstractWindows.size()
+-			<< " positions, " << seedTermsCount << " terms" << endl;
++			<< " windows, " << seedTermsCount << " terms" << endl;
+ #endif
+ 	}
+ 
+@@ -210,9 +212,6 @@
+ 			if ((tokenizer.has_cjkv(termName) == true) &&
+ 				(termName.length() > 4))
+ 			{
+-#ifdef DEBUG
+-				cout << "AbstractGenerator::generateAbstract: skipping " << termName << endl;
+-#endif
+ 				continue;
+ 			}
+ 
+@@ -266,7 +265,7 @@
+ 		}
+ 
+ 		// Is this a seed term ?
+-		if (abstractWindows.find(wordIter->first) != abstractWindows.end())
++		if (seedTermsPositions.find(wordIter->first) != seedTermsPositions.end())
+ 		{
+ 			summary += "<b>";
+ 			summary += pEscToken;
+
+
+
+From fabricecolin at mail.berlios.de  Wed Oct  1 11:35:59 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Wed, 1 Oct 2008 11:35:59 +0200
+Subject: [Pinot-svn] r1380 - trunk/UI/GTK2/src
+Message-ID: <200810010935.m919ZxJ2001591@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-01 11:35:54 +0200 (Wed, 01 Oct 2008)
+New Revision: 1380
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+Log:
+Don't rely on the size of m_indexNames for IDs assigned to indexes; that list
+may grow or shrink while Pinot is running and that messed things up, eg the
+retrieval from history and the display of abstracts.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-10-01 09:33:13 UTC (rev 1379)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-10-01 09:35:54 UTC (rev 1380)
+@@ -110,7 +110,8 @@
+ 	m_proxyPort(8080),
+ 	m_proxyEnabled(false),
+ 	m_isBlackList(true),
+-	m_firstRun(false)
++	m_firstRun(false),
++	m_indexCount(0)
+ {
+ 	string directoryName(getConfigurationDirectory());
+ 	struct stat fileStat;
+@@ -294,6 +295,7 @@
+ 	m_firstRun = false;
+ 	m_indexNames.clear();
+ 	m_indexIds.clear();
++	m_indexCount = 0;
+ 	m_engines.clear();
+ 	m_engineIds.clear();
+ 	m_engineChannels.clear();
+@@ -1587,8 +1589,12 @@
+ 	if (namesMapIter == m_indexNames.end())
+ 	{
+ 		// Okay, no such index exists
+-		m_indexIds[1 << m_indexNames.size()] = name;
++		m_indexIds[1 << m_indexCount] = name;
+ 		m_indexNames[name] = location;
++#ifdef DEBUG
++		cout << "PinotSettings::addIndex: index " << m_indexCount << " is " << name << endl;
++#endif
++		++m_indexCount;
+ 
+ 		return true;
+ 	}
+@@ -1627,6 +1633,7 @@
+ 	// Clear both maps, reinsert the internal index
+ 	m_indexNames.clear();
+ 	m_indexIds.clear();
++	m_indexCount = 0;
+ 	addIndex(_("My Web Pages"), m_docsIndexLocation);
+ 	addIndex(_("My Documents"), m_daemonIndexLocation);
+ }
+@@ -1669,13 +1676,13 @@
+ {
+ 	names.clear();
+ 
+-	// Make sure there are indexes defined
+-	if (m_indexNames.empty() == true)
++	// Make sure indexes are or were defined
++	if (m_indexCount == 0)
+ 	{
+ 		return;
+ 	}
+ 
+-	unsigned indexId = 1 << (m_indexNames.size() - 1);
++	unsigned indexId = 1 << (m_indexCount - 1);
+ 	do
+ 	{
+ 		if (id & indexId)
+@@ -1683,6 +1690,9 @@
+ 			map<unsigned int, string>::iterator mapIter = m_indexIds.find(indexId);
+ 			if (mapIter != m_indexIds.end())
+ 			{
++#ifdef DEBUG
++				cout << "PinotSettings::getIndexNames: index " << indexId << " is " << mapIter->second << endl;
++#endif
+ 				// Get the associated name
+ 				names.insert(mapIter->second);
+ 			}
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2008-10-01 09:33:13 UTC (rev 1379)
++++ trunk/UI/GTK2/src/PinotSettings.h	2008-10-01 09:35:54 UTC (rev 1380)
+@@ -207,6 +207,7 @@
+ 		bool m_firstRun;
+ 		std::map<std::string, std::string> m_indexNames;
+ 		std::map<unsigned int, std::string> m_indexIds;
++		unsigned int m_indexCount;
+ 		std::set<ModuleProperties> m_engines;
+ 		std::map<unsigned int, std::string> m_engineIds;
+ 		std::map<std::string, bool> m_engineChannels;
+
+
+
+From fabricecolin at mail.berlios.de  Sun Oct  5 10:58:33 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 5 Oct 2008 10:58:33 +0200
+Subject: [Pinot-svn] r1381 - in trunk: . Monitor
+Message-ID: <200810050858.m958wXS1001735@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-05 10:58:20 +0200 (Sun, 05 Oct 2008)
+New Revision: 1381
+
+Removed:
+   trunk/Monitor/linux-inotify-syscalls.h
+Modified:
+   trunk/AUTHORS
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/Makefile.am
+   trunk/configure.in
+Log:
+A patch by Adrian Bunk to fix inotify support.
+More information on this topic at http://lkml.org/lkml/2008/9/16/79
+
+
+Modified: trunk/AUTHORS
+===================================================================
+--- trunk/AUTHORS	2008-10-01 09:35:54 UTC (rev 1380)
++++ trunk/AUTHORS	2008-10-05 08:58:20 UTC (rev 1381)
+@@ -24,10 +24,8 @@
+ 	David Paleino <d dot paleino at gmail dot com>
+ 	Michael Biebl <biebl at debian dot org>
+ 	Constantin Teodorescu <brailateo at gmail dot com>
++	Adrian Bunk <bunk at stusta dot de>
+ 
+-The file Monitor/linux-inotify-syscalls.h is originally from libinotify
+-(Copyright ? 2005 Ryan Lortie <desrt at desrt dot ca>).
+-
+ The source in Utils/unac is from unac 1.7.0 (Copyright Loic Dachary
+ <loic at senga dot org>).
+ 
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2008-10-01 09:35:54 UTC (rev 1380)
++++ trunk/Monitor/INotifyMonitor.cpp	2008-10-05 08:58:20 UTC (rev 1381)
+@@ -18,17 +18,9 @@
+ 
+ #include "config.h"
+ #include <sys/ioctl.h>
+-#ifdef HAVE_LINUX_INOTIFY_H
+-#include <unistd.h>
+-#include <stdint.h>
+-#include <sys/types.h>
+-#include <linux/inotify.h>
+-#include "linux-inotify-syscalls.h"
+-#else
+ #ifdef HAVE_SYS_INOTIFY_H
+ #include <sys/inotify.h>
+ #endif
+-#endif
+ #include <string.h>
+ #include <errno.h>
+ #include <iostream>
+
+Modified: trunk/Monitor/Makefile.am
+===================================================================
+--- trunk/Monitor/Makefile.am	2008-10-01 09:35:54 UTC (rev 1380)
++++ trunk/Monitor/Makefile.am	2008-10-05 08:58:20 UTC (rev 1381)
+@@ -5,8 +5,7 @@
+ 	MonitorEvent.h \
+ 	MonitorFactory.h \
+ 	MonitorHandler.h \
+-	MonitorInterface.h \
+-	linux-inotify-syscalls.h
++	MonitorInterface.h
+ 
+ noinst_LTLIBRARIES = libMonitor.la
+ 
+
+Deleted: trunk/Monitor/linux-inotify-syscalls.h
+===================================================================
+--- trunk/Monitor/linux-inotify-syscalls.h	2008-10-01 09:35:54 UTC (rev 1380)
++++ trunk/Monitor/linux-inotify-syscalls.h	2008-10-05 08:58:20 UTC (rev 1381)
+@@ -1,116 +0,0 @@
+-/*
+- * linux-inotify-syscalls.h - temporary shim for syscalls
+- * Copyright ? 2005 Ryan Lortie <desrt at desrt.ca>
+- *
+- *   This library is free software; you can redistribute it and/or
+- *   modify it under the terms of version 2.1 of the GNU Lesser General
+- *   Public as published by the Free Software Foundation.
+- *
+- *   This library is distributed in the hope that it will be useful,
+- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- *   Lesser General Public License for more details.
+- *
+- *   You should have received a copy of the GNU Lesser General Public
+- *   License along with this library; if not, write to the Free Software
+- *   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110
+- *
+- *   $Id: linux-inotify-syscalls.h,v 1.2 2005/09/04 15:55:51 ryanl Exp $
+- */
+-
+-#ifndef _linux_inotify_syscalls_h_
+-#define _linux_inotify_syscalls_h_
+-
+-#include <asm/types.h>
+-#include <sys/syscall.h>
+-#include <unistd.h>
+-
+-#if defined(__i386__)
+-# define __NR_inotify_init	291
+-# define __NR_inotify_add_watch	292
+-# define __NR_inotify_rm_watch	293
+-#elif defined(__x86_64__)
+-# define __NR_inotify_init	253
+-# define __NR_inotify_add_watch	254
+-# define __NR_inotify_rm_watch	255
+-#elif defined(__alpha__)
+-# define __NR_inotify_init      444
+-# define __NR_inotify_add_watch 445
+-# define __NR_inotify_rm_watch  446
+-#elif defined(__ppc__) || defined(__powerpc__) || defined(__powerpc64__)
+-# define __NR_inotify_init      275
+-# define __NR_inotify_add_watch 276
+-# define __NR_inotify_rm_watch  277
+-#elif defined(__sparc__) || defined (__sparc64__)
+-# define __NR_inotify_init      151
+-# define __NR_inotify_add_watch 152
+-# define __NR_inotify_rm_watch  156
+-#elif defined (__ia64__)
+-# define __NR_inotify_init  1277
+-# define __NR_inotify_add_watch 1278
+-# define __NR_inotify_rm_watch  1279
+-#elif defined (__s390__) || defined (__s390x__)
+-# define __NR_inotify_init  284
+-# define __NR_inotify_add_watch 285
+-# define __NR_inotify_rm_watch  286
+-#elif defined (__arm__)
+-# define __NR_inotify_init  316
+-# define __NR_inotify_add_watch 317
+-# define __NR_inotify_rm_watch  318
+-#elif defined (__SH4__)
+-# define __NR_inotify_init  290
+-# define __NR_inotify_add_watch 291
+-# define __NR_inotify_rm_watch  292
+-#elif defined (__SH5__)
+-# define __NR_inotify_init  318
+-# define __NR_inotify_add_watch 319
+-# define __NR_inotify_rm_watch  320
+-#elif defined (__mc68000__)
+-# define __NR_inotify_init     284
+-# define __NR_inotify_add_watch        285
+-# define __NR_inotify_rm_watch 286
+-#elif defined (__hppa__)
+-# define __NR_inotify_init      269
+-# define __NR_inotify_add_watch 270
+-# define __NR_inotify_rm_watch  271
+-#elif defined (__mips__)
+-# include <sgidefs.h>
+-# if _MIPS_SIM == _MIPS_SIM_ABI32
+-#  define __NR_Linux             4000
+-#  define __NR_inotify_init      (__NR_Linux + 284)
+-#  define __NR_inotify_add_watch (__NR_Linux + 285)
+-#  define __NR_inotify_rm_watch  (__NR_Linux + 286)
+-# elif _MIPS_SIM == _MIPS_SIM_ABI64
+-#  define __NR_Linux             5000
+-#  define __NR_inotify_init      (__NR_Linux + 243)
+-#  define __NR_inotify_add_watch (__NR_Linux + 244)
+-#  define __NR_inotify_rm_watch  (__NR_Linux + 245)
+-# elif _MIPS_SIM == _MIPS_SIM_NABI32
+-#  define __NR_Linux             6000
+-#  define __NR_inotify_init      (__NR_Linux + 247)
+-#  define __NR_inotify_add_watch (__NR_Linux + 248)
+-#  define __NR_inotify_rm_watch  (__NR_Linux + 249)
+-# endif
+-#else
+-# error "Unsupported architecture"
+-#endif
+-
+-static inline int
+-inotify_init (void)
+-{
+-  return syscall( __NR_inotify_init );
+-}
+-
+-static inline int
+-inotify_add_watch( int fd, const char *name, uint32_t mask )
+-{
+-  return syscall( __NR_inotify_add_watch, fd, name, mask );
+-}
+-
+-static inline int
+-inotify_rm_watch( int fd, uint32_t wd )
+-{
+-  return syscall( __NR_inotify_rm_watch, fd, wd );
+-}
+-
+-#endif /* _linux_inotify_syscalls_h_ */
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2008-10-01 09:35:54 UTC (rev 1380)
++++ trunk/configure.in	2008-10-05 08:58:20 UTC (rev 1381)
+@@ -226,18 +226,9 @@
+ fi
+ 
+ dnl inotify
+-linuxinotify="no"
+-AM_CONDITIONAL(HAVE_LINUX_INOTIFY, false)
+-AC_CHECK_HEADERS([linux/inotify.h],
+-   [linuxinotify="yes"
+-   AM_CONDITIONAL(HAVE_LINUX_INOTIFY, true)
++AC_CHECK_HEADERS([sys/inotify.h],
++   [AM_CONDITIONAL(HAVE_LINUX_INOTIFY, true)
+    ])
+-if test "$linuxinotify" = "no" ; then
+-   AC_CHECK_HEADERS([sys/inotify.h],
+-   [linuxinotify="yes"
+-   AM_CONDITIONAL(HAVE_LINUX_INOTIFY, true)
+-   ])
+-fi
+ 
+ dnl boost Spirit 
+ AM_CONDITIONAL(HAVE_BOOST_SPIRIT, false)
+
+
+
+From fabricecolin at mail.berlios.de  Thu Oct  9 15:09:33 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Thu, 9 Oct 2008 15:09:33 +0200
+Subject: [Pinot-svn] r1382 - in trunk: . Utils
+Message-ID: <200810091309.m99D9XbG024791@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-09 15:09:15 +0200 (Thu, 09 Oct 2008)
+New Revision: 1382
+
+Modified:
+   trunk/FAQ
+   trunk/Utils/MIMEScanner.cpp
+Log:
+In MIMEScanner::getDefaultActionsForType(), if GIO is used, initialize the
+list with the default actions obtained with g_app_info_get_default_for_type()
+to make sure they are picked up first.
+Add an entry to the FAQ about this, using browsers and HTML docs as example.
+
+
+Modified: trunk/FAQ
+===================================================================
+--- trunk/FAQ	2008-10-05 08:58:20 UTC (rev 1381)
++++ trunk/FAQ	2008-10-09 13:09:15 UTC (rev 1382)
+@@ -13,6 +13,13 @@
+     You may also want to disable support for spelling. See the README for more
+     details.
+ 
++  * Pinot doesn't use my favourite browser XYZ to open HTML documents
++    Even if you have set XYZ as your favourite Web browser in your desktop
++    environment, it may not be setup as the default application for HTML files.
++    In Gnome for instance, one has to select XYZ as default for all HTML files
++    using Nautilus (Properties dialog, Open With tab). This applies to
++    applications for any other file type.
++
+   * At startup, when listing an index or indexing documents, Pinot complains
+     of an "index error"
+     This is likely because a previous instance didn't exit properly and one
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2008-10-05 08:58:20 UTC (rev 1381)
++++ trunk/Utils/MIMEScanner.cpp	2008-10-09 13:09:15 UTC (rev 1382)
+@@ -880,10 +880,42 @@
+ 	vector<MIMEAction> &typeActions)
+ {
+ #ifdef USE_GIO
++	// Get default actions first
++	GAppInfo *pDefAppInfo1 = g_app_info_get_default_for_type(mimeType.c_str(), TRUE);
++	if (pDefAppInfo1 != NULL)
++	{
++		MIMEAction action(pDefAppInfo1);
++
++#ifdef DEBUG
++		cout << "MIMEScanner::getDefaultActionsForType: default action " << action.m_name << endl;
++#endif
++		actionNames.insert(action.m_name);
++		typeActions.push_back(action);
++
++		g_object_unref(pDefAppInfo1);
++	}
++	GAppInfo *pDefAppInfo2 = g_app_info_get_default_for_type(mimeType.c_str(), FALSE);
++	if (pDefAppInfo2 != NULL)
++	{
++		MIMEAction action(pDefAppInfo2);
++
++		if (actionNames.find(action.m_name) == actionNames.end())
++		{
++#ifdef DEBUG
++			cout << "MIMEScanner::getDefaultActionsForType: non-URI default action " << action.m_name << endl;
++#endif
++			actionNames.insert(action.m_name);
++			typeActions.push_back(action);
++		}
++
++		g_object_unref(pDefAppInfo2);
++	}
++
++	// Get all other actions
+ 	GList *pAppInfoList = g_app_info_get_all_for_type(mimeType.c_str());
+ 	if (pAppInfoList == NULL)
+ 	{
+-		return false;
++		return !typeActions.empty();
+ 	}
+ 
+ 	typeActions.reserve(g_list_length(pAppInfoList));
+@@ -901,12 +933,16 @@
+ 		}
+ 
+ 		MIMEAction action(pAppInfo);
++
++		// Skip defaults
++		if (actionNames.find(action.m_name) == actionNames.end())
++		{
+ #ifdef DEBUG
+-		cout << "MIMEScanner::getDefaultActions: action " << action.m_name << endl;
++			cout << "MIMEScanner::getDefaultActionsForType: action " << action.m_name << endl;
+ #endif
+-
+-		actionNames.insert(action.m_name);
+-		typeActions.push_back(action);
++			actionNames.insert(action.m_name);
++			typeActions.push_back(action);
++		}
+ 	}
+ 	g_list_foreach(pAppInfoList, (GFunc)g_object_unref, NULL);
+ 	g_list_free(pAppInfoList);
+@@ -935,7 +971,7 @@
+ 			if (actionNames.find(actionIter->second.m_name) == actionNames.end())
+ 			{
+ #ifdef DEBUG
+-				cout << "MIMEScanner::getDefaultActions: action " << actionIter->second.m_name
++				cout << "MIMEScanner::getDefaultActionsForType: action " << actionIter->second.m_name
+ 					<< " at " << actionIter->second.m_location << endl;
+ #endif
+ 				actionNames.insert(actionIter->second.m_name);
+
+
+
+From fabricecolin at mail.berlios.de  Sat Oct 11 10:35:34 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sat, 11 Oct 2008 10:35:34 +0200
+Subject: [Pinot-svn] r1383 - trunk/Monitor
+Message-ID: <200810110835.m9B8ZYIB007811@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-11 10:35:26 +0200 (Sat, 11 Oct 2008)
+New Revision: 1383
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/INotifyMonitor.h
+   trunk/Monitor/MonitorInterface.h
+Log:
+New getLimit() method to get the maximum number of watches.
+INotifyMonitor will not attempt using more watches than available. If there are
+more than 8k, 1k is set aside for other applications.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2008-10-09 13:09:15 UTC (rev 1382)
++++ trunk/Monitor/INotifyMonitor.cpp	2008-10-11 08:35:26 UTC (rev 1383)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -24,22 +24,25 @@
+ #include <string.h>
+ #include <errno.h>
+ #include <iostream>
++#include <fstream>
+ #include <set>
+ 
+ #include "INotifyMonitor.h"
+ 
++using std::cout;
++using std::cerr;
++using std::endl;
+ using std::string;
+ using std::map;
+ using std::set;
+ using std::queue;
+ using std::pair;
+-using std::cout;
+-using std::cerr;
+-using std::endl;
++using std::ifstream;
+ 
+ INotifyMonitor::INotifyMonitor() :
+ 	MonitorInterface(),
+-	m_noWatchesLeft(false)
++	m_maxUserWatches(0),
++	m_watchesCount(0)
+ {
+ 	pthread_mutex_init(&m_mutex, NULL);
+ 	m_monitorFd = inotify_init();
+@@ -50,6 +53,21 @@
+ 		strerror_r(errno, errBuffer, 1024);
+ 		cerr << "Couldn't initialize inotify: " << errBuffer << endl;
+ 	}
++
++	// FIXME: check for existence of /proc
++	ifstream inputFile;
++	inputFile.open("/proc/sys/fs/inotify/max_user_watches");
++	if (inputFile.good() == true)
++	{
++		inputFile >> m_maxUserWatches;
++		inputFile.close();
++
++		if (m_maxUserWatches > 8192)
++		{
++			// Don't be greedy, leave some for other processes
++			m_maxUserWatches -= 1024;
++		}
++	}
+ }
+ 
+ INotifyMonitor::~INotifyMonitor()
+@@ -67,7 +85,7 @@
+ 	if (locationIter != m_locations.end())
+ 	{
+ 		inotify_rm_watch(m_monitorFd, locationIter->second);
+-		m_noWatchesLeft = false;
++		--m_watchesCount;
+ 
+ 		map<int, string>::iterator watchIter = m_watches.find(locationIter->second);
+ 		if (watchIter != m_watches.end())
+@@ -86,6 +104,12 @@
+ 	return false;
+ }
+ 
++/// Returns the maximum number of files that can be monitored.
++unsigned int INotifyMonitor::getLimit(void) const
++{
++	return m_maxUserWatches;
++}
++
+ /// Starts monitoring a location.
+ bool INotifyMonitor::addLocation(const string &location, bool isDirectory)
+ {
+@@ -95,7 +119,7 @@
+ 	if ((location.empty() == true) ||
+ 		(location == "/") ||
+ 		(m_monitorFd < 0) ||
+-		(m_noWatchesLeft == true))
++		(m_watchesCount > m_maxUserWatches))
+ 	{
+ 		return false;
+ 	}
+@@ -113,10 +137,11 @@
+ 	}
+ 	else
+ 	{
+-		// FIXME: check the maximum number of watches hasn't been reached (MAX_FILE_WATCHES ?)
+ 		int watchNum = inotify_add_watch(m_monitorFd, location.c_str(), eventsMask);
+ 		if (watchNum >= 0)
+ 		{
++			++m_watchesCount;
++
+ 			// Generate an event to signal the file exists and is being monitored
+ 			if (isDirectory == false)
+ 			{
+@@ -140,7 +165,8 @@
+ 		{
+ 			if (errno == ENOSPC)
+ 			{
+-				m_noWatchesLeft = true;
++				// There are no watches left
++				m_watchesCount = m_maxUserWatches + 1;
+ 			}
+ 			cerr << "Couldn't monitor " << location << endl;
+ 		}
+
+Modified: trunk/Monitor/INotifyMonitor.h
+===================================================================
+--- trunk/Monitor/INotifyMonitor.h	2008-10-09 13:09:15 UTC (rev 1382)
++++ trunk/Monitor/INotifyMonitor.h	2008-10-11 08:35:26 UTC (rev 1383)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -33,6 +33,9 @@
+ 		INotifyMonitor();
+ 		virtual ~INotifyMonitor();
+ 
++		/// Returns the maximum number of files that can be monitored.
++		virtual unsigned int getLimit(void) const;
++
+ 		/// Adds a watch for the specified location.
+ 		virtual bool addLocation(const std::string &location, bool isDirectory);
+ 
+@@ -47,7 +50,8 @@
+ 		std::queue<MonitorEvent> m_internalEvents;
+ 		std::map<std::string, int> m_locations;
+ 		std::map<uint32_t, MonitorEvent> m_movedFrom;
+-		bool m_noWatchesLeft;
++		unsigned int m_maxUserWatches;
++		unsigned int m_watchesCount;
+ 
+ 		bool removeWatch(const std::string &location);
+ 
+
+Modified: trunk/Monitor/MonitorInterface.h
+===================================================================
+--- trunk/Monitor/MonitorInterface.h	2008-10-09 13:09:15 UTC (rev 1382)
++++ trunk/Monitor/MonitorInterface.h	2008-10-11 08:35:26 UTC (rev 1383)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -39,6 +39,9 @@
+ 			return m_monitorFd;
+ 		}
+ 
++		/// Returns the maximum number of files that can be monitored.
++		virtual unsigned int getLimit(void) const = 0;
++
+ 		/// Adds a watch for the specified location.
+ 		virtual bool addLocation(const std::string &location, bool isDirectory) = 0;
+ 
+
+
+
+From fabricecolin at mail.berlios.de  Sat Oct 11 11:06:20 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sat, 11 Oct 2008 11:06:20 +0200
+Subject: [Pinot-svn] r1384 - trunk/IndexSearch
+Message-ID: <200810110906.m9B96K66010060@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-11 11:06:15 +0200 (Sat, 11 Oct 2008)
+New Revision: 1384
+
+Modified:
+   trunk/IndexSearch/OpenSearchParser.cpp
+   trunk/IndexSearch/pinot-index.cpp
+Log:
+Cosmetic changes mostly.
+In pinot-index, let closeAll() close stuff at exit time.
+
+
+Modified: trunk/IndexSearch/OpenSearchParser.cpp
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.cpp	2008-10-11 08:35:26 UTC (rev 1383)
++++ trunk/IndexSearch/OpenSearchParser.cpp	2008-10-11 09:06:15 UTC (rev 1384)
+@@ -112,7 +112,6 @@
+ 	{
+ 		bool loadFeed = false;
+ 
+-		// Parse the configuration file
+ 		DomParser parser;
+ 		parser.set_substitute_entities(true);
+ 		parser.parse_memory_raw((const unsigned char *)pContent, (Parser::size_type)contentLen);
+@@ -307,7 +306,6 @@
+ 
+ 	try
+ 	{
+-		// Parse the configuration file
+ 		DomParser parser;
+ 		parser.set_substitute_entities(true);
+ 		parser.parse_file(m_fileName);
+
+Modified: trunk/IndexSearch/pinot-index.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-index.cpp	2008-10-11 08:35:26 UTC (rev 1383)
++++ trunk/IndexSearch/pinot-index.cpp	2008-10-11 09:06:15 UTC (rev 1384)
+@@ -105,7 +105,7 @@
+ 	bool checkDocument = false, indexDocument = false, showInfo = false, success = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, "b:cd:hia:p:t:sv", g_longOptions, &longOptionIndex);
++	int optionChar = getopt_long(argc, argv, "a:b:cd:hip:t:sv", g_longOptions, &longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		set<string> engines;
+@@ -165,7 +165,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, "b:cd:hia:p:t:sv", g_longOptions, &longOptionIndex);
++		optionChar = getopt_long(argc, argv, "a:b:cd:hip:t:sv", g_longOptions, &longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -222,11 +222,6 @@
+ 	{
+ 		cerr << "Couldn't open index " << databaseName << endl;
+ 
+-		Dijon::FilterFactory::unloadFilters();
+-		Dijon::HtmlFilter::shutdown();
+-		DownloaderInterface::shutdown();
+-		MIMEScanner::shutdown();
+-
+ 		return EXIT_FAILURE;
+ 	}
+ 
+@@ -236,12 +231,6 @@
+ 	{
+ 		cerr << "Couldn't obtain index for " << databaseName << endl;
+ 
+-		ModuleFactory::unloadModules();
+-		Dijon::FilterFactory::unloadFilters();
+-		Dijon::HtmlFilter::shutdown();
+-		DownloaderInterface::shutdown();
+-		MIMEScanner::shutdown();
+-
+ 		return EXIT_FAILURE;
+ 	}
+ 
+
+
+
+From fabricecolin at mail.berlios.de  Sat Oct 11 12:24:45 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sat, 11 Oct 2008 12:24:45 +0200
+Subject: [Pinot-svn] r1385 - trunk/Collect
+Message-ID: <200810111024.m9BAOjkR017994@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-11 12:24:34 +0200 (Sat, 11 Oct 2008)
+New Revision: 1385
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+   trunk/Collect/CurlDownloader.h
+   trunk/Collect/DownloaderInterface.cpp
+   trunk/Collect/DownloaderInterface.h
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Collect/NeonDownloader.h
+Log:
+Reduced code duplication between the Neon and Curl downloaders.
+Added ability to do a POST.
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/CurlDownloader.cpp	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -124,8 +124,7 @@
+ unsigned int CurlDownloader::m_initialized = 0;
+ 
+ CurlDownloader::CurlDownloader() :
+-	DownloaderInterface(),
+-	m_proxyPort(0)
++	DownloaderInterface()
+ {
+ 	if (m_initialized == 0)
+ 	{
+@@ -134,9 +133,6 @@
+ 
+ 		++m_initialized;
+ 	}
+-
+-        // Pretend to be Mozilla
+-	m_userAgent = "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020";
+ }
+ 
+ CurlDownloader::~CurlDownloader()
+@@ -153,42 +149,6 @@
+ // Implementation of DownloaderInterface
+ //
+ 
+-/**
+-  * Sets a (name, value) setting. Setting names include :
+-  * proxyaddress - the address of the proxy to use
+-  * proxyport - the port of the proxy to use (positive integer)
+-  * proxytype - the type of the proxy to use
+-  * Returns true if success.
+-  */
+-bool CurlDownloader::setSetting(const string &name, const string &value)
+-{
+-        bool goodSetting = true;
+-
+-        if (name == "useragent")
+-        {
+-                m_userAgent = value;
+-        }
+-	else if (name == "proxyaddress")
+-	{
+-		m_proxyAddress = value;
+-	}
+-	else if ((name == "proxyport") &&
+-		(value.empty() == false))
+-	{
+-		m_proxyPort = (unsigned int )atoi(value.c_str());
+-	}
+-	else if (name == "proxytype")
+-	{
+-		m_proxyType = value;
+-	}
+-        else
+-        {
+-                goodSetting = false;
+-        }
+-
+-        return goodSetting;
+-}
+-
+ /// Retrieves the specified document; NULL if error.
+ Document *CurlDownloader::retrieveUrl(const DocumentInfo &docInfo)
+ {
+@@ -258,6 +218,15 @@
+ 		{
+ 			curl_easy_setopt(pCurlHandler, CURLOPT_URL, url.c_str());
+ 
++			if (m_method == "POST")
++			{
++				curl_easy_setopt(pCurlHandler, CURLOPT_POST, 1);
++				if (m_postFields.empty() == false)
++				{
++					curl_easy_setopt(pCurlHandler, CURLOPT_POSTFIELDS, m_postFields.c_str());
++				}
++			}
++
+ 			CURLcode res = curl_easy_perform(pCurlHandler);
+ 			if ((res == CURLE_OK) &&
+ 				(pContentInfo->m_pContent != NULL) &&
+
+Modified: trunk/Collect/CurlDownloader.h
+===================================================================
+--- trunk/Collect/CurlDownloader.h	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/CurlDownloader.h	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,24 +30,11 @@
+ 		CurlDownloader();
+ 		virtual ~CurlDownloader();
+ 
+-		/**
+-		  * Sets a (name, value) setting. Setting names include :
+-		  * proxyaddress - the address of the proxy to use
+-		  * proxyport - the port of the proxy to use (positive integer)
+-		  * proxytype - the type of the proxy to use
+-		  * Returns true if success.
+-		  */
+-		virtual bool setSetting(const std::string &name, const std::string &value);
+-
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &docInfo);
+ 
+ 	protected:
+ 		static unsigned int m_initialized;
+-		std::string m_userAgent;
+-		std::string m_proxyAddress;
+-		unsigned int m_proxyPort;
+-		std::string m_proxyType;
+ 
+ 	private:
+ 		CurlDownloader(const CurlDownloader &other);
+
+Modified: trunk/Collect/DownloaderInterface.cpp
+===================================================================
+--- trunk/Collect/DownloaderInterface.cpp	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/DownloaderInterface.cpp	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include <stdlib.h>
+ #include <pthread.h>
+ #include <iostream>
+ 
+@@ -103,7 +104,10 @@
+ }
+ 
+ DownloaderInterface::DownloaderInterface() :
+-	m_timeout(60)
++	m_userAgent("Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020"),
++	m_proxyPort(0),
++	m_timeout(60),
++	m_method("GET")
+ {
+ }
+ 
+@@ -114,11 +118,46 @@
+ /// Sets a (name, value) setting; true if success.
+ bool DownloaderInterface::setSetting(const string &name, const string &value)
+ {
+-	return false;
++	bool goodSetting = true;
++
++	if (name == "useragent")
++	{
++		m_userAgent = value;
++	}
++	else if (name == "proxyaddress")
++	{
++		m_proxyAddress = value;
++	}
++	else if ((name == "proxyport") &&
++		(value.empty() == false))
++	{
++		m_proxyPort = (unsigned int )atoi(value.c_str());
++	}
++	else if (name == "proxytype")
++	{
++		m_proxyType = value;
++	}
++	else if (name == "timeout")
++	{
++		m_timeout = (unsigned int)atoi(value.c_str());
++	}
++	else if (name == "method")
++	{
++		if ((value == "GET") ||
++			(value == "POST"))
++		{
++			m_method = value;
++		}
++	}
++	else if (name == "postfields")
++	{
++		m_postFields = value;
++	}
++	else
++	{
++		goodSetting = false;
++	}
++
++	return goodSetting;
+ }
+ 
+-/// Sets timeout.
+-void DownloaderInterface::setTimeout(unsigned int seconds)
+-{
+-	m_timeout = seconds;
+-}
+
+Modified: trunk/Collect/DownloaderInterface.h
+===================================================================
+--- trunk/Collect/DownloaderInterface.h	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/DownloaderInterface.h	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -40,18 +40,24 @@
+ 		  * proxyaddress - the address of the proxy to use
+ 		  * proxyport - the port of the proxy to use (positive integer)
+ 		  * proxytype - the type of the proxy to use
++		  * timeout - timeout in seconds 
++		  * method - GET or POST
++		  * postfields - data to post
+ 		  * Returns true if success.
+ 		  */
+ 		virtual bool setSetting(const std::string &name, const std::string &value);
+ 
+-		/// Sets timeout.
+-		virtual void setTimeout(unsigned int seconds);
+-
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &docInfo) = 0;
+ 
+ 	protected:
++		std::string m_userAgent;
++		std::string m_proxyAddress;
++		unsigned int m_proxyPort;
++		std::string m_proxyType;
+ 		unsigned int m_timeout;
++		std::string m_method;
++		std::string m_postFields;
+ 
+ 		DownloaderInterface();
+ 
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/NeonDownloader.cpp	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -16,7 +16,8 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include <cstdio>
++#include <stdio.h>
++#include <string.h>
+ #include <strings.h>
+ #include <stdarg.h>
+ #include <pthread.h>
+@@ -36,8 +37,7 @@
+ unsigned int NeonDownloader::m_initialized = 0;
+ 
+ NeonDownloader::NeonDownloader() :
+-	DownloaderInterface(),
+-	m_proxyPort(0)
++	DownloaderInterface()
+ {
+ 	if (m_initialized == 0)
+ 	{
+@@ -46,9 +46,6 @@
+ 
+ 		++m_initialized;
+ 	}
+-
+-	// Pretend to be Mozilla
+-	m_userAgent = "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020";
+ }
+ 
+ NeonDownloader::~NeonDownloader()
+@@ -104,42 +101,6 @@
+ // Implementation of DownloaderInterface
+ //
+ 
+-/**
+-  * Sets a (name, value) setting. Setting names include :
+-  * proxyaddress - the address of the proxy to use
+-  * proxyport - the port of the proxy to use (positive integer)
+-  * proxytype - the type of the proxy to use
+-  * Returns true if success.
+-  */
+-bool NeonDownloader::setSetting(const string &name, const string &value)
+-{
+-	bool goodSetting = true;
+-
+-	if (name == "useragent")
+-	{
+-		m_userAgent = value;
+-	}
+-	else if (name == "proxyaddress")
+-	{
+-		m_proxyAddress = value;
+-	}
+-	else if ((name == "proxyport") &&
+-		(value.empty() == false))
+-	{
+-		m_proxyPort = (unsigned int )atoi(value.c_str());
+-	}
+-	else if (name == "proxytype")
+-	{
+-		m_proxyType = value;
+-	}
+-	else
+-	{
+-		goodSetting = false;
+-	}
+-
+-	return goodSetting;
+-}
+-
+ /// Retrieves the specified document; NULL if error.
+ Document *NeonDownloader::retrieveUrl(const DocumentInfo &docInfo)
+ {
+@@ -206,7 +167,20 @@
+ 	}
+ 
+ 	// Create a request for this URL
+-	ne_request *pRequest = ne_request_create(pSession, "GET", fullLocation.c_str());
++	ne_request *pRequest = NULL;
++	if (m_method == "POST")
++	{
++		pRequest = ne_request_create(pSession, "POST", fullLocation.c_str());
++		if ((pRequest != NULL) &&
++			(m_postFields.empty() == false))
++		{
++			ne_set_request_body_buffer(pRequest, m_postFields.c_str(), m_postFields.length());
++		}
++	}
++	else
++	{
++		pRequest = ne_request_create(pSession, "GET", fullLocation.c_str());
++	}
+ 	if (pRequest == NULL)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/Collect/NeonDownloader.h
+===================================================================
+--- trunk/Collect/NeonDownloader.h	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/NeonDownloader.h	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,24 +30,11 @@
+ 		NeonDownloader();
+ 		virtual ~NeonDownloader();
+ 
+-		/**
+-		  * Sets a (name, value) setting. Setting names include :
+-		  * proxyaddress - the address of the proxy to use
+-		  * proxyport - the port of the proxy to use (positive integer)
+-		  * proxytype - the type of the proxy to use
+-		  * Returns true if success.
+-		  */
+-		virtual bool setSetting(const std::string &name, const std::string &value);
+-
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &docInfo);
+ 
+ 	protected:
+ 		static unsigned int m_initialized;
+-		std::string m_userAgent;
+-		std::string m_proxyAddress;
+-		unsigned int m_proxyPort;
+-		std::string m_proxyType;
+ 
+ 		std::string handleRedirection(const char *pBody, unsigned int length);
+ 
+
+
+
+From fabricecolin at mail.berlios.de  Wed Oct 15 15:46:40 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Wed, 15 Oct 2008 15:46:40 +0200
+Subject: [Pinot-svn] r1386 - trunk/UI/GTK2/src
+Message-ID: <200810151346.m9FDke5B003466@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-15 15:46:31 +0200 (Wed, 15 Oct 2008)
+New Revision: 1386
+
+Modified:
+   trunk/UI/GTK2/src/Notebook.cpp
+   trunk/UI/GTK2/src/Notebook.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+When a spelling suggestion is available, don't create a Corrected query right
+away. Instead, show suggestions below the results list, in a combobox labeled
+"Did you mean ?" and let the user choose which one he thinks is relevant and
+click the Yes button. Then create a new query, based on the original.
+
+
+Modified: trunk/UI/GTK2/src/Notebook.cpp
+===================================================================
+--- trunk/UI/GTK2/src/Notebook.cpp	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/Notebook.cpp	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,9 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#if _USE_BUTTON_TAB
+ #include <gtkmm/rc.h>
+-#endif
+ 
+ #include "config.h"
+ #include "NLS.h"
+@@ -60,21 +58,49 @@
+ ResultsPage::ResultsPage(const ustring &queryName, ResultsTree *pTree,
+ 	int parentHeight, PinotSettings &settings) :
+ 	NotebookPageBox(queryName, NotebookPageBox::RESULTS_PAGE, settings),
++	m_pLabel(NULL),
++	m_pCombobox(NULL),
++	m_pButton(NULL),
++	m_pHBox(NULL),
++	m_pVBox(NULL),
+ 	m_pVPaned(NULL),
+ 	m_pTree(pTree)
+ {
+ 	if (pTree != NULL)
+ 	{
++		m_pLabel = manage(new Label(_("Did you mean ?")));
++		m_pCombobox = manage(new ComboBoxText());
++		m_pButton = manage(new Button(StockID("gtk-yes")));
++
++		m_pHBox = manage(new HBox(false, 0));
++		m_pHBox->pack_start(*m_pLabel, Gtk::PACK_SHRINK, 4);
++		m_pHBox->pack_start(*m_pCombobox, Gtk::PACK_EXPAND_WIDGET, 4);
++		m_pHBox->pack_start(*m_pButton, Gtk::PACK_SHRINK, 4);
++
++		m_pVBox = manage(new VBox(false, 0));
++		m_pVBox->pack_start(*pTree->getResultsScrolledWindow());
++		m_pVBox->pack_start(*m_pHBox, Gtk::PACK_SHRINK, 0);
++
+ 		m_pVPaned = manage(new VPaned());
+ 		m_pVPaned->set_flags(Gtk::CAN_FOCUS);
+ 		m_pVPaned->set_position(105);
+-		m_pVPaned->pack1(*pTree->getResultsScrolledWindow(), Gtk::EXPAND|Gtk::SHRINK);
++		m_pVPaned->pack1(*m_pVBox, Gtk::EXPAND|Gtk::SHRINK);
+ 		m_pVPaned->pack2(*pTree->getExtractScrolledWindow(), Gtk::SHRINK);
+ 		pack_start(*m_pVPaned, Gtk::PACK_EXPAND_WIDGET, 0);
+ 
+ 		// Give the extract 2/10th of the height
+ 		m_pVPaned->set_position((parentHeight * 8) / 10);
++
++		// Hide suggestions by default
++		m_pLabel->hide();
++		m_pCombobox->hide();
++		m_pButton->hide();
++		m_pHBox->hide();
++		m_pVBox->show();
+ 		m_pVPaned->show();
++
++		m_pButton->signal_clicked().connect(
++			sigc::mem_fun(*this, &ResultsPage::onButtonClicked), false);
+ 	}
+ 
+ 	show();
+@@ -84,6 +110,16 @@
+ {
+ }
+ 
++void ResultsPage::onButtonClicked()
++{
++	if (m_pCombobox == NULL)
++	{
++		return;
++	}
++
++	m_signalSuggest(m_title, m_pCombobox->get_active_text());
++}
++
+ //
+ // Returns the page's tree.
+ //
+@@ -92,6 +128,29 @@
+ 	return m_pTree;
+ }
+ 
++// Returns the suggest signal.
++sigc::signal2<void, ustring, ustring>& ResultsPage::getSuggestSignal(void)
++{
++	return m_signalSuggest;
++}
++
++//
++// Append a suggestion.
++//
++void ResultsPage::appendSuggestion(const ustring &text)
++{
++	if (text.empty() == false)
++	{
++		m_pCombobox->prepend_text(text);
++		m_pCombobox->set_active(0);
++
++		m_pLabel->show();
++		m_pCombobox->show();
++		m_pButton->show();
++		m_pHBox->show();
++	}
++}
++
+ bool NotebookTabBox::m_initialized = false;
+ 
+ NotebookTabBox::NotebookTabBox(const Glib::ustring &title, NotebookPageBox::PageType type) :
+@@ -100,17 +159,12 @@
+ 	m_pageType(type),
+ 	m_tabLabel(NULL),
+ 	m_tabImage(NULL),
+-#if _USE_BUTTON_TAB
+ 	m_tabButton(NULL)
+-#else
+-	m_tabEventBox(NULL)
+-#endif
+ {
+ 	if (m_initialized == false)
+ 	{
+ 		m_initialized = true;
+ 
+-#if _USE_BUTTON_TAB
+ 		// This was lifted from gnome-terminal's terminal-window.c
+ 		RC::parse_string("style \"pinot-tab-close-button-style\"\n"
+ 			"{\n"
+@@ -120,16 +174,11 @@
+ 			"ythickness = 0\n"
+ 			"}\n"
+ 			"widget \"*.pinot-tab-close-button\" style \"pinot-tab-close-button-style\"");
+-#endif
+ 	}
+ 
+ 	m_tabLabel = manage(new Label(title));
+ 	m_tabImage = manage(new Image(StockID("gtk-close"), IconSize(ICON_SIZE_MENU)));
+-#if _USE_BUTTON_TAB
+ 	m_tabButton = manage(new Button());
+-#else
+-	m_tabEventBox = manage(new EventBox);
+-#endif
+ 
+ 	m_tabLabel->set_alignment(0, 0.5);
+ 	m_tabLabel->set_padding(0, 0);
+@@ -139,58 +188,32 @@
+ 	m_tabLabel->set_selectable(false);
+ 	m_tabImage->set_alignment(0, 0);
+ 	m_tabImage->set_padding(0, 0);
+-#if _USE_BUTTON_TAB
+ 	m_tabButton->set_relief(RELIEF_NONE);
+ 	m_tabButton->set_border_width(0);
+ 	m_tabButton->set_name("pinot-tab-close-button");
+ 	m_tabButton->set_tooltip_text(_("Close"));
+ 	m_tabButton->set_alignment(0, 0);
+ 	m_tabButton->add(*m_tabImage);
+-#else
+-	m_tabEventBox->add(*m_tabImage);
+-	m_tabEventBox->set_events(Gdk::BUTTON_PRESS_MASK);
+-#endif
+ 	pack_start(*m_tabLabel);
+-#if _USE_BUTTON_TAB
+ 	pack_start(*m_tabButton, PACK_SHRINK);
+-#else
+-	pack_start(*m_tabEventBox, PACK_SHRINK);
+-#endif
+ 	set_spacing(0);
+ 	set_homogeneous(false);
+ 	m_tabLabel->show();
+ 	m_tabImage->show();
+-#if _USE_BUTTON_TAB
+ 	m_tabButton->show();
+-#else
+-	m_tabEventBox->show();
+-#endif
+ 	show();
+ 
+-#if _USE_BUTTON_TAB
+ 	m_tabButton->signal_clicked().connect(
+ 		sigc::mem_fun(*this, &NotebookTabBox::onButtonClicked));
+-#else
+-	m_tabEventBox->signal_button_press_event().connect(
+-		sigc::mem_fun(*this, &NotebookTabBox::onButtonPressEvent));
+-#endif
+ }
+ 
+ NotebookTabBox::~NotebookTabBox()
+ {
+ }
+ 
+-#if _USE_BUTTON_TAB
+ void NotebookTabBox::onButtonClicked(void)
+-#else
+-bool NotebookTabBox::onButtonPressEvent(GdkEventButton *ev)
+-#endif
+ {
+ 	m_signalClose(m_title, m_pageType);
+-
+-#if !_USE_BUTTON_TAB
+-	return true;
+-#endif
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/Notebook.h
+===================================================================
+--- trunk/UI/GTK2/src/Notebook.h	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/Notebook.h	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -22,15 +22,11 @@
+ #include <sigc++/sigc++.h>
+ #include <glibmm/ustring.h>
+ #include <gtkmm/box.h>
++#include <gtkmm/button.h>
++#include <gtkmm/comboboxtext.h>
++#include <gtkmm/image.h>
++#include <gtkmm/label.h>
+ #include <gtkmm/paned.h>
+-#include <gtkmm/label.h>
+-#include <gtkmm/image.h>
+-#define _USE_BUTTON_TAB 1
+-#if _USE_BUTTON_TAB
+-#include <gtkmm/button.h>
+-#else
+-#include <gtkmm/eventbox.h>
+-#endif
+ #include <gtkmm/textview.h>
+ 
+ #include "PinotSettings.h"
+@@ -68,10 +64,24 @@
+ 		/// Returns the page's tree.
+ 		virtual ResultsTree *getTree(void) const;
+ 
++		/// Returns the suggest signal.
++		sigc::signal2<void, Glib::ustring, Glib::ustring>& getSuggestSignal(void);
++
++		/// Append a suggestion.
++		void appendSuggestion(const Glib::ustring &text);
++
+ 	protected:
++		Gtk::Label *m_pLabel;
++		Gtk::ComboBoxText *m_pCombobox;
++		Gtk::Button *m_pButton;
++		Gtk::HBox *m_pHBox;
++		Gtk::VBox *m_pVBox;
+ 		Gtk::VPaned *m_pVPaned;
+ 		ResultsTree *m_pTree;
++		sigc::signal2<void, Glib::ustring, Glib::ustring> m_signalSuggest;
+ 
++		void onButtonClicked();
++
+ };
+ 
+ class NotebookTabBox : public Gtk::HBox
+@@ -89,18 +99,10 @@
+ 		NotebookPageBox::PageType m_pageType;
+ 		Gtk::Label *m_tabLabel;
+ 		Gtk::Image *m_tabImage;
+-#if _USE_BUTTON_TAB
+ 		Gtk::Button *m_tabButton;
+-#else
+-		Gtk::EventBox *m_tabEventBox;
+-#endif
+ 		sigc::signal2<void, Glib::ustring, NotebookPageBox::PageType> m_signalClose;
+ 
+-#if _USE_BUTTON_TAB
+ 		void onButtonClicked(void);
+-#else
+-		bool onButtonPressEvent(GdkEventButton *ev);
+-#endif
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -1330,26 +1330,6 @@
+ 		status += _("ended");
+ 		set_status(status);
+ 
+-		// Suggest the correction to the user
+-		if (wasCorrected == true)
+-		{
+-			ustring correctedQueryName(_("Corrected"));
+-
+-			if (queryName.empty() == true)
+-			{
+-				correctedQueryName += "...";
+-			}
+-			else
+-			{
+-				correctedQueryName += " ";
+-				correctedQueryName += queryName;
+-			}
+-			queryProps.setName(correctedQueryName);
+-			queryProps.setModified(true);
+-
+-			add_query(queryProps, true);
+-		}
+-
+ 		// Index results ?
+ 		QueryProperties::IndexWhat indexResults = queryProps.getIndexResults();
+ 		if ((indexResults != QueryProperties::NOTHING) &&
+@@ -1462,6 +1442,14 @@
+ 				resultsCharset, pQueryThread->isLive());
+ 		}
+ 
++		// Suggest the correction to the user
++		if ((pResultsPage != NULL) &&
++			(wasCorrected == true))
++		{
++			pResultsPage->getSuggestSignal().connect(sigc::mem_fun(*this, &mainWindow::on_suggestQueryButton_clicked));
++			pResultsPage->appendSuggestion(queryProps.getFreeQuery());
++		}
++
+ 		// Now that results are displayed, go ahead and index documents
+ 		for (set<DocumentInfo>::const_iterator docIter = docsToIndex.begin();
+ 			docIter != docsToIndex.end(); ++docIter)
+@@ -2909,6 +2897,26 @@
+ }
+ 
+ //
++// Suggest query button click
++//
++void mainWindow::on_suggestQueryButton_clicked(ustring queryName, ustring queryText)
++{
++	// Find the query
++	const std::map<string, QueryProperties> &queriesMap = m_settings.getQueries();
++	std::map<string, QueryProperties>::const_iterator queryIter = queriesMap.find(queryName);
++	if (queryIter != queriesMap.end())
++	{
++		QueryProperties queryProps(queryIter->second);
++
++		queryProps.setName("");
++		queryProps.setFreeQuery(queryText);
++		queryProps.setModified(true);
++
++		edit_query(queryProps, true);
++	}
++}
++
++//
+ // Index back button click
+ //
+ void mainWindow::on_indexBackButton_clicked(ustring indexName)
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2008-10-11 10:24:34 UTC (rev 1385)
++++ trunk/UI/GTK2/src/mainWindow.hh	2008-10-15 13:46:31 UTC (rev 1386)
+@@ -121,6 +121,7 @@
+ 	virtual void on_removeQueryButton_clicked();
+ 	virtual void on_queryHistoryButton_clicked();
+ 	virtual void on_findQueryButton_clicked();
++	virtual void on_suggestQueryButton_clicked(Glib::ustring queryName, Glib::ustring queryText);
+ 
+ 	virtual void on_indexBackButton_clicked(Glib::ustring indexName);
+ 	virtual void on_indexForwardButton_clicked(Glib::ustring indexName);
+
+
+
+From fabricecolin at mail.berlios.de  Sat Oct 18 12:33:25 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sat, 18 Oct 2008 12:33:25 +0200
+Subject: [Pinot-svn] r1387 - trunk/IndexSearch
+Message-ID: <200810181033.m9IAXPBD004163@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-18 12:33:19 +0200 (Sat, 18 Oct 2008)
+New Revision: 1387
+
+Modified:
+   trunk/IndexSearch/FilterWrapper.cpp
+   trunk/IndexSearch/FilterWrapper.h
+Log:
+Added method reduceToText() and the ReducedAction class.
+
+
+Modified: trunk/IndexSearch/FilterWrapper.cpp
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.cpp	2008-10-15 13:46:31 UTC (rev 1386)
++++ trunk/IndexSearch/FilterWrapper.cpp	2008-10-18 10:33:19 UTC (rev 1387)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007 Fabrice Colin
++ *  Copyright 2007-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -42,6 +42,74 @@
+ 	return converter.toUTF8(pData, dataLen, charset);
+ }
+ 
++ReducedAction::ReducedAction()
++{
++}
++
++ReducedAction::~ReducedAction()
++{
++}
++
++class IndexAction : public ReducedAction
++{
++	public:
++		IndexAction(IndexInterface *pIndex, const set<string> &labels,
++			unsigned int docId, bool doUpdate) :
++			ReducedAction(),
++			m_pIndex(pIndex),
++			m_labels(labels),
++			m_docId(docId),
++			m_doUpdate(doUpdate)
++		{
++		}
++
++		virtual ~IndexAction()
++		{
++		}
++
++		virtual bool takeAction(Document &doc, bool isNested)
++		{
++			bool docSuccess = false;
++
++			// Nested documents can't be updated because they are unindexed
++			// and the ID is that of the base document anyway
++			if ((m_doUpdate == true) &&
++				(isNested == false))
++			{
++				docSuccess = m_pIndex->updateDocument(m_docId, doc);
++			}
++			else
++			{
++				unsigned int newDocId = m_docId;
++
++				docSuccess = m_pIndex->indexDocument(doc, m_labels, newDocId);
++				// Make sure we return the base document's ID, not the last nested document's ID
++				if (isNested == false)
++				{
++					m_docId = newDocId;
++				}
++			}
++
++			return docSuccess;
++		}
++
++		unsigned int getId(void) const
++		{
++			return m_docId;
++		}
++
++	public:
++		IndexInterface *m_pIndex;
++		const set<string> &m_labels;
++		unsigned int m_docId;
++		bool m_doUpdate;
++
++	private:
++		IndexAction(const IndexAction &other);
++		IndexAction &operator=(const IndexAction &other);
++
++};
++
+ FilterWrapper::FilterWrapper(IndexInterface *pIndex) :
+ 	m_pIndex(pIndex)
+ {
+@@ -51,6 +119,14 @@
+ {
+ }
+ 
++bool FilterWrapper::reduceToText(const Document &doc, ReducedAction &action)
++{
++	string originalType(doc.getType());
++	unsigned int indexId = 0;
++
++	return filterDocument(doc, originalType, action);
++}
++
+ bool FilterWrapper::indexDocument(const Document &doc, const set<string> &labels, unsigned int &docId)
+ {
+ 	string originalType(doc.getType());
+@@ -62,7 +138,12 @@
+ 
+ 	unindexNestedDocuments(doc.getLocation());
+ 
+-	return filterDocument(doc, originalType, labels, docId, false);
++	IndexAction action(m_pIndex, labels, docId, false);
++
++	bool filteredDoc = filterDocument(doc, originalType, action);
++	docId = action.getId();
++
++	return filteredDoc;
+ }
+ 
+ bool FilterWrapper::updateDocument(const Document &doc, unsigned int docId)
+@@ -77,7 +158,9 @@
+ 
+ 	unindexNestedDocuments(doc.getLocation());
+ 
+-	return filterDocument(doc, originalType, labels, docId, true);
++	IndexAction action(m_pIndex, labels, docId, true);
++
++	return filterDocument(doc, originalType, action);
+ }
+ 
+ bool FilterWrapper::unindexDocument(const string &location)
+@@ -93,7 +176,7 @@
+ }
+ 
+ bool FilterWrapper::filterDocument(const Document &doc, const string &originalType,
+-	const set<string> &labels, unsigned int &docId, bool doUpdate)
++	ReducedAction &action)
+ {
+ 	Filter *pFilter = FilterUtils::getFilter(doc.getType());
+ 	bool fedFilter = false, docSuccess = false, finalSuccess = false;
+@@ -129,7 +212,11 @@
+ 		return false;
+ 	}
+ 
+-	while (pFilter->has_documents() == true)
++	bool hasDocs = pFilter->has_documents();
++#ifdef DEBUG
++	cout << "FilterWrapper::filterDocument: has documents " << hasDocs << endl;
++#endif
++	while (hasDocs == true)
+ 	{
+ 		string actualType(originalType);
+ 		bool isNested = false;
+@@ -152,6 +239,7 @@
+ 
+ 		if (FilterUtils::populateDocument(filteredDoc, pFilter) == false)
+ 		{
++			hasDocs = pFilter->has_documents();
+ 			continue;
+ 		}
+ 
+@@ -193,28 +281,12 @@
+ 			// No, it's been reduced to plain text
+ 			filteredDoc.setType(actualType);
+ 
+-			// Nested documents can't be updated because they are unindexed
+-			// and the ID is that of the base document anyway
+-			if ((doUpdate == true) &&
+-				(isNested == false))
+-			{
+-				docSuccess = m_pIndex->updateDocument(docId, filteredDoc);
+-			}
+-			else
+-			{
+-				unsigned int newDocId = docId;
+-
+-				docSuccess = m_pIndex->indexDocument(filteredDoc, labels, newDocId);
+-				// Make sure we return the base document's ID, not the last nested document's ID
+-				if (isNested == false)
+-				{
+-					docId = newDocId;
+-				}
+-			}
++			// Take the appropriate action
++			docSuccess = action.takeAction(filteredDoc, isNested);
+ 		}
+ 		else
+ 		{
+-			docSuccess = filterDocument(filteredDoc, actualType, labels, docId, doUpdate);
++			docSuccess = filterDocument(filteredDoc, actualType, action);
+ 		}
+ 
+ 		// Consider indexing anything a success
+@@ -222,6 +294,9 @@
+ 		{
+ 			finalSuccess = true;
+ 		}
++
++		// Next
++		hasDocs = pFilter->has_documents();
+ 	}
+ 
+ 	delete pFilter;
+
+Modified: trunk/IndexSearch/FilterWrapper.h
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.h	2008-10-15 13:46:31 UTC (rev 1386)
++++ trunk/IndexSearch/FilterWrapper.h	2008-10-18 10:33:19 UTC (rev 1387)
+@@ -27,14 +27,31 @@
+ #include "Filter.h"
+ #include "IndexInterface.h"
+ 
++/// Takes action on a document that's been reduced to text.
++class PINOT_EXPORT ReducedAction
++{
++	public:
++		ReducedAction();
++		virtual ~ReducedAction();
++
++		virtual bool takeAction(Document &doc, bool isNested) = 0;
++
++	private:
++		ReducedAction(const ReducedAction &other);
++		ReducedAction &operator=(const ReducedAction &other);
++
++};
++
+ /// A wrapper around Dijon filters.
+ class PINOT_EXPORT FilterWrapper
+ {
+ 	public:
+-		/// Builds a FilterWrapper object.
+ 		FilterWrapper(IndexInterface *pIndex);
+ 		virtual ~FilterWrapper();
+ 
++		/// Reduces a document to text.
++		bool reduceToText(const Document &doc, ReducedAction &action);
++
+ 		/// Indexes the given data.
+ 		bool indexDocument(const Document &doc, const std::set<std::string> &labels,
+ 			unsigned int &docId);
+@@ -49,8 +66,7 @@
+ 		IndexInterface *m_pIndex;
+ 
+ 		bool filterDocument(const Document &doc, const std::string &originalType,
+-			const std::set<std::string> &labels, unsigned int &docId,
+-			bool doUpdate);
++			ReducedAction &action);
+ 
+ 		bool unindexNestedDocuments(const std::string &url);
+ 
+
+
+
+From fabricecolin at mail.berlios.de  Tue Oct 21 16:35:28 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Tue, 21 Oct 2008 16:35:28 +0200
+Subject: [Pinot-svn] r1388 - trunk/UI/GTK2/src
+Message-ID: <200810211435.m9LEZSwt006080@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-21 16:35:21 +0200 (Tue, 21 Oct 2008)
+New Revision: 1388
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+Log:
+The daemon's status is retrieved in the background. The status window should no
+longer occasionally freeze.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-10-18 10:33:19 UTC (rev 1387)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-10-21 14:35:21 UTC (rev 1388)
+@@ -1813,9 +1813,13 @@
+ //
+ void mainWindow::on_statistics_activate()
+ {
++	m_state.disconnect();
++
+ 	statisticsDialog statsDialog;
+ 	statsDialog.show();
+ 	statsDialog.run();
++
++	m_state.connect();
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-10-18 10:33:19 UTC (rev 1387)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-10-21 14:35:21 UTC (rev 1388)
+@@ -33,20 +33,82 @@
+ #include "ModuleFactory.h"
+ #include "PinotSettings.h"
+ #include "PinotUtils.h"
+-#include "WorkerThreads.h"
+ #include "statisticsDialog.hh"
+ 
+ using namespace std;
+ using namespace Glib;
+ using namespace Gtk;
+ 
++class DaemonStatusThread : public WorkerThread
++{
++        public:
++                DaemonStatusThread() :
++			WorkerThread(),
++			m_gotStats(false),
++			m_lowDiskSpace(false),
++			m_onBattery(false),
++			m_crawling(false),
++			m_crawledCount(0),
++			m_docsCount(0)
++		{
++		}
++                virtual ~DaemonStatusThread()
++		{
++		}
++
++                virtual std::string getType(void) const
++		{
++			return "DaemonStatusThread";
++		}
++
++		bool m_gotStats;
++		bool m_lowDiskSpace;
++		bool m_onBattery;
++		bool m_crawling;
++		unsigned int m_crawledCount;
++		unsigned int m_docsCount;
++
++        protected:
++                virtual void doWork(void)
++		{
++			if (DBusIndex::getStatistics(m_crawledCount, m_docsCount,
++				m_lowDiskSpace, m_onBattery, m_crawling) == true)
++			{
++				m_gotStats = true;
++			}
++#ifdef DEBUG
++			else cout << "DaemonStatusThread::doWork: failed to get statistics" << endl;
++#endif
++		}
++
++        private:
++                DaemonStatusThread(const DaemonStatusThread &other);
++                DaemonStatusThread &operator=(const DaemonStatusThread &other);
++
++};
++
++statisticsDialog::InternalState::InternalState(unsigned int maxIndexThreads, statisticsDialog *pWindow) :
++        ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads),
++	m_getStats(true),
++	m_gettingStats(false),
++	m_lowDiskSpace(false),
++	m_onBattery(false),
++	m_crawling(false)
++{
++        m_onThreadEndSignal.connect(sigc::mem_fun(*pWindow, &statisticsDialog::on_thread_end));
++}
++
++statisticsDialog::InternalState::~InternalState()
++{
++}
++
+ statisticsDialog::statisticsDialog() :
+ 	statisticsDialog_glade(),
+ 	m_hasErrors(false),
+ 	m_hasDiskSpace(false),
+ 	m_hasBattery(false),
+ 	m_hasCrawl(false),
+-	m_getStats(true)
++	m_state(10, this)
+ {
+ 	// Associate the columns model to the engines tree
+ 	m_refStore = TreeStore::create(m_statsColumns);
+@@ -66,11 +128,15 @@
+ 	// ...and update regularly
+ 	m_idleConnection = Glib::signal_timeout().connect(sigc::mem_fun(*this,
+ 		&statisticsDialog::on_activity_timeout), 10000);
++
++	// Connect to threads' finished signal
++	m_state.connect();
+ }
+ 
+ statisticsDialog::~statisticsDialog()
+ {
+ 	m_idleConnection.disconnect();
++	m_state.disconnect();
+ }
+ 
+ void statisticsDialog::populate(void)
+@@ -133,7 +199,6 @@
+ 	std::map<unsigned int, string> sources;
+ 	string daemonDBusStatus;
+ 	char countStr[64];
+-	bool lowDiskSpace = false, onBattery = false, crawling = false;
+ 
+ 	row = *m_myWebPagesIter;
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
+@@ -199,18 +264,15 @@
+ 		// FIXME: check whether it's actually running !
+ 		row[m_statsColumns.m_name] = ustring(_("Running under PID")) + " " + countStr;
+ 
+-		if (m_getStats == true)
++		if ((m_state.m_getStats == true) &&
++			(m_state.m_gettingStats == false))
+ 		{
+-			unsigned int crawledCount = 0, docsCount = 0;
++			DaemonStatusThread *pThread = new DaemonStatusThread();
+ 
+-			if (DBusIndex::getStatistics(crawledCount, docsCount, lowDiskSpace, onBattery, crawling) == false)
++			if (m_state.start_thread(pThread, false) == false)
+ 			{
+-#ifdef DEBUG
+-				cout << "statisticsDialog::on_activity_timeout: failed to get statistics" << endl;
+-#endif
+-
+-				// Don't try again
+-				m_getStats = false;
++				delete pThread;
++				m_state.m_getStats = false;
+ 			}
+ 		}
+ 	}
+@@ -231,7 +293,7 @@
+ 	}
+ 
+ 	// Show status
+-	if (lowDiskSpace == true)
++	if (m_state.m_lowDiskSpace == true)
+ 	{
+ 		if (m_hasDiskSpace == false)
+ 		{
+@@ -248,7 +310,7 @@
+ 
+ 		m_hasDiskSpace = false;
+ 	}
+-	if (onBattery == true)
++	if (m_state.m_onBattery == true)
+ 	{
+ 		if (m_hasBattery == false)
+ 		{
+@@ -265,7 +327,7 @@
+ 
+ 		m_hasBattery = false;
+ 	}
+-	if (crawling == true)
++	if (m_state.m_crawling == true)
+ 	{
+ 		if (m_hasCrawl == false)
+ 		{
+@@ -364,3 +426,58 @@
+ 	return true;
+ }
+ 
++void statisticsDialog::on_thread_end(WorkerThread *pThread)
++{
++	ustring status;
++	bool success = true;
++
++	if (pThread == NULL)
++	{
++		return;
++	}
++
++	// Any thread still running ?
++	if (m_state.get_threads_count() > 0)
++	{
++		m_state.m_gettingStats = false;
++	}
++
++	// Did the thread fail ?
++	status = pThread->getStatus();
++	if (status.empty() == false)
++	{
++#ifdef DEBUG
++		cout << "statisticsDialog::on_thread_end: " << status << endl;
++#endif
++		success = false;
++	}
++
++	// What type of thread was it ?
++	string type = pThread->getType();
++	if (type == "DaemonStatusThread")
++	{
++		// Did it succeed ?
++		if (success == true)
++		{
++			DaemonStatusThread *pStatusThread = dynamic_cast<DaemonStatusThread*>(pThread);
++			if (pStatusThread != NULL)
++			{
++				// Yes, it did
++				m_state.m_getStats = pStatusThread->m_gotStats;
++				m_state.m_lowDiskSpace = pStatusThread->m_lowDiskSpace;
++				m_state.m_onBattery = pStatusThread->m_onBattery;
++				m_state.m_crawling = pStatusThread->m_crawling;
++#ifdef DEBUG
++				cout << "statisticsDialog::on_thread_end: refreshed stats" << endl;
++#endif
++			}
++		}
++	}
++
++	// Delete the thread
++	delete pThread;
++
++	// We might be able to run a queued action
++	m_state.pop_queue();
++}
++
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2008-10-18 10:33:19 UTC (rev 1387)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2008-10-21 14:35:21 UTC (rev 1388)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -26,6 +26,7 @@
+ #include <gtkmm/treestore.h>
+ 
+ #include "ModelColumns.h"
++#include "WorkerThreads.h"
+ #include "statisticsDialog_glade.hh"
+ 
+ class statisticsDialog : public statisticsDialog_glade
+@@ -53,12 +54,28 @@
+ 	bool m_hasDiskSpace;
+ 	bool m_hasBattery;
+ 	bool m_hasCrawl;
+-	bool m_getStats;
+ 	sigc::connection m_idleConnection;
++	class InternalState : public ThreadsManager
++	{
++	public:
++		InternalState(unsigned int maxIndexThreads,
++			statisticsDialog *pWindow);
++		~InternalState();
+ 
++		bool m_getStats;
++		bool m_gettingStats;
++		bool m_lowDiskSpace;
++		bool m_onBattery;
++		bool m_crawling;
++
++	} m_state;
++
+ 	void populate(void);
+ 
+ 	bool on_activity_timeout(void);
+ 
++	void on_thread_end(WorkerThread *pThread);
++
+ };
++
+ #endif
+
+
+
+From fabricecolin at mail.berlios.de  Sat Oct 25 09:35:10 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sat, 25 Oct 2008 09:35:10 +0200
+Subject: [Pinot-svn] r1389 - trunk/IndexSearch/Xapian
+Message-ID: <200810250735.m9P7ZA3J001917@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-25 09:35:03 +0200 (Sat, 25 Oct 2008)
+New Revision: 1389
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+Log:
+Index all components of the path to a file with the XPATH: prefix. At search
+time, this maps to the "path:" filter.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-10-21 14:35:21 UTC (rev 1388)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-10-25 07:35:03 UTC (rev 1389)
+@@ -593,6 +593,7 @@
+ 	parser.add_prefix("title", "S");
+ 	parser.add_boolean_prefix("url", "U");
+ 	parser.add_boolean_prefix("dir", "XDIR:");
++	parser.add_boolean_prefix("path", "XPATH:");
+ 	parser.add_boolean_prefix("lang", "L");
+ 	parser.add_boolean_prefix("type", "T");
+ 	parser.add_boolean_prefix("class", "XCLASS:");
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-10-21 14:35:21 UTC (rev 1388)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-10-25 07:35:03 UTC (rev 1389)
+@@ -25,6 +25,7 @@
+ #include <strings.h>
+ #include <time.h>
+ #include <ctype.h>
++#include <vector>
+ #include <iostream>
+ #include <fstream>
+ #include <algorithm>
+@@ -602,6 +603,17 @@
+ 			// Next
+ 			slashPos = tree.find('/', slashPos + 1);
+ 		}
++
++		// ...and all components as XPATH:
++		Dijon::CJKVTokenizer pathTokenizer;
++		vector<string> paths;
++
++		pathTokenizer.tokenize(tree, paths);
++		for (vector<string>::iterator pathIter = paths.begin();
++			pathIter != paths.end(); ++pathIter)
++		{
++			doc.add_term(string("XPATH:") + XapianDatabase::limitTermLength(Url::escapeUrl(*pathIter), true));
++		}
+ 	}
+ 	// ...and the file name with prefix P
+ 	string fileName(urlObj.getFile());
+@@ -727,6 +739,17 @@
+ 			// Next
+ 			slashPos = tree.find('/', slashPos + 1);
+ 		}
++
++		// ...paths
++		Dijon::CJKVTokenizer pathTokenizer;
++		vector<string> paths;
++
++		pathTokenizer.tokenize(tree, paths);
++		for (vector<string>::iterator pathIter = paths.begin();
++			pathIter != paths.end(); ++pathIter)
++		{
++			commonTerms.insert(string("XPATH:") + XapianDatabase::limitTermLength(Url::escapeUrl(*pathIter), true));
++		}
+ 	}
+ 	// ...and file name
+ 	string fileName(urlObj.getFile());
+
+
+
+From fabricecolin at mail.berlios.de  Mon Oct 27 04:43:17 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 27 Oct 2008 04:43:17 +0100
+Subject: [Pinot-svn] r1390 - trunk/UI/GTK2/src
+Message-ID: <200810270343.m9R3hH8M013734@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-27 04:43:12 +0100 (Mon, 27 Oct 2008)
+New Revision: 1390
+
+Modified:
+   trunk/UI/GTK2/src/queryDialog.cc
+Log:
+Support for the path: filter.
+
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2008-10-25 07:35:03 UTC (rev 1389)
++++ trunk/UI/GTK2/src/queryDialog.cc	2008-10-27 03:43:12 UTC (rev 1390)
+@@ -92,7 +92,7 @@
+ 
+ 		// FIXME: this is extremely hacky !
+ 		if ((sscanf(rowPath.c_str(), "%u", &rowPos) == 1) &&
+-			(rowPos == 10))
++			(rowPos == 11))
+ 		{
+ 			return true;
+ 		}
+@@ -113,6 +113,7 @@
+ 	filterCombobox->append_text(_("Title"));
+ 	filterCombobox->append_text(_("URL"));
+ 	filterCombobox->append_text(_("Directory"));
++	filterCombobox->append_text(_("Path"));
+ 	filterCombobox->append_text(_("Language code"));
+ 	filterCombobox->append_text(_("MIME type"));
+ 	filterCombobox->append_text(_("MIME class"));
+@@ -295,29 +296,32 @@
+ 			filter = "dir:/home/xxx";
+ 			break;
+ 		case 6:
++			filter = "path:Documents";
++			break;
++		case 7:
+ 			filter = "lang:en";
+ 			break;
+-		case 7:
++		case 8:
+ 			filter = "type:text/plain";
+ 			break;
+-		case 8:
++		case 9:
+ 			filter = "class:text";
+ 			break;
+-		case 9:
++		case 10:
+ 			filter = "label:New";
+ 			break;
+-		case 10:
++		case 11:
+ 			// Separator
+ 			break;
+-		case 11:
++		case 12:
+ 			filter = TimeConverter::toYYYYMMDDString(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+ 			filter += "..20991231";
+ 			break;
+-		case 12:
++		case 13:
+ 			filter = TimeConverter::toHHMMSSString(tm->tm_hour, tm->tm_min, tm->tm_sec);
+ 			filter += "..235959";
+ 			break;
+-		case 13:
++		case 14:
+ 			filter += "0..10240b";
+ 			break;
+ 		default:
+
+
+
+From fabricecolin at mail.berlios.de  Mon Oct 27 05:02:33 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 27 Oct 2008 05:02:33 +0100
+Subject: [Pinot-svn] r1391 - trunk/UI/GTK2/src
+Message-ID: <200810270402.m9R42XSt015124@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-27 05:02:01 +0100 (Mon, 27 Oct 2008)
+New Revision: 1391
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+The FileFound signal doesn't require a source label, the caller should set it
+on the document prior to emitting the signal.
+The DirectoryScanner thread inherits from Indexing and will index files as they
+are being found, unless the env var PINOT_DELEGATE_INDEXING is set to Y. I am
+enabling this by default, but this may change in the near future.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -540,27 +540,11 @@
+ 	pop_queue(indexedUrl);
+ }
+ 
+-void DaemonState::on_message_filefound(DocumentInfo docInfo, string sourceLabel, bool isDirectory)
++void DaemonState::on_message_filefound(DocumentInfo docInfo, bool isDirectory)
+ {
+ 	if (isDirectory == false)
+ 	{
+-		DocumentInfo docCopy(docInfo);
+-		set<string> labels;
+-
+-		if (sourceLabel.empty() == false)
+-		{
+-			// Insert a label that identifies the source
+-			labels.insert(sourceLabel);
+-			docCopy.setLabels(labels);
+-#ifdef DEBUG
+-			cout << "DaemonState::on_message_filefound: source label for " << docCopy.getLocation() << " is " << sourceLabel << endl;
+-#endif
+-		}
+-#ifdef DEBUG
+-		else cout << "DaemonState::on_message_filefound: no source label for " << docCopy.getLocation() << endl;
+-#endif
+-
+-		queue_index(docCopy);
++		queue_index(docInfo);
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -48,8 +48,7 @@
+ 
+ 		void on_thread_end(WorkerThread *pThread);
+ 
+-		void on_message_filefound(DocumentInfo docInfo, std::string sourceLabel,
+-			bool isDirectory);
++		void on_message_filefound(DocumentInfo docInfo, bool isDirectory);
+ 
+ 		sigc::signal1<void, int>& getQuitSignal(void);
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -48,8 +48,8 @@
+ 	pthread_mutex_destroy(&m_mutex);
+ 
+ 	// Disconnect the signal
+-	sigc::signal3<void, DocumentInfo, string, bool>::slot_list_type slotsList = m_signalFileFound.slots();
+-	sigc::signal3<void, DocumentInfo, string, bool>::slot_list_type::iterator slotIter = slotsList.begin();
++	sigc::signal2<void, DocumentInfo, bool>::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal2<void, DocumentInfo, bool>::slot_list_type::iterator slotIter = slotsList.begin();
+ 	if (slotIter != slotsList.end())
+ 	{
+ 		if (slotIter->empty() == false)
+@@ -203,7 +203,7 @@
+ 	DocumentInfo docInfo("", location, MIMEScanner::scanUrl(urlObj), "");
+ 
+ 	// What source does it belong to ?
+-	for(map<unsigned int, string>::const_iterator sourceIter = m_fileSources.begin();
++	for (map<unsigned int, string>::const_iterator sourceIter = m_fileSources.begin();
+ 		sourceIter != m_fileSources.end(); ++sourceIter)
+ 	{
+ 		sourceId = sourceIter->first;
+@@ -216,6 +216,7 @@
+ 
+ 		if (location.substr(0, sourceIter->second.length()) == sourceIter->second)
+ 		{
++			set<string> labels;
+ 			stringstream labelStream;
+ 
+ 			// That's the one
+@@ -223,18 +224,16 @@
+ #ifdef DEBUG
+ 			cout << "OnDiskHandler::indexFile: source label for " << location << " is " << labelStream.str() << endl;
+ #endif
+-			m_signalFileFound(docInfo, labelStream.str(), isDirectory);
+-			return true;
++			labels.insert(labelStream.str());
++			docInfo.setLabels(labels);
++			break;
+ 		}
+ #ifdef DEBUG
+ 		else cout << "OnDiskHandler::indexFile: not " << sourceIter->second << endl;
+ #endif
+ 	}
+-#ifdef DEBUG
+-	cout << "OnDiskHandler::indexFile: no source label for " << location << endl;
+-#endif
+ 
+-	m_signalFileFound(docInfo, "", isDirectory);
++	m_signalFileFound(docInfo, isDirectory);
+ 
+ 	return true;
+ }
+@@ -413,7 +412,7 @@
+ 	return fileDeleted(dirName, IndexInterface::BY_DIRECTORY);
+ }
+ 
+-sigc::signal3<void, DocumentInfo, string, bool>& OnDiskHandler::getFileFoundSignal(void)
++sigc::signal2<void, DocumentInfo, bool>& OnDiskHandler::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -68,11 +68,11 @@
+ 		/// Handles directory deleted events.
+ 		virtual bool directoryDeleted(const std::string &dirName);
+ 
+-		sigc::signal3<void, DocumentInfo, std::string, bool>& getFileFoundSignal(void);
++		sigc::signal2<void, DocumentInfo, bool>& getFileFoundSignal(void);
+ 
+ 	protected:
+ 		pthread_mutex_t m_mutex;
+-		sigc::signal3<void, DocumentInfo, std::string, bool> m_signalFileFound;
++		sigc::signal2<void, DocumentInfo, bool> m_signalFileFound;
+ 		std::map<unsigned int, std::string> m_fileSources;
+ 		CrawlHistory m_history;
+ 		IndexInterface *m_pIndex;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -23,6 +23,7 @@
+ #include <stdlib.h>
+ #include <fcntl.h>
+ #include <string.h>
++#include <strings.h>
+ #include <signal.h>
+ #include <errno.h>
+ #include <exception>
+@@ -37,6 +38,8 @@
+ #include "TimeConverter.h"
+ #include "Timer.h"
+ #include "Url.h"
++#include "CrawlHistory.h"
++#include "MetaDataBackup.h"
+ #include "DBusIndex.h"
+ #include "ModuleFactory.h"
+ #include "DaemonState.h"
+@@ -106,7 +109,7 @@
+ DirectoryScannerThread::DirectoryScannerThread(const string &dirName, bool isSource,
+ 	bool fullScan, MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 	unsigned int maxLevel, bool followSymLinks) :
+-	WorkerThread(),
++	IndexingThread(),
+ 	m_dirName(dirName),
+ 	m_fullScan(fullScan),
+ 	m_pMonitor(pMonitor),
+@@ -114,8 +117,18 @@
+ 	m_sourceId(0),
+ 	m_currentLevel(0),
+ 	m_maxLevel(maxLevel),
+-	m_followSymLinks(followSymLinks)
++	m_followSymLinks(followSymLinks),
++	m_delegateIndexing(false)
+ {
++	// This is not set in the configuration file
++	char *pEnvVar = getenv("PINOT_DELEGATE_INDEXING");
++	if ((pEnvVar != NULL) &&
++		(strlen(pEnvVar) > 0) &&
++		(strncasecmp(pEnvVar, "Y", 1) == 0))
++	{
++		m_delegateIndexing = true;
++	}
++
+ 	if (m_dirName.empty() == false)
+ 	{
+ 		CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+@@ -171,8 +184,8 @@
+ void DirectoryScannerThread::stop(void)
+ {
+ 	// Disconnect the signal
+-	sigc::signal3<void, DocumentInfo, string, bool>::slot_list_type slotsList = m_signalFileFound.slots();
+-	sigc::signal3<void, DocumentInfo, string, bool>::slot_list_type::iterator slotIter = slotsList.begin();
++	sigc::signal2<void, DocumentInfo, bool>::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal2<void, DocumentInfo, bool>::slot_list_type::iterator slotIter = slotsList.begin();
+ 	if (slotIter != slotsList.end())
+ 	{
+ 		if (slotIter->empty() == false)
+@@ -184,7 +197,7 @@
+ 	WorkerThread::stop();
+ }
+ 
+-sigc::signal3<void, DocumentInfo, string, bool>& DirectoryScannerThread::getFileFoundSignal(void)
++sigc::signal2<void, DocumentInfo, bool>& DirectoryScannerThread::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+@@ -202,6 +215,10 @@
+ 
+ void DirectoryScannerThread::flushUpdates(CrawlHistory &crawlHistory)
+ {
++#ifdef DEBUG
++	cout << "DirectoryScannerThread::flushUpdates: flushing updates" << endl;
++#endif
++
+ 	// Update these records
+ 	crawlHistory.updateItems(m_updateCache, CrawlHistory::CRAWLED);
+ 	m_updateCache.clear();
+@@ -219,14 +236,24 @@
+ 		return;
+ 	}
+ 
+-	stringstream labelStream;
++	if (m_delegateIndexing == false)
++	{
++		// Reset base class members
++		m_docInfo = docInfo;
++		m_docId = 0;
++		m_indexLocation = PinotSettings::getInstance().m_daemonIndexLocation;
++		m_update = false;
+ 
+-	// This identifies the source
+-	labelStream << "X-SOURCE" << m_sourceId;
++		IndexingThread::doWork();
+ #ifdef DEBUG
+-	cout << "DirectoryScannerThread::foundFile: source label for " << docInfo.getLocation() << " is " << labelStream.str() << endl;
++		cout << "DirectoryScannerThread::foundFile: indexed " << docInfo.getLocation() << " to " << m_docId << endl;
+ #endif
+-	m_signalFileFound(docInfo, labelStream.str(), false);
++	}
++	else
++	{
++		// Delegate indexing
++		m_signalFileFound(docInfo, false);
++	}
+ }
+ 
+ bool DirectoryScannerThread::scanEntry(const string &entryName, CrawlHistory &crawlHistory)
+@@ -421,6 +448,8 @@
+ 		if (reportFile == true)
+ 		{
+ 			DocumentInfo docInfo("", location, "", "");
++			set<string> labels;
++			stringstream labelStream;
+ 
+ 			if (S_ISDIR(fileStat.st_mode))
+ 			{
+@@ -433,6 +462,10 @@
+ 			}
+ 			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
+ 			docInfo.setSize(fileStat.st_size);
++			// Insert a label that identifies the source
++			labelStream << "X-SOURCE" << m_sourceId;
++			labels.insert(labelStream.str());
++			docInfo.setLabels(labels);
+ 
+ 			foundFile(docInfo);
+ 		}
+
+Modified: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/ServerThreads.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -41,7 +41,7 @@
+ #include "DaemonState.h"
+ #include "WorkerThreads.h"
+ 
+-class DirectoryScannerThread : public WorkerThread
++class DirectoryScannerThread : public IndexingThread
+ {
+ 	public:
+ 		DirectoryScannerThread(const std::string &dirName, bool isSource,
+@@ -55,7 +55,7 @@
+ 
+ 		virtual void stop(void);
+ 
+-		sigc::signal3<void, DocumentInfo, std::string, bool>& getFileFoundSignal(void);
++		sigc::signal2<void, DocumentInfo, bool>& getFileFoundSignal(void);
+ 
+ 	protected:
+ 		std::string m_dirName;
+@@ -66,7 +66,8 @@
+ 		unsigned int m_currentLevel;
+ 		unsigned int m_maxLevel;
+ 		bool m_followSymLinks;
+-		sigc::signal3<void, DocumentInfo, std::string, bool> m_signalFileFound;
++		bool m_delegateIndexing;
++		sigc::signal2<void, DocumentInfo, bool> m_signalFileFound;
+ 		std::map<std::string, time_t> m_updateCache;
+ 
+ 		void cacheUpdate(const std::string &location, time_t mTime, CrawlHistory &crawlHistory);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -1357,6 +1357,14 @@
+ {
+ }
+ 
++DownloadingThread::DownloadingThread() :
++	WorkerThread(),
++	m_docInfo("", "", "", ""),
++	m_pDoc(NULL),
++	m_pDownloader(NULL)
++{
++}
++
+ DownloadingThread::~DownloadingThread()
+ {
+ 	if (m_pDoc != NULL)
+@@ -1386,6 +1394,11 @@
+ 
+ void DownloadingThread::doWork(void)
+ {
++	if (m_pDoc != NULL)
++	{
++		delete m_pDoc;
++		m_pDoc = NULL;
++	}
+ 	if (m_pDownloader != NULL)
+ 	{
+ 		delete m_pDownloader;
+@@ -1442,6 +1455,15 @@
+ {
+ }
+ 
++IndexingThread::IndexingThread() :
++	DownloadingThread(),
++	m_docId(0),
++	m_indexLocation(""),
++	m_allowAllMIMETypes(true),
++	m_update(false)
++{
++}
++
+ IndexingThread::~IndexingThread()
+ {
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-10-27 03:43:12 UTC (rev 1390)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-10-27 04:02:01 UTC (rev 1391)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -373,6 +373,8 @@
+ 		Document *m_pDoc;
+ 		DownloaderInterface *m_pDownloader;
+ 
++		DownloadingThread();
++
+ 		virtual void doWork(void);
+ 
+ 	private:
+@@ -404,6 +406,8 @@
+ 		bool m_allowAllMIMETypes;
+ 		bool m_update;
+ 
++		IndexingThread();
++
+ 		virtual void doWork(void);
+ 
+ 	private:
+
+
+
+From fabricecolin at mail.berlios.de  Mon Oct 27 05:04:19 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 27 Oct 2008 05:04:19 +0100
+Subject: [Pinot-svn] r1392 - in trunk: IndexSearch/Xapian UI/GTK2/src Utils
+Message-ID: <200810270404.m9R44JdT015160@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-27 05:04:03 +0100 (Mon, 27 Oct 2008)
+New Revision: 1392
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianDatabase.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/Utils/Url.h
+Log:
+Cosmetic changes.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.cpp	2008-10-27 04:02:01 UTC (rev 1391)
++++ trunk/IndexSearch/Xapian/XapianDatabase.cpp	2008-10-27 04:04:03 UTC (rev 1392)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -21,12 +21,12 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <strings.h>
+ #include <regex.h>
+ #include <stdio.h>
+ #include <sstream>
+ #include <iostream>
+-#include <cstring>
+ 
+ #include "StringManip.h"
+ #include "TimeConverter.h"
+@@ -158,7 +158,8 @@
+ 	// Should we build the spelling database ?
+ 	char *pEnvVar = getenv("PINOT_SPELLING_DB");
+ 	if ((pEnvVar != NULL) &&
+-		(strncasecmp(pEnvVar, "no", 2) == 0))
++		(strlen(pEnvVar) > 0) &&
++		(strncasecmp(pEnvVar, "N", 1) == 0))
+ 	{
+ 		// No
+ 		m_withSpelling = false;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-10-27 04:02:01 UTC (rev 1391)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-10-27 04:04:03 UTC (rev 1392)
+@@ -20,6 +20,7 @@
+ #include <stdlib.h>
+ #include <ctype.h>
+ #include <unistd.h>
++#include <string.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <dirent.h>
+@@ -27,7 +28,6 @@
+ #include <fnmatch.h>
+ #include <algorithm>
+ #include <iostream>
+-#include <cstring>
+ 
+ #include <glibmm/convert.h>
+ #include <glibmm/date.h>
+@@ -139,11 +139,11 @@
+ 	m_daemonIndexLocation += "/daemon";
+ 
+ 	// This is not set in the configuration file
+-	char *minDiskSpace = getenv("PINOT_MINIMUM_DISK_SPACE");
+-	if ((minDiskSpace != NULL) &&
+-		(strlen(minDiskSpace) > 0))
++	char *pEnvVar = getenv("PINOT_MINIMUM_DISK_SPACE");
++	if ((pEnvVar != NULL) &&
++		(strlen(pEnvVar) > 0))
+ 	{
+-		m_minimumDiskSpace = atof(minDiskSpace);
++		m_minimumDiskSpace = atof(pEnvVar);
+ 	}
+ }
+ 
+
+Modified: trunk/Utils/Url.h
+===================================================================
+--- trunk/Utils/Url.h	2008-10-27 04:02:01 UTC (rev 1391)
++++ trunk/Utils/Url.h	2008-10-27 04:04:03 UTC (rev 1392)
+@@ -70,7 +70,7 @@
+ 		std::string getParameters(void) const;
+ 
+ 		/// Returns whether the Url points to a local file.
+-		bool isLocal(void) const ;
++		bool isLocal(void) const;
+ 
+ 	protected:
+ 		std::string m_protocol;
+
+
+
+From fabricecolin at mail.berlios.de  Mon Oct 27 07:08:58 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 27 Oct 2008 07:08:58 +0100
+Subject: [Pinot-svn] r1393 - in trunk: IndexSearch IndexSearch/Xapian
+	UI/GTK2/src
+Message-ID: <200810270608.m9R68wLP000095@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-27 07:08:14 +0100 (Mon, 27 Oct 2008)
+New Revision: 1393
+
+Modified:
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/DBusIndex.h
+   trunk/IndexSearch/IndexInterface.h
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+   trunk/UI/GTK2/src/ModelColumns.cpp
+   trunk/UI/GTK2/src/ModelColumns.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+Log:
+Removing the seldom-used and more-trouble-than-it's-worth ability to rename
+labels.
+
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/IndexSearch/DBusIndex.cpp	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007 Fabrice Colin
++ *  Copyright 2007-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -489,7 +489,7 @@
+ }
+ 
+ /// Sets the list of known labels.
+-bool DBusIndex::setLabels(const set<string> &labels)
++bool DBusIndex::setLabels(const set<string> &labels, bool resetLabels)
+ {
+ 	// Not allowed here
+ 	return false;
+@@ -591,52 +591,6 @@
+ 	return addedLabel;
+ }
+ 
+-/// Renames a label.
+-bool DBusIndex::renameLabel(const string &name, const string &newName)
+-{
+-	bool renamedLabel = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr << "DBusIndex::renameLabel: couldn't get bus proxy" << endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	const char *pOldLabel = name.c_str();
+-	const char *pNewLabel = newName.c_str();
+-
+-	if (dbus_g_proxy_call(pBusProxy, "RenameLabel", &pError,
+-		G_TYPE_STRING, pOldLabel,
+-		G_TYPE_STRING, pNewLabel,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRING, &pNewLabel,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		renamedLabel = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr << "DBusIndex::renameLabel: " << pError->message << endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return renamedLabel;
+-}
+-
+ /// Deletes all references to a label.
+ bool DBusIndex::deleteLabel(const string &name)
+ {
+
+Modified: trunk/IndexSearch/DBusIndex.h
+===================================================================
+--- trunk/IndexSearch/DBusIndex.h	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/IndexSearch/DBusIndex.h	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2007 Fabrice Colin
++ *  Copyright 2007-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -83,7 +83,7 @@
+ 			std::map<unsigned int, std::string> &wordsBuffer) const;
+ 
+ 		/// Sets the list of known labels.
+-		virtual bool setLabels(const std::set<std::string> &labels);
++		virtual bool setLabels(const std::set<std::string> &labels, bool resetLabels);
+ 
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set<std::string> &labels) const;
+@@ -91,9 +91,6 @@
+ 		/// Adds a label.
+ 		virtual bool addLabel(const std::string &name);
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &name, const std::string &newName);
+-
+ 		/// Deletes all references to a label.
+ 		virtual bool deleteLabel(const std::string &name);
+ 
+
+Modified: trunk/IndexSearch/IndexInterface.h
+===================================================================
+--- trunk/IndexSearch/IndexInterface.h	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/IndexSearch/IndexInterface.h	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -58,7 +58,7 @@
+ 			std::map<unsigned int, std::string> &wordsBuffer) const = 0;
+ 
+ 		/// Sets the list of known labels.
+-		virtual bool setLabels(const std::set<std::string> &labels) = 0;
++		virtual bool setLabels(const std::set<std::string> &labels, bool resetLabels) = 0;
+ 
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set<std::string> &labels) const = 0;
+@@ -66,9 +66,6 @@
+ 		/// Adds a label.
+ 		virtual bool addLabel(const std::string &name) = 0;
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &name, const std::string &newName) = 0;
+-
+ 		/// Deletes all references to a label.
+ 		virtual bool deleteLabel(const std::string &name) = 0;
+ 
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -1196,10 +1196,11 @@
+ }
+ 
+ /// Sets the list of known labels.
+-bool XapianIndex::setLabels(const set<string> &labels)
++bool XapianIndex::setLabels(const set<string> &labels, bool resetLabels)
+ {
+ 	string labelsString;
+ 
++	// Whether labels are reset or not doesn't make any difference
+ 	for (set<string>::const_iterator labelIter = labels.begin();
+ 		labelIter != labels.end(); ++labelIter)
+ 	{
+@@ -1251,65 +1252,6 @@
+ 	return false;
+ }
+ 
+-/// Renames a label.
+-bool XapianIndex::renameLabel(const string &name, const string &newName)
+-{
+-	bool renamedLabel = false;
+-
+-	// Prevent from renaming or setting internal labels
+-	if ((name.substr(0, 2) == "X-") ||
+-		(newName.substr(0, 2) == "X-"))
+-	{
+-		return false;
+-	}
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr << "Bad index " << m_databaseName << endl;
+-		return false;
+-	}
+-
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase->writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term("XLABEL:");
+-
+-			// Get documents that have this label
+-			term += XapianDatabase::limitTermLength(Url::escapeUrl(name));
+-			for (Xapian::PostingIterator postingIter = pIndex->postlist_begin(term);
+-				postingIter != pIndex->postlist_end(term); ++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				// Get the document
+-				Xapian::Document doc = pIndex->get_document(docId);
+-				// Remove the term
+-				doc.remove_term(term);
+-				// ...add the new one
+-				doc.add_term(string("XLABEL:") + XapianDatabase::limitTermLength(Url::escapeUrl(newName)));
+-				// ...and update the document
+-				pIndex->replace_document(docId, doc);
+-			}
+-
+-			renamedLabel = true;
+-		}
+-	}
+-	catch (const Xapian::Error &error)
+-	{
+-		cerr << "Couldn't delete label: " << error.get_type() << ": " << error.get_msg() << endl;
+-	}
+-	catch (...)
+-	{
+-		cerr << "Couldn't delete label, unknown exception occured" << endl;
+-	}
+-	pDatabase->unlock();
+-
+-	return renamedLabel;
+-}
+-
+ /// Deletes all references to a label.
+ bool XapianIndex::deleteLabel(const string &name)
+ {
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -70,7 +70,7 @@
+ 			std::map<unsigned int, std::string> &wordsBuffer) const;
+ 
+ 		/// Sets the list of known labels.
+-		virtual bool setLabels(const std::set<std::string> &labels);
++		virtual bool setLabels(const std::set<std::string> &labels, bool resetLabels);
+ 
+ 		/// Gets the list of known labels.
+ 		virtual bool getLabels(std::set<std::string> &labels) const;
+@@ -78,9 +78,6 @@
+ 		/// Adds a label.
+ 		virtual bool addLabel(const std::string &name);
+ 
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &name, const std::string &newName);
+-
+ 		/// Deletes all references to a label.
+ 		virtual bool deleteLabel(const std::string &name);
+ 
+
+Modified: trunk/UI/GTK2/src/ModelColumns.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.cpp	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/ModelColumns.cpp	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -90,7 +90,6 @@
+ {
+ 	add(m_enabled);
+ 	add(m_name);
+-	add(m_oldName);
+ }
+ 
+ LabelModelColumns::~LabelModelColumns()
+
+Modified: trunk/UI/GTK2/src/ModelColumns.h
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.h	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/ModelColumns.h	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -119,7 +119,6 @@
+ 
+ 	Gtk::TreeModelColumn<bool> m_enabled;
+ 	Gtk::TreeModelColumn<Glib::ustring> m_name;
+-	Gtk::TreeModelColumn<Glib::ustring> m_oldName;
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -876,45 +876,6 @@
+ 			}
+ 		}
+ 	}
+-	else if (dbus_message_is_method_call(m_pRequest, "de.berlios.Pinot", "RenameLabel") == TRUE)
+-	{
+-		char *pOldLabel = NULL;
+-		char *pNewLabel = NULL;
+-
+-		if (dbus_message_get_args(m_pRequest, &error,
+-			DBUS_TYPE_STRING, &pOldLabel,
+-			DBUS_TYPE_STRING, &pNewLabel,
+-			DBUS_TYPE_INVALID) == TRUE)
+-		{
+-#ifdef DEBUG
+-			cout << "DBusServletThread::doWork: received RenameLabel " << pOldLabel << ", " << pNewLabel << endl;
+-#endif
+-
+-			if ((pOldLabel != NULL) &&
+-				(pNewLabel != NULL))
+-			{
+-				// Rename the label
+-				flushIndex = pIndex->renameLabel(pOldLabel, pNewLabel);
+-				// Update the labels list
+-				set<string>::const_iterator oldLabelIter = labelsCache.find(pOldLabel);
+-				if (oldLabelIter != labelsCache.end())
+-				{
+-					labelsCache.erase(oldLabelIter);
+-					labelsCache.insert(pNewLabel);
+-					updateLabelsCache = true;
+-				}
+-			}
+-
+-			// Prepare the reply
+-			m_pReply = newDBusReply(m_pRequest);
+-			if (m_pReply != NULL)
+-			{
+-				dbus_message_append_args(m_pReply,
+-					DBUS_TYPE_STRING, &pNewLabel,
+-					DBUS_TYPE_INVALID);
+-			}
+-		}
+-	}
+ 	else if (dbus_message_is_method_call(m_pRequest, "de.berlios.Pinot", "DeleteLabel") == TRUE)
+ 	{
+ 		char *pLabel = NULL;
+@@ -1312,7 +1273,7 @@
+ 
+ 	// Set labels ?
+ 	if ((updateLabelsCache == true) &&
+-		(pIndex->setLabels(labelsCache) == false))
++		(pIndex->setLabels(labelsCache, false) == false))
+ 	{
+ 		// Updating failed... reset the cache
+ 		labelsCache.clear();
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -1245,7 +1245,7 @@
+ }
+ 
+ LabelUpdateThread::LabelUpdateThread(const set<string> &labelsToAdd,
+-	const set<string> &labelsToDelete, const map<string, string> &labelsToRename) :
++	const set<string> &labelsToDelete) :
+ 	WorkerThread(),
+ 	m_resetLabels(false)
+ {
+@@ -1253,8 +1253,6 @@
+ 		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
+ 	copy(labelsToDelete.begin(), labelsToDelete.end(),
+ 		inserter(m_labelsToDelete, m_labelsToDelete.begin()));
+-	copy(labelsToRename.begin(), labelsToRename.end(),
+-		inserter(m_labelsToRename, m_labelsToRename.begin()));
+ }
+ 
+ LabelUpdateThread::LabelUpdateThread(const set<string> &labelsToAdd,
+@@ -1337,12 +1335,6 @@
+ 			pDocsIndex->deleteLabel(*iter);
+ 			pDaemonIndex->deleteLabel(*iter);
+ 		}
+-		// Rename labels
+-		for (map<string, string>::iterator iter = m_labelsToRename.begin(); iter != m_labelsToRename.end(); ++iter)
+-		{
+-			pDocsIndex->renameLabel(iter->first, iter->second);
+-			pDaemonIndex->renameLabel(iter->first, iter->second);
+-		}
+ 	}
+ 
+ 	delete pDaemonIndex;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -325,8 +325,7 @@
+ {
+ 	public:
+ 		LabelUpdateThread(const std::set<std::string> &labelsToAdd,
+-			const std::set<std::string> &labelsToDelete,
+-			const std::map<std::string, std::string> &labelsToRename);
++			const std::set<std::string> &labelsToDelete);
+ 		LabelUpdateThread(const std::set<std::string> &labelsToAdd,
+ 			const std::set<unsigned int> &docsIds,
+ 			const std::set<unsigned int> &daemonIds,
+@@ -343,7 +342,6 @@
+ 	protected:
+ 		std::set<std::string> m_labelsToAdd;
+ 		std::set<std::string> m_labelsToDelete;
+-		std::map<std::string, std::string> m_labelsToRename;
+ 		std::set<unsigned int> m_docsIds;
+ 		std::set<unsigned int> m_daemonIds;
+ 		bool m_resetLabels;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -1846,12 +1846,10 @@
+ 	// Any labels to add, delete or rename ?
+ 	const set<string> &labelsToAdd = prefsBox.getLabelsToAdd();
+ 	const set<string> &labelsToDelete = prefsBox.getLabelsToDelete();
+-	const std::map<string, string> &labelsToRename = prefsBox.getLabelsToRename();
+ 	if ((labelsToAdd.empty() == false) ||
+-		(labelsToDelete.empty() == false) ||
+-		(labelsToRename.empty() == false))
++		(labelsToDelete.empty() == false))
+ 	{
+-		start_thread(new LabelUpdateThread(labelsToAdd, labelsToDelete, labelsToRename));
++		start_thread(new LabelUpdateThread(labelsToAdd, labelsToDelete));
+ 	}
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -642,13 +642,13 @@
+ 				{
+ 					// If this is an upgrade from a version < 0.80, the labels list
+ 					// needs to be pulled from the configuration file
+-					pIndex->setLabels(settings.m_labels);
++					pIndex->setLabels(settings.m_labels, true);
+ 
+ 					cout << "Set labels as per the configuration file" << endl;
+ 				}
+ 				else
+ 				{
+-					pIndex->setLabels(labels);
++					pIndex->setLabels(labels, true);
+ 				}
+ 			}
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -66,18 +66,6 @@
+       <arg type="s" name="label" direction="out"/>
+     </method>
+     <!--
+-	Renames a label.
+-	 oldLabel: the label to rename
+-	 newLabel: the new label name
+-        This method shouldn't be used by applications other than Pinot.
+-	-->
+-    <method name="RenameLabel">
+-      <annotation name="de.berlios.Pinot.RenameLabel" value="pinotDBus"/>
+-      <arg type="s" name="oldLabel" direction="in"/>
+-      <arg type="s" name="newLabel" direction="in"/>
+-      <arg type="s" name="newLabel" direction="out"/>
+-    </method>
+-    <!--
+ 	Deletes a label.
+ 	 label: the name of the label to delete
+         This method shouldn't be used by applications other than Pinot.
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -102,7 +102,7 @@
+ 	// Associate the columns model to the labels tree
+ 	m_refLabelsTree = ListStore::create(m_labelsColumns);
+ 	labelsTreeview->set_model(m_refLabelsTree);
+-	labelsTreeview->append_column_editable(_("Name"), m_labelsColumns.m_name);
++	labelsTreeview->append_column(_("Name"), m_labelsColumns.m_name);
+ 	// Allow only single selection
+ 	labelsTreeview->get_selection()->set_mode(SELECTION_SINGLE);
+ 	populate_labelsTreeview();
+@@ -155,11 +155,6 @@
+ 	return m_deletedLabels;
+ }
+ 
+-const map<string, string> &prefsDialog::getLabelsToRename(void) const
+-{
+-	return m_renamedLabels;
+-}
+-
+ bool prefsDialog::startDaemon(void) const
+ {
+ 	return m_startDaemon;
+@@ -252,7 +247,6 @@
+ 		row = *iter;
+ 		// Set its name
+ 		row[m_labelsColumns.m_name] = *labelIter;
+-		row[m_labelsColumns.m_oldName] = *labelIter;
+ 		// This allows to differentiate existing labels from new labels the user may create
+ 		row[m_labelsColumns.m_enabled] = true;
+ 	}
+@@ -274,24 +268,15 @@
+ 		for (; iter != children.end(); ++iter)
+ 		{
+ 			TreeModel::Row row = *iter;
+-
+-			// Add this new label to the settings
+ 			ustring labelName(row[m_labelsColumns.m_name]);
+-			ustring oldName(row[m_labelsColumns.m_oldName]);
+-			// Was this label renamed ?
+-			if ((row[m_labelsColumns.m_enabled] == true) &&
+-				(labelName != oldName))
+-			{
+-				// Yes, it was
+-				m_renamedLabels[from_utf8(oldName)] = from_utf8(labelName);
+-			}
++
+ 			// Check user didn't recreate this label after having deleted it
+ 			set<string>::iterator labelIter = m_deletedLabels.find(from_utf8(labelName));
+ 			if (labelIter != m_deletedLabels.end())
+ 			{
+ 				m_deletedLabels.erase(labelIter);
+ 			}
+-			// Is this a nw label ?
++			// Is this a new label ?
+ 			if (row[m_labelsColumns.m_enabled] == false)
+ 			{
+ 				m_addedLabels.insert(from_utf8(labelName));
+@@ -300,6 +285,7 @@
+ #ifdef DEBUG
+ 			cout << "prefsDialog::save_labelsTreeview: " << labelName << endl;
+ #endif
++			// Add this new label to the settings
+ 			labels.insert(labelName);
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2008-10-27 04:04:03 UTC (rev 1392)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2008-10-27 06:08:14 UTC (rev 1393)
+@@ -41,8 +41,6 @@
+ 
+ 	const std::set<std::string> &getLabelsToDelete(void) const;
+ 
+-	const std::map<std::string, std::string> &getLabelsToRename(void) const;
+-
+ 	bool startDaemon(void) const;
+ 
+ protected:
+@@ -58,7 +56,6 @@
+ 	std::vector<Gtk::Entry *> m_editableValueEntries;
+ 	std::set<std::string> m_addedLabels;
+ 	std::set<std::string> m_deletedLabels;
+-	std::map<std::string, std::string> m_renamedLabels;
+ 	std::set<std::string> m_deletedDirectories;
+ 	std::string m_directoriesHash;
+ 	std::string m_patternsHash;
+
+
+
+From fabricecolin at mail.berlios.de  Mon Oct 27 08:13:53 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 27 Oct 2008 08:13:53 +0100
+Subject: [Pinot-svn] r1394 - trunk/Utils
+Message-ID: <200810270713.m9R7DrPV028884@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-10-27 08:13:45 +0100 (Mon, 27 Oct 2008)
+New Revision: 1394
+
+Modified:
+   trunk/Utils/DocumentInfo.cpp
+   trunk/Utils/DocumentInfo.h
+Log:
+Serialization methods can deal with all or only some properties.
+
+
+Modified: trunk/Utils/DocumentInfo.cpp
+===================================================================
+--- trunk/Utils/DocumentInfo.cpp	2008-10-27 06:08:14 UTC (rev 1393)
++++ trunk/Utils/DocumentInfo.cpp	2008-10-27 07:13:45 UTC (rev 1394)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -97,78 +97,102 @@
+ }
+ 
+ /// Serializes the document.
+-string DocumentInfo::serialize(void) const
++string DocumentInfo::serialize(SerialExtent extent) const
+ {
+ 	string info;
+ 	char numStr[64];
+ 
+ 	// Serialize DocumentInfo into a string
+-	for (map<string, string>::const_iterator fieldIter = m_fields.begin();
+-		fieldIter != m_fields.end(); ++fieldIter)
++	if ((extent == SERIAL_ALL) ||
++		(extent == SERIAL_FIELDS))
+ 	{
++		for (map<string, string>::const_iterator fieldIter = m_fields.begin();
++			fieldIter != m_fields.end(); ++fieldIter)
++		{
++			info += "\n";
++			info += fieldIter->first;
++			info += "=";
++			info += fieldIter->second;
++		}
+ 		info += "\n";
+-		info += fieldIter->first;
+-		info += "=";
+-		info += fieldIter->second;
+ 	}
+-	info += "\nlabels=";
+-	for (set<string>::const_iterator labelIter = m_labels.begin();
+-		labelIter != m_labels.end(); ++labelIter)
++	if ((extent == SERIAL_ALL) ||
++		(extent == SERIAL_LABELS))
+ 	{
+-		info += "[" + Url::escapeUrl(*labelIter) + "]";
++		info += "labels=";
++		for (set<string>::const_iterator labelIter = m_labels.begin();
++			labelIter != m_labels.end(); ++labelIter)
++		{
++			info += "[" + Url::escapeUrl(*labelIter) + "]";
++		}
++		info += "\n";
+ 	}
+-	info += "\nextract=";
+-	info += m_extract;
+-	info += "\nscore=";
+-	snprintf(numStr, 64, "%f", m_score);
+-	info += numStr;
+-	info += "\nindexid=";
+-	snprintf(numStr, 64, "%u", m_indexId);
+-	info += numStr;
+-	info += "\ndocid=";
+-	snprintf(numStr, 64, "%u", m_docId);
+-	info += numStr;
+-	info += "\n";
++	if (extent == SERIAL_ALL)
++	{
++		info += "extract=";
++		info += m_extract;
++		info += "\nscore=";
++		snprintf(numStr, 64, "%f", m_score);
++		info += numStr;
++		info += "\nindexid=";
++		snprintf(numStr, 64, "%u", m_indexId);
++		info += numStr;
++		info += "\ndocid=";
++		snprintf(numStr, 64, "%u", m_docId);
++		info += numStr;
++		info += "\n";
++	}
+ 
+ 	return Url::escapeUrl(info);
+ }
+ 
+ /// Deserializes the document.
+-void DocumentInfo::deserialize(const string &info)
++void DocumentInfo::deserialize(const string &info, SerialExtent extent)
+ {
+ 	string unescapedInfo(Url::unescapeUrl(info));
+ 
+ 	// Deserialize DocumentInfo
+-	setField("caption", StringManip::extractField(unescapedInfo, "caption=", "\n"));
+-	setField("url", StringManip::extractField(unescapedInfo, "url=", "\n"));
+-	setField("type", StringManip::extractField(unescapedInfo, "type=", "\n"));
+-	setField("language", StringManip::extractField(unescapedInfo, "language=", "\n"));
+-	setField("modtime", StringManip::extractField(unescapedInfo, "modtime=", "\n"));
+-	setField("size", StringManip::extractField(unescapedInfo, "size=", "\n"));
+-	string labelsString(StringManip::extractField(unescapedInfo, "labels=", "\n"));
+-	if (labelsString.empty() == false)
++	if ((extent == SERIAL_ALL) ||
++		(extent == SERIAL_FIELDS))
+ 	{
+-		string::size_type endPos = 0;
+-		string labelName(StringManip::extractField(labelsString, "[", "]", endPos));
++		setField("caption", StringManip::extractField(unescapedInfo, "caption=", "\n"));
++		setField("url", StringManip::extractField(unescapedInfo, "url=", "\n"));
++		setField("type", StringManip::extractField(unescapedInfo, "type=", "\n"));
++		setField("language", StringManip::extractField(unescapedInfo, "language=", "\n"));
++		setField("modtime", StringManip::extractField(unescapedInfo, "modtime=", "\n"));
++		setField("size", StringManip::extractField(unescapedInfo, "size=", "\n"));
++	}
++	if ((extent == SERIAL_ALL) ||
++		(extent == SERIAL_LABELS))
++	{
++		string labelsString(StringManip::extractField(unescapedInfo, "labels=", "\n"));
++		if (labelsString.empty() == false)
++		{
++			string::size_type endPos = 0;
++			string labelName(StringManip::extractField(labelsString, "[", "]", endPos));
+ 
+-		m_labels.clear();
++			m_labels.clear();
+ 
+-		// Parse labels
+-		while (labelName.empty() == false)
+-		{
+-			m_labels.insert(Url::unescapeUrl(labelName));
++			// Parse labels
++			while (labelName.empty() == false)
++			{
++				m_labels.insert(Url::unescapeUrl(labelName));
+ 
+-			if (endPos == string::npos)
+-			{
+-				break;
++				if (endPos == string::npos)
++				{
++					break;
++				}
++				labelName = StringManip::extractField(labelsString, "[", "]", endPos);
+ 			}
+-			labelName = StringManip::extractField(labelsString, "[", "]", endPos);
+ 		}
+ 	}
+-	m_extract = StringManip::extractField(unescapedInfo, "extract=", "\n");
+-	m_score = (float)atof(StringManip::extractField(unescapedInfo, "score=", "\n").c_str());
+-	m_indexId = (unsigned int)atoi(StringManip::extractField(unescapedInfo, "indexid=", "\n").c_str());
+-	m_docId = (unsigned int)atoi(StringManip::extractField(unescapedInfo, "docid=", "\n").c_str());
++	if (extent == SERIAL_ALL)
++	{
++		m_extract = StringManip::extractField(unescapedInfo, "extract=", "\n");
++		m_score = (float)atof(StringManip::extractField(unescapedInfo, "score=", "\n").c_str());
++		m_indexId = (unsigned int)atoi(StringManip::extractField(unescapedInfo, "indexid=", "\n").c_str());
++		m_docId = (unsigned int)atoi(StringManip::extractField(unescapedInfo, "docid=", "\n").c_str());
++	}
+ }
+ 
+ /// Sets the title of the document.
+
+Modified: trunk/Utils/DocumentInfo.h
+===================================================================
+--- trunk/Utils/DocumentInfo.h	2008-10-27 06:08:14 UTC (rev 1393)
++++ trunk/Utils/DocumentInfo.h	2008-10-27 07:13:45 UTC (rev 1394)
+@@ -40,11 +40,13 @@
+ 
+ 		bool operator<(const DocumentInfo& other) const;
+ 
++		typedef enum { SERIAL_ALL = 0, SERIAL_FIELDS, SERIAL_LABELS } SerialExtent;
++
+ 		/// Serializes the document.
+-		std::string serialize(void) const;
++		std::string serialize(SerialExtent extent = SERIAL_ALL) const;
+ 
+ 		/// Deserializes the document.
+-		void deserialize(const std::string &info);
++		void deserialize(const std::string &info, SerialExtent extent = SERIAL_ALL);
+ 
+ 		/// Sets the title of the document.
+ 		virtual void setTitle(const std::string &title);
+
+
+

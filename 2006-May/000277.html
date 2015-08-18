@@ -1,0 +1,574 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r283 - in trunk: Search Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r283%20-%20in%20trunk%3A%20Search%20Tokenize&In-Reply-To=%3C200605311611.k4VGBPZB011628%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000276.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r283 - in trunk: Search Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r283%20-%20in%20trunk%3A%20Search%20Tokenize&In-Reply-To=%3C200605311611.k4VGBPZB011628%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r283 - in trunk: Search Tokenize">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed May 31 18:11:25 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000276.html">[Pinot-svn] r282 - in trunk: Collect Search Utils
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#277">[ date ]</a>
+              <a href="thread.html#277">[ thread ]</a>
+              <a href="subject.html#277">[ subject ]</a>
+              <a href="author.html#277">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-31 18:11:24 +0200 (Wed, 31 May 2006)
+New Revision: 283
+
+Modified:
+   trunk/Search/SherlockParser.cpp
+   trunk/Tokenize/HtmlTokenizer.cpp
+   trunk/Tokenize/HtmlTokenizer.h
+   trunk/Tokenize/XmlTokenizer.cpp
+Log:
+HtmlTokenizer can attempt to find an abstract, basically the text between links.
+Some other changes.
+
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2006-05-31 14:56:30 UTC (rev 282)
++++ trunk/Search/SherlockParser.cpp	2006-05-31 16:11:24 UTC (rev 283)
+@@ -323,16 +323,13 @@
+ 		{
+ 			Document chunkDoc(&quot;&quot;, &quot;&quot;, contentType, &quot;&quot;);
+ 			chunkDoc.setData(resultItem.c_str(), resultItem.length());
+-			HtmlTokenizer chunkTokens(&amp;chunkDoc);
++			HtmlTokenizer chunkTokens(&amp;chunkDoc, true);
+ 			set&lt;Link&gt; &amp;chunkLinks = chunkTokens.getLinks();
+ 			unsigned int endOfFirstLink = 0, startOfSecondLink = 0, endOfSecondLink = 0, startOfThirdLink = 0;
+ 
+ 			// The result's URL and title should be given by the first link
+ 			for (set&lt;Link&gt;::iterator linkIter = chunkLinks.begin(); linkIter != chunkLinks.end(); ++linkIter)
+ 			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;SherlockResponseParser::parse: checking link &quot; &lt;&lt; linkIter-&gt;m_index &lt;&lt; endl;
+-#endif
+ 				if (linkIter-&gt;m_index == 0)
+ 				{
+ 					url = linkIter-&gt;m_url;
+@@ -354,72 +351,11 @@
+ 				}
+ 			}
+ 
+-			// Positions apply to text only
+-			resultItem = XmlTokenizer::stripTags(resultItem);
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;SherlockResponseParser::parse: tag-less chunk is \&quot;&quot;
+-				&lt;&lt; resultItem &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
+-#endif
+-
+-			// Chances are the extract is between the first two links
+-			if ((endOfFirstLink &gt; 0) &amp;&amp;
+-				(endOfFirstLink &lt; resultItem.length()))
++			extract = chunkTokens.getAbstract();
++			if (extract.empty() == true)
+ 			{
+-				string extractWithMarkup1, extractWithMarkup2;
+-				string extractCandidate1, extractCandidate2;
+-				bool isBlank = true;
+-
+-				if (startOfSecondLink &gt; 0)
+-				{
+-					extractWithMarkup1 = resultItem.substr(endOfFirstLink, startOfSecondLink - endOfFirstLink);
+-				}
+-				else
+-				{
+-					extractWithMarkup1 = resultItem.substr(endOfFirstLink);
+-				}
+-				extractCandidate1 = XmlTokenizer::stripTags(extractWithMarkup1);
+-
+-				// ... or between the second and third link :-)
+-				if ((endOfSecondLink &gt; 0) &amp;&amp;
+-					(endOfSecondLink &lt; resultItem.length()))
+-				{
+-					if (startOfThirdLink &gt; 0)
+-					{
+-						extractWithMarkup2 = resultItem.substr(endOfSecondLink, startOfThirdLink - endOfSecondLink);
+-					}
+-					else
+-					{
+-						extractWithMarkup2 = resultItem.substr(endOfSecondLink);
+-					}
+-				}
+-				extractCandidate2 = XmlTokenizer::stripTags(extractWithMarkup2);
+-
+-				// It seems we can rely on length to determine which is the best one
+-				if (extractCandidate1.length() &gt; extractCandidate2.length())
+-				{
+-					extract = extractCandidate1;
+-				}
+-				else
+-				{
+-					extract = extractCandidate2;
+-				}
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;SherlockResponseParser::parse: extract is \&quot;&quot;
+-					&lt;&lt; extract &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
+-#endif
+-				for (string::size_type pos = 0; pos &lt; extract.length(); ++pos)
+-				{
+-					if (isspace(extract[pos]) == 0)
+-					{
+-						isBlank = false;
+-						break;
+-					}
+-				}
+-
+-				if (isBlank == true)
+-				{
+-					extract = resultItem;
+-				}
++				extract = XmlTokenizer::stripTags(resultItem);
++				StringManip::trimSpaces(extract);
+ 			}
+ 		}
+ 		else
+
+Modified: trunk/Tokenize/HtmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.cpp	2006-05-31 14:56:30 UTC (rev 282)
++++ trunk/Tokenize/HtmlTokenizer.cpp	2006-05-31 16:11:24 UTC (rev 283)
+@@ -32,60 +32,55 @@
+ using std::map;
+ using std::set;
+ 
+-Link::Link() :
+-	m_index(0),
+-	m_startPos(0),
+-	m_endPos(0)
++static bool getInBetweenLinksText(HtmlTokenizer::ParserState *pState,
++	unsigned int currentLinkIndex)
+ {
+-}
++	if (pState == NULL)
++	{
++		return false;
++	}
+ 
+-Link::Link(const Link &amp;other) :
+-	m_url(other.m_url),
+-	m_name(other.m_name),
+-	m_index(other.m_index),
+-	m_startPos(other.m_startPos),
+-	m_endPos(other.m_endPos)
+-{
+-}
++	if ((pState-&gt;m_links.empty() == true) ||
++		(pState-&gt;m_currentLink.m_index == 0))
++	{
++		pState-&gt;m_abstract = pState-&gt;m_text;
+ 
+-Link::~Link()
+-{
+-}
++		return true;
++	}
+ 
+-Link&amp; Link::operator=(const Link&amp; other)
+-{
+-	m_url = other.m_url;
+-	m_name = other.m_name;
+-	m_index = other.m_index;
+-	m_startPos = other.m_startPos;
+-	m_endPos = other.m_endPos;
++	// Get the text between the current link and the previous one
++	for (set&lt;Link&gt;::const_iterator linkIter = pState-&gt;m_links.begin();
++		linkIter != pState-&gt;m_links.end(); ++linkIter)
++	{
++		// Is this the previous link ?
++		if (linkIter-&gt;m_index == currentLinkIndex - 1)
++		{
++			// Is there text in between ?
++			if (linkIter-&gt;m_endPos + 1 &lt; pState-&gt;m_textPos)
++			{
++				unsigned int abstractLen = pState-&gt;m_textPos - linkIter-&gt;m_endPos - 1;
++				string abstract(pState-&gt;m_text.substr(linkIter-&gt;m_endPos, abstractLen));
+ 
+-	return *this;
+-}
++				StringManip::trimSpaces(abstract);
+ 
+-bool Link::operator==(const Link &amp;other) const
+-{
+-	return m_url == other.m_url;
+-}
++				// The longer, the better
++				if (abstract.length() &gt; pState-&gt;m_abstract.length())
++				{
++					pState-&gt;m_abstract = abstract;
++#ifdef DEBUG
++					cout &lt;&lt; &quot;HtmlTokenizer::getInBetweenLinksText: abstract after link &quot;
++						&lt;&lt; linkIter-&gt;m_index &lt;&lt; endl;
++#endif
+ 
+-bool Link::operator&lt;(const Link &amp;other) const
+-{
+-	return m_index &lt; other.m_index;
+-}
++					return true;
++				}
++			}
+ 
+-HtmlTokenizer::ParserState::ParserState() :
+-	m_textPos(0),
+-	m_inHead(false),
+-	m_foundHead(false),
+-	m_appendToTitle(false),
+-	m_appendToText(false),
+-	m_appendToLink(false),
+-	m_skip(0)
+-{
+-}
++			break;
++		}
++	}
+ 
+-HtmlTokenizer::ParserState::~ParserState()
+-{
++	return false;
+ }
+ 
+ static void startHandler(void *pData, const char *pElementName, const char **pAttributes)
+@@ -174,9 +169,15 @@
+ 			// FIXME: get the NodeInfo to find out the position of this link
+ 			pState-&gt;m_currentLink.m_startPos = pState-&gt;m_textPos;
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;HtmlTokenizer::startHandler: found link to &quot; &lt;&lt; pState-&gt;m_currentLink.m_url &lt;&lt; endl;
++			cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: link starts at position &quot; &lt;&lt; pState-&gt;m_textPos &lt;&lt; endl;
+ #endif
+ 
++			// Find abstract ?
++			if (pState-&gt;m_findAbstract == true)
++			{
++				getInBetweenLinksText(pState, pState-&gt;m_currentLink.m_index);
++			}
++
+ 			// Extract link
+ 			pState-&gt;m_appendToLink = true;
+ 		}
+@@ -253,13 +254,13 @@
+ 		{
+ 			// FIXME: get the NodeInfo to find out the position of this link
+ 			pState-&gt;m_currentLink.m_endPos = pState-&gt;m_textPos;
+-
++#ifdef DEBUG
++			cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: link ends at position &quot; &lt;&lt; pState-&gt;m_textPos &lt;&lt; endl;
++#endif
++				
+ 			// Store this link
+ 			pState-&gt;m_links.insert(pState-&gt;m_currentLink);
+ 			++pState-&gt;m_currentLink.m_index;
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;HtmlTokenizer::endHandler: link was &quot; &lt;&lt; pState-&gt;m_currentLink.m_name &lt;&lt; endl;
+-#endif
+ 		}
+ 
+ 		pState-&gt;m_appendToLink = false;
+@@ -287,7 +288,6 @@
+ 		return;
+ 	}
+ 
+-	pState-&gt;m_textPos += textLen;
+ 	if (pState-&gt;m_skip &gt; 0)
+ 	{
+ 		// Skip this
+@@ -302,9 +302,6 @@
+ 	if (pState-&gt;m_lastHash == textHash)
+ 	{
+ 		// Ignore this
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;HtmlTokenizer::charactersHandler: ignoring duplicate text&quot; &lt;&lt; endl;
+-#endif
+ 		return;
+ 	}
+ 	pState-&gt;m_lastHash = textHash;
+@@ -320,6 +317,7 @@
+ 		if (pState-&gt;m_appendToText == true)
+ 		{
+ 			pState-&gt;m_text += text;
++			pState-&gt;m_textPos += textLen;
+ 		}
+ 
+ 		// Appending to text and to link are not mutually exclusive operations
+@@ -406,7 +404,64 @@
+ 	cerr &lt;&lt; &quot;HtmlTokenizer::warningHandler: &quot; &lt;&lt; pErr &lt;&lt; endl;
+ }
+ 
+-HtmlTokenizer::HtmlTokenizer(const Document *pDocument, unsigned int linksStartAtPos) :
++Link::Link() :
++	m_index(0),
++	m_startPos(0),
++	m_endPos(0)
++{
++}
++
++Link::Link(const Link &amp;other) :
++	m_url(other.m_url),
++	m_name(other.m_name),
++	m_index(other.m_index),
++	m_startPos(other.m_startPos),
++	m_endPos(other.m_endPos)
++{
++}
++
++Link::~Link()
++{
++}
++
++Link&amp; Link::operator=(const Link&amp; other)
++{
++	m_url = other.m_url;
++	m_name = other.m_name;
++	m_index = other.m_index;
++	m_startPos = other.m_startPos;
++	m_endPos = other.m_endPos;
++
++	return *this;
++}
++
++bool Link::operator==(const Link &amp;other) const
++{
++	return m_url == other.m_url;
++}
++
++bool Link::operator&lt;(const Link &amp;other) const
++{
++	return m_index &lt; other.m_index;
++}
++
++HtmlTokenizer::ParserState::ParserState() :
++	m_findAbstract(false),
++	m_textPos(0),
++	m_inHead(false),
++	m_foundHead(false),
++	m_appendToTitle(false),
++	m_appendToText(false),
++	m_appendToLink(false),
++	m_skip(0)
++{
++}
++
++HtmlTokenizer::ParserState::~ParserState()
++{
++}
++
++HtmlTokenizer::HtmlTokenizer(const Document *pDocument, bool findAbstract) :
+ 	Tokenizer(NULL)
+ {
+ 	if (pDocument != NULL)
+@@ -414,6 +469,9 @@
+ 		unsigned int length = 0;
+ 		const char *pData = pDocument-&gt;getData(length);
+ 
++		// Attempt to find an abstract ?
++		m_state.m_findAbstract = findAbstract;
++
+ 		if ((pData != NULL) &amp;&amp;
+ 			(length &gt; 0) &amp;&amp;
+ 			(parseHTML(pData) == true))
+@@ -427,6 +485,12 @@
+ 				m_state.m_title = pDocument-&gt;getTitle();
+ 			}
+ 
++			// The text after the last link might make a good abstract
++			if (m_state.m_findAbstract == true)
++			{
++				getInBetweenLinksText(&amp;m_state, m_state.m_currentLink.m_index);
++			}
++
+ 			// Pass the result to the parent class
+ 			Document *pStrippedDoc = new Document(m_state.m_title,
+ 				pDocument-&gt;getLocation(), pDocument-&gt;getType(),
+@@ -502,9 +566,6 @@
+ 		dummyHtml += htmlChunk;
+ 		dummyHtml += &quot;&lt;/html&gt;&quot;;
+ 		htmlChunk = dummyHtml;
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;HtmlTokenizer::parseHTML: wrapped input&quot; &lt;&lt; endl;
+-#endif
+ 	}
+ 
+ #ifndef _DONT_USE_PUSH_INTERFACE
+@@ -536,7 +597,7 @@
+ }
+ 
+ /// Gets the specified META tag content.
+-string HtmlTokenizer::getMetaTag(const string &amp;name)
++string HtmlTokenizer::getMetaTag(const string &amp;name) const
+ {
+ 	if (name.empty() == true)
+ 	{
+@@ -557,3 +618,9 @@
+ {
+ 	return m_state.m_links;
+ }
++
++/// Gets the abstract.
++std::string HtmlTokenizer::getAbstract(void) const
++{
++	return m_state.m_abstract;
++}
+
+Modified: trunk/Tokenize/HtmlTokenizer.h
+===================================================================
+--- trunk/Tokenize/HtmlTokenizer.h	2006-05-31 14:56:30 UTC (rev 282)
++++ trunk/Tokenize/HtmlTokenizer.h	2006-05-31 16:11:24 UTC (rev 283)
+@@ -47,21 +47,25 @@
+ class HtmlTokenizer : public Tokenizer
+ {
+ 	public:
+-		HtmlTokenizer(const Document *pDocument, unsigned int linksStartAtPos = 0);
++		HtmlTokenizer(const Document *pDocument, bool findAbstract = false);
+ 		virtual ~HtmlTokenizer();
+ 
+ 		/// Gets the specified META tag content; an empty string if it wasn't found.
+-		std::string getMetaTag(const std::string &amp;name);
++		std::string getMetaTag(const std::string &amp;name) const;
+ 
+ 		/// Gets the links map.
+ 		std::set&lt;Link&gt; &amp;getLinks(void);
+ 
++		/// Gets the abstract.
++		std::string getAbstract(void) const;
++
+ 		class ParserState
+ 		{
+ 			public:
+ 				ParserState();
+ 				~ParserState();
+ 
++				bool m_findAbstract;
+ 				unsigned int m_textPos;
+ 				std::string m_lastHash;
+ 				bool m_inHead;
+@@ -72,6 +76,7 @@
+ 				unsigned int m_skip;
+ 				std::string m_title;
+ 				std::string m_text;
++				std::string m_abstract;
+ 				Link m_currentLink;
+ 				std::set&lt;Link&gt; m_links;
+ 				std::set&lt;Link&gt; m_frames;
+
+Modified: trunk/Tokenize/XmlTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/XmlTokenizer.cpp	2006-05-31 14:56:30 UTC (rev 282)
++++ trunk/Tokenize/XmlTokenizer.cpp	2006-05-31 16:11:24 UTC (rev 283)
+@@ -63,47 +63,37 @@
+ /// Parses XML; the string without tags.
+ string XmlTokenizer::parseXML(const string &amp;str)
+ {
+-	string stripped;
+-	string::size_type startPos = 0;
+-	bool isXml = false, skip = false;
++	if (str.empty() == true)
++	{
++		return &quot;&quot;;
++	}
+ 
++	string stripped(StringManip::replaceEntities(str));
++
+ 	// Tag start
+-	string::size_type pos = str.find(&quot;&lt;&quot;);
+-	while (pos != string::npos)
++	string::size_type startPos = stripped.find(&quot;&lt;&quot;);
++	while (startPos != string::npos)
+ 	{
+-		isXml = true;
+-
+-		if (skip == false)
++		string::size_type endPos = stripped.find(&quot;&gt;&quot;, startPos);
++		if (endPos != string::npos)
+ 		{
+-			string text = str.substr(startPos, pos - startPos);
+-
+-			stripped += StringManip::replaceEntities(text);
+-			stripped += &quot; &quot;;
+-
+-			startPos = pos + 1;
+-			// Tag end
+-			if (str[pos] == '&lt;')
+-			{
+-				pos = str.find(&quot;&gt;&quot;, startPos);
+-			}
+-			// Skip stuff in the tag
+-			skip = true;
++			stripped.erase(startPos, endPos - startPos + 1);
+ 		}
+-		else
+-		{
+-			startPos = pos + 1;
+-			pos = str.find(&quot;&lt;&quot;, startPos);
+-			skip = false;
+-		}
++
++		// Next
++		startPos = stripped.find(&quot;&lt;&quot;);
+ 	}
+-	if (startPos &lt; str.length())
++
++	// The input may contain partial tags, eg &quot;a&gt;...&lt;/a&gt;&lt;b&gt;...&lt;/b&gt;...&lt;c&quot;
++	string::size_type pos = stripped.find(&quot;&gt;&quot;);
++	if (pos != string::npos)
+ 	{
+-		stripped  += StringManip::replaceEntities(str.substr(startPos));
++		stripped.erase(0, pos + 1);
+ 	}
+-
+-	if (isXml == false)
++	pos = stripped.find(&quot;&lt;&quot;);
++	if (pos != string::npos)
+ 	{
+-		return str;
++		stripped.erase(pos);
+ 	}
+ 
+ 	return stripped;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000276.html">[Pinot-svn] r282 - in trunk: Collect Search Utils
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#277">[ date ]</a>
+              <a href="thread.html#277">[ thread ]</a>
+              <a href="subject.html#277">[ subject ]</a>
+              <a href="author.html#277">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

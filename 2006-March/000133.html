@@ -1,0 +1,818 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r134 - in trunk: . Index Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r134%20-%20in%20trunk%3A%20.%20Index%20Search&In-Reply-To=%3C200603031431.k23EVFvn022203%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000134.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r134 - in trunk: . Index Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r134%20-%20in%20trunk%3A%20.%20Index%20Search&In-Reply-To=%3C200603031431.k23EVFvn022203%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r134 - in trunk: . Index Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Mar  3 15:31:15 CET 2006</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000134.html">[Pinot-svn] r135 - in trunk: Collect UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#133">[ date ]</a>
+              <a href="thread.html#133">[ thread ]</a>
+              <a href="subject.html#133">[ subject ]</a>
+              <a href="author.html#133">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-03 15:30:49 +0100 (Fri, 03 Mar 2006)
+New Revision: 134
+
+Removed:
+   trunk/Index/Summarizer.cpp
+   trunk/Index/Summarizer.h
+Modified:
+   trunk/Index/Makefile.am
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/Makefile.am
+   trunk/README
+   trunk/Search/AbstractGenerator.cpp
+   trunk/Search/AbstractGenerator.h
+   trunk/Search/XapianEngine.cpp
+   trunk/configure.in
+   trunk/pinot.spec.in
+Log:
+Removed dependency on OTS. Summaries are now built at query time by
+AbstractGenerator.
+
+
+Modified: trunk/Index/Makefile.am
+===================================================================
+--- trunk/Index/Makefile.am	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Index/Makefile.am	2006-03-03 14:30:49 UTC (rev 134)
+@@ -3,14 +3,12 @@
+ noinst_HEADERS = \
+ 	IndexInterface.h \
+ 	LanguageDetector.h \
+-	Summarizer.h \
+ 	XapianIndex.h
+ 
+ noinst_LTLIBRARIES = libIndex.la
+ 
+ libIndex_la_SOURCES = \
+ 	LanguageDetector.cpp \
+-	Summarizer.cpp \
+ 	XapianIndex.cpp
+ 
+ AM_CXXFLAGS = -I../Utils -I../Tokenize @INDEX_CFLAGS@ 
+
+Deleted: trunk/Index/Summarizer.cpp
+===================================================================
+--- trunk/Index/Summarizer.cpp	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Index/Summarizer.cpp	2006-03-03 14:30:49 UTC (rev 134)
+@@ -1,115 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;string.h&gt;
+-#include &lt;sys/time.h&gt;
+-#include &lt;map&gt;
+-#include &lt;iostream&gt;
+-#include &lt;utility&gt;
+-
+-#include &lt;ots/libots.h&gt;
+-
+-#include &quot;Languages.h&quot;
+-#include &quot;StringManip.h&quot;
+-#include &quot;Timer.h&quot;
+-#include &quot;Summarizer.h&quot;
+-
+-using std::cout;
+-using std::cerr;
+-using std::endl;
+-using std::string;
+-using std::map;
+-using std::min;
+-
+-unsigned int Summarizer::m_maxTextSize = 50000;
+-unsigned int Summarizer::m_maxSummarySize = 1000;
+-
+-Summarizer::Summarizer(const std::string &amp;language, unsigned int wordsCount) :
+-	m_wordsCount(wordsCount),
+-	m_dictionaryCode(&quot;en&quot;)
+-{
+-	// Look up the language code
+-	m_dictionaryCode = Languages::toCode(language);
+-}
+-
+-Summarizer::~Summarizer()
+-{
+-}
+-
+-/// Attempts to summarize the document in wordsCount words.
+-string Summarizer::summarize(const char *pText, unsigned int textLen)
+-{
+-	unsigned char *pSummary = NULL;
+-	size_t outputLen = 0;
+-
+-	if ((pText == NULL) ||
+-		(textLen == 0))
+-	{
+-		return NULL;
+-	}
+-
+-	m_title.clear();
+-
+-#ifdef DEBUG
+-	Timer timer;
+-	timer.start();
+-	cout &lt;&lt; &quot;Summarizer::summarize: starting&quot; &lt;&lt; endl;
+-#endif
+-	// Create a new article
+-	OtsArticle *pArticle = ots_new_article();
+-	if ((pArticle != NULL) &amp;&amp;
+-		(ots_load_xml_dictionary(pArticle, m_dictionaryCode.c_str())))
+-	{
+-		// OTS may take too long with long documents
+-		ots_parse_stream((const unsigned char*)pText,
+-			min(textLen, m_maxTextSize), pArticle);
+-
+-		ots_grade_doc(pArticle);
+-		ots_highlight_doc_words(pArticle, m_wordsCount);
+-
+-		// Summarize
+-		pSummary = ots_get_doc_text(pArticle, &amp;outputLen);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;Summarizer::summarize: summarized to &quot; &lt;&lt; outputLen &lt;&lt; &quot; bytes in &quot;
+-			&lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+-#endif
+-
+-		// Get the title before freeing the article
+-		if (pArticle-&gt;title != NULL)
+-		{
+-			m_title = pArticle-&gt;title;
+-		}
+-		ots_free_article(pArticle);
+-	}
+-
+-	if (pSummary != NULL)
+-	{
+-		string sum((const char *)pSummary,
+-			min(outputLen, m_maxSummarySize));
+-
+-		free(pSummary);
+-
+-		return sum;
+-	}
+-
+-	return &quot;&quot;;
+-}
+-
+-/// Gets the document's title, as determined by summarize().
+-string Summarizer::getTitle(void) const
+-{
+-	return m_title;
+-}
+
+Deleted: trunk/Index/Summarizer.h
+===================================================================
+--- trunk/Index/Summarizer.h	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Index/Summarizer.h	2006-03-03 14:30:49 UTC (rev 134)
+@@ -1,47 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _SUMMARIZER_H
+-#define _SUMMARIZER_H
+-
+-#include &lt;string&gt;
+-
+-class Summarizer
+-{
+-	public:
+-		Summarizer(const std::string &amp;language, unsigned int wordsCount);
+-		virtual ~Summarizer();
+-
+-		/// Attempts to summarize the document in wordsCount words.
+-		std::string summarize(const char *pText, unsigned int textLen);
+-
+-		/// Gets the document's title, as determined by summarize().
+-		std::string getTitle(void) const;
+-
+-	protected:
+-		static unsigned int m_maxTextSize;
+-		static unsigned int m_maxSummarySize;
+-		unsigned int m_wordsCount;
+-		std::string m_dictionaryCode;
+-		std::string m_title;
+-
+-	private:
+-		Summarizer(const Summarizer &amp;other);
+-		Summarizer &amp;operator=(const Summarizer &amp;other);
+-
+-};
+-
+-#endif // _SUMMARIZER_H
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Index/XapianIndex.cpp	2006-03-03 14:30:49 UTC (rev 134)
+@@ -32,7 +32,6 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;Summarizer.h&quot;
+ #include &quot;LanguageDetector.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;XapianIndex.h&quot;
+@@ -164,7 +163,7 @@
+ }
+ 
+ bool XapianIndex::prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-	Xapian::termcount &amp;termPos, const std::string &amp;summary) const
++	Xapian::termcount &amp;termPos) const
+ {
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+@@ -209,17 +208,16 @@
+ 	// Finally, add the language code with prefix L
+ 	doc.add_term(string(&quot;L&quot;) + Languages::toCode(m_stemLanguage));
+ 
+-	setDocumentData(doc, info, summary, m_stemLanguage);
++	setDocumentData(doc, info, m_stemLanguage);
+ 
+ 	return true;
+ }
+ 
+-string XapianIndex::scanDocument(const char *pData, unsigned int dataLength,
++void XapianIndex::scanDocument(const char *pData, unsigned int dataLength,
+ 	DocumentInfo &amp;info)
+ {
+ 	vector&lt;string&gt; candidates;
+ 	string language;
+-	string summary;
+ 
+ 	// Try to determine the document's language
+ 	LanguageDetector lang;
+@@ -253,21 +251,10 @@
+ 	cout &lt;&lt; &quot;XapianIndex::scanDocument: language now &quot; &lt;&lt; m_stemLanguage &lt;&lt; endl;
+ #endif
+ 
+-	// Get a summary of the document
+-	if (language.empty() == true)
+-	{
+-		// Fall back on English
+-		language = &quot;english&quot;;
+-	}
+-	Summarizer sum(language, 50);
+-	summary = sum.summarize(pData, dataLength);
+-
+ 	// Update the document's properties
+ 	string title = info.getTitle();
+ 	if (title.empty() == true)
+ 	{
+-		// Use the title supplied by the summarizer
+-		title = sum.getTitle();
+ 		// Remove heading spaces
+ 		while (isspace(title[0]))
+ 		{
+@@ -276,11 +263,9 @@
+ 		info.setTitle(title);
+ 	}
+ 	info.setLanguage(m_stemLanguage);
+-
+-	return summary;
+ }
+ 
+-void XapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info, const string &amp;extract,
++void XapianIndex::setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+ 	const string &amp;language) const
+ {
+ 	string title(info.getTitle());
+@@ -290,15 +275,8 @@
+ 	// Set the document data omindex-style
+ 	string record = &quot;url=&quot;;
+ 	record += info.getLocation();
++	// The sample will be generated at query time
+ 	record += &quot;\nsample=&quot;;
+-	// Ignore the extract if it contains any of our field delimiters
+-	if (badField(extract) == false)
+-	{
+-		record += extract;
+-	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;XapianIndex::setDocumentData: bad extract&quot; &lt;&lt; endl;
+-#endif
+ 	record += &quot;\ncaption=&quot;;
+ 	if (badField(title) == true)
+ 	{
+@@ -382,7 +360,7 @@
+ 		docInfo.setTimestamp(pDocument-&gt;getTimestamp());
+ 		docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+ 
+-		string summary = scanDocument(pData, dataLength, docInfo);
++		scanDocument(pData, dataLength, docInfo);
+ 
+ 		Xapian::Document doc;
+ 		Xapian::termcount termPos = 0;
+@@ -398,7 +376,7 @@
+ 		{
+ 			doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 		}
+-		if (prepareDocument(docInfo, doc, termPos, summary) == true)
++		if (prepareDocument(docInfo, doc, termPos) == true)
+ 		{
+ 			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 			if (pIndex != NULL)
+@@ -654,7 +632,7 @@
+ 	docInfo.setTimestamp(pDocument-&gt;getTimestamp());
+ 	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
+ 
+-	string summary = scanDocument(pData, dataLength, docInfo);
++	scanDocument(pData, dataLength, docInfo);
+ 
+ 	try
+ 	{
+@@ -674,7 +652,7 @@
+ 				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
+ 			}
+ 		}
+-		if (prepareDocument(docInfo, doc, termPos, summary) == true)
++		if (prepareDocument(docInfo, doc, termPos) == true)
+ 		{
+ 			Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+ 			if (pIndex != NULL)
+@@ -725,11 +703,10 @@
+ 
+ 			// Get the current document data
+ 			string record = doc.get_data();
+-			string extract = StringManip::extractField(record, &quot;sample=&quot;, &quot;\n&quot;);
+ 			string language = StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;);
+ 
+-			// Update the document data with the current extract and language
+-			setDocumentData(doc, docInfo, extract, language);
++			// Update the document data with the current language
++			setDocumentData(doc, docInfo, language);
+ 			pIndex-&gt;replace_document(docId, doc);
+ 			updated = true;
+ 		}
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Index/XapianIndex.h	2006-03-03 14:30:49 UTC (rev 134)
+@@ -102,13 +102,13 @@
+ 			const std::string &amp;prefix, Xapian::termcount &amp;termPos, StemmingMode mode) const;
+ 
+ 		bool prepareDocument(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+-			Xapian::termcount &amp;termPos, const std::string &amp;summary) const;
++			Xapian::termcount &amp;termPos) const;
+ 
+-		std::string scanDocument(const char *pData, unsigned int dataLength,
++		void scanDocument(const char *pData, unsigned int dataLength,
+ 			DocumentInfo &amp;info);
+ 
+ 		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+-			const std::string &amp;extract, const std::string &amp;language) const;
++			const std::string &amp;language) const;
+ 
+ 	private:
+ 		XapianIndex(const XapianIndex &amp;other);
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Makefile.am	2006-03-03 14:30:49 UTC (rev 134)
+@@ -1,7 +1,8 @@
+ # generated 2005/12/14 20:48:47 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ # using glademm V2.6.0
+ 
+-SUBDIRS = po Utils Tokenize SQL Collect Search Index UI/RenderHTML UI/GTK2/src
++SUBDIRS = po Utils Tokenize SQL Collect Search \
++	Index UI/RenderHTML UI/GTK2/src
+ 
+ EXTRA_DIST = ChangeLog TODO README mkinstalldirs pinot.spec \
+ 	Search/Plugins/*src Search/Plugins/*.xml \
+
+Modified: trunk/README
+===================================================================
+--- trunk/README	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/README	2006-03-03 14:30:49 UTC (rev 134)
+@@ -39,9 +39,6 @@
+ 
+  libxml2						libxml2-devel-2.6.16-3
+ 
+-ots							ots-devel-0.4.2-2
+-<A HREF="http://libots.sourceforge.net/">http://libots.sourceforge.net/</A>
+-
+ libtextcat						libtextcat-devel-2.2-1
+ <A HREF="http://software.wise-guys.nl/libtextcat/">http://software.wise-guys.nl/libtextcat/</A>
+ 
+
+Modified: trunk/Search/AbstractGenerator.cpp
+===================================================================
+--- trunk/Search/AbstractGenerator.cpp	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Search/AbstractGenerator.cpp	2006-03-03 14:30:49 UTC (rev 134)
+@@ -20,8 +20,6 @@
+ #include &lt;iostream&gt;
+ #include &lt;utility&gt;
+ 
+-#include &lt;ots/libots.h&gt;
+-
+ #include &quot;Timer.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
+ 
+@@ -32,6 +30,7 @@
+ using std::vector;
+ using std::map;
+ 
++unsigned int AbstractGenerator::m_maxSeedTerms = 4;
+ unsigned int AbstractGenerator::m_minTermPositions = 10;
+ 
+ AbstractGenerator::PositionWindow::PositionWindow() :
+@@ -56,18 +55,18 @@
+ }
+ 
+ /// Attempts to generate an abstract of wordsCount words.
+-string AbstractGenerator::generateAbstract(const vector&lt;string&gt; &amp;queryTerms,
++string AbstractGenerator::generateAbstract(const vector&lt;string&gt; &amp;seedTerms,
+ 	Xapian::docid docId)
+ {
+ 	map&lt;Xapian::termpos, PositionWindow&gt; abstractWindows;
+ 	map&lt;Xapian::termpos, string&gt; wordsBuffer;
+ 	string summary;
+ 	Xapian::termpos bestPosition = 0, startPosition =0;
+-	unsigned int topTermCount = 0, bestWeight = 0;
++	unsigned int seedTermsCount = 0, bestWeight = 0;
+ 	bool topTerm = true;
+ 
+ 	if ((m_pIndex == NULL) ||
+-		(queryTerms.empty() == true))
++		(seedTerms.empty() == true))
+ 	{
+ 		return &quot;&quot;;
+ 	}
+@@ -76,55 +75,71 @@
+ 	Timer timer;
+ 	timer.start();
+ #endif
+-	for (vector&lt;string&gt;::const_iterator termIter = queryTerms.begin();
+-		termIter != queryTerms.end(); ++termIter)
++	for (vector&lt;string&gt;::const_iterator termIter = seedTerms.begin();
++		termIter != seedTerms.end(); ++termIter)
+ 	{
+ 		string termName(*termIter);
+ 
++		if (seedTermsCount &gt;= m_maxSeedTerms)
++		{
++			// Enough terms
++			break;
++		}
++
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: term &quot; &lt;&lt; termName &lt;&lt; endl;
+ #endif
+-		// Go through that term's position list in the document
+-		for (Xapian::PositionIterator positionIter = m_pIndex-&gt;positionlist_begin(docId, termName);
+-			positionIter != m_pIndex-&gt;positionlist_end(docId, termName); ++positionIter)
++		try
+ 		{
+-			Xapian::termpos termPos = *positionIter;
+-
+-			// Take all the top term's positions into account, and some of 
+-			// the other terms' too if the minimum number is not reached
+-			if ((topTermCount &lt; m_minTermPositions) ||
+-				(topTerm == true))
++			// Go through that term's position list in the document
++			for (Xapian::PositionIterator positionIter = m_pIndex-&gt;positionlist_begin(docId, termName);
++				positionIter != m_pIndex-&gt;positionlist_end(docId, termName); ++positionIter)
+ 			{
+-				abstractWindows[termPos] = PositionWindow();
+-			}
++				Xapian::termpos termPos = *positionIter;
+ 
+-			// Look for other terms close to that position
+-			for (map&lt;Xapian::termpos, PositionWindow&gt;::iterator winIter = abstractWindows.begin();
+-				winIter != abstractWindows.end(); ++winIter)
+-			{
+-				// Is this within the number of words we are interested in ?
+-				if (winIter-&gt;first &gt; termPos)
++				// Take all the top term's positions into account, and some of 
++				// the other terms' too if the minimum number is not reached
++				if ((m_minTermPositions &gt; abstractWindows.size()) ||
++					(topTerm == true))
+ 				{
+-					if (winIter-&gt;first - termPos &lt;= m_wordsCount)
+-					{
+-						++winIter-&gt;second.m_backWeight;
+-					}
++					abstractWindows[termPos] = PositionWindow();
+ 				}
+-				else
++
++				// Look for other terms close to that position
++				for (map&lt;Xapian::termpos, PositionWindow&gt;::iterator winIter = abstractWindows.begin();
++					winIter != abstractWindows.end(); ++winIter)
+ 				{
+-					if (termPos - winIter-&gt;first &lt;= m_wordsCount)
++					// Is this within the number of words we are interested in ?
++					if (winIter-&gt;first &gt; termPos)
+ 					{
+-						++winIter-&gt;second.m_forwardWeight;
++						if (winIter-&gt;first - termPos &lt;= m_wordsCount)
++						{
++							++winIter-&gt;second.m_backWeight;
++						}
+ 					}
++					else
++					{
++						if (termPos - winIter-&gt;first &lt;= m_wordsCount)
++						{
++							++winIter-&gt;second.m_forwardWeight;
++						}
++					}
+ 				}
+ 			}
++
++			topTerm = false;
++			++seedTermsCount;
+ 		}
++		catch (const Xapian::Error &amp;error)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++#endif
++		}
+ 
+-		topTerm = false;
+-		++topTermCount;
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: &quot; &lt;&lt; abstractWindows.size()
+-			&lt;&lt; &quot; positions, &quot; &lt;&lt; topTermCount &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
++			&lt;&lt; &quot; positions, &quot; &lt;&lt; seedTermsCount &lt;&lt; &quot; terms&quot; &lt;&lt; endl;
+ #endif
+ 	}
+ 
+@@ -175,7 +190,7 @@
+ 		summary += wordIter-&gt;second;
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;AbstractGenerator: done in &quot; &lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: summarized document &quot; &lt;&lt; docId &lt;&lt; &quot; in &quot; &lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	return summary;
+
+Modified: trunk/Search/AbstractGenerator.h
+===================================================================
+--- trunk/Search/AbstractGenerator.h	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Search/AbstractGenerator.h	2006-03-03 14:30:49 UTC (rev 134)
+@@ -29,10 +29,11 @@
+ 		virtual ~AbstractGenerator();
+ 
+ 		/// Attempts to generate an abstract of wordsCount words.
+-		std::string generateAbstract(const std::vector&lt;std::string&gt; &amp;queryTerms,
++		std::string generateAbstract(const std::vector&lt;std::string&gt; &amp;seedTerms,
+ 			Xapian::docid docId);
+ 
+ 	protected:
++		static unsigned int m_maxSeedTerms;
+ 		static unsigned int m_minTermPositions;
+ 		const Xapian::Database *m_pIndex;
+ 		unsigned int m_wordsCount;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/Search/XapianEngine.cpp	2006-03-03 14:30:49 UTC (rev 134)
+@@ -26,9 +26,11 @@
+ #include &quot;Tokenizer.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;AbstractGenerator.h&quot;
+ #include &quot;XapianEngine.h&quot;
+ 
+ using std::string;
++using std::multimap;
+ using std::vector;
+ using std::stack;
+ using std::cout;
+@@ -126,49 +128,82 @@
+ 
+ 			// Get the top results of the query
+ 			Xapian::MSet matches = enquire.get_mset(0, m_maxResultsCount);
++			if (matches.empty() == false)
++			{
++				multimap&lt;Xapian::weight, string&gt; queryTerms;
++				vector&lt;string&gt; seedTerms;
++				Xapian::weight maxWeight = matches.get_max_attained();
+ 
+-			// Get the results
++				// Sort query terms by weight
++				for (Xapian::TermIterator termIter = query.get_terms_begin();
++					termIter != query.get_terms_end(); ++termIter)
++				{
++					string termName(*termIter);
++					Xapian::weight termWeight = maxWeight - matches.get_termweight(termName);
++
++					queryTerms.insert(pair&lt;Xapian::weight, string&gt;(termWeight, termName));
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.get_matches_estimated() &lt;&lt; &quot;/&quot; &lt;&lt; m_maxResultsCount &lt;&lt; &quot; results found&quot; &lt;&lt; endl;
++					cout &lt;&lt; &quot;XapianEngine::queryDatabase: term &quot; &lt;&lt; termName
++						&lt;&lt; &quot; has weight &quot; &lt;&lt; matches.get_termweight(termName) &lt;&lt; &quot;/&quot; &lt;&lt; maxWeight &lt;&lt; endl;
+ #endif
+-			for (Xapian::MSetIterator mIter = matches.begin(); mIter != matches.end(); ++mIter)
+-			{
+-				// Get the document data
+-				string record = mIter.get_document().get_data();
++				}
+ 
+-				// Get the title
+-				string title = StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;);
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;XapianEngine::queryDatabase: found omindex title &quot; &lt;&lt; title &lt;&lt; endl;
+-#endif
+-				// Get the URL
+-				string url = StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;);
+-				if (url.empty() == true)
++				for (multimap&lt;Xapian::weight, string&gt;::iterator weightIter = queryTerms.begin();
++					weightIter != queryTerms.end(); ++weightIter)
+ 				{
+-					// Hmmm this shouldn't be empty...
+-					// Use this instead, even though the document isn't cached in the index
+-					url = buildUrl(m_databaseName, *mIter);
++					seedTerms.push_back(weightIter-&gt;second);
+ 				}
+-				else
+-				{
++
++				// Get the results
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;XapianEngine::queryDatabase: found omindex URL &quot; &lt;&lt; url &lt;&lt; endl;
++				cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.get_matches_estimated() &lt;&lt; &quot;/&quot; &lt;&lt; m_maxResultsCount &lt;&lt; &quot; results found&quot; &lt;&lt; endl;
+ #endif
+-					url = Url::canonicalizeUrl(url);
+-				}
++				for (Xapian::MSetIterator mIter = matches.begin(); mIter != matches.end(); ++mIter)
++				{
++					Xapian::docid docId = *mIter;
++					Xapian::Document doc(mIter.get_document());
++					string record = doc.get_data();
+ 
+-				// Get the summary and the type
+-				string summary = StringManip::extractField(record, &quot;sample=&quot;, &quot;\n&quot;);
++					// Get the title
++					string title = StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;);
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;XapianEngine::queryDatabase: found omindex summary &quot; &lt;&lt; summary &lt;&lt; endl;
++					cout &lt;&lt; &quot;XapianEngine::queryDatabase: found omindex title &quot; &lt;&lt; title &lt;&lt; endl;
+ #endif
+-				string type = StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;);
+-				// ...and finally the language, if available
+-				string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
++					// Get the URL
++					string url = StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;);
++					if (url.empty() == true)
++					{
++						// Hmmm this shouldn't be empty...
++						// Use this instead, even though the document isn't cached in the index
++						url = buildUrl(m_databaseName, *mIter);
++					}
++					else
++					{
++#ifdef DEBUG
++						cout &lt;&lt; &quot;XapianEngine::queryDatabase: found omindex URL &quot; &lt;&lt; url &lt;&lt; endl;
++#endif
++						url = Url::canonicalizeUrl(url);
++					}
+ 
+-				// Add this result
+-				Result thisResult(url, title, summary, language, (float)mIter.get_percent());
+-				m_resultsList.push_back(thisResult);
++					// Get the type
++					string type = StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;);
++					// ...and the language, if available
++					string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
++
++					// Finally, get a summary
++					string summary = StringManip::extractField(record, &quot;sample=&quot;, &quot;\n&quot;);
++					if (summary.empty() == true)
++					{
++						AbstractGenerator abstractGen(pIndex, 50);
++
++						// Generate an abstract based on the query's terms
++						summary = abstractGen.generateAbstract(seedTerms, docId);
++					}
++
++					// Add this result
++					Result thisResult(url, title, summary, language, (float)mIter.get_percent());
++					m_resultsList.push_back(thisResult);
++				}
+ 			}
+ 
+ 			bStatus = true;
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/configure.in	2006-03-03 14:30:49 UTC (rev 134)
+@@ -75,9 +75,9 @@
+ PKG_CHECK_MODULES(XML, libxml++-2.6 &gt;= 2.12 )
+ AC_SUBST(XML_CFLAGS)
+ AC_SUBST(XML_LIBS)
+-PKG_CHECK_MODULES(OTS, libots-1 &gt;= 0.4.2 )
+-INDEX_CFLAGS=&quot;$XAPIAN_CFLAGS $OTS_CFLAGS&quot;
+-INDEX_LIBS=&quot;$XAPIAN_LIBS $OTS_LIBS -ltextcat&quot;
++dnl FIXME: check for libtextcat
++INDEX_CFLAGS=&quot;$XAPIAN_CFLAGS&quot;
++INDEX_LIBS=&quot;$XAPIAN_LIBS -ltextcat&quot;
+ AC_SUBST(INDEX_CFLAGS)
+ AC_SUBST(INDEX_LIBS)
+ PKG_CHECK_MODULES(UI, mozilla-xpcom &gt;= 1.4 mozilla-nss &gt;= 1.4 mozilla-gtkmozembed &gt;= 1.4 gtkmm-2.4 &gt;= 2.6 )
+@@ -98,6 +98,6 @@
+ AC_CHECK_FUNCS(mmap)
+ 
+ AC_OUTPUT( pinot.spec Makefile Utils/Makefile Tokenize/Makefile SQL/Makefile \
+-	po/Makefile.in Collect/Makefile Search/Makefile Index/Makefile \
+-	UI/RenderHTML/Makefile UI/GTK2/src/Makefile )
++	po/Makefile.in Collect/Makefile Search/Makefile Search/Google/Makefile \
++	Index/Makefile UI/RenderHTML/Makefile UI/GTK2/src/Makefile )
+ 
+
+Modified: trunk/pinot.spec.in
+===================================================================
+--- trunk/pinot.spec.in	2006-02-27 15:30:23 UTC (rev 133)
++++ trunk/pinot.spec.in	2006-03-03 14:30:49 UTC (rev 134)
+@@ -11,8 +11,8 @@
+ Source: %{name}-%{version}.tar.gz
+ URL: <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A>
+ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+-Requires: xapian-core-libs &gt;= 0.9.4, neon &gt;= 0.24, gtkmm24 &gt;= 2.6, libxml++ &gt;= 2.12, mozilla &gt;= %{mozilla_ver}, sqlite &gt;= 3.1.2, ots &gt;= 0.4.2, libtextcat &gt;= 2.2, fam &gt;= 2.6.10, gmime &gt;= 2.1, file
+-BuildRequires: xapian-core-devel &gt;= 0.9.4, neon-devel &gt;= 0.24, gtkmm24-devel &gt;= 2.6, libxml++-devel &gt;= 2.12, mozilla-devel &gt;= %{mozilla_ver}, sqlite-devel &gt;= 3.1.2, ots-devel &gt;= 0.4.2, libtextcat-devel &gt;= 2.2, fam-devel &gt;= 2.6.10, gmime-devel &gt;= 2.1, file, boost-devel &gt;= 1.32, desktop-file-utils
++Requires: xapian-core-libs &gt;= 0.9.4, neon &gt;= 0.24, gtkmm24 &gt;= 2.6, libxml++ &gt;= 2.12, mozilla &gt;= %{mozilla_ver}, sqlite &gt;= 3.1.2, libtextcat &gt;= 2.2, fam &gt;= 2.6.10, gmime &gt;= 2.1, file
++BuildRequires: xapian-core-devel &gt;= 0.9.4, neon-devel &gt;= 0.24, gtkmm24-devel &gt;= 2.6, libxml++-devel &gt;= 2.12, mozilla-devel &gt;= %{mozilla_ver}, sqlite-devel &gt;= 3.1.2, libtextcat-devel &gt;= 2.2, fam-devel &gt;= 2.6.10, gmime-devel &gt;= 2.1, file, boost-devel &gt;= 1.32, desktop-file-utils
+ 
+ %description
+ Pinot is a metasearch tool for the Free Desktop. It enables one to query
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000134.html">[Pinot-svn] r135 - in trunk: Collect UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#133">[ date ]</a>
+              <a href="thread.html#133">[ thread ]</a>
+              <a href="subject.html#133">[ subject ]</a>
+              <a href="author.html#133">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

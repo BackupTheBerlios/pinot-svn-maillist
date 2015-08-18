@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r476 - in trunk: Index UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r476%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200609121313.k8CDDoAb015123%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000468.html">
+   <LINK REL="Next"  HREF="000470.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r476 - in trunk: Index UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r476%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200609121313.k8CDDoAb015123%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r476 - in trunk: Index UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 12 15:13:50 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000468.html">[Pinot-svn] r475 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000470.html">[Pinot-svn] r477 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#469">[ date ]</a>
+              <a href="thread.html#469">[ thread ]</a>
+              <a href="subject.html#469">[ subject ]</a>
+              <a href="author.html#469">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-12 15:13:47 +0200 (Tue, 12 Sep 2006)
+New Revision: 476
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/UI/GTK2/src/prefsDialog.cc
+Log:
+DBusXapianIndex exports the GetStatistics method. It's invoked when validating
+new preferences if there are locations to index. D-Bus activation will then
+start the service if not already running.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2006-09-09 06:15:05 UTC (rev 475)
++++ trunk/Index/DBusXapianIndex.cpp	2006-09-12 13:13:47 UTC (rev 476)
+@@ -96,6 +96,49 @@
+ 	}
+ }
+ 
++/// Asks the D-Bus service for statistics.
++bool DBusXapianIndex::getStatistics(unsigned int &amp;crawledCount, unsigned int &amp;docsCount)
++{
++	bool gotStats = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusXapianIndex::getStatistics: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	if (dbus_g_proxy_call(pBusProxy, &quot;GetStatistics&quot;, &amp;pError,
++		G_TYPE_INVALID,
++		G_TYPE_UINT, &amp;crawledCount,
++		G_TYPE_UINT, &amp;docsCount,
++		G_TYPE_INVALID) == TRUE)
++	{
++		gotStats = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusXapianIndex::getStatistics: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return gotStats;
++}
++
++
+ //
+ // Implementation of IndexInterface
+ //
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2006-09-09 06:15:05 UTC (rev 475)
++++ trunk/Index/DBusXapianIndex.h	2006-09-12 13:13:47 UTC (rev 476)
+@@ -31,6 +31,9 @@
+ 
+ 		DBusXapianIndex &amp;operator=(const DBusXapianIndex &amp;other);
+ 
++		/// Asks the D-Bus service for statistics.
++		static bool getStatistics(unsigned int &amp;crawledCount, unsigned int &amp;docsCount);
++
+ 		/// Returns false if the index couldn't be opened.
+ 		virtual bool isGood(void) const;
+ 
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2006-09-09 06:15:05 UTC (rev 475)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2006-09-12 13:13:47 UTC (rev 476)
+@@ -23,6 +23,7 @@
+ #include &lt;gtkmm/messagedialog.h&gt;
+ 
+ #include &quot;MIMEScanner.h&quot;
++#include &quot;DBusXapianIndex.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;config.h&quot;
+@@ -208,6 +209,8 @@
+ 
+ bool prefsDialog::save_directoriesTreeview()
+ {
++	bool startService = false;
++
+ 	// Clear the current settings
+ 	m_settings.m_indexableLocations.clear();
+ 
+@@ -239,9 +242,22 @@
+ 			cout &lt;&lt; &quot;prefsDialog::save_directoriesTreeview: &quot; &lt;&lt; indexableLocation.m_name &lt;&lt; endl;
+ #endif
+ 			m_settings.m_indexableLocations.insert(indexableLocation);
++			startService = true;
+ 		}
+ 	}
+ 
++	if (startService == true)
++	{
++		unsigned int crawledCount = 0, docsCount = 0;
++
++		// Let D-Bus activate the service if necessary
++		DBusXapianIndex::getStatistics(crawledCount, docsCount);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;prefsDialog::save_directoriesTreeview: crawled &quot; &lt;&lt; crawledCount
++			&lt;&lt; &quot;, indexed &quot; &lt;&lt; docsCount &lt;&lt; endl;
++#endif
++	}
++
+ 	return true;
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000468.html">[Pinot-svn] r475 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000470.html">[Pinot-svn] r477 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#469">[ date ]</a>
+              <a href="thread.html#469">[ thread ]</a>
+              <a href="subject.html#469">[ subject ]</a>
+              <a href="author.html#469">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

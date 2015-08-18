@@ -1,0 +1,409 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1095 - in trunk: Monitor UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1095%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200711080615.lA86FbQ8018433%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001088.html">
+   <LINK REL="Next"  HREF="001090.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1095 - in trunk: Monitor UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1095%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200711080615.lA86FbQ8018433%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1095 - in trunk: Monitor UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov  8 07:15:37 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001088.html">[Pinot-svn] r1094 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001090.html">[Pinot-svn] r1096 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1089">[ date ]</a>
+              <a href="thread.html#1089">[ thread ]</a>
+              <a href="subject.html#1089">[ subject ]</a>
+              <a href="author.html#1089">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-11-08 07:15:34 +0100 (Thu, 08 Nov 2007)
+New Revision: 1095
+
+Modified:
+   trunk/Monitor/MonitorHandler.h
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+MonitorHandler has a directoryCreated() method. In practice, this means that
+MonitorThread doesn't shortcut the handler when a directory is created, and
+that OnDiskHandler can fire the &quot;file found&quot; signal on its own. This also
+unifies indexing between monitoring and crawling, and should ensure no indexing
+takes place when the new stop indexing flag is up.
+
+
+Modified: trunk/Monitor/MonitorHandler.h
+===================================================================
+--- trunk/Monitor/MonitorHandler.h	2007-11-08 02:46:33 UTC (rev 1094)
++++ trunk/Monitor/MonitorHandler.h	2007-11-08 06:15:34 UTC (rev 1095)
+@@ -44,6 +44,9 @@
+ 		/// Handles file creation events.
+ 		virtual bool fileCreated(const std::string &amp;fileName) = 0;
+ 
++		/// Handles directory creation events.
++		virtual bool directoryCreated(const std::string &amp;dirName) = 0;
++
+ 		/// Handles file modified events.
+ 		virtual bool fileModified(const std::string &amp;fileName) = 0;
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-11-08 02:46:33 UTC (rev 1094)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-11-08 06:15:34 UTC (rev 1095)
+@@ -30,7 +30,6 @@
+ #include &quot;Url.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+-#include &quot;FileCollector.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ 
+@@ -47,6 +46,18 @@
+ OnDiskHandler::~OnDiskHandler()
+ {
+ 	pthread_mutex_destroy(&amp;m_mutex);
++
++	// Disconnect the signal
++	sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;::slot_list_type slotsList = m_signalFileFound.slots();
++	sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
+ }
+ 
+ bool OnDiskHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName,
+@@ -158,15 +169,13 @@
+ 	return handledEvent;
+ }
+ 
+-bool OnDiskHandler::indexFile(const string &amp;fileName, bool alwaysUpdate, unsigned int &amp;sourceId)
++bool OnDiskHandler::indexFile(const string &amp;fileName, bool isDirectory, unsigned int &amp;sourceId)
+ {
+ 	string location(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+ 	Url urlObj(location);
+-	set&lt;string&gt; labels;
+-	bool indexedFile = false;
++	char labelStr[64];
+ 
+-	if ((m_index.isGood() == false) || 
+-		(fileName.empty() == true))
++	if (fileName.empty() == true)
+ 	{
+ 		return false;
+ 	}
+@@ -177,15 +186,6 @@
+ 		return false;
+ 	}
+ 
+-	// Has this file been indexed already ?
+-	unsigned int docId = m_index.hasDocument(location);
+-	if ((docId &gt; 0) &amp;&amp;
+-		(alwaysUpdate == false))
+-	{
+-		// No need to update
+-		return true;
+-	}
+-
+ 	// What source does it belong to ?
+ 	for(map&lt;unsigned int, string&gt;::const_iterator sourceIter = m_fileSources.begin();
+ 		sourceIter != m_fileSources.end(); ++sourceIter)
+@@ -200,52 +200,18 @@
+ 
+ 		if (sourceIter-&gt;second.substr(0, location.length()) == location)
+ 		{
+-			char sourceStr[64];
+ 
+ 			// That's the one
+-			snprintf(sourceStr, 64, &quot;X-SOURCE%u&quot;, sourceIter-&gt;first);
+-			labels.insert(sourceStr);
++			snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, sourceIter-&gt;first);
+ 			break;
+ 		}
+ 	}
+ 
+ 	DocumentInfo docInfo(&quot;&quot;, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+ 
+-	FileCollector fileCollector;
+-	Document *pDoc = fileCollector.retrieveUrl(docInfo);
+-	if (pDoc == NULL)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;OnDiskHandler::indexFile: couldn't download &quot; &lt;&lt; location &lt;&lt; endl;
+-#endif
++	m_signalFileFound(docInfo, labelStr, isDirectory);
+ 
+-		// The file  couldn't be downloaded but exists nonetheless !
+-		pDoc = new Document(docInfo);
+-	}
+-
+-	FilterWrapper wrapFilter(&amp;m_index);
+-
+-	// Get an ad hoc tokenizer for the message
+-	// Index or update ?
+-	if (docId == 0)
+-	{
+-		indexedFile = wrapFilter.indexDocument(*pDoc, labels, docId);
+-	}
+-	else
+-	{
+-		indexedFile = wrapFilter.updateDocument(*pDoc, docId);
+-	}
+-
+-#ifdef DEBUG
+-	if (indexedFile == false)
+-	{
+-		cout &lt;&lt; &quot;OnDiskHandler::indexFile: couldn't index &quot; &lt;&lt; location &lt;&lt; endl;
+-	}
+-#endif
+-
+-	delete pDoc;
+-
+-	return indexedFile;
++	return true;
+ }
+ 
+ bool OnDiskHandler::replaceFile(unsigned int docId, DocumentInfo &amp;docInfo)
+@@ -288,16 +254,16 @@
+ 			// Is this an indexable location ?
+ 			if (directories.find(sourceIter-&gt;second.substr(7)) == directories.end())
+ 			{
+-				char sourceStr[64];
++				char labelStr[64];
+ 
+-				snprintf(sourceStr, 64, &quot;X-SOURCE%u&quot;, sourceId);
++				snprintf(labelStr, 64, &quot;X-SOURCE%u&quot;, sourceId);
+ 
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;OnDiskHandler::initialize: &quot; &lt;&lt; sourceIter-&gt;second
+ 					&lt;&lt; &quot;, source &quot; &lt;&lt; sourceId &lt;&lt; &quot; was removed&quot; &lt;&lt; endl;
+ #endif
+ 				// All documents with this label will be unindexed
+-				if (m_index.unindexDocuments(sourceStr, IndexInterface::BY_LABEL) == true)
++				if (m_index.unindexDocuments(labelStr, IndexInterface::BY_LABEL) == true)
+ 				{
+ 					// Delete the source itself and all its items
+ 					m_history.deleteSource(sourceId);
+@@ -345,6 +311,22 @@
+ 	return handledEvent;
+ }
+ 
++bool OnDiskHandler::directoryCreated(const string &amp;dirName)
++{
++	unsigned int sourceId;
++	bool handledEvent = false;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;OnDiskHandler::directoryCreated: &quot; &lt;&lt; dirName &lt;&lt; endl;
++#endif
++	pthread_mutex_lock(&amp;m_mutex);
++	handledEvent = indexFile(dirName, true, sourceId);
++	// History will be set by crawling
++	pthread_mutex_unlock(&amp;m_mutex);
++
++	return handledEvent;
++}
++
+ bool OnDiskHandler::fileModified(const string &amp;fileName)
+ {
+ 	unsigned int sourceId;
+@@ -355,7 +337,7 @@
+ #endif
+ 	pthread_mutex_lock(&amp;m_mutex);
+ 	// Update the file, or index if necessary
+-	handledEvent = indexFile(fileName, true, sourceId);
++	handledEvent = indexFile(fileName, false, sourceId);
+ 	if (handledEvent == true)
+ 	{
+ 		m_history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, CrawlHistory::CRAWLED, time(NULL));
+@@ -386,3 +368,8 @@
+ 	return fileDeleted(dirName, IndexInterface::BY_DIRECTORY);
+ }
+ 
++sigc::signal3&lt;void, const DocumentInfo&amp;, const string&amp;, bool&gt;&amp; OnDiskHandler::getFileFoundSignal(void)
++{
++	return m_signalFileFound;
++}
++
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2007-11-08 02:46:33 UTC (rev 1094)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2007-11-08 06:15:34 UTC (rev 1095)
+@@ -23,6 +23,7 @@
+ #include &lt;pthread.h&gt;
+ #include &lt;string&gt;
+ #include &lt;map&gt;
++#include &lt;sigc++/sigc++.h&gt;
+ 
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+@@ -47,6 +48,9 @@
+ 		/// Handles file creation events.
+ 		virtual bool fileCreated(const std::string &amp;fileName);
+ 
++		/// Handles directory creation events.
++		virtual bool directoryCreated(const std::string &amp;dirName);
++
+ 		/// Handles file modified events.
+ 		virtual bool fileModified(const std::string &amp;fileName);
+ 
+@@ -64,8 +68,11 @@
+ 		/// Handles directory deleted events.
+ 		virtual bool directoryDeleted(const std::string &amp;dirName);
+ 
++		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getFileFoundSignal(void);
++
+ 	protected:
+ 		pthread_mutex_t m_mutex;
++		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
+ 		std::map&lt;unsigned int, std::string&gt; m_fileSources;
+ 		CrawlHistory m_history;
+ 		XapianIndex m_index;
+@@ -76,7 +83,7 @@
+ 
+ 		bool fileDeleted(const std::string &amp;fileName, IndexInterface::NameType type);
+ 
+-		bool indexFile(const std::string &amp;fileName, bool alwaysUpdate, unsigned int &amp;sourceId);
++		bool indexFile(const std::string &amp;fileName, bool isDirectory, unsigned int &amp;sourceId);
+ 
+ 		bool replaceFile(unsigned int docId, DocumentInfo &amp;docInfo);
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-11-08 02:46:33 UTC (rev 1094)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-11-08 06:15:34 UTC (rev 1095)
+@@ -1895,28 +1895,12 @@
+ 
+ bool MonitorThread::stop(void)
+ {
+-	// Disconnect the signal
+-	sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalDirectoryFound.slots();
+-	sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+-	if (slotIter != slotsList.end())
+-	{
+-		if (slotIter-&gt;empty() == false)
+-		{
+-			slotIter-&gt;block();
+-			slotIter-&gt;disconnect();
+-		}
+-	}
+ 	m_done = true;
+ 	write(m_ctrlWritePipe, &quot;X&quot;, 1);
+ 
+ 	return true;
+ }
+ 
+-sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; MonitorThread::getDirectoryFoundSignal(void)
+-{
+-	return m_signalDirectoryFound;
+-}
+-
+ void MonitorThread::processEvents(void)
+ {
+ 	CrawlHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
+@@ -1980,10 +1964,7 @@
+ 			}
+ 			else
+ 			{
+-				DocumentInfo docInfo(&quot;&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + event.m_location, &quot;&quot;, &quot;&quot;);
+-
+-				// Report this directory so that it is crawled
+-				m_signalDirectoryFound(docInfo, &quot;&quot;, true);
++				m_pHandler-&gt;directoryCreated(event.m_location);
+ 			}
+ 		}
+ 		else if (event.m_type == MonitorEvent::WRITE_CLOSED)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-11-08 02:46:33 UTC (rev 1094)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-11-08 06:15:34 UTC (rev 1095)
+@@ -491,15 +491,12 @@
+ 
+ 		virtual bool stop(void);
+ 
+-		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getDirectoryFoundSignal(void);
+-
+ 	protected:
+ 		int m_ctrlReadPipe;
+ 		int m_ctrlWritePipe;
+ 		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+ 		bool m_checkHistory;
+-		sigc::signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalDirectoryFound;
+ 
+ 		void processEvents(void);
+ 		virtual void doWork(void);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-11-08 02:46:33 UTC (rev 1094)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-11-08 06:15:34 UTC (rev 1095)
+@@ -88,6 +88,13 @@
+ 			return true; 
+ 		}
+ 
++		/// Handles directory creation events.
++		virtual bool directoryCreated(const std::string &amp;dirName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
+ 		/// Handles file modified events.
+ 		virtual bool fileModified(const std::string &amp;fileName)
+ 		{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001088.html">[Pinot-svn] r1094 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001090.html">[Pinot-svn] r1096 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1089">[ date ]</a>
+              <a href="thread.html#1089">[ thread ]</a>
+              <a href="subject.html#1089">[ subject ]</a>
+              <a href="author.html#1089">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,332 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1243 - in trunk: IndexSearch Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1243%20-%20in%20trunk%3A%20IndexSearch%20Tokenize&In-Reply-To=%3C200805061456.m46EumC2006189%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001236.html">
+   <LINK REL="Next"  HREF="001238.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1243 - in trunk: IndexSearch Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1243%20-%20in%20trunk%3A%20IndexSearch%20Tokenize&In-Reply-To=%3C200805061456.m46EumC2006189%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1243 - in trunk: IndexSearch Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue May  6 16:56:48 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001236.html">[Pinot-svn] r1242 - in trunk: . IndexSearch UI/GTK2/src po
+</A></li>
+        <LI>Next message: <A HREF="001238.html">[Pinot-svn] r1244 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1237">[ date ]</a>
+              <a href="thread.html#1237">[ thread ]</a>
+              <a href="subject.html#1237">[ subject ]</a>
+              <a href="author.html#1237">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-06 16:56:48 +0200 (Tue, 06 May 2008)
+New Revision: 1243
+
+Modified:
+   trunk/IndexSearch/FilterWrapper.cpp
+   trunk/Tokenize/FilterUtils.cpp
+   trunk/Tokenize/TextConverter.cpp
+   trunk/Tokenize/TextConverter.h
+Log:
+Overloaded TextConverter::toUTF8(). FilterWrapper uses the new method
+Filter::set_utf8_converter(). Some minor changes.
+
+
+Modified: trunk/IndexSearch/FilterWrapper.cpp
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.cpp	2008-05-05 12:36:21 UTC (rev 1242)
++++ trunk/IndexSearch/FilterWrapper.cpp	2008-05-06 14:56:48 UTC (rev 1243)
+@@ -23,6 +23,7 @@
+ #include &quot;FilterFactory.h&quot;
+ #include &quot;TextFilter.h&quot;
+ #include &quot;FilterUtils.h&quot;
++#include &quot;TextConverter.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ 
+ using std::cout;
+@@ -31,6 +32,16 @@
+ using std::set;
+ using namespace Dijon;
+ 
++static string convertToUTF8(const char *pData, unsigned int dataLen, const string &amp;charset)
++{
++	TextConverter converter(20);
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;FilterWrapper::filterDocument: filter requested conversion from &quot; &lt;&lt; charset &lt;&lt; endl;
++#endif
++	return converter.toUTF8(pData, dataLen, charset);
++}
++
+ FilterWrapper::FilterWrapper(IndexInterface *pIndex) :
+ 	m_pIndex(pIndex)
+ {
+@@ -89,6 +100,9 @@
+ 
+ 	if (pFilter != NULL)
+ 	{
++		// The filter may have to convert the content to UTF-8 itself
++    		pFilter-&gt;set_utf8_converter(convertToUTF8);
++
+ 		fedFilter = FilterUtils::feedFilter(doc, pFilter);
+ 	}
+ 	else
+
+Modified: trunk/Tokenize/FilterUtils.cpp
+===================================================================
+--- trunk/Tokenize/FilterUtils.cpp	2008-05-05 12:36:21 UTC (rev 1242)
++++ trunk/Tokenize/FilterUtils.cpp	2008-05-06 14:56:48 UTC (rev 1243)
+@@ -164,9 +164,6 @@
+ 	if (((dataLength &gt; 0) &amp;&amp; (pData != NULL)) &amp;&amp;
+ 		(pFilter-&gt;is_data_input_ok(Dijon::Filter::DOCUMENT_DATA) == true))
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterUtils::feedFilter: feeding &quot; &lt;&lt; dataLength &lt;&lt; &quot; bytes of data from &quot; &lt;&lt; location &lt;&lt; endl;
+-#endif
+ 		fedInput = pFilter-&gt;set_document_data(pData, dataLength);
+ 	}
+ 	// ... to feeding the file
+@@ -328,18 +325,14 @@
+ 	{
+ 		string utf8Data(converter.toUTF8(contentIter-&gt;second, charset));
+ 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterUtils::populateDocument: converting &quot; &lt;&lt; doc.getLocation()
+-			&lt;&lt; &quot; from &quot; &lt;&lt; charset &lt;&lt; endl;
+-#endif
+ 		if (converter.getErrorsCount() &gt; 0)
+ 		{
+ 			cerr &lt;&lt; doc.getLocation() &lt;&lt; &quot; may not have been fully converted to UTF-8&quot; &lt;&lt; endl;
+ 		}
+ 		doc.setData(utf8Data.c_str(), utf8Data.length());
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;FilterUtils::populateDocument: set &quot; &lt;&lt; utf8Data.length() &lt;&lt; &quot;/&quot; &lt;&lt; contentIter-&gt;second.size()
+-			&lt;&lt; &quot; characters of data&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;FilterUtils::populateDocument: set &quot; &lt;&lt; utf8Data.length() &lt;&lt; &quot;/&quot; &lt;&lt; contentIter-&gt;second.length()
++			&lt;&lt; &quot; bytes, converted from charset &quot; &lt;&lt; charset &lt;&lt; endl;
+ #endif
+ 	}
+ 	contentIter = metaData.find(&quot;title&quot;);
+
+Modified: trunk/Tokenize/TextConverter.cpp
+===================================================================
+--- trunk/Tokenize/TextConverter.cpp	2008-05-05 12:36:21 UTC (rev 1242)
++++ trunk/Tokenize/TextConverter.cpp	2008-05-06 14:56:48 UTC (rev 1243)
+@@ -19,6 +19,7 @@
+ #include &lt;errno.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;glibmm/convert.h&gt;
++#include &lt;glibmm/ustring.h&gt;
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;TextConverter.h&quot;
+@@ -28,9 +29,6 @@
+ using std::string;
+ using namespace Glib;
+ 
+-#define USE_GLIBMM_ICONV 1
+-//#define USE_GLIBMM_FUNCS 1
+-
+ TextConverter::TextConverter(unsigned int maxErrors) :
+ 	m_utf8Locale(false),
+ 	m_maxErrors(maxErrors),
+@@ -44,19 +42,28 @@
+ {
+ }
+ 
+-ustring TextConverter::toUTF8(const string &amp;text, const string &amp;charset)
++string TextConverter::toUTF8(const string &amp;text, const string &amp;charset)
+ {
++	unsigned int textLen = (unsigned int)text.length();
++
++	// Call overload
++	return toUTF8(text.c_str(), textLen, charset);
++}
++
++string TextConverter::toUTF8(const char *pText, unsigned int textLen, const string &amp;charset)
++{
+ 	string textCharset(StringManip::toLowerCase(charset));
+ 	char outputBuffer[8192];
+-	char *pInput = const_cast&lt;char *&gt;(text.c_str());
++	char *pInput = const_cast&lt;char *&gt;(pText);
+ 
+ 	m_conversionErrors = 0;
+ 
+-	if ((text.empty() == true) ||
++	if ((pText == NULL) ||
++		(textLen == 0) ||
+ 		(textCharset == &quot;utf-8&quot;))
+ 	{
+ 		// No conversion necessary
+-		return text;
++		return string(pText, textLen);
+ 	}
+ 
+ 	if (textCharset.empty() == true)
+@@ -64,16 +71,15 @@
+ 		if (m_utf8Locale == true)
+ 		{
+ 			// The current locale uses UTF-8
+-			return text;
++			return string(pText, textLen);
+ 		}
+ 
+ 		textCharset = m_localeCharset;
+ 	}
+ 
+-#ifdef USE_GLIBMM_ICONV
+ 	IConv converter(&quot;UTF-8&quot;, textCharset);
+ 	string outputText;
+-	gsize inputSize = text.length();
++	gsize inputSize = (gsize)textLen;
+ 	bool invalidSequence = false;
+ 
+ 	while (inputSize &gt; 0)
+@@ -90,13 +96,14 @@
+ 				// Conversion was only partially successful
+ 				++m_conversionErrors;
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;TextConverter::toUTF8: invalid sequence at &quot; &lt;&lt; pInput - text.c_str() &lt;&lt; endl;
++				cout &lt;&lt; &quot;TextConverter::toUTF8: invalid sequence at &quot; &lt;&lt; pInput - pText &lt;&lt; endl;
+ #endif
+ 				if (m_conversionErrors &gt;= m_maxErrors)
+ 				{
+ 					// Give up
+-					return text; 
++					return string(pText, textLen);
+ 				}
++				converter.reset();
+ 
+ 				outputText.append(outputBuffer, 8192 - outputSize);
+ 				if (invalidSequence == false)
+@@ -115,7 +122,7 @@
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;TextConverter::toUTF8: unknown error &quot; &lt;&lt; errorCode &lt;&lt; endl;
+ #endif
+-				return text;
++				return string(pText, textLen);
+ 			}
+ 		}
+ 		else
+@@ -131,38 +138,6 @@
+ #endif
+ 
+ 	return outputText;
+-#else
+-#ifdef USE_GLIBMM_FUNCS
+-	try
+-	{
+-		if (textCharset.empty() == false)
+-		{
+-			return convert_with_fallback(text, &quot;UTF-8&quot;, textCharset, &quot; &quot;);
+-		}
+-		else
+-		{
+-			return locale_to_utf8(text);
+-		}
+-	}
+-	catch (ConvertError &amp;ce)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;TextConverter::toUTF8: cannot convert from &quot; &lt;&lt; textCharset &lt;&lt; &quot;: &quot; &lt;&lt; ce.what() &lt;&lt; endl;
+-#endif
+-		if (textCharset.empty() == false)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;TextConverter::toUTF8: trying again&quot; &lt;&lt; endl;
+-#endif
+-			return TextConverter::toUTF8(text, &quot;&quot;);
+-		}
+-	}
+-
+-	return &quot;&quot;;
+-#else
+-	return text;
+-#endif
+-#endif
+ }
+ 
+ unsigned int TextConverter::getErrorsCount(void) const
+@@ -170,7 +145,7 @@
+ 	return m_conversionErrors;
+ }
+ 
+-string TextConverter::fromUTF8(const ustring &amp;text)
++string TextConverter::fromUTF8(const string &amp;text)
+ {
+ 	try
+ 	{
+
+Modified: trunk/Tokenize/TextConverter.h
+===================================================================
+--- trunk/Tokenize/TextConverter.h	2008-05-05 12:36:21 UTC (rev 1242)
++++ trunk/Tokenize/TextConverter.h	2008-05-06 14:56:48 UTC (rev 1243)
+@@ -20,7 +20,6 @@
+ #define _TEXT_CONVERTER_H
+ 
+ #include &lt;string&gt;
+-#include &lt;glibmm/ustring.h&gt;
+ 
+ class TextConverter
+ {
+@@ -29,13 +28,16 @@
+ 		virtual ~TextConverter();
+ 
+ 		/// Converts to UTF-8.
+-		Glib::ustring toUTF8(const std::string &amp;text, const std::string &amp;charset);
++		std::string toUTF8(const std::string &amp;text, const std::string &amp;charset);
+ 
++		/// Converts to UTF-8.
++		std::string toUTF8(const char *pText, unsigned int textLen, const std::string &amp;charset);
++
+ 		/// Gets the number of conversion errors for the previous toUTF8() call.
+ 		unsigned int getErrorsCount(void) const;
+ 
+ 		/// Converts from UTF-8.
+-		std::string fromUTF8(const Glib::ustring &amp;text);
++		std::string fromUTF8(const std::string &amp;text);
+ 
+ 	protected:
+ 		std::string m_localeCharset;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001236.html">[Pinot-svn] r1242 - in trunk: . IndexSearch UI/GTK2/src po
+</A></li>
+	<LI>Next message: <A HREF="001238.html">[Pinot-svn] r1244 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1237">[ date ]</a>
+              <a href="thread.html#1237">[ thread ]</a>
+              <a href="subject.html#1237">[ subject ]</a>
+              <a href="author.html#1237">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

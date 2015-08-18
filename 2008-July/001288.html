@@ -1,0 +1,421 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1294 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1294%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200807110448.m6B4mJK8030741%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001287.html">
+   <LINK REL="Next"  HREF="001289.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1294 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1294%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200807110448.m6B4mJK8030741%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1294 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 11 06:48:19 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001287.html">[Pinot-svn] r1293 - trunk/IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001289.html">[Pinot-svn] r1295 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1288">[ date ]</a>
+              <a href="thread.html#1288">[ thread ]</a>
+              <a href="subject.html#1288">[ subject ]</a>
+              <a href="author.html#1288">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-11 06:47:39 +0200 (Fri, 11 Jul 2008)
+New Revision: 1294
+
+Modified:
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+Support for drag-n-drop.
+Dropping text on the stored queries list will create a new query with this text,
+while dropping files will generate a query to find similar documents in the
+indexes. If necessary, these files are indexed in My Web Pages.
+Files can be dropped on the import dialog's location field too.
+
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2008-07-11 04:41:53 UTC (rev 1293)
++++ trunk/UI/GTK2/src/importDialog.cc	2008-07-11 04:47:39 UTC (rev 1294)
+@@ -23,6 +23,7 @@
+ #include &lt;utility&gt;
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;gtkmm/stock.h&gt;
++#include &lt;gtkmm/targetlist.h&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;DocumentInfo.h&quot;
+@@ -36,6 +37,7 @@
+ 
+ using namespace std;
+ using namespace Glib;
++using namespace Gdk;
+ using namespace Gtk;
+ 
+ importDialog::importDialog() :
+@@ -51,6 +53,13 @@
+ 	m_refLocationCompletion-&gt;set_popup_completion(true);
+ 	locationEntry-&gt;set_completion(m_refLocationCompletion);
+ 
++	// Specify drop targets
++	locationEntry-&gt;drag_dest_set(Gtk::DEST_DEFAULT_ALL, DragAction(GDK_ACTION_COPY|GDK_ACTION_MOVE));
++	locationEntry-&gt;drag_dest_add_uri_targets();
++	// Connect to the drag data received signal
++	locationEntry-&gt;signal_drag_data_received().connect(
++		sigc::mem_fun(*this, &amp;importDialog::on_data_received));
++
+ 	// Populate
+ 	populate_comboboxes();
+ 
+@@ -68,6 +77,25 @@
+ 	return m_docInfo;
+ }
+ 
++void importDialog::on_data_received(const RefPtr&lt;DragContext&gt; &amp;context,
++	int x, int y, const SelectionData &amp;data, guint info, guint time)
++{
++	list&lt;ustring&gt; droppedUris = data.get_uris();
++	bool goodDrop = false;
++
++	cout &lt;&lt; &quot;importDialog::on_data_received: data type &quot;
++		&lt;&lt; data.get_data_type() &lt;&lt; &quot; in format &quot; &lt;&lt; data.get_format() &lt;&lt; endl;
++
++	if (droppedUris.empty() == false)
++	{
++		locationEntry-&gt;set_text(droppedUris.front());
++
++		goodDrop = true;
++	}
++
++	context-&gt;drag_finish(goodDrop, false, time);
++}
++
+ void importDialog::populate_comboboxes(void)
+ {
+ 	labelNameCombobox-&gt;append_text(_(&quot;None&quot;));
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2008-07-11 04:41:53 UTC (rev 1293)
++++ trunk/UI/GTK2/src/importDialog.hh	2008-07-11 04:47:39 UTC (rev 1294)
+@@ -45,6 +45,8 @@
+ 	unsigned int m_locationLength;
+ 	DocumentInfo m_docInfo;
+ 
++	void on_data_received(const Glib::RefPtr&lt;Gdk::DragContext&gt; &amp;context,
++		int x, int y, const Gtk::SelectionData &amp;data, guint info, guint time);
+ 	void populate_comboboxes(void);
+ 
+ 	virtual void on_importButton_clicked();
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-07-11 04:41:53 UTC (rev 1293)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-07-11 04:47:39 UTC (rev 1294)
+@@ -34,6 +34,7 @@
+ #include &lt;gtkmm/scrolledwindow.h&gt;
+ #include &lt;gtkmm/clipboard.h&gt;
+ #include &lt;gtkmm/recentmanager.h&gt;
++#include &lt;gtkmm/targetlist.h&gt;
+ #include &lt;gtkmm/main.h&gt;
+ 
+ #include &quot;config.h&quot;
+@@ -179,6 +180,19 @@
+ 	// Connect to the &quot;changed&quot; signal
+ 	queryTreeview-&gt;get_selection()-&gt;signal_changed().connect(
+ 		sigc::mem_fun(*this, &amp;mainWindow::on_queryTreeviewSelection_changed));
++
++	// Specify drop targets
++	queryTreeview-&gt;drag_dest_set(Gtk::DEST_DEFAULT_ALL, DragAction(GDK_ACTION_COPY|GDK_ACTION_MOVE));
++	// FIXME: this causes some text files to be received as text, others as URIs !
++	//queryTreeview-&gt;drag_dest_add_text_targets();
++	queryTreeview-&gt;drag_dest_add_uri_targets();
++	RefPtr&lt;TargetList&gt; targetList = queryTreeview-&gt;drag_dest_get_target_list();
++	targetList-&gt;add(&quot;UTF8_STRING&quot;, TargetFlags(0), 0);
++	targetList-&gt;add(&quot;text/plain&quot;, TargetFlags(0), 0);
++	// Connect to the drag data received signal
++	queryTreeview-&gt;signal_drag_data_received().connect(
++		sigc::mem_fun(*this, &amp;mainWindow::on_data_received));
++
+ 	// Populate
+ 	populate_queryTreeview(&quot;&quot;);
+ 
+@@ -599,23 +613,83 @@
+ }
+ 
+ //
+-// Query list selection changed
++// Drag and drop
+ //
+-void mainWindow::on_queryTreeviewSelection_changed()
++void mainWindow::on_data_received(const RefPtr&lt;DragContext&gt; &amp;context,
++	int x, int y, const SelectionData &amp;data, guint info, guint time)
+ {
+-	bool enableButtons = false;
++	list&lt;ustring&gt; droppedUris = data.get_uris();
++	ustring droppedText(data.get_text());
++	bool goodDrop = false;
+ 
+-	TreeModel::iterator iter = queryTreeview-&gt;get_selection()-&gt;get_selected();
+-	// Anything selected ?
+-	if (iter)
++	cout &lt;&lt; &quot;mainWindow::on_data_received: data type &quot;
++		&lt;&lt; data.get_data_type() &lt;&lt; &quot; in format &quot; &lt;&lt; data.get_format() &lt;&lt; endl;
++
++	if (droppedUris.empty() == false)
+ 	{
+-		// Enable all buttons
+-		enableButtons = true;
++		IndexInterface *pIndex = m_settings.getIndex(&quot;MERGED&quot;);
++		set&lt;string&gt; locationsToIndex;
++		bool isIndexing = true;
++
++		for (list&lt;ustring&gt;::iterator uriIter = droppedUris.begin();
++			uriIter != droppedUris.end(); ++uriIter)
++		{
++			string uri(*uriIter);
++
++			cout &lt;&lt; &quot;mainWindow::on_data_received: received URI \&quot;&quot;
++				&lt;&lt; uri &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl; 
++
++			// Query the merged index
++			if (pIndex != NULL)
++			{
++				// Has this been indexed ?
++				unsigned int docId = pIndex-&gt;hasDocument(uri);
++				if (docId == 0)
++				{
++					locationsToIndex.insert(uri);
++				}
++			}
++
++			m_expandLocations.insert(uri);
++			goodDrop = true;
++		}
++
++		if (pIndex != NULL)
++		{
++			delete pIndex;
++		}
++
++		if (goodDrop == true)
++		{
++			for (set&lt;string&gt;::iterator locationIter = locationsToIndex.begin();
++				locationIter != locationsToIndex.end(); ++locationIter)
++			{
++				DocumentInfo docInfo(&quot;&quot;, *locationIter, &quot;&quot;, &quot;&quot;);
++
++				// Add this to My Web Pages
++				m_state.queue_index(docInfo);
++			}
++
++			if (locationsToIndex.empty() == true)
++			{
++				// We can run a catch-all query and expand on these documents right away
++				expand_locations();
++			}
++			// Else, do it when indexing is completed
++		}
+ 	}
++	else if (droppedText.empty() == false)
++	{
++		QueryProperties queryProps(&quot;&quot;, from_utf8(droppedText));
++		edit_query(queryProps, true);
+ 
+-	removeQueryButton-&gt;set_sensitive(enableButtons);
+-	queryHistoryButton-&gt;set_sensitive(enableButtons);
+-	findQueryButton-&gt;set_sensitive(enableButtons);
++		cout &lt;&lt; &quot;mainWindow::on_data_received: received text \&quot;&quot;
++			&lt;&lt; droppedText &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
++
++		goodDrop = true;
++	}
++
++	context-&gt;drag_finish(goodDrop, false, time);
+ }
+ 
+ //
+@@ -657,6 +731,26 @@
+ }
+ 
+ //
++// Query list selection changed
++//
++void mainWindow::on_queryTreeviewSelection_changed()
++{
++	bool enableButtons = false;
++
++	TreeModel::iterator iter = queryTreeview-&gt;get_selection()-&gt;get_selected();
++	// Anything selected ?
++	if (iter)
++	{
++		// Enable all buttons
++		enableButtons = true;
++	}
++
++	removeQueryButton-&gt;set_sensitive(enableButtons);
++	queryHistoryButton-&gt;set_sensitive(enableButtons);
++	findQueryButton-&gt;set_sensitive(enableButtons);
++}
++
++//
+ // Results tree selection changed
+ //
+ void mainWindow::on_resultsTreeviewSelection_changed(ustring queryName)
+@@ -1646,7 +1740,10 @@
+ 	delete pThread;;
+ 
+ 	// We might be able to run a queued action
+-	m_state.pop_queue(indexedUrl);
++	if (m_state.pop_queue(indexedUrl) == false)
++	{
++		expand_locations();
++	}
+ 
+ 	// Any threads left to return ?
+ 	if (m_state.get_threads_count() == 0)
+@@ -1820,9 +1917,7 @@
+ 				ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+ 				if (pResultsTree != NULL)
+ 				{
+-					TreeView *pTree = pResultsTree-&gt;getExtractTree();
+-					if ((pTree != NULL) &amp;&amp;
+-						(pTree-&gt;is_focus() == true))
++					if (pResultsTree-&gt;focusOnExtract() == true)
+ 					{
+ 						// Retrieve the extract
+ 						text = pResultsTree-&gt;getExtract();
+@@ -1916,8 +2011,7 @@
+ 		cout &lt;&lt; &quot;mainWindow::on_paste_activate: query tree&quot; &lt;&lt; endl;
+ #endif
+ 		// Use whatever text is in the clipboard as query name
+-		// FIXME: look for \n as query fields separators ?
+-		QueryProperties queryProps = QueryProperties(from_utf8(clipText), from_utf8(clipText));
++		QueryProperties queryProps(&quot;&quot;, from_utf8(clipText));
+ 		edit_query(queryProps, true);
+ 	}
+ 	else
+@@ -2694,7 +2788,7 @@
+ {
+ 	// Even though live queries terms are now ANDed together,
+ 	// use them as OR terms when creating a new stored query
+-	QueryProperties queryProps = QueryProperties(&quot;&quot;, liveQueryEntry-&gt;get_text());
++	QueryProperties queryProps(&quot;&quot;, liveQueryEntry-&gt;get_text());
+ 
+ 	edit_query(queryProps, true);
+ }
+@@ -2871,7 +2965,7 @@
+ #endif
+ 
+ 			// Edit this query's properties
+-			QueryProperties queryProps = row[m_queryColumns.m_properties];
++			QueryProperties queryProps(row[m_queryColumns.m_properties]);
+ 			edit_query(queryProps, false);
+ 		}
+ 	}
+@@ -3609,6 +3703,31 @@
+ 	return true;
+ }
+ 
++bool mainWindow::expand_locations(void)
++{
++	// Was an expand operation delayed by indexing ?
++	if (m_expandLocations.empty() == true)
++	{
++		return false;
++	}
++
++	Url urlObj(*m_expandLocations.begin());
++	string queryName(urlObj.getFile());
++
++	if (m_expandLocations.size() &gt; 1)
++	{
++		queryName += &quot;...&quot;;
++	}
++	QueryProperties queryProps(queryName, &quot;dir:/&quot;);
++
++	// Run a catch-all query and expand on these documents
++	ExpandQueryThread *pExpandQueryThread = new ExpandQueryThread(queryProps, m_expandLocations);
++	m_expandLocations.clear();
++	start_thread(pExpandQueryThread);
++
++	return true;
++}
++
+ //
+ // Sets the status bar text.
+ //
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2008-07-11 04:41:53 UTC (rev 1293)
++++ trunk/UI/GTK2/src/mainWindow.hh	2008-07-11 04:47:39 UTC (rev 1294)
+@@ -68,6 +68,8 @@
+ 		QueryProperties &amp;queryProps, std::set&lt;std::string&gt; &amp;locations);
+ 
+ 	// Handlers
++	void on_data_received(const Glib::RefPtr&lt;Gdk::DragContext&gt; &amp;context,
++		int x, int y, const Gtk::SelectionData &amp;data, guint info, guint time);
+ 	void on_enginesTreeviewSelection_changed();
+ 	void on_queryTreeviewSelection_changed();
+ 	void on_resultsTreeviewSelection_changed(Glib::ustring queryName);
+@@ -142,6 +144,7 @@
+ 	bool append_document(IndexPage *pIndexPage, const Glib::ustring &amp;indexName,
+ 		const DocumentInfo &amp;docInfo);
+ 	bool start_thread(WorkerThread *pNewThread, bool inBackground = false);
++	bool expand_locations(void);
+ 
+ 	// Status methods
+ 	bool on_activity_timeout(void);
+@@ -157,6 +160,7 @@
+ 	Glib::RefPtr&lt;Gtk::EntryCompletion&gt; m_refLiveQueryCompletion;
+ 	QueryModelColumns m_queryColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refQueryTree;
++	std::set&lt;std::string&gt; m_expandLocations;
+ 	// Notebook
+ 	Gtk::Notebook *m_pNotebook;
+ 	// Menus
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001287.html">[Pinot-svn] r1293 - trunk/IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001289.html">[Pinot-svn] r1295 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1288">[ date ]</a>
+              <a href="thread.html#1288">[ thread ]</a>
+              <a href="subject.html#1288">[ subject ]</a>
+              <a href="author.html#1288">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

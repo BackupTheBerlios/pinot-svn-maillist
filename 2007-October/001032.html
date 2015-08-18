@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1038 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1038%20-%20trunk/Utils&In-Reply-To=%3C200710150252.l9F2qVmE032260%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001031.html">
+   <LINK REL="Next"  HREF="001033.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1038 - trunk/Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1038%20-%20trunk/Utils&In-Reply-To=%3C200710150252.l9F2qVmE032260%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1038 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 15 04:52:31 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001031.html">[Pinot-svn] r1037 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="001033.html">[Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1032">[ date ]</a>
+              <a href="thread.html#1032">[ thread ]</a>
+              <a href="subject.html#1032">[ subject ]</a>
+              <a href="author.html#1032">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-15 04:52:22 +0200 (Mon, 15 Oct 2007)
+New Revision: 1038
+
+Modified:
+   trunk/Utils/DocumentInfo.cpp
+   trunk/Utils/DocumentInfo.h
+Log:
+Documents can be serialized to and from strings.
+
+
+Modified: trunk/Utils/DocumentInfo.cpp
+===================================================================
+--- trunk/Utils/DocumentInfo.cpp	2007-10-14 09:06:54 UTC (rev 1037)
++++ trunk/Utils/DocumentInfo.cpp	2007-10-15 02:52:22 UTC (rev 1038)
+@@ -16,9 +16,13 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;stdlib.h&gt;
+ #include &lt;algorithm&gt;
++
++#include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;DocumentInfo.h&quot;
++#include &quot;Url.h&quot;
+ 
+ using std::string;
+ using std::map;
+@@ -92,6 +96,81 @@
+ 	return false;
+ }
+ 
++/// Serializes the document.
++string DocumentInfo::serialize(void) const
++{
++	string info;
++	char numStr[64];
++
++	// Serialize DocumentInfo into a string
++	for (map&lt;string, string&gt;::const_iterator fieldIter = m_fields.begin();
++		fieldIter != m_fields.end(); ++fieldIter)
++	{
++		info += &quot;\n&quot;;
++		info += fieldIter-&gt;first;
++		info += &quot;=&quot;;
++		info += fieldIter-&gt;second;
++	}
++	info += &quot;\nlabels=&quot;;
++	for (set&lt;string&gt;::const_iterator labelIter = m_labels.begin();
++		labelIter != m_labels.end(); ++labelIter)
++	{
++		info += &quot;[&quot; + Url::escapeUrl(*labelIter) + &quot;]&quot;;
++	}
++	info += &quot;\nextract=&quot;;
++	info += m_extract;
++	info += &quot;\nscore=&quot;;
++	snprintf(numStr, 64, &quot;%f&quot;, m_score);
++	info += numStr;
++	info += &quot;\nindexid=&quot;;
++	snprintf(numStr, 64, &quot;%u&quot;, m_indexId);
++	info += numStr;
++	info += &quot;\ndocid=&quot;;
++	snprintf(numStr, 64, &quot;%u&quot;, m_docId);
++	info += numStr;
++	info += &quot;\n&quot;;
++
++	return Url::escapeUrl(info);
++}
++
++/// Deserializes the document.
++void DocumentInfo::deserialize(const string &amp;info)
++{
++	string unescapedInfo(Url::unescapeUrl(info));
++
++	// Deserialize DocumentInfo
++	setField(&quot;caption&quot;, StringManip::extractField(unescapedInfo, &quot;caption=&quot;, &quot;\n&quot;));
++	setField(&quot;url&quot;, StringManip::extractField(unescapedInfo, &quot;url=&quot;, &quot;\n&quot;));
++	setField(&quot;type&quot;, StringManip::extractField(unescapedInfo, &quot;type=&quot;, &quot;\n&quot;));
++	setField(&quot;language&quot;, StringManip::extractField(unescapedInfo, &quot;language=&quot;, &quot;\n&quot;));
++	setField(&quot;modtime&quot;, StringManip::extractField(unescapedInfo, &quot;modtime=&quot;, &quot;\n&quot;));
++	setField(&quot;size&quot;, StringManip::extractField(unescapedInfo, &quot;size=&quot;, &quot;\n&quot;));
++	string labelsString(StringManip::extractField(unescapedInfo, &quot;labels=&quot;, &quot;\n&quot;));
++	if (labelsString.empty() == false)
++	{
++		string::size_type endPos = 0;
++		string labelName(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
++
++		m_labels.clear();
++
++		// Parse labels
++		while (labelName.empty() == false)
++		{
++			m_labels.insert(Url::unescapeUrl(labelName));
++
++			if (endPos == string::npos)
++			{
++				break;
++			}
++			labelName = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
++		}
++	}
++	m_extract = StringManip::extractField(unescapedInfo, &quot;extract=&quot;, &quot;\n&quot;);
++	m_score = (float)atof(StringManip::extractField(unescapedInfo, &quot;score=&quot;, &quot;\n&quot;).c_str());
++	m_indexId = (unsigned int)atoi(StringManip::extractField(unescapedInfo, &quot;indexid=&quot;, &quot;\n&quot;).c_str());
++	m_docId = (unsigned int)atoi(StringManip::extractField(unescapedInfo, &quot;docid=&quot;, &quot;\n&quot;).c_str());
++}
++
+ /// Sets the title of the document.
+ void DocumentInfo::setTitle(const string &amp;title)
+ {
+
+Modified: trunk/Utils/DocumentInfo.h
+===================================================================
+--- trunk/Utils/DocumentInfo.h	2007-10-14 09:06:54 UTC (rev 1037)
++++ trunk/Utils/DocumentInfo.h	2007-10-15 02:52:22 UTC (rev 1038)
+@@ -38,6 +38,12 @@
+ 
+ 		bool operator&lt;(const DocumentInfo&amp; other) const;
+ 
++		/// Serializes the document.
++		std::string serialize(void) const;
++
++		/// Deserializes the document.
++		void deserialize(const std::string &amp;info);
++
+ 		/// Sets the title of the document.
+ 		virtual void setTitle(const std::string &amp;title);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001031.html">[Pinot-svn] r1037 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="001033.html">[Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1032">[ date ]</a>
+              <a href="thread.html#1032">[ thread ]</a>
+              <a href="subject.html#1032">[ subject ]</a>
+              <a href="author.html#1032">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1383 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1383%20-%20trunk/Monitor&In-Reply-To=%3C200810110835.m9B8ZYIB007811%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001373.html">
+   <LINK REL="Next"  HREF="001375.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1383 - trunk/Monitor</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1383%20-%20trunk/Monitor&In-Reply-To=%3C200810110835.m9B8ZYIB007811%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1383 - trunk/Monitor">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 11 10:35:34 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001373.html">[Pinot-svn] r1382 - in trunk: . Utils
+</A></li>
+        <LI>Next message: <A HREF="001375.html">[Pinot-svn] r1384 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1374">[ date ]</a>
+              <a href="thread.html#1374">[ thread ]</a>
+              <a href="subject.html#1374">[ subject ]</a>
+              <a href="author.html#1374">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-10-11 10:35:26 +0200 (Sat, 11 Oct 2008)
+New Revision: 1383
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/INotifyMonitor.h
+   trunk/Monitor/MonitorInterface.h
+Log:
+New getLimit() method to get the maximum number of watches.
+INotifyMonitor will not attempt using more watches than available. If there are
+more than 8k, 1k is set aside for other applications.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2008-10-09 13:09:15 UTC (rev 1382)
++++ trunk/Monitor/INotifyMonitor.cpp	2008-10-11 08:35:26 UTC (rev 1383)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -24,22 +24,25 @@
+ #include &lt;string.h&gt;
+ #include &lt;errno.h&gt;
+ #include &lt;iostream&gt;
++#include &lt;fstream&gt;
+ #include &lt;set&gt;
+ 
+ #include &quot;INotifyMonitor.h&quot;
+ 
++using std::cout;
++using std::cerr;
++using std::endl;
+ using std::string;
+ using std::map;
+ using std::set;
+ using std::queue;
+ using std::pair;
+-using std::cout;
+-using std::cerr;
+-using std::endl;
++using std::ifstream;
+ 
+ INotifyMonitor::INotifyMonitor() :
+ 	MonitorInterface(),
+-	m_noWatchesLeft(false)
++	m_maxUserWatches(0),
++	m_watchesCount(0)
+ {
+ 	pthread_mutex_init(&amp;m_mutex, NULL);
+ 	m_monitorFd = inotify_init();
+@@ -50,6 +53,21 @@
+ 		strerror_r(errno, errBuffer, 1024);
+ 		cerr &lt;&lt; &quot;Couldn't initialize inotify: &quot; &lt;&lt; errBuffer &lt;&lt; endl;
+ 	}
++
++	// FIXME: check for existence of /proc
++	ifstream inputFile;
++	inputFile.open(&quot;/proc/sys/fs/inotify/max_user_watches&quot;);
++	if (inputFile.good() == true)
++	{
++		inputFile &gt;&gt; m_maxUserWatches;
++		inputFile.close();
++
++		if (m_maxUserWatches &gt; 8192)
++		{
++			// Don't be greedy, leave some for other processes
++			m_maxUserWatches -= 1024;
++		}
++	}
+ }
+ 
+ INotifyMonitor::~INotifyMonitor()
+@@ -67,7 +85,7 @@
+ 	if (locationIter != m_locations.end())
+ 	{
+ 		inotify_rm_watch(m_monitorFd, locationIter-&gt;second);
+-		m_noWatchesLeft = false;
++		--m_watchesCount;
+ 
+ 		map&lt;int, string&gt;::iterator watchIter = m_watches.find(locationIter-&gt;second);
+ 		if (watchIter != m_watches.end())
+@@ -86,6 +104,12 @@
+ 	return false;
+ }
+ 
++/// Returns the maximum number of files that can be monitored.
++unsigned int INotifyMonitor::getLimit(void) const
++{
++	return m_maxUserWatches;
++}
++
+ /// Starts monitoring a location.
+ bool INotifyMonitor::addLocation(const string &amp;location, bool isDirectory)
+ {
+@@ -95,7 +119,7 @@
+ 	if ((location.empty() == true) ||
+ 		(location == &quot;/&quot;) ||
+ 		(m_monitorFd &lt; 0) ||
+-		(m_noWatchesLeft == true))
++		(m_watchesCount &gt; m_maxUserWatches))
+ 	{
+ 		return false;
+ 	}
+@@ -113,10 +137,11 @@
+ 	}
+ 	else
+ 	{
+-		// FIXME: check the maximum number of watches hasn't been reached (MAX_FILE_WATCHES ?)
+ 		int watchNum = inotify_add_watch(m_monitorFd, location.c_str(), eventsMask);
+ 		if (watchNum &gt;= 0)
+ 		{
++			++m_watchesCount;
++
+ 			// Generate an event to signal the file exists and is being monitored
+ 			if (isDirectory == false)
+ 			{
+@@ -140,7 +165,8 @@
+ 		{
+ 			if (errno == ENOSPC)
+ 			{
+-				m_noWatchesLeft = true;
++				// There are no watches left
++				m_watchesCount = m_maxUserWatches + 1;
+ 			}
+ 			cerr &lt;&lt; &quot;Couldn't monitor &quot; &lt;&lt; location &lt;&lt; endl;
+ 		}
+
+Modified: trunk/Monitor/INotifyMonitor.h
+===================================================================
+--- trunk/Monitor/INotifyMonitor.h	2008-10-09 13:09:15 UTC (rev 1382)
++++ trunk/Monitor/INotifyMonitor.h	2008-10-11 08:35:26 UTC (rev 1383)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -33,6 +33,9 @@
+ 		INotifyMonitor();
+ 		virtual ~INotifyMonitor();
+ 
++		/// Returns the maximum number of files that can be monitored.
++		virtual unsigned int getLimit(void) const;
++
+ 		/// Adds a watch for the specified location.
+ 		virtual bool addLocation(const std::string &amp;location, bool isDirectory);
+ 
+@@ -47,7 +50,8 @@
+ 		std::queue&lt;MonitorEvent&gt; m_internalEvents;
+ 		std::map&lt;std::string, int&gt; m_locations;
+ 		std::map&lt;uint32_t, MonitorEvent&gt; m_movedFrom;
+-		bool m_noWatchesLeft;
++		unsigned int m_maxUserWatches;
++		unsigned int m_watchesCount;
+ 
+ 		bool removeWatch(const std::string &amp;location);
+ 
+
+Modified: trunk/Monitor/MonitorInterface.h
+===================================================================
+--- trunk/Monitor/MonitorInterface.h	2008-10-09 13:09:15 UTC (rev 1382)
++++ trunk/Monitor/MonitorInterface.h	2008-10-11 08:35:26 UTC (rev 1383)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -39,6 +39,9 @@
+ 			return m_monitorFd;
+ 		}
+ 
++		/// Returns the maximum number of files that can be monitored.
++		virtual unsigned int getLimit(void) const = 0;
++
+ 		/// Adds a watch for the specified location.
+ 		virtual bool addLocation(const std::string &amp;location, bool isDirectory) = 0;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001373.html">[Pinot-svn] r1382 - in trunk: . Utils
+</A></li>
+	<LI>Next message: <A HREF="001375.html">[Pinot-svn] r1384 - trunk/IndexSearch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1374">[ date ]</a>
+              <a href="thread.html#1374">[ thread ]</a>
+              <a href="subject.html#1374">[ subject ]</a>
+              <a href="author.html#1374">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

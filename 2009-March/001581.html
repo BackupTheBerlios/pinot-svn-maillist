@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1591 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1591%20-%20trunk/Utils&In-Reply-To=%3C200903220131.n2M1VFmf002434%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001580.html">
+   <LINK REL="Next"  HREF="001582.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1591 - trunk/Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1591%20-%20trunk/Utils&In-Reply-To=%3C200903220131.n2M1VFmf002434%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1591 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Mar 22 02:31:15 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001580.html">[Pinot-svn] r1590 - in trunk: Core UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001582.html">[Pinot-svn] r1592 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1581">[ date ]</a>
+              <a href="thread.html#1581">[ thread ]</a>
+              <a href="subject.html#1581">[ subject ]</a>
+              <a href="author.html#1581">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-22 02:31:09 +0100 (Sun, 22 Mar 2009)
+New Revision: 1591
+
+Modified:
+   trunk/Utils/Document.cpp
+   trunk/Utils/Document.h
+   trunk/Utils/Makefile.am
+Log:
+Document relies on Memory for its internal buffer, uses madvise() if available
+whenever mmap'ing a file.
+
+
+Modified: trunk/Utils/Document.cpp
+===================================================================
+--- trunk/Utils/Document.cpp	2009-03-21 11:00:39 UTC (rev 1590)
++++ trunk/Utils/Document.cpp	2009-03-22 01:31:09 UTC (rev 1591)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -36,6 +36,7 @@
+ 
+ #include &quot;Document.h&quot;
+ #include &quot;TimeConverter.h&quot;
++#include &quot;Memory.h&quot;
+ 
+ using std::cout;
+ using std::cerr;
+@@ -143,7 +144,7 @@
+ 	// Discard existing data
+ 	resetData();
+ 
+-	m_pData = (char *)malloc(sizeof(char) * (length + 1));
++	m_pData = Memory::allocateBuffer(length + 1);
+ 	if (m_pData != NULL)
+ 	{
+ 		memcpy(m_pData, data, length);
+@@ -212,16 +213,24 @@
+ 
+ #ifdef HAVE_MMAP
+ 	// Request a private mapping of the whole file
+-	void *mapSpace = mmap(NULL, fileStat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
++	void *mapSpace = mmap(NULL, (size_t)fileStat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+ 	if (mapSpace != MAP_FAILED)
+ 	{
+ 		m_pData = (char*)mapSpace;
+ 		m_dataLength = fileStat.st_size;
+ 		m_isMapped = true;
++#ifdef HAVE_MADVISE
++		if (madvise(mapSpace, (size_t)fileStat.st_size, MADV_SEQUENTIAL) != 0)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;Document::setDataFromFile: ignored memory advice&quot; &lt;&lt; endl;
++#endif
++		}
++#endif
+ 	}
+ 	else cerr &lt;&lt; &quot;Document::setDataFromFile: mapping failed&quot; &lt;&lt; endl;
+ #else
+-	m_pData = (char *)malloc(sizeof(char) * (fileStat.st_size + 1));
++	m_pData = Memory::allocateBuffer(fileStat.st_size + 1);
+ 	if (m_pData != NULL)
+ 	{
+ 		if (read(fd, (void*)m_pData, fileStat.st_size) == fileStat.st_size)
+@@ -231,7 +240,7 @@
+ 		}
+ 		else
+ 		{
+-			free(m_pData);
++			Memory::freeBuffer(m_pData, fileStat.st_size + 1);
+ 			m_pData = NULL;
+ 		}
+ 	}
+@@ -327,13 +336,21 @@
+ 		if (m_isMapped == false)
+ 		{
+ 			// Free
+-			free(m_pData);
++			Memory::freeBuffer(m_pData, m_dataLength + 1);
+ 		}
+ #ifdef HAVE_MMAP
+ 		else
+ 		{
++#ifdef HAVE_MADVISE
++			if (madvise((void*)m_pData, (size_t)m_dataLength, MADV_DONTNEED) != 0)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;Document::resetData: ignored memory advice&quot; &lt;&lt; endl;
++#endif
++			}
++#endif
+ 			// Unmap
+-			munmap((void*)m_pData, m_dataLength);
++			munmap((void*)m_pData, (size_t)m_dataLength);
+ 		}
+ #endif
+ 	}
+
+Modified: trunk/Utils/Document.h
+===================================================================
+--- trunk/Utils/Document.h	2009-03-21 11:00:39 UTC (rev 1590)
++++ trunk/Utils/Document.h	2009-03-22 01:31:09 UTC (rev 1591)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+
+Modified: trunk/Utils/Makefile.am
+===================================================================
+--- trunk/Utils/Makefile.am	2009-03-21 11:00:39 UTC (rev 1590)
++++ trunk/Utils/Makefile.am	2009-03-22 01:31:09 UTC (rev 1591)
+@@ -6,6 +6,7 @@
+ 	DocumentInfo.h \
+ 	Languages.h \
+ 	MIMEScanner.h \
++	Memory.h \
+ 	NLS.h \
+ 	StringManip.h \
+ 	TimeConverter.h \
+@@ -46,7 +47,8 @@
+ 
+ libUtils_la_SOURCES = \
+ 	Languages.cpp \
+-	MIMEScanner.cpp
++	MIMEScanner.cpp \
++	Memory.cpp
+ 
+ if HAVE_GIO_MIME
+ else
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001580.html">[Pinot-svn] r1590 - in trunk: Core UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001582.html">[Pinot-svn] r1592 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1581">[ date ]</a>
+              <a href="thread.html#1581">[ thread ]</a>
+              <a href="subject.html#1581">[ subject ]</a>
+              <a href="author.html#1581">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

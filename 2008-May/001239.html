@@ -1,0 +1,328 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1245 - in trunk/IndexSearch: . Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1245%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200805081220.m48CKuGr004984%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001238.html">
+   <LINK REL="Next"  HREF="001240.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1245 - in trunk/IndexSearch: . Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1245%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200805081220.m48CKuGr004984%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1245 - in trunk/IndexSearch: . Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu May  8 14:20:56 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001238.html">[Pinot-svn] r1244 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001240.html">[Pinot-svn] r1246 - in trunk/IndexSearch: . Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1239">[ date ]</a>
+              <a href="thread.html#1239">[ thread ]</a>
+              <a href="subject.html#1239">[ subject ]</a>
+              <a href="author.html#1239">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-08 14:20:55 +0200 (Thu, 08 May 2008)
+New Revision: 1245
+
+Modified:
+   trunk/IndexSearch/QueryProperties.cpp
+   trunk/IndexSearch/WebEngine.cpp
+   trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+Log:
+AbstractGenerator and WebEngine's TermHighlighter skip multi-character CJKV
+terms to avoid repetition in extracts.
+QueryProperties' FilterRemover does what the name implies and simply removes
+filters and ranges from a query instead of trying to rebuild it one token at a
+time.
+
+
+Modified: trunk/IndexSearch/QueryProperties.cpp
+===================================================================
+--- trunk/IndexSearch/QueryProperties.cpp	2008-05-06 14:57:51 UTC (rev 1244)
++++ trunk/IndexSearch/QueryProperties.cpp	2008-05-08 12:20:55 UTC (rev 1245)
+@@ -29,12 +29,9 @@
+ class FilterRemover : public Dijon::CJKVTokenizer::TokensHandler
+ {
+         public:
+-                FilterRemover(string &amp;freeQueryWithoutFilters,
+-			unsigned int nGramSize) :
++                FilterRemover(const string &amp;freeQuery) :
+ 			Dijon::CJKVTokenizer::TokensHandler(),
+-			m_freeQueryWithoutFilters(freeQueryWithoutFilters),
+-			m_nGramSize(nGramSize),
+-			m_nGramCount(0)
++			m_freeQuery(freeQuery)
+ 		{
+ 		}
+ 
+@@ -52,46 +49,36 @@
+ 			// Is this CJKV ?
+ 			if (is_cjkv == false)
+ 			{
+-				m_nGramCount = 0;
+-
+ 				if ((tok.find(':') != string::npos) ||
+ 					(tok.find(&quot;..&quot;) != string::npos))
+ 				{
+-					// It's a filter or a range
++					string::size_type tokPosStart = m_freeQuery.find(tok);
++
++					// It's a filter or a range, remove it
++					if (tokPosStart != string::npos)
++					{
++						string::size_type tokPosEnd = m_freeQuery.find(&quot; &quot;, tokPosStart);
++
++						if (tokPosEnd != string::npos)
++						{
++							m_freeQuery.erase(tokPosStart, tokPosEnd - tokPosStart);
++						}
++						else
++						{
++							m_freeQuery.erase(tokPosStart);
++						}
++					}
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;QueryProperties::getFreeQuery: ignoring filter '&quot; &lt;&lt; tok &lt;&lt; &quot;'&quot; &lt;&lt; endl;
++					cout &lt;&lt; &quot;QueryProperties::getFreeQuery: removed &quot; &lt;&lt; tok &lt;&lt; &quot;...&quot; &lt;&lt; endl;
+ #endif
+ 					return true;
+ 				}
+ 			}
+-			else
+-			{
+-				++m_nGramCount;
+-				if (m_nGramCount % m_nGramSize != 0)
+-				{
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;QueryProperties::getFreeQuery: ignoring &quot; &lt;&lt; m_nGramCount &lt;&lt; &quot; '&quot; &lt;&lt; tok &lt;&lt; &quot;'&quot; &lt;&lt; endl;
+-#endif
+-					return true;
+-				}
+-			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;QueryProperties::getFreeQuery: keeping '&quot; &lt;&lt; tok &lt;&lt; &quot;'&quot; &lt;&lt; endl;
+-#endif
+ 
+-			if (m_freeQueryWithoutFilters.empty() == false)
+-			{
+-				m_freeQueryWithoutFilters += &quot; &quot;;
+-			}
+-			m_freeQueryWithoutFilters += tok;
+-
+ 			return true;
+ 		}
+ 
+-	protected:
+-		string &amp;m_freeQueryWithoutFilters;
+-		unsigned int m_nGramSize;
+-		unsigned int m_nGramCount;
++		string m_freeQuery;
+ 
+ };
+ 
+@@ -214,9 +201,10 @@
+ 	}
+ 
+ 	Dijon::CJKVTokenizer tokenizer;
+-	FilterRemover handler(m_freeQueryWithoutFilters, tokenizer.get_ngram_size());
++	FilterRemover handler(m_freeQuery);
+ 
+ 	tokenizer.tokenize(m_freeQuery, handler, true);
++	m_freeQueryWithoutFilters = handler.m_freeQuery;
+ }
+ 
+ /// Sets the name.
+
+Modified: trunk/IndexSearch/WebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/WebEngine.cpp	2008-05-06 14:57:51 UTC (rev 1244)
++++ trunk/IndexSearch/WebEngine.cpp	2008-05-08 12:20:55 UTC (rev 1245)
+@@ -41,9 +41,12 @@
+ class TermHighlighter : public Dijon::CJKVTokenizer::TokensHandler
+ {
+         public:
+-                TermHighlighter(string &amp;extract, set&lt;string&gt; &amp;queryTerms) :
++                TermHighlighter(string &amp;extract, set&lt;string&gt; &amp;queryTerms,
++			unsigned int nGramSize) :
+ 			Dijon::CJKVTokenizer::TokensHandler(),
+ 			m_extract(extract),
++			m_nGramSize(nGramSize),
++			m_nGramCount(0),
+ 			m_queryTerms(queryTerms)
+ 		{
+ 		}
+@@ -63,6 +66,23 @@
+ 				return false;
+ 			}
+ 
++			if (is_cjkv == false)
++			{
++				m_nGramCount = 0;
++			}
++			else
++			{
++				++m_nGramCount;
++				if (tok.length() &gt; 4)
++				{
++					// Ignore multi-character tokens
++#ifdef DEBUG
++					cout &lt;&lt; &quot;WebEngine::processResult: ignoring &quot; &lt;&lt; tok &lt;&lt; endl;
++#endif
++					return true;
++				}
++			}
++
+ 			pUTF8Token = g_locale_to_utf8(tok.c_str(), tok.length(),
+ 				NULL, &amp;bytesWritten, NULL);
+ 			if (pUTF8Token != NULL)
+@@ -75,6 +95,11 @@
+ 				return true;
+ 			}
+ 
++			if ((m_extract.empty() == false) &amp;&amp;
++				(m_nGramCount &lt;= 1))
++			{
++				m_extract += &quot; &quot;;
++			}
+ 			// Is this a query term ?
+ 			if (m_queryTerms.find(StringManip::toLowerCase(tok)) == m_queryTerms.end())
+ 			{
+@@ -86,13 +111,14 @@
+ 				m_extract += pEscToken;
+ 				m_extract += &quot;&lt;/b&gt;&quot;;
+ 			}
+-			m_extract += &quot; &quot;;
+ 
+ 			g_free(pEscToken);
+ 		}
+ 
+ 	protected:
+ 		string &amp;m_extract;
++		unsigned int m_nGramSize;
++		unsigned int m_nGramCount;
+ 		set&lt;string&gt; &amp;m_queryTerms;
+ 
+ };
+@@ -242,7 +268,7 @@
+ 	}
+ 
+ 	Dijon::CJKVTokenizer tokenizer;
+-	TermHighlighter handler(extract, m_queryTerms);
++	TermHighlighter handler(extract, m_queryTerms, tokenizer.get_ngram_size());
+ 
+ 	// Highlight query terms in the extract
+ 	extract.clear();
+
+Modified: trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-05-06 14:57:51 UTC (rev 1244)
++++ trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2008-05-08 12:20:55 UTC (rev 1245)
+@@ -27,6 +27,7 @@
+ 
+ #include &quot;Timer.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
++#include &quot;CJKVTokenizer.h&quot;
+ 
+ using std::cout;
+ using std::cerr;
+@@ -35,6 +36,7 @@
+ using std::vector;
+ using std::map;
+ using std::find;
++using namespace Dijon;
+ 
+ unsigned int AbstractGenerator::m_maxSeedTerms = 5;
+ unsigned int AbstractGenerator::m_minTermPositions = 10;
+@@ -212,13 +214,30 @@
+ 	}
+ 
+ 	// Generate the abstract
++	CJKVTokenizer tokenizer;
++	bool wasCJKV = false;
+ 	for (map&lt;Xapian::termpos, string&gt;::iterator wordIter = wordsBuffer.begin();
+ 		wordIter != wordsBuffer.end(); ++wordIter)
+ 	{
+ 		gchar *pEscToken = NULL;
+ 		gchar *pUTF8Token = NULL;
+ 		gsize bytesWritten = 0;
++		bool isCJKV = false;
+ 
++		// Skip multi-character CJKV terms
++		if (tokenizer.has_cjkv(wordIter-&gt;second) == true)
++		{
++			isCJKV = true;
++
++			if (wordIter-&gt;second.length() &gt; 4)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: skipping &quot; &lt;&lt; wordIter-&gt;second &lt;&lt; endl;
++#endif
++				continue;
++			}
++		}
++
+ 		pUTF8Token = g_locale_to_utf8(wordIter-&gt;second.c_str(), wordIter-&gt;second.length(),
+ 			NULL, &amp;bytesWritten, NULL);
+ 		if (pUTF8Token != NULL)
+@@ -231,6 +250,11 @@
+ 			continue;
+ 		}
+ 
++		if ((summary.empty() == false) &amp;&amp;
++			(wasCJKV != isCJKV))
++		{
++			summary += &quot; &quot;;
++		}
+ 		// Is this a seed term ?
+ 		if (find(seedTerms.begin(), seedTerms.end(), wordIter-&gt;second) != seedTerms.end())
+ 		{
+@@ -242,8 +266,8 @@
+ 		{
+ 			summary += pEscToken;
+ 		}
+-		summary += &quot; &quot;;
+ 
++		wasCJKV = isCJKV;
+ 		g_free(pEscToken);
+ 	}
+ #ifdef DEBUG
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001238.html">[Pinot-svn] r1244 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001240.html">[Pinot-svn] r1246 - in trunk/IndexSearch: . Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1239">[ date ]</a>
+              <a href="thread.html#1239">[ thread ]</a>
+              <a href="subject.html#1239">[ subject ]</a>
+              <a href="author.html#1239">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

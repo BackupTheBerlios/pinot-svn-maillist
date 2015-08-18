@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1382 - in trunk: . Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1382%20-%20in%20trunk%3A%20.%20Utils&In-Reply-To=%3C200810091309.m99D9XbG024791%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001372.html">
+   <LINK REL="Next"  HREF="001374.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1382 - in trunk: . Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1382%20-%20in%20trunk%3A%20.%20Utils&In-Reply-To=%3C200810091309.m99D9XbG024791%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1382 - in trunk: . Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct  9 15:09:33 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001372.html">[Pinot-svn] r1381 - in trunk: . Monitor
+</A></li>
+        <LI>Next message: <A HREF="001374.html">[Pinot-svn] r1383 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1373">[ date ]</a>
+              <a href="thread.html#1373">[ thread ]</a>
+              <a href="subject.html#1373">[ subject ]</a>
+              <a href="author.html#1373">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-10-09 15:09:15 +0200 (Thu, 09 Oct 2008)
+New Revision: 1382
+
+Modified:
+   trunk/FAQ
+   trunk/Utils/MIMEScanner.cpp
+Log:
+In MIMEScanner::getDefaultActionsForType(), if GIO is used, initialize the
+list with the default actions obtained with g_app_info_get_default_for_type()
+to make sure they are picked up first.
+Add an entry to the FAQ about this, using browsers and HTML docs as example.
+
+
+Modified: trunk/FAQ
+===================================================================
+--- trunk/FAQ	2008-10-05 08:58:20 UTC (rev 1381)
++++ trunk/FAQ	2008-10-09 13:09:15 UTC (rev 1382)
+@@ -13,6 +13,13 @@
+     You may also want to disable support for spelling. See the README for more
+     details.
+ 
++  * Pinot doesn't use my favourite browser XYZ to open HTML documents
++    Even if you have set XYZ as your favourite Web browser in your desktop
++    environment, it may not be setup as the default application for HTML files.
++    In Gnome for instance, one has to select XYZ as default for all HTML files
++    using Nautilus (Properties dialog, Open With tab). This applies to
++    applications for any other file type.
++
+   * At startup, when listing an index or indexing documents, Pinot complains
+     of an &quot;index error&quot;
+     This is likely because a previous instance didn't exit properly and one
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2008-10-05 08:58:20 UTC (rev 1381)
++++ trunk/Utils/MIMEScanner.cpp	2008-10-09 13:09:15 UTC (rev 1382)
+@@ -880,10 +880,42 @@
+ 	vector&lt;MIMEAction&gt; &amp;typeActions)
+ {
+ #ifdef USE_GIO
++	// Get default actions first
++	GAppInfo *pDefAppInfo1 = g_app_info_get_default_for_type(mimeType.c_str(), TRUE);
++	if (pDefAppInfo1 != NULL)
++	{
++		MIMEAction action(pDefAppInfo1);
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MIMEScanner::getDefaultActionsForType: default action &quot; &lt;&lt; action.m_name &lt;&lt; endl;
++#endif
++		actionNames.insert(action.m_name);
++		typeActions.push_back(action);
++
++		g_object_unref(pDefAppInfo1);
++	}
++	GAppInfo *pDefAppInfo2 = g_app_info_get_default_for_type(mimeType.c_str(), FALSE);
++	if (pDefAppInfo2 != NULL)
++	{
++		MIMEAction action(pDefAppInfo2);
++
++		if (actionNames.find(action.m_name) == actionNames.end())
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MIMEScanner::getDefaultActionsForType: non-URI default action &quot; &lt;&lt; action.m_name &lt;&lt; endl;
++#endif
++			actionNames.insert(action.m_name);
++			typeActions.push_back(action);
++		}
++
++		g_object_unref(pDefAppInfo2);
++	}
++
++	// Get all other actions
+ 	GList *pAppInfoList = g_app_info_get_all_for_type(mimeType.c_str());
+ 	if (pAppInfoList == NULL)
+ 	{
+-		return false;
++		return !typeActions.empty();
+ 	}
+ 
+ 	typeActions.reserve(g_list_length(pAppInfoList));
+@@ -901,12 +933,16 @@
+ 		}
+ 
+ 		MIMEAction action(pAppInfo);
++
++		// Skip defaults
++		if (actionNames.find(action.m_name) == actionNames.end())
++		{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; action.m_name &lt;&lt; endl;
++			cout &lt;&lt; &quot;MIMEScanner::getDefaultActionsForType: action &quot; &lt;&lt; action.m_name &lt;&lt; endl;
+ #endif
+-
+-		actionNames.insert(action.m_name);
+-		typeActions.push_back(action);
++			actionNames.insert(action.m_name);
++			typeActions.push_back(action);
++		}
+ 	}
+ 	g_list_foreach(pAppInfoList, (GFunc)g_object_unref, NULL);
+ 	g_list_free(pAppInfoList);
+@@ -935,7 +971,7 @@
+ 			if (actionNames.find(actionIter-&gt;second.m_name) == actionNames.end())
+ 			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;MIMEScanner::getDefaultActions: action &quot; &lt;&lt; actionIter-&gt;second.m_name
++				cout &lt;&lt; &quot;MIMEScanner::getDefaultActionsForType: action &quot; &lt;&lt; actionIter-&gt;second.m_name
+ 					&lt;&lt; &quot; at &quot; &lt;&lt; actionIter-&gt;second.m_location &lt;&lt; endl;
+ #endif
+ 				actionNames.insert(actionIter-&gt;second.m_name);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001372.html">[Pinot-svn] r1381 - in trunk: . Monitor
+</A></li>
+	<LI>Next message: <A HREF="001374.html">[Pinot-svn] r1383 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1373">[ date ]</a>
+              <a href="thread.html#1373">[ thread ]</a>
+              <a href="subject.html#1373">[ subject ]</a>
+              <a href="author.html#1373">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

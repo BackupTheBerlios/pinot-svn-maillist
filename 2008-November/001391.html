@@ -1,0 +1,511 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1400 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1400%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811020908.mA298FNj011438%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001390.html">
+   <LINK REL="Next"  HREF="001392.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1400 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1400%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811020908.mA298FNj011438%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1400 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov  2 10:08:15 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001390.html">[Pinot-svn] r1399 - in trunk: SQL Utils
+</A></li>
+        <LI>Next message: <A HREF="001392.html">[Pinot-svn] r1401 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1391">[ date ]</a>
+              <a href="thread.html#1391">[ thread ]</a>
+              <a href="subject.html#1391">[ subject ]</a>
+              <a href="author.html#1391">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-02 10:07:59 +0100 (Sun, 02 Nov 2008)
+New Revision: 1400
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/statisticsDialog.cc
+Log:
+Whenever metadata is updated through the DBus interface, the daemon updates the
+MetaDataBackup table. When reindexing occurs, the crawler re-applies all the
+metadata found there.
+Synced with recent changes to CrawlHistory.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-11-02 08:42:24 UTC (rev 1399)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-11-02 09:07:59 UTC (rev 1400)
+@@ -128,6 +128,7 @@
+ DaemonState::DaemonState() :
+ 	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 10),
+ 	m_fullScan(false),
++	m_isReindex(false),
+ 	m_reload(false),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+ 	m_pDiskHandler(NULL),
+@@ -259,13 +260,13 @@
+ 	{
+ 		// Monitoring is not necessary, but we still have to pass the handler
+ 		// so that we can act on documents that have been deleted
+-		pScannerThread = new DirectoryScannerThread(locationToCrawl, isSource, m_fullScan,
+-			NULL, m_pDiskHandler);
++		pScannerThread = new DirectoryScannerThread(locationToCrawl, isSource,
++			m_fullScan, m_isReindex, NULL, m_pDiskHandler);
+ 	}
+ 	else
+ 	{
+-		pScannerThread = new DirectoryScannerThread(locationToCrawl, isSource, m_fullScan,
+-			m_pDiskMonitor, m_pDiskHandler);
++		pScannerThread = new DirectoryScannerThread(locationToCrawl, isSource,
++			m_fullScan, m_isReindex, m_pDiskMonitor, m_pDiskHandler);
+ 	}
+ 	pScannerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
+ 
+@@ -280,7 +281,7 @@
+ 	return false;
+ }
+ 
+-void DaemonState::start(bool forceFullScan)
++void DaemonState::start(bool forceFullScan, bool isReindex)
+ {
+ 	// Disable implicit flushing after a change
+ 	WorkerThread::immediateFlush(false);
+@@ -305,6 +306,7 @@
+ 		cout &lt;&lt; &quot;DaemonState::start: picked &quot; &lt;&lt; randomNum &lt;&lt; endl;
+ #endif
+ 	}
++	m_isReindex = isReindex;
+ 
+ 	// Fire up the disk monitor thread
+ 	if (m_pDiskHandler == NULL)
+@@ -530,7 +532,7 @@
+ #endif
+ 
+ 		// ...and restart everything 
+-		start(true);
++		start(true, false);
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;DaemonState::on_thread_end: reload status &quot; &lt;&lt; m_reload &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-11-02 08:42:24 UTC (rev 1399)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-11-02 09:07:59 UTC (rev 1400)
+@@ -38,7 +38,7 @@
+ 
+ 		typedef enum { LOW_DISK_SPACE = 0, ON_BATTERY, CRAWLING, STOPPED, DISCONNECTED } StatusFlag;
+ 
+-		void start(bool forceFullScan);
++		void start(bool forceFullScan, bool isReindex);
+ 
+ 		void reload(void);
+ 
+@@ -60,6 +60,7 @@
+ 
+ 	protected:
+ 		bool m_fullScan;
++		bool m_isReindex;
+ 		bool m_reload;
+ 		fd_set m_flagsSet;
+ 		MonitorInterface *m_pDiskMonitor;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-11-02 08:42:24 UTC (rev 1399)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-11-02 09:07:59 UTC (rev 1400)
+@@ -49,6 +49,33 @@
+ using namespace Glib;
+ using namespace std;
+ 
++static void updateLabels(unsigned int docId, MetaDataBackup &amp;metaData,
++	IndexInterface *pIndex, set&lt;string&gt; &amp;labels, gboolean resetLabels)
++{
++	DocumentInfo docInfo;
++
++	if (pIndex == NULL)
++	{
++		return;
++	}
++
++	// If it's a reset, remove labels from the metadata backup
++	if ((resetLabels == TRUE) &amp;&amp;
++		(pIndex-&gt;getDocumentInfo(docId, docInfo) == true))
++	{
++		metaData.deleteItem(docInfo, DocumentInfo::SERIAL_LABELS);
++	}
++
++	// Get the current labels 
++	if (resetLabels == TRUE)
++	{
++		labels.clear();
++		pIndex-&gt;getDocumentLabels(docId, labels);
++	}
++	docInfo.setLabels(labels);
++	metaData.addItem(docInfo, DocumentInfo::SERIAL_LABELS);
++}
++
+ static DBusMessage *newDBusReply(DBusMessage *pMessage)
+ {
+         if (pMessage == NULL) 
+@@ -107,11 +134,13 @@
+ }
+ 
+ DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName, bool isSource,
+-	bool fullScan, MonitorInterface *pMonitor, MonitorHandler *pHandler,
++	bool fullScan, bool isReindex,
++	MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 	unsigned int maxLevel, bool followSymLinks) :
+ 	IndexingThread(),
+ 	m_dirName(dirName),
+ 	m_fullScan(fullScan),
++	m_isReindex(isReindex),
+ 	m_pMonitor(pMonitor),
+ 	m_pHandler(pHandler),
+ 	m_sourceId(0),
+@@ -493,8 +522,10 @@
+ void DirectoryScannerThread::doWork(void)
+ {
+ 	CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+-	set&lt;string&gt; deletedFiles;
++	MetaDataBackup metaData(PinotSettings::getInstance().getHistoryDatabaseName());
+ 	Timer scanTimer;
++	set&lt;string&gt; urls;
++	unsigned int currentOffset = 0;
+ 
+ 	if (m_dirName.empty() == true)
+ 	{
+@@ -519,6 +550,7 @@
+ 		m_errorParam = m_dirName;
+ 	}
+ 	flushUpdates(crawlHistory);
++	cout &lt;&lt; &quot;Scanned &quot; &lt;&lt; m_dirName &lt;&lt; &quot; in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ 
+ 	if (m_done == true)
+ 	{
+@@ -530,27 +562,77 @@
+ 
+ 	if (m_fullScan == true)
+ 	{
++		scanTimer.start();
++
+ 		// All files left with status CRAWLING were not found in this crawl
+ 		// Chances are they were removed after the last full scan
+-		if ((m_pHandler != NULL) &amp;&amp;
+-			(crawlHistory.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, deletedFiles) &gt; 0))
++		while ((m_pHandler != NULL) &amp;&amp;
++			(crawlHistory.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, urls,
++				currentOffset, currentOffset + 100) &gt; 0))
+ 		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::doWork: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; files were deleted&quot; &lt;&lt; endl;
+-#endif
+-			for(set&lt;string&gt;::const_iterator fileIter = deletedFiles.begin();
+-				fileIter != deletedFiles.end(); ++fileIter)
++			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
++				urlIter != urls.end(); ++urlIter)
+ 			{
+ 				// Inform the MonitorHandler
+-				if (m_pHandler-&gt;fileDeleted(fileIter-&gt;substr(7)) == true)
++				if (m_pHandler-&gt;fileDeleted(urlIter-&gt;substr(7)) == true)
+ 				{
+ 					// Delete this item
+-					crawlHistory.deleteItem(*fileIter);
++					crawlHistory.deleteItem(*urlIter);
++					metaData.deleteItem(DocumentInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;), DocumentInfo::SERIAL_ALL);
+ 				}
+ 			}
++
++			// Next
++			if (urls.size() &lt; 100)
++			{
++				break;
++			}
++			currentOffset += 100;
+ 		}
++		cout &lt;&lt; &quot;Cleaned up &quot; &lt;&lt; currentOffset + urls.size()
++			&lt;&lt; &quot; history entries in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ 	}
+-	cout &lt;&lt; &quot;Scanned &quot; &lt;&lt; m_dirName &lt;&lt; &quot; in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++
++	if (m_isReindex == true)
++	{
++		urls.clear();
++		currentOffset = 0;
++		scanTimer.start();
++
++		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++		// Restore user-set metadata, if any
++		while ((pIndex != NULL) &amp;&amp;
++			(pIndex-&gt;isGood() == true) &amp;&amp;
++			(metaData.getItems(&quot;<A HREF="file://">file://</A>&quot;, urls,
++				currentOffset, currentOffset + 100) == true))
++		{
++			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
++				urlIter != urls.end(); ++urlIter)
++			{
++				unsigned int docId = pIndex-&gt;hasDocument(*urlIter);
++
++				if (docId &gt; 0)
++				{
++					DocumentInfo docInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;);
++
++					if (metaData.getItem(docInfo, DocumentInfo::SERIAL_ALL) == true)
++					{
++						pIndex-&gt;updateDocumentInfo(docId, docInfo);
++						pIndex-&gt;setDocumentLabels(docId, docInfo.getLabels(), true);
++					}
++				}
++			}
++
++			// Next
++			if (urls.size() &lt; 100)
++			{
++				break;
++			}
++			currentOffset += 100;
++		}
++		cout &lt;&lt; &quot;Restored user-set metadata for &quot; &lt;&lt; currentOffset + urls.size()
++			&lt;&lt; &quot; documents in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++	}
+ }
+ 
+ DBusServletThread::DBusServletThread(DaemonState *pServer, DBusConnection *pConnection, DBusMessage *pRequest) :
+@@ -664,6 +746,7 @@
+ {
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+ 	IndexInterface *pIndex = settings.getIndex(settings.m_daemonIndexLocation);
++	MetaDataBackup metaData(settings.getHistoryDatabaseName());
+ 	DBusError error;
+ 	bool processedMessage = true, updateLabelsCache = false, flushIndex = false;
+ 
+@@ -876,6 +959,31 @@
+ 			}
+ 		}
+ 	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;RenameLabel&quot;) == TRUE)
++	{
++		char *pOldLabel = NULL;
++		char *pNewLabel = NULL;
++
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_STRING, &amp;pOldLabel,
++			DBUS_TYPE_STRING, &amp;pNewLabel,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			// Nothing to do, this was obsoleted
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received RenameLabel &quot; &lt;&lt; pOldLabel &lt;&lt; &quot;, &quot; &lt;&lt; pNewLabel &lt;&lt; endl;
++#endif
++			
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_STRING, &amp;pNewLabel,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
+ 	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;DeleteLabel&quot;) == TRUE)
+ 	{
+ 		char *pLabel = NULL;
+@@ -898,6 +1006,9 @@
+ 					labelsCache.erase(labelIter);
+ 					updateLabelsCache = true;
+ 				}
++
++				// Update the metadata backup
++				metaData.deleteLabel(pLabel);
+ 			}
+ 
+ 			// Prepare the reply
+@@ -991,9 +1102,13 @@
+ 			cout &lt;&lt; &quot;DBusServletThread::doWork: received SetDocumentLabels on ID &quot; &lt;&lt; docId
+ 				&lt;&lt; &quot;, &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels &lt;&lt; endl;
+ #endif
++
+ 			// Set labels
+ 			flushIndex = pIndex-&gt;setDocumentLabels(docId, labels, ((resetLabels == TRUE) ? true : false));
+ 
++			// Update the metadata backup
++			updateLabels(docId, metaData, pIndex, labels, resetLabels);
++
+ 			// Free container types
+ 			g_strfreev(ppLabels);
+ 
+@@ -1030,6 +1145,7 @@
+ 				{
+ 					break;
+ 				}
++
+ 				docIds.insert((unsigned int)atoi(ppDocIds[idIndex]));
+ 			}
+ 			for (dbus_uint32_t labelIndex = 0; labelIndex &lt; labelsCount; ++labelIndex)
+@@ -1060,6 +1176,13 @@
+ 				flushIndex = true;
+ 			}
+ 
++			// Update the metadata backup
++			for (set&lt;unsigned int&gt;::const_iterator docIter = docIds.begin();
++				docIter != docIds.end(); ++docIter)
++			{
++				updateLabels(*docIter, metaData, pIndex, labels, resetLabels);
++			}
++
+ 			// Free container types
+ 			g_strfreev(ppDocIds);
+ 			g_strfreev(ppLabels);
+@@ -1135,6 +1258,9 @@
+ 			// Update the document info
+ 			flushIndex = pIndex-&gt;updateDocumentInfo(docId, docInfo);
+ 
++			// Update the metadata backup
++			metaData.addItem(docInfo, DocumentInfo::SERIAL_FIELDS);
++
+ 			// Prepare the reply
+ 			m_pReply = newDBusReply(m_pRequest);
+ 			if (m_pReply != NULL)
+
+Modified: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2008-11-02 08:42:24 UTC (rev 1399)
++++ trunk/UI/GTK2/src/ServerThreads.h	2008-11-02 09:07:59 UTC (rev 1400)
+@@ -45,7 +45,8 @@
+ {
+ 	public:
+ 		DirectoryScannerThread(const std::string &amp;dirName, bool isSource,
+-			bool fullScan, MonitorInterface *pMonitor, MonitorHandler *pHandler,
++			bool fullScan, bool isReindex,
++			MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 			unsigned int maxLevel = 0, bool followSymLinks = true);
+ 		virtual ~DirectoryScannerThread();
+ 
+@@ -60,6 +61,7 @@
+ 	protected:
+ 		std::string m_dirName;
+ 		bool m_fullScan;
++		bool m_isReindex;
+ 		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+ 		unsigned int m_sourceId;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-11-02 08:42:24 UTC (rev 1399)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-11-02 09:07:59 UTC (rev 1400)
+@@ -44,6 +44,7 @@
+ #include &quot;ModuleFactory.h&quot;
+ #include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
++#include &quot;MetaDataBackup.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+@@ -486,6 +487,7 @@
+ 	if ((historyDatabase.empty() == true) ||
+ 		(ActionQueue::create(historyDatabase) == false) ||
+ 		(CrawlHistory::create(historyDatabase) == false) ||
++		(MetaDataBackup::create(historyDatabase) == false) ||
+ 		(QueryHistory::create(historyDatabase) == false) ||
+ 		(ViewHistory::create(historyDatabase) == false))
+ 	{
+@@ -687,7 +689,7 @@
+ 				cout &lt;&lt; &quot;System is on battery&quot; &lt;&lt; endl;
+ 			}
+ 
+-			server.start(fullScan);
++			server.start(fullScan, reindex);
+ 
+ 			// Run the main loop
+ 			g_refMainLoop-&gt;run();
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-11-02 08:42:24 UTC (rev 1399)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-11-02 09:07:59 UTC (rev 1400)
+@@ -354,6 +354,7 @@
+ 		unsigned int sourceNum(sourceIter-&gt;first);
+ 		set&lt;string&gt; errors;
+ 		time_t latestErrorDate = 0;
++		unsigned int currentOffset = 0;
+ 
+ 		std::map&lt;unsigned int, time_t&gt;::const_iterator dateIter = m_latestErrorDates.find(sourceNum);
+ 		if (dateIter != m_latestErrorDates.end())
+@@ -363,8 +364,9 @@
+ 
+ 		// Did any error occur on this source ?
+ 		unsigned int errorCount = crawlHistory.getSourceItems(sourceNum,
+-			CrawlHistory::ERROR, errors, latestErrorDate);
+-		if ((errorCount &gt; 0) &amp;&amp;
++			CrawlHistory::ERROR, errors, currentOffset, currentOffset + 100,
++			latestErrorDate);
++		while ((errorCount &gt; 0) &amp;&amp;
+ 			(errors.empty() == false))
+ 		{
+ 			// Add an errors row
+@@ -417,6 +419,16 @@
+ 			// Expand errors
+ 			TreeModel::Path errPath = m_refStore-&gt;get_path(m_errorsTopIter);
+ 			statisticsTreeview-&gt;expand_to_path(errPath);
++
++			// Next
++			if (errors.size() &lt; 100)
++			{
++				break;
++			}
++			currentOffset += 100;
++			errorCount = crawlHistory.getSourceItems(sourceNum,
++				CrawlHistory::ERROR, errors, currentOffset, currentOffset + 100,
++				latestErrorDate);
+ 		}
+ 
+ 		// The next check will ignore errors older than this
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001390.html">[Pinot-svn] r1399 - in trunk: SQL Utils
+</A></li>
+	<LI>Next message: <A HREF="001392.html">[Pinot-svn] r1401 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1391">[ date ]</a>
+              <a href="thread.html#1391">[ thread ]</a>
+              <a href="subject.html#1391">[ subject ]</a>
+              <a href="author.html#1391">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

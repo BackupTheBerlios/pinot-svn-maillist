@@ -1,0 +1,558 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r54 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r54%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200601101304.k0AD4JTx025868%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000052.html">
+   <LINK REL="Next"  HREF="000054.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r54 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r54%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200601101304.k0AD4JTx025868%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r54 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Jan 10 14:04:19 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000052.html">[Pinot-svn] r53 - in trunk: Index Tokenize UI/GTK2 UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000054.html">[Pinot-svn] r55 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#53">[ date ]</a>
+              <a href="thread.html#53">[ thread ]</a>
+              <a href="subject.html#53">[ subject ]</a>
+              <a href="author.html#53">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-10 14:04:16 +0100 (Tue, 10 Jan 2006)
+New Revision: 54
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/importDialog_glade.cc
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+Log:
+Fixes for the previous check-in.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-10 13:04:16 UTC (rev 54)
+@@ -805,7 +805,7 @@
+ 		}
+ 		else if (m_done == false)
+ 		{
+-			DocumentInfo docInfo(&quot;Document&quot;, m_url, &quot;&quot;, &quot;&quot;);
++			DocumentInfo docInfo(&quot;&quot;, m_url, &quot;&quot;, &quot;&quot;);
+ 
+ 			m_pDoc = m_downloader-&gt;retrieveUrl(docInfo);
+ 		}
+@@ -1670,7 +1670,8 @@
+ 	m_dirName(dirName),
+ 	m_maxLevel(maxLevel),
+ 	m_pMutex(pMutex),
+-	m_pCondVar(pCondVar)
++	m_pCondVar(pCondVar),
++	m_currentLevel(0)
+ {
+ }
+ 
+@@ -1737,43 +1738,36 @@
+ 	}
+ }
+ 
+-void DirectoryScannerThread::do_scanning()
++bool DirectoryScannerThread::scan_directory(const string &amp;dirName)
+ {
+ 	struct stat fileStat;
+ 
+-	if ((m_dirName.empty() == true) ||
+-		(lstat(m_dirName.c_str(), &amp;fileStat) == -1))
++	if ((dirName.empty() == true) ||
++		(lstat(dirName.c_str(), &amp;fileStat) == -1))
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::do_scanning: stat failed&quot; &lt;&lt; endl;
+-#endif
+-		return;
++		return false;
+ 	}
+ 
+ 	// Is it a file or a directory ?
+ 	if (S_ISLNK(fileStat.st_mode))
+ 	{
+-		// Don't follow
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::do_scanning: skipping symlink&quot; &lt;&lt; endl;
+-#endif
+-		return;
++		return false;
+ 	}
+ 	else if (S_ISREG(fileStat.st_mode))
+ 	{
+ 		// It's actually a file
+-		found_file(m_dirName);
++		found_file(dirName);
+ 	}
+ 	else if (S_ISDIR(fileStat.st_mode))
+ 	{
+ 		// A directory : scan it
+-		DIR *pDir = opendir(m_dirName.c_str());
++		DIR *pDir = opendir(dirName.c_str());
+ 		if (pDir == NULL)
+ 		{
+-			return;
++			return false;
+ 		}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::do_scanning: entering &quot; &lt;&lt; m_dirName &lt;&lt; endl;
++		cout &lt;&lt; &quot;DirectoryScannerThread::scan_directory: entering &quot; &lt;&lt; dirName &lt;&lt; endl;
+ #endif
+ 
+ 		// Iterate through this directory's entries
+@@ -1784,8 +1778,8 @@
+ 			char *pEntryName = pDirEntry-&gt;d_name;
+ 			if (pEntryName != NULL)
+ 			{
+-				string entryName = m_dirName;
+-				if (m_dirName[m_dirName.length() - 1] != '/')
++				string entryName = dirName;
++				if (dirName[dirName.length() - 1] != '/')
+ 				{
+ 					entryName += &quot;/&quot;;
+ 				}
+@@ -1804,7 +1798,7 @@
+ 				}
+ 
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::do_scanning: stat'ing &quot; &lt;&lt; entryName &lt;&lt; endl;
++				cout &lt;&lt; &quot;DirectoryScannerThread::scan_directory: stat'ing &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+ 				// File or directory
+ 				if (S_ISREG(fileStat.st_mode))
+@@ -1814,11 +1808,15 @@
+ 				else if (S_ISDIR(fileStat.st_mode))
+ 				{
+ 					// Can we scan this directory ?
+-					if (m_currentLevel + 1 &lt; m_maxLevel)
++					if ((m_maxLevel == 0) ||
++						(m_currentLevel + 1 &lt; m_maxLevel))
+ 					{
+ 						++m_currentLevel;
+-						m_dirName = entryName;
+-						do_scanning();
++						scan_directory(entryName);
++#ifdef DEBUG
++						cout &lt;&lt; &quot;DirectoryScannerThread::scan_directory: done at level &quot;
++							&lt;&lt; m_currentLevel &lt;&lt; endl;
++#endif
+ 						--m_currentLevel;
+ 					}
+ 				}
+@@ -1830,5 +1828,15 @@
+ 		closedir(pDir);
+ 	}
+ 
++	return true;
++}
++
++void DirectoryScannerThread::do_scanning()
++{
++	if (scan_directory(m_dirName) == false)
++	{
++		m_status = _(&quot;Couldn't open directory &quot;);
++		m_status += m_dirName;
++	}
+ 	emitSignal();
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-01-10 13:04:16 UTC (rev 54)
+@@ -449,6 +449,7 @@
+ 		SigC::Signal1&lt;bool, const std::string&amp;&gt; m_signalFileFound;
+ 
+ 		void found_file(const std::string &amp;fileName);
++		bool scan_directory(const std::string &amp;dirName);
+ 		void do_scanning();
+ 
+ 	private:
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-01-10 13:04:16 UTC (rev 54)
+@@ -22,7 +22,6 @@
+ #include &lt;sigc++/class_slot.h&gt;
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;gtkmm/stock.h&gt;
+-#include &lt;gtkmm/main.h&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+@@ -34,7 +33,6 @@
+ #include &quot;importDialog.hh&quot;
+ 
+ using namespace std;
+-using namespace SigC;
+ using namespace Glib;
+ using namespace Gtk;
+ 
+@@ -120,7 +118,6 @@
+ 	// The title field may remain empty
+ 	importButton-&gt;set_sensitive(false);
+ 	importProgressbar-&gt;set_pulse_step(0.10);
+-	importProgressbar-&gt;set_text(_(&quot;Waiting...&quot;));
+ }
+ 
+ importDialog::~importDialog()
+@@ -133,10 +130,10 @@
+ 
+ 	TreeModel::iterator iter = m_refTypeList-&gt;append();
+ 	TreeModel::Row row = *iter;
+-	row[m_typeColumns.m_name] = _(&quot;Single file&quot;);
++	row[m_typeColumns.m_name] = _(&quot;File&quot;);
+ 	iter = m_refTypeList-&gt;append();
+ 	row = *iter;
+-	row[m_typeColumns.m_name] = _(&quot;Whole directory&quot;);
++	row[m_typeColumns.m_name] = _(&quot;Directory&quot;);
+ 	if (localOnly == false)
+ 	{
+ 		iter = m_refTypeList-&gt;append();
+@@ -176,6 +173,13 @@
+ 	return true;
+ }
+ 
++bool importDialog::on_activity_timeout()
++{
++	importProgressbar-&gt;pulse();
++
++	return true;
++}
++
+ bool importDialog::on_import_file(const string &amp;fileName)
+ {
+ 	string mimeType = MIMEScanner::scanFile(fileName);
+@@ -200,9 +204,6 @@
+ 		string title = locale_from_utf8(m_title);
+ 		unsigned int docId = 0;
+ 
+-		importProgressbar-&gt;pulse();
+-		importProgressbar-&gt;set_text(to_utf8(fileName));
+-
+ 		if (index.isGood() == true)
+ 		{
+ 			docId = index.hasDocument(url);
+@@ -241,6 +242,7 @@
+ void importDialog::on_thread_end()
+ {
+ 	ustring status;
++	bool success = true;
+ 
+ 	WorkerThread *pThread = m_state.on_thread_end();
+ 	if (pThread == NULL)
+@@ -261,12 +263,21 @@
+ 		m_state.m_importing = false;
+ 	}
+ 
++	// Did the thread fail ?
++	if (pThread-&gt;getStatus().empty() == false)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;importDialog::on_thread_end: &quot; &lt;&lt; pThread-&gt;getStatus() &lt;&lt; endl;
++#endif
++		success = false;
++	}
++
+ 	// What type of thread was it ?
+ 	string type = pThread-&gt;getType();
+ 	if (type == &quot;IndexingThread&quot;)
+ 	{
+ 		// Did it succeed ?
+-		if (pThread-&gt;getStatus().empty() == true)
++		if (success == true)
+ 		{
+ 			// Yes, it did
+ 			++m_docsCount;
+@@ -287,17 +298,11 @@
+ 	// Delete the thread
+ 	delete pThread;
+ 
+-	do
++	if (m_state.m_importing == false)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;importDialog::on_thread_end: UI event&quot; &lt;&lt; endl;
+-#endif
+-		Main::iteration(false);
+-	} while(Main::events_pending() == true);
++		m_timeoutConnection.block();
++		m_timeoutConnection.disconnect();
+ 
+-	if (m_state.m_importing == false)
+-	{
+-		importProgressbar-&gt;set_text(_(&quot;Done&quot;));
+ 		importProgressbar-&gt;set_fraction(1.0);
+ 		importButton-&gt;set_sensitive(true);
+ 	}
+@@ -469,6 +474,9 @@
+ 		// Maximum depth
+ 		unsigned int maxDirLevel = (unsigned int)depthSpinbutton-&gt;get_value();
+ 
++		m_timeoutConnection = Glib::signal_timeout().connect(SigC::slot(*this,
++			&amp;importDialog::on_activity_timeout), 1000);
++
+ 		// Scan the directory and import all its files
+ 		DirectoryScannerThread *pThread = new DirectoryScannerThread(location,
+ 			maxDirLevel, &amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
+@@ -486,6 +494,12 @@
+ 
+ void importDialog::on_importDialog_response(int response_id)
+ {
++	if (m_timeoutConnection.connected() == true)
++	{
++		m_timeoutConnection.block();
++		m_timeoutConnection.disconnect();
++	}
++
+ 	// Closing the window should stop everything
+ 	m_state.stop_threads();
+ 	m_state.disconnect();
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-01-10 13:04:16 UTC (rev 54)
+@@ -21,6 +21,7 @@
+ #include &lt;set&gt;
+ #include &lt;pthread.h&gt;
+ #include &lt;sigc++/slot.h&gt;
++#include &lt;sigc++/connection.h&gt;
+ #include &lt;glibmm/refptr.h&gt;
+ #include &lt;glibmm/ustring.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+@@ -48,19 +49,24 @@
+ 	void populate_mimeTreeview(void);
+ 	bool start_thread(WorkerThread *pNewThread);
+ 
++	bool on_activity_timeout();
+ 	bool on_import_file(const std::string &amp;fileName);
+ 	void on_thread_end(void);
+ 
+ private:
+ 	std::set&lt;std::string&gt; m_mimeTypes;
+ 	std::set&lt;std::string&gt; m_mimeTypesBlackList;
++	// Type
+ 	ComboModelColumns m_typeColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refTypeList;
+ 	Glib::ustring m_title;
+ 	unsigned int m_docsCount;
+ 	bool m_importDirectory;
++	// MIME types
+ 	TypeModelColumns m_mimeTypeColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refMimeTypeList;
++	// Activity timeout
++	SigC::Connection m_timeoutConnection;
+ 	// Internal state
+ 	class InternalState : public ThreadsManager
+ 	{
+
+Modified: trunk/UI/GTK2/src/importDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog_glade.cc	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/importDialog_glade.cc	2006-01-10 13:04:16 UTC (rev 54)
+@@ -98,7 +98,6 @@
+    titleEntry-&gt;set_visibility(true);
+    titleEntry-&gt;set_editable(true);
+    titleEntry-&gt;set_max_length(0);
+-   titleEntry-&gt;set_text(_(&quot;&quot;));
+    titleEntry-&gt;set_has_frame(true);
+    titleEntry-&gt;set_activates_default(false);
+    locationLabel-&gt;set_alignment(0,0.5);
+@@ -123,7 +122,6 @@
+    locationEntry-&gt;set_visibility(true);
+    locationEntry-&gt;set_editable(true);
+    locationEntry-&gt;set_max_length(0);
+-   locationEntry-&gt;set_text(_(&quot;&quot;));
+    locationEntry-&gt;set_has_frame(true);
+    locationEntry-&gt;set_activates_default(false);
+    locationButton-&gt;set_flags(Gtk::CAN_FOCUS);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-01-10 13:04:16 UTC (rev 54)
+@@ -1326,7 +1326,7 @@
+ 	// FIXME: if mail accounts are configured, make sure the MonitorThread
+ 	// is running and knows about the new accounts
+ 
+-	if (m_state.read_lock(2) == true)
++	if (m_state.read_lock(5) == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+ 		{
+@@ -2445,7 +2445,7 @@
+ {
+ 	NotebookPageBox *pNotebookPage = NULL;
+ 
+-	if (m_state.read_lock(4) == true)
++	if (m_state.read_lock(6) == true)
+ 	{
+ 		Widget *pPage = m_pNotebook-&gt;get_nth_page(m_pNotebook-&gt;get_current_page());
+ 		if (pPage != NULL)
+@@ -2466,7 +2466,7 @@
+ {
+ 	NotebookPageBox *pNotebookPage = NULL;
+ 
+-	if (m_state.read_lock(5) == true)
++	if (m_state.read_lock(7) == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+ 		{
+@@ -2503,7 +2503,7 @@
+ {
+ 	int pageNumber = -1;
+ 
+-	if (m_state.read_lock(6) == true)
++	if (m_state.read_lock(8) == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+ 		{
+@@ -2541,7 +2541,7 @@
+ {
+ 	if (m_state.get_threads_count() &gt;= m_maxThreads)
+ 	{
+-		if (m_state.write_lock(5) == true)
++		if (m_state.write_lock(9) == true)
+ 		{
+ 			m_state.m_indexQueue[docInfo] = labelName;
+ 
+@@ -2852,7 +2852,7 @@
+ 			docId = index.hasDocument(url);
+ 		}
+ 		if ((docId == 0) &amp;&amp;
+-			(m_state.write_lock(6) == true))
++			(m_state.write_lock(10) == true))
+ 		{
+ 			if (m_state.m_beingIndexed.find(url) == m_state.m_beingIndexed.end())
+ 			{
+@@ -2964,7 +2964,7 @@
+ 				pViewPage = manage(new ViewPage(viewName, m_pHtmlView, m_settings));
+ 
+ 				// Append the page
+-				if (m_state.write_lock(7) == true)
++				if (m_state.write_lock(11) == true)
+ 				{
+ 					pageNum = m_pNotebook-&gt;append_page(*pViewPage, *pTab);
+ 					m_pNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+@@ -3037,7 +3037,7 @@
+ 	DocumentInfo docInfo;
+ 	string labelName;
+ 
+-	if (m_state.write_lock(9) == true)
++	if (m_state.write_lock(12) == true)
+ 	{
+ 		if (m_state.m_indexQueue.empty() == false)
+ 		{
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2006-01-10 09:46:28 UTC (rev 53)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2006-01-10 13:04:16 UTC (rev 54)
+@@ -116,7 +116,6 @@
+    nameEntry-&gt;set_visibility(true);
+    nameEntry-&gt;set_editable(true);
+    nameEntry-&gt;set_max_length(0);
+-   nameEntry-&gt;set_text(_(&quot;&quot;));
+    nameEntry-&gt;set_has_frame(true);
+    nameEntry-&gt;set_activates_default(false);
+    table1-&gt;set_row_spacings(0);
+@@ -127,21 +126,18 @@
+    anyEntry-&gt;set_visibility(true);
+    anyEntry-&gt;set_editable(true);
+    anyEntry-&gt;set_max_length(0);
+-   anyEntry-&gt;set_text(_(&quot;&quot;));
+    anyEntry-&gt;set_has_frame(true);
+    anyEntry-&gt;set_activates_default(false);
+    hostNameEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+    hostNameEntry-&gt;set_visibility(true);
+    hostNameEntry-&gt;set_editable(true);
+    hostNameEntry-&gt;set_max_length(0);
+-   hostNameEntry-&gt;set_text(_(&quot;&quot;));
+    hostNameEntry-&gt;set_has_frame(true);
+    hostNameEntry-&gt;set_activates_default(false);
+    fileNameEntry-&gt;set_flags(Gtk::CAN_FOCUS);
+    fileNameEntry-&gt;set_visibility(true);
+    fileNameEntry-&gt;set_editable(true);
+    fileNameEntry-&gt;set_max_length(0);
+-   fileNameEntry-&gt;set_text(_(&quot;&quot;));
+    fileNameEntry-&gt;set_has_frame(true);
+    fileNameEntry-&gt;set_activates_default(false);
+    resultsCountSpinbutton-&gt;set_flags(Gtk::CAN_FOCUS);
+@@ -187,7 +183,6 @@
+    notEntry-&gt;set_visibility(true);
+    notEntry-&gt;set_editable(true);
+    notEntry-&gt;set_max_length(0);
+-   notEntry-&gt;set_text(_(&quot;&quot;));
+    notEntry-&gt;set_has_frame(true);
+    notEntry-&gt;set_activates_default(false);
+    tersmTable-&gt;set_row_spacings(0);
+@@ -221,7 +216,6 @@
+    phraseEntry-&gt;set_visibility(true);
+    phraseEntry-&gt;set_editable(true);
+    phraseEntry-&gt;set_max_length(0);
+-   phraseEntry-&gt;set_text(_(&quot;&quot;));
+    phraseEntry-&gt;set_has_frame(true);
+    phraseEntry-&gt;set_activates_default(false);
+    phraseLabel-&gt;set_alignment(0,0.5);
+@@ -240,7 +234,6 @@
+    andEntry-&gt;set_visibility(true);
+    andEntry-&gt;set_editable(true);
+    andEntry-&gt;set_max_length(0);
+-   andEntry-&gt;set_text(_(&quot;&quot;));
+    andEntry-&gt;set_has_frame(true);
+    andEntry-&gt;set_activates_default(false);
+    andLabel-&gt;set_alignment(0,0.5);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000052.html">[Pinot-svn] r53 - in trunk: Index Tokenize UI/GTK2 UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000054.html">[Pinot-svn] r55 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#53">[ date ]</a>
+              <a href="thread.html#53">[ thread ]</a>
+              <a href="subject.html#53">[ subject ]</a>
+              <a href="author.html#53">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

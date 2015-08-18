@@ -1,0 +1,400 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1362 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1362%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200809130500.m8D50HI8004845%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001352.html">
+   <LINK REL="Next"  HREF="001354.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1362 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1362%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200809130500.m8D50HI8004845%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1362 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep 13 07:00:17 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001352.html">[Pinot-svn] r1361 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001354.html">[Pinot-svn] r1363 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1353">[ date ]</a>
+              <a href="thread.html#1353">[ thread ]</a>
+              <a href="subject.html#1353">[ subject ]</a>
+              <a href="author.html#1353">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-09-13 06:59:53 +0200 (Sat, 13 Sep 2008)
+New Revision: 1362
+
+Modified:
+   trunk/IndexSearch/Xapian/ModuleExports.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.h
+Log:
+FileStopper implements a file-based Stopper. Language specific stopwords lists
+are assumed to be at &quot;$PREFIX/share/pinot/stopwords/stopwords.language_code&quot;.
+Stopwords are removed from queries when stemming is on, and if the query
+consists of more than one token. For non-CJKV queries, we rely on the number
+of spaces in the query (which is okay for the languages stopwords removal is
+useful for).
+Cache the stopper object, and delete it when the back-end is unloaded.
+Let QueryProperties sanitize the query string.
+
+
+Modified: trunk/IndexSearch/Xapian/ModuleExports.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/ModuleExports.cpp	2008-09-13 04:31:24 UTC (rev 1361)
++++ trunk/IndexSearch/Xapian/ModuleExports.cpp	2008-09-13 04:59:53 UTC (rev 1362)
+@@ -92,6 +92,7 @@
+ 
+ void closeAll(void)
+ {
++	XapianEngine::freeAll();
+ 	XapianDatabaseFactory::closeAll();
+ }
+ 
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-09-13 04:31:24 UTC (rev 1361)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-09-13 04:59:53 UTC (rev 1362)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -24,6 +24,7 @@
+ #include &lt;cstring&gt;
+ #include &lt;vector&gt;
+ #include &lt;iostream&gt;
++#include &lt;fstream&gt;
+ #include &lt;algorithm&gt;
+ 
+ #include &quot;config.h&quot;
+@@ -49,6 +50,8 @@
+ using std::cerr;
+ using std::endl;
+ using std::inserter;
++using std::getline;
++using std::ifstream;
+ using namespace Dijon;
+ 
+ static void checkFilter(const string &amp;freeQuery, string::size_type filterValueStart,
+@@ -88,8 +91,14 @@
+ class TimeValueRangeProcessor : public Xapian::ValueRangeProcessor
+ {
+ 	public:
+-		TimeValueRangeProcessor(Xapian::valueno valueNumber) : Xapian::ValueRangeProcessor(), m_valueNumber(valueNumber) { }
+-		~TimeValueRangeProcessor() { }
++		TimeValueRangeProcessor(Xapian::valueno valueNumber) :
++			Xapian::ValueRangeProcessor(),
++			m_valueNumber(valueNumber)
++		{
++		}
++		~TimeValueRangeProcessor()
++		{
++		}
+ 
+ 		virtual Xapian::valueno operator()(string &amp;begin, string &amp;end)
+ 		{
+@@ -131,8 +140,14 @@
+ class PrefixDecider : public Xapian::ExpandDecider
+ {
+ 	public:
+-		PrefixDecider(const string &amp;allowedPrefixes) : Xapian::ExpandDecider(), m_allowedPrefixes(allowedPrefixes) { }
+-		~PrefixDecider() { }
++		PrefixDecider(const string &amp;allowedPrefixes) :
++			Xapian::ExpandDecider(),
++			m_allowedPrefixes(allowedPrefixes)
++		{
++		}
++		~PrefixDecider()
++		{
++		}
+ 
+ 		virtual bool operator()(const std::string &amp;term) const
+ 		{
+@@ -153,6 +168,83 @@
+ 
+ };
+ 
++class FileStopper : public Xapian::SimpleStopper
++{
++	public:
++		FileStopper(const string &amp;languageCode) :
++			Xapian::SimpleStopper(),
++			m_languageCode(languageCode),
++			m_stopwordsCount(0)
++		{
++			if (languageCode.empty() == false)
++			{
++				ifstream inputFile;
++				string fileName(PREFIX);
++
++				fileName += &quot;/share/pinot/stopwords/stopwords.&quot;;
++				fileName += languageCode;
++				inputFile.open(fileName.c_str());
++				if (inputFile.good() == true)
++				{
++					string line;
++
++					// Each line is a stopword
++					while (getline(inputFile, line).eof() == false)
++					{
++						add(line);
++						++m_stopwordsCount;
++					}
++				}
++				inputFile.close();
++
++#ifdef DEBUG
++				cout &lt;&lt; &quot;FileStopper: &quot; &lt;&lt; m_stopwordsCount &lt;&lt; &quot; stopwords for language code &quot; &lt;&lt; languageCode &lt;&lt; endl;
++#endif
++			}
++		}
++		virtual ~FileStopper()
++		{
++		}
++
++		unsigned int get_stopwords_count(void) const
++		{
++			return m_stopwordsCount;
++		}
++
++		static FileStopper *get_stopper(const string &amp;languageCode)
++		{
++			if (m_pStopper == NULL)
++			{
++				m_pStopper = new FileStopper(languageCode);
++			}
++			else if (m_pStopper-&gt;m_languageCode != languageCode)
++			{
++				delete m_pStopper;
++
++				m_pStopper = new FileStopper(languageCode);
++			}
++
++			return m_pStopper;
++		}
++
++		static void free_stopper(void)
++		{
++			if (m_pStopper != NULL)
++			{
++				delete m_pStopper;
++				m_pStopper = NULL;
++			}
++		}
++
++	protected:
++		string m_languageCode;
++		unsigned int m_stopwordsCount;
++		static FileStopper *m_pStopper;
++
++};
++
++FileStopper *FileStopper::m_pStopper = NULL;
++
+ class QueryModifier : public Dijon::CJKVTokenizer::TokensHandler
+ {
+ 	public:
+@@ -167,6 +259,7 @@
+ 			m_wrapped(false),
+ 			m_nGramCount(0),
+ 			m_nGramSize(nGramSize),
++			m_tokensCount(0),
+ 			m_hasCJKV(false),
+ 			m_hasNonCJKV(false)
+ 		{
+@@ -188,6 +281,7 @@
+ 
+ 			// Where is this token in the original query ?
+ 			string::size_type tokPos = m_query.find(tok, m_pos);
++			++m_tokensCount;
+ 
+ 			// Is this CJKV ?
+ 			if (is_cjkv == false)
+@@ -285,6 +379,11 @@
+ 			return true;
+ 		}
+ 
++		unsigned int get_tokens_count(void) const
++		{
++			return m_tokensCount;
++		}
++
+ 		string get_modified_query(bool &amp;pureCJKV)
+ 		{
+ #ifdef DEBUG
+@@ -324,6 +423,7 @@
+ 		string m_currentFilter;
+ 		unsigned int m_nGramCount;
+ 		unsigned int m_nGramSize;
++		unsigned int m_tokensCount;
+ 		bool m_hasCJKV;
+ 		bool m_hasNonCJKV;
+ 
+@@ -388,9 +488,8 @@
+ 	Xapian::QueryParser parser;
+ 	Xapian::Stem stemmer;
+ 	CJKVTokenizer tokenizer;
+-	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+-	unsigned int minDay, minMonth, minYear = 0;
+-	unsigned int maxDay, maxMonth, maxYear = 0;
++	string freeQuery(queryProps.getFreeQuery());
++	unsigned int tokensCount = 1;
+ 	bool diacriticSensitive = queryProps.getDiacriticSensitive();
+ 
+ 	// Modifying the query is necessary if it's CJKV or diacritics are off
+@@ -403,6 +502,8 @@
+ 
+ 		tokenizer.tokenize(freeQuery, handler, true);
+ 
++		tokensCount = handler.get_tokens_count();
++
+ 		// We can disable stemming and spelling correction for pure CJKV queries
+ 		string cjkvQuery(handler.get_modified_query(minimal));
+ #ifdef DEBUG
+@@ -412,7 +513,26 @@
+ 		// Do as if the user had given this as input
+ 		freeQuery = cjkvQuery;
+ 	}
++	else
++	{
++		string::size_type spacePos = freeQuery.find(' ');
++		while (spacePos != string::npos)
++		{
++			++tokensCount;
+ 
++			if (spacePos + 1 &gt;= freeQuery.length())
++			{
++				break;
++			}
++
++			// Next
++			spacePos = freeQuery.find(' ', spacePos + 1);
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; tokensCount &lt;&lt; &quot; tokens&quot; &lt;&lt; endl;
++#endif
++
+ 	if (pIndex != NULL)
+ 	{
+ 		// The database is required for wildcards and spelling
+@@ -436,6 +556,19 @@
+ 		}
+ 		parser.set_stemmer(stemmer);
+ 		parser.set_stemming_strategy(Xapian::QueryParser::STEM_SOME);
++
++		// Don't bother loading the stopwords list if there's only one token
++		if (tokensCount &gt; 1)
++		{
++			string languageCode(Languages::toCode(stemLanguage));
++
++			FileStopper *pStopper = FileStopper::get_stopper(languageCode);
++			if ((pStopper != NULL) &amp;&amp;
++				(pStopper-&gt;get_stopwords_count() &gt; 0))
++			{
++				parser.set_stopper(pStopper);
++			}
++		}
+ 	}
+ 	else
+ 	{
+@@ -509,6 +642,7 @@
+ 
+ 		XapianQueryBuilder builder(parser, fieldMapping);
+ 		XesamParser *pParser = NULL;
++		bool parsedQuery = false;
+ 
+ 		// Get a Xesam parser
+ 		if (type == QueryProperties::XESAM_QL)
+@@ -524,14 +658,14 @@
+ 
+ 		if (pParser != NULL)
+ 		{
+-			bool parsedQuery = pParser-&gt;parse(freeQuery, builder);
++			parsedQuery = pParser-&gt;parse(freeQuery, builder);
+ 
+ 			delete pParser;
++		}
+ 
+-			if (parsedQuery == true)
+-			{
+-				return builder.get_query();
+-			}
++		if (parsedQuery == true)
++		{
++			return builder.get_query();
+ 		}
+ 
+ 		return Xapian::Query();
+@@ -834,6 +968,12 @@
+ 	return false;
+ }
+ 
++/// Frees all objects.
++void XapianEngine::freeAll(void)
++{
++	FileStopper::free_stopper();
++}
++
+ //
+ // Implementation of SearchEngineInterface
+ //
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.h	2008-09-13 04:31:24 UTC (rev 1361)
++++ trunk/IndexSearch/Xapian/XapianEngine.h	2008-09-13 04:59:53 UTC (rev 1362)
+@@ -45,6 +45,9 @@
+ 		XapianEngine(const std::string &amp;database);
+ 		virtual ~XapianEngine();
+ 
++		/// Frees all objects.
++		static void freeAll(void);
++
+ 		/// Sets the set of documents to limit to.
+ 		virtual bool setLimitSet(const std::set&lt;std::string&gt; &amp;docsSet);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001352.html">[Pinot-svn] r1361 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001354.html">[Pinot-svn] r1363 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1353">[ date ]</a>
+              <a href="thread.html#1353">[ thread ]</a>
+              <a href="subject.html#1353">[ subject ]</a>
+              <a href="author.html#1353">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

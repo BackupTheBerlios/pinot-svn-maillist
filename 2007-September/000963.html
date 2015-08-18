@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r969 - in trunk: Index Search UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r969%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src&In-Reply-To=%3C200709111248.l8BCm36S017712%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000962.html">
+   <LINK REL="Next"  HREF="000964.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r969 - in trunk: Index Search UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r969%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2/src&In-Reply-To=%3C200709111248.l8BCm36S017712%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r969 - in trunk: Index Search UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 11 14:48:03 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000962.html">[Pinot-svn] r968 - in trunk: UI/GTK2 UI/GTK2/src po
+</A></li>
+        <LI>Next message: <A HREF="000964.html">[Pinot-svn] r970 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#963">[ date ]</a>
+              <a href="thread.html#963">[ thread ]</a>
+              <a href="subject.html#963">[ subject ]</a>
+              <a href="author.html#963">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-11 14:48:02 +0200 (Tue, 11 Sep 2007)
+New Revision: 969
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/src/queryDialog.cc
+Log:
+Store documents' size, in bytes, in value 2. Ranges with suffix 'b' will be
+applied on that value.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-09-08 11:04:46 UTC (rev 968)
++++ trunk/Index/XapianIndex.cpp	2007-09-11 12:48:02 UTC (rev 969)
+@@ -611,7 +611,9 @@
+ 
+ 	// Add this value to allow sorting by date
+ 	doc.add_value(0, yyyymmdd);
+-	// FIXME: add a value for size
++	// FIXME: checksum in value 1
++	// Size goes in value 2
++	doc.add_value(2, Xapian::sortable_serialise((double )info.getSize()));
+ 
+ 	DocumentInfo docCopy(info);
+ 	docCopy.setLanguage(language);
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-08 11:04:46 UTC (rev 968)
++++ trunk/Search/XapianEngine.cpp	2007-09-11 12:48:02 UTC (rev 969)
+@@ -273,6 +273,20 @@
+ 	Xapian::DateValueRangeProcessor dateProcessor(0);
+ 	parser.add_valuerangeprocessor(&amp;dateProcessor);
+ 
++	// Size with a &quot;b&quot; suffix, ie 1024..10240b
++#if XAPIAN_MAJOR_VERSION&gt;1
++	Xapian::NumberValueRangeProcessor sizeProcessor(2, &quot;b&quot;, false);
++	parser.add_valuerangeprocessor(&amp;sizeProcessor);
++#elif XAPIAN_MAJOR_VERSION==1
++#if XAPIAN_MINOR_VERSION&gt;0
++	Xapian::NumberValueRangeProcessor sizeProcessor(2, &quot;b&quot;, false);
++#else
++	// Xapian 1.02 is the bare minimum
++	Xapian::v102::NumberValueRangeProcessor sizeProcessor(2, &quot;b&quot;, false);
++#endif
++	parser.add_valuerangeprocessor(&amp;sizeProcessor);
++#endif
++
+ 	// Parse the query string
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+ 	if (minimal == true)
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2007-09-08 11:04:46 UTC (rev 968)
++++ trunk/UI/GTK2/src/queryDialog.cc	2007-09-11 12:48:02 UTC (rev 969)
+@@ -123,6 +123,7 @@
+ 	filterCombobox-&gt;append_text(_(&quot;MIME type&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;Label&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;Date range&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Size&quot;));
+ 	filterCombobox-&gt;set_active(0);
+ }
+ 
+@@ -192,7 +193,7 @@
+ 	ustring filter;
+ 	time_t timeT = time(NULL);
+ 	struct tm *tm = localtime(&amp;timeT);
+-	bool isDateRange = false;
++	bool hasValue = true;
+ 
+ 	// What's the corresponding filter ?
+ 	int chosenFilter = filterCombobox-&gt;get_active_row_number();
+@@ -232,8 +233,12 @@
+ 		case 10:
+ 			filter = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
+ 			filter += &quot;..20991231&quot;;
+-			isDateRange = true;
++			hasValue = false;
+ 			break;
++		case 11:
++			filter += &quot;0..10240b&quot;;
++			hasValue = false;
++			break;
+ 		default:
+ 			break;
+ 	}
+@@ -244,7 +249,7 @@
+ 		ustring queryText = refBuffer-&gt;get_text();
+ 		queryText += &quot; &quot;;
+ 		queryText += filter;
+-		if (isDateRange == false)
++		if (hasValue == true)
+ 		{
+ 			queryText += &quot;:xxx&quot;;
+ 		}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000962.html">[Pinot-svn] r968 - in trunk: UI/GTK2 UI/GTK2/src po
+</A></li>
+	<LI>Next message: <A HREF="000964.html">[Pinot-svn] r970 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#963">[ date ]</a>
+              <a href="thread.html#963">[ thread ]</a>
+              <a href="subject.html#963">[ subject ]</a>
+              <a href="author.html#963">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

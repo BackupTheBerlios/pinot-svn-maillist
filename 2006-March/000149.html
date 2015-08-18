@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r150 - in trunk: Collect Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r150%20-%20in%20trunk%3A%20Collect%20Search&In-Reply-To=%3C200603161437.k2GEbvPJ009800%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000148.html">
+   <LINK REL="Next"  HREF="000150.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r150 - in trunk: Collect Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r150%20-%20in%20trunk%3A%20Collect%20Search&In-Reply-To=%3C200603161437.k2GEbvPJ009800%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r150 - in trunk: Collect Search">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Mar 16 15:37:57 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000148.html">[Pinot-svn] r149 - trunk/Search/Plugins
+</A></li>
+        <LI>Next message: <A HREF="000150.html">[Pinot-svn] r151 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#149">[ date ]</a>
+              <a href="thread.html#149">[ thread ]</a>
+              <a href="subject.html#149">[ subject ]</a>
+              <a href="author.html#149">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-16 15:37:54 +0100 (Thu, 16 Mar 2006)
+New Revision: 150
+
+Modified:
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Search/SherlockParser.cpp
+   trunk/Search/SherlockParser.h
+Log:
+Lock parsing of Sherlock plugins rather downloading...
+
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2006-03-16 14:20:37 UTC (rev 149)
++++ trunk/Collect/NeonDownloader.cpp	2006-03-16 14:37:54 UTC (rev 150)
+@@ -62,8 +62,6 @@
+ 	}
+ }
+ 
+-static pthread_mutex_t g_accessLock = PTHREAD_MUTEX_INITIALIZER;
+-
+ unsigned int NeonDownloader::m_initialized = 0;
+ 
+ NeonDownloader::NeonDownloader() :
+@@ -169,11 +167,6 @@
+ 	string file = urlObj.getFile();
+ 	string parameters = urlObj.getParameters();
+ 
+-	if (pthread_mutex_lock(&amp;g_accessLock) != 0)
+-	{
+-		return NULL;
+-	}
+-
+ 	// Create a session
+ 	ne_session *pSession = ne_session_create(protocol.c_str(), hostName.c_str(), 80); // urlObj.getPort());
+ 	if (pSession == NULL)
+@@ -181,7 +174,6 @@
+ #ifdef DEBUG
+ 		cerr &lt;&lt; &quot;NeonDownloader::retrieveUrl: couldn't create session !&quot; &lt;&lt; endl;
+ #endif
+-		pthread_mutex_unlock(&amp;g_accessLock);
+ 		return NULL;
+ 	}
+ 	// Set the user agent
+@@ -210,7 +202,6 @@
+ 
+ 	// Create a request for this URL
+ 	ne_request *pRequest = ne_request_create(pSession, &quot;GET&quot;, fullLocation.c_str());
+-	pthread_mutex_unlock(&amp;g_accessLock);
+ 	if (pRequest == NULL)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2006-03-16 14:20:37 UTC (rev 149)
++++ trunk/Search/SherlockParser.cpp	2006-03-16 14:37:54 UTC (rev 150)
+@@ -462,6 +462,8 @@
+ 	return foundResult;
+ }
+ 
++pthread_mutex_t SherlockParser::m_mutex = PTHREAD_MUTEX_INITIALIZER;
++
+ SherlockParser::SherlockParser(const string &amp;fileName) :
+ 	PluginParserInterface(fileName)
+ {
+@@ -500,28 +502,41 @@
+ 	map&lt;string, string&gt; searchParams, interpretParams, inputItems;
+ 	string userInput, nextInput, nextFactor, nextValue;
+ 	skip_grammar skip;
+-	parse_info&lt;&gt; parseInfo;
++	bool fullParsing = false;
+ 
+-	if (extractSearchParams == false)
++#ifdef DEBUG
++	cout &lt;&lt; &quot;SherlockParser::parse: starting&quot; &lt;&lt; endl;
++#endif
++	if (pthread_mutex_lock(&amp;m_mutex) == 0)
+ 	{
+-		plugin_grammar plugin(searchParams, interpretParams, inputItems,
+-			userInput, nextInput, nextFactor, nextValue);
++		if (extractSearchParams == false)
++		{
++			plugin_grammar plugin(searchParams, interpretParams, inputItems,
++				userInput, nextInput, nextFactor, nextValue);
+ 
+-		parseInfo = boost::spirit::parse(pData, plugin, skip);
+-	}
+-	else
+-	{
+-		plugin_min_grammar plugin(searchParams);
++			parse_info&lt;&gt; parseInfo = boost::spirit::parse(pData, plugin, skip);
++			fullParsing = parseInfo.full;
++		}
++		else
++		{
++			plugin_min_grammar plugin(searchParams);
+ 
+-		parseInfo = boost::spirit::parse(pData, plugin, skip);
++			parse_info&lt;&gt; parseInfo = boost::spirit::parse(pData, plugin, skip);
++			fullParsing = parseInfo.full;
++		}
++
++		pthread_mutex_unlock(&amp;m_mutex);
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;SherlockParser::parse: done&quot; &lt;&lt; endl;
++#endif
+ 
+ 	// We are done with the document
+ 	delete pPluginDoc;
+ 
+ 	SherlockResponseParser *pResponseParser = NULL;
+ 
+-	if (parseInfo.full == true)
++	if (fullParsing == true)
+ 	{
+ 		map&lt;string, string&gt; lowSearchParams, lowInterpretParams, lowInputItems;
+ 
+
+Modified: trunk/Search/SherlockParser.h
+===================================================================
+--- trunk/Search/SherlockParser.h	2006-03-16 14:20:37 UTC (rev 149)
++++ trunk/Search/SherlockParser.h	2006-03-16 14:37:54 UTC (rev 150)
+@@ -17,6 +17,7 @@
+ #ifndef _SHERLOCK_PARSER_H
+ #define _SHERLOCK_PARSER_H
+ 
++#include &lt;pthread.h&gt;
+ #include &lt;string&gt;
+ 
+ #include &quot;Document.h&quot;
+@@ -65,6 +66,9 @@
+ 		virtual ResponseParserInterface *parse(SearchPluginProperties &amp;properties,
+ 			bool extractSearchParams = false);
+ 
++	protected:
++		static pthread_mutex_t m_mutex;
++
+ 	private:
+ 		SherlockParser(const SherlockParser &amp;other);
+ 		SherlockParser&amp; operator=(const SherlockParser&amp; other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000148.html">[Pinot-svn] r149 - trunk/Search/Plugins
+</A></li>
+	<LI>Next message: <A HREF="000150.html">[Pinot-svn] r151 - trunk/Search/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#149">[ date ]</a>
+              <a href="thread.html#149">[ thread ]</a>
+              <a href="subject.html#149">[ subject ]</a>
+              <a href="author.html#149">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

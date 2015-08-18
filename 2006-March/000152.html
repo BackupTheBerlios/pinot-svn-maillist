@@ -1,0 +1,251 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r153 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r153%20-%20trunk/SQL&In-Reply-To=%3C200603171216.k2HCGi1i031719%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000151.html">
+   <LINK REL="Next"  HREF="000154.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r153 - trunk/SQL</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r153%20-%20trunk/SQL&In-Reply-To=%3C200603171216.k2HCGi1i031719%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r153 - trunk/SQL">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Mar 17 13:16:44 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000151.html">[Pinot-svn] r152 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000154.html">[Pinot-svn] r154 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#152">[ date ]</a>
+              <a href="thread.html#152">[ thread ]</a>
+              <a href="subject.html#152">[ subject ]</a>
+              <a href="author.html#152">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-17 13:16:41 +0100 (Fri, 17 Mar 2006)
+New Revision: 153
+
+Modified:
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/QueryHistory.h
+   trunk/SQL/ViewHistory.cpp
+   trunk/SQL/ViewHistory.h
+Log:
+ViewHistory now includes a Date column. The table is updated by create().
+Items in both tables can be expired.
+
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2006-03-17 12:03:03 UTC (rev 152)
++++ trunk/SQL/QueryHistory.cpp	2006-03-17 12:16:41 UTC (rev 153)
+@@ -73,9 +73,6 @@
+ 	string escapedUrl = Url::escapeUrl(url);
+ 	bool success = false;
+ 
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;QueryHistory::insertItem: called&quot; &lt;&lt; endl;
+-#endif
+ 	SQLiteResults *results = executeStatement(&quot;INSERT INTO QueryHistory \
+ 		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%q', '%f', '0.0', '%d');&quot;,
+ 		queryName.c_str(), engineName.c_str(), hostName.c_str(),
+@@ -122,9 +119,6 @@
+ {
+ 	bool success = false;
+ 
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;QueryHistory::updateItem: called on &quot; &lt;&lt; url &lt;&lt; endl;
+-#endif
+ 	SQLiteResults *results = executeStatement(&quot;UPDATE QueryHistory SET PrevScore=Score, \
+ 		Score=%f, Date='%d', Title='%q', Extract='%q', Language='%q' \
+ 		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';&quot;,
+@@ -267,3 +261,18 @@
+ 
+ 	return false;
+ }
++
++/// Expires items older than the given date.
++bool QueryHistory::expireItems(time_t expiryDate)
++{
++	SQLiteResults *results = executeStatement(&quot;DELETE FROM QueryHistory \
++		WHERE Date&lt;'%d';&quot;, expiryDate);
++	if (results != NULL)
++	{
++		delete results;
++
++		return true;
++	}
++
++	return false;
++}
+
+Modified: trunk/SQL/QueryHistory.h
+===================================================================
+--- trunk/SQL/QueryHistory.h	2006-03-17 12:03:03 UTC (rev 152)
++++ trunk/SQL/QueryHistory.h	2006-03-17 12:16:41 UTC (rev 153)
+@@ -62,6 +62,9 @@
+ 		/// Deletes items.
+ 		bool deleteItems(const string &amp;name, bool isQueryName);
+ 
++		/// Expires items older than the given date.
++		bool expireItems(time_t expiryDate);
++
+ 	private:
+ 		QueryHistory(const QueryHistory &amp;other);
+ 		QueryHistory &amp;operator=(const QueryHistory &amp;other);
+
+Modified: trunk/SQL/ViewHistory.cpp
+===================================================================
+--- trunk/SQL/ViewHistory.cpp	2006-03-17 12:03:03 UTC (rev 152)
++++ trunk/SQL/ViewHistory.cpp	2006-03-17 12:16:41 UTC (rev 153)
+@@ -34,7 +34,7 @@
+ /// Creates the ViewHistory table in the database.
+ bool ViewHistory::create(const string &amp;database)
+ {
+-	bool success = true;
++	bool createTable = false;
+ 
+ 	// The specified path must be a file
+ 	if (SQLiteBase::check(database) == false)
+@@ -50,14 +50,35 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;ViewHistory::create: ViewHistory doesn't exist&quot; &lt;&lt; endl;
+ #endif
+-		// Create the table
+-		if (db.executeSimpleStatement(&quot;CREATE TABLE ViewHistory (Url VARCHAR(255) PRIMARY KEY, Status INT);&quot;) == false)
++		createTable = true;
++	}
++	else
++	{
++		// Previous versions didn't include a Date field, so check for it
++		if (db.executeSimpleStatement(&quot;SELECT Date FROM ViewHistory LIMIT 1;&quot;) == false)
+ 		{
+-			success = false;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;ViewHistory::create: ViewHistory needs updating&quot; &lt;&lt; endl;
++#endif
++			// Ideally, we would use ALTER TABLE but it's not supported by SQLite
++			if (db.executeSimpleStatement(&quot;DROP TABLE ViewHistory; VACUUM;&quot;) == true)
++			{
++				createTable = true;
++			}
+ 		}
+ 	}
+ 
+-	return success;
++	// Create the table ?
++	if (createTable == true)
++	{
++		if (db.executeSimpleStatement(&quot;CREATE TABLE ViewHistory (Url VARCHAR(255) \
++			PRIMARY KEY, Status INTEGER, DATE INTEGER);&quot;) == false)
++		{
++			return false;
++		}
++	}
++
++	return true;
+ }
+ 
+ /// Inserts an URL.
+@@ -66,7 +87,7 @@
+ 	bool success = false;
+ 
+ 	SQLiteResults *results = executeStatement(&quot;INSERT INTO ViewHistory \
+-		VALUES('%q', '1');&quot;, Url::escapeUrl(url).c_str());
++		VALUES('%q', '1', '%d');&quot;, Url::escapeUrl(url).c_str(), time(NULL));
+ 	if (results != NULL)
+ 	{
+ 		success = true;
+@@ -81,8 +102,8 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement(&quot;SELECT Url FROM ViewHistory WHERE Url='%q';&quot;,
+-		Url::escapeUrl(url).c_str());
++	SQLiteResults *results = executeStatement(&quot;SELECT Url FROM ViewHistory \
++		WHERE Url='%q';&quot;, Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+ 		SQLiteRow *row = results-&gt;nextRow();
+@@ -118,3 +139,19 @@
+ 
+ 	return success;
+ }
++
++/// Expires items older than the given date.
++bool ViewHistory::expireItems(time_t expiryDate)
++{
++	bool success = false;
++
++	SQLiteResults *results = executeStatement(&quot;DELETE FROM ViewHistory \
++		WHERE Date&lt;'%d';&quot;, expiryDate);
++	if (results != NULL)
++	{
++		success = true;
++		delete results;
++	}
++
++	return success;
++}
+
+Modified: trunk/SQL/ViewHistory.h
+===================================================================
+--- trunk/SQL/ViewHistory.h	2006-03-17 12:03:03 UTC (rev 152)
++++ trunk/SQL/ViewHistory.h	2006-03-17 12:16:41 UTC (rev 153)
+@@ -17,6 +17,7 @@
+ #ifndef _VIEW_HISTORY_H
+ #define _VIEW_HISTORY_H
+ 
++#include &lt;time.h&gt;
+ #include &lt;string&gt;
+ 
+ #include &quot;SQLiteBase.h&quot;
+@@ -41,6 +42,9 @@
+ 		/// Deletes an URL.
+ 		bool deleteItem(const string &amp;url);
+ 
++		/// Expires items older than the given date.
++		bool expireItems(time_t expiryDate);
++
+ 	private:
+ 		ViewHistory(const ViewHistory &amp;other);
+ 		ViewHistory &amp;operator=(const ViewHistory &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000151.html">[Pinot-svn] r152 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000154.html">[Pinot-svn] r154 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#152">[ date ]</a>
+              <a href="thread.html#152">[ thread ]</a>
+              <a href="subject.html#152">[ subject ]</a>
+              <a href="author.html#152">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

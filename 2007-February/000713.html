@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r719 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r719%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200702171013.l1HADQhC004903%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000712.html">
+   <LINK REL="Next"  HREF="000714.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r719 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r719%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200702171013.l1HADQhC004903%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r719 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb 17 11:13:26 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000712.html">[Pinot-svn] r718 - in trunk: UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000714.html">[Pinot-svn] r720 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#713">[ date ]</a>
+              <a href="thread.html#713">[ thread ]</a>
+              <a href="subject.html#713">[ subject ]</a>
+              <a href="author.html#713">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-17 11:13:25 +0100 (Sat, 17 Feb 2007)
+New Revision: 719
+
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/statisticsDialog.cc
+Log:
+Daemon logs its PID, shown by the Status window.
+In the Status window, don't add an Errors row if no error was logged.
+
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-02-17 10:11:43 UTC (rev 718)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-02-17 10:13:25 UTC (rev 719)
+@@ -18,11 +18,12 @@
+ 
+ #include &lt;stdlib.h&gt;
+ #include &lt;signal.h&gt;
+-#include &lt;unistd.h&gt;
+ #include &lt;libintl.h&gt;
+ #include &lt;getopt.h&gt;
+ #include &lt;sys/time.h&gt;
+ #include &lt;sys/resource.h&gt;
++#include &lt;sys/types.h&gt;
++#include &lt;unistd.h&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;glibmm.h&gt;
+@@ -54,6 +55,7 @@
+ using namespace std;
+ 
+ static ofstream g_outputFile;
++static string g_pidFileName;
+ static streambuf *g_coutBuf = NULL;
+ static streambuf *g_cerrBuf = NULL;
+ static struct option g_longOptions[] = {
+@@ -93,6 +95,10 @@
+ 		cerr.rdbuf(g_cerrBuf);
+ 	}
+ 	g_outputFile.close();
++	if (g_pidFileName.empty() == false)
++	{
++		unlink(g_pidFileName.c_str());
++	}
+ 
+ 	DownloaderInterface::shutdown();
+ 	MIMEScanner::shutdown();
+@@ -256,14 +262,22 @@
+ 	string confDirectory = PinotSettings::getConfigurationDirectory();
+ 	if (chdir(confDirectory.c_str()) == 0)
+ 	{
++		ofstream pidFile;
++		string fileName(confDirectory);
++
+ 		// Redirect cout and cerr to a file
+-		string logFileName = confDirectory;
+-		logFileName += &quot;/pinot-dbus-daemon.log&quot;;
+-		g_outputFile.open(logFileName.c_str());
++		fileName += &quot;/pinot-dbus-daemon.log&quot;;
++		g_outputFile.open(fileName.c_str());
+ 		g_coutBuf = cout.rdbuf();
+ 		g_cerrBuf = cerr.rdbuf();
+ 		cout.rdbuf(g_outputFile.rdbuf());
+ 		cerr.rdbuf(g_outputFile.rdbuf());
++
++		// Save the PID to file
++		g_pidFileName = confDirectory + &quot;/pinot-dbus-daemon.pid&quot;;
++		pidFile.open(g_pidFileName.c_str());
++		pidFile &lt;&lt; getpid() &lt;&lt; endl;
++		pidFile.close();
+ 	}
+ 
+ 	// Localize language names
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2007-02-17 10:11:43 UTC (rev 718)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2007-02-17 10:13:25 UTC (rev 719)
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;fstream&gt;
+ #include &lt;iostream&gt;
+ #include &lt;string&gt;
+ #include &lt;map&gt;
+@@ -109,8 +110,31 @@
+ 
+ 	folderIter = m_refStore-&gt;append();
+ 	row = *folderIter;
+-	row[m_statsColumns.m_name] = _(&quot;Crawler&quot;);
++	row[m_statsColumns.m_name] = _(&quot;Daemon&quot;);
+ 
++	// Is the daemon still running ?
++	string pidFileName(PinotSettings::getInstance().getConfigurationDirectory() + &quot;/pinot-dbus-daemon.pid&quot;);
++	pid_t daemonPID = 0;
++	ifstream pidFile;
++	pidFile.open(pidFileName.c_str());
++	if (pidFile.is_open() == true)
++	{
++		pidFile &gt;&gt; daemonPID;
++		pidFile.close();
++	}
++	snprintf(countStr, 64, &quot;%u&quot;, daemonPID);
++	statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	if (daemonPID &gt; 0)
++	{
++		// FIXME: check whether it's actually running !
++		row[m_statsColumns.m_name] = ustring(_(&quot;Running under PID&quot;)) + &quot; &quot; + countStr;
++	}
++	else
++	{
++		row[m_statsColumns.m_name] = ustring(_(&quot;Currently not running&quot;));
++	}
++
+ 	// Show crawler statistics
+ 	unsigned int crawledFilesCount = crawlerHistory.getItemsCount(CrawlHistory::CRAWLED);
+ 	snprintf(countStr, 64, &quot;%u&quot;, crawledFilesCount);
+@@ -118,9 +142,7 @@
+ 	row = *statIter;
+ 	row[m_statsColumns.m_name] = ustring(_(&quot;Crawled&quot;)) + &quot; &quot; + countStr + &quot; &quot; + _(&quot;files&quot;);
+ 
+-	TreeModel::iterator errIter = m_refStore-&gt;append(folderIter-&gt;children());
+-	row = *errIter;
+-	row[m_statsColumns.m_name] = _(&quot;Errors&quot;);
++	TreeModel::iterator errIter;
+ 
+ 	crawlerHistory.getSources(sources);
+ 	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+@@ -130,11 +152,22 @@
+ 
+ 		// Did any error occur on this source ?
+ 		unsigned int errorCount = crawlerHistory.getSourceItems(sourceIter-&gt;first, CrawlHistory::ERROR, errors);
+-		if (errorCount &gt; 0)
++		if ((errorCount &gt; 0) &amp;&amp;
++			(errors.empty() == false))
+ 		{
+ 			Url urlObj(sourceIter-&gt;second);
+ 			ustring sourceName(urlObj.getLocation());
+ 
++			if (hasErrors == false)
++			{
++				// Add an errors row
++				errIter  = m_refStore-&gt;append(folderIter-&gt;children());
++				row = *errIter;
++				row[m_statsColumns.m_name] = _(&quot;Errors&quot;);
++
++				hasErrors = true;
++			}
++
+ 			// Add the source
+ 			TreeModel::iterator srcIter = m_refStore-&gt;append(errIter-&gt;children());
+ 			row = *srcIter;
+@@ -153,23 +186,17 @@
+ 				row = *statIter;
+ 				row[m_statsColumns.m_name] = (*errorIter);
+ 			}
+-
+-			hasErrors = true;
+ 		}
+ 	}
+ 
+-	if (hasErrors == false)
++	// Expand everything except errors
++	statisticsTreeview-&gt;expand_all();
++	if (hasErrors == true)
+ 	{
+-		statIter = m_refStore-&gt;append(errIter-&gt;children());
+-		row = *statIter;
+-		row[m_statsColumns.m_name] = _(&quot;None&quot;);
++		TreeModel::Path errPath = m_refStore-&gt;get_path(errIter);
++		statisticsTreeview-&gt;collapse_row(errPath);
+ 	}
+ 
+-	// Expand everything except errors
+-	statisticsTreeview-&gt;expand_all();
+-	TreeModel::Path errPath = m_refStore-&gt;get_path(errIter);
+-	statisticsTreeview-&gt;collapse_row(errPath);
+-
+ 	Adjustment *pAdjustement = statisticsScrolledwindow-&gt;get_hadjustment();
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;statisticsDialog: &quot; &lt;&lt; pAdjustement-&gt;get_value() &lt;&lt; &quot; &quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000712.html">[Pinot-svn] r718 - in trunk: UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000714.html">[Pinot-svn] r720 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#713">[ date ]</a>
+              <a href="thread.html#713">[ thread ]</a>
+              <a href="subject.html#713">[ subject ]</a>
+              <a href="author.html#713">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

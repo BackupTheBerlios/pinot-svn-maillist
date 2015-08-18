@@ -1,0 +1,502 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1680 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1680%20-%20trunk/SQL&In-Reply-To=%3C200911011448.nA1Emww5008183%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001671.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1680 - trunk/SQL</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1680%20-%20trunk/SQL&In-Reply-To=%3C200911011448.nA1Emww5008183%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1680 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov  1 15:48:58 CET 2009</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001671.html">[Pinot-svn] r1681 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1670">[ date ]</a>
+              <a href="thread.html#1670">[ thread ]</a>
+              <a href="subject.html#1670">[ subject ]</a>
+              <a href="author.html#1670">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-11-01 15:48:44 +0100 (Sun, 01 Nov 2009)
+New Revision: 1680
+
+Modified:
+   trunk/SQL/SQLDB.h
+   trunk/SQL/SQLiteBase.cpp
+   trunk/SQL/SQLiteBase.h
+Log:
+Support for prepared statements, transactions.
+
+
+Modified: trunk/SQL/SQLDB.h
+===================================================================
+--- trunk/SQL/SQLDB.h	2009-10-25 08:33:44 UTC (rev 1679)
++++ trunk/SQL/SQLDB.h	2009-11-01 14:48:44 UTC (rev 1680)
+@@ -20,6 +20,7 @@
+ #define _SQL_DB_H
+ 
+ #include &lt;string&gt;
++#include &lt;vector&gt;
+ 
+ /// A row in a table.
+ class SQLRow
+@@ -44,7 +45,7 @@
+ 	public:
+ 		virtual ~SQLResults();
+ 
+-		bool hasMoreRows(void) const;
++		virtual bool hasMoreRows(void) const;
+ 
+ 		virtual std::string getColumnName(unsigned int nColumn) const = 0;
+ 
+@@ -79,10 +80,20 @@
+ 			const std::string &amp;columns,
+ 			const std::string &amp;newDefinition) = 0;
+ 
++		virtual bool beginTransaction(void) = 0;
++
++		virtual bool endTransaction(void) = 0;
++
+ 		virtual bool executeSimpleStatement(const std::string &amp;sql) = 0;
+ 
+ 		virtual SQLResults *executeStatement(const char *sqlFormat, ...) = 0;
+ 
++		virtual bool prepareStatement(const std::string &amp;statementId,
++			const std::string &amp;sqlFormat) = 0;
++
++		virtual SQLResults *executePreparedStatement(const std::string &amp;statementId,
++			const std::vector&lt;std::string&gt; &amp;values) = 0;
++
+ 	protected:
+ 		std::string m_databaseName;
+ 		bool m_readOnly;
+
+Modified: trunk/SQL/SQLiteBase.cpp
+===================================================================
+--- trunk/SQL/SQLiteBase.cpp	2009-10-25 08:33:44 UTC (rev 1679)
++++ trunk/SQL/SQLiteBase.cpp	2009-11-01 14:48:44 UTC (rev 1680)
+@@ -21,6 +21,7 @@
+ #include &lt;stdarg.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;algorithm&gt;
++#include &lt;utility&gt;
+ #include &lt;iostream&gt;
+ 
+ #include &quot;SQLiteBase.h&quot;
+@@ -29,6 +30,8 @@
+ using std::endl;
+ using std::string;
+ using std::vector;
++using std::map;
++using std::pair;
+ 
+ static int busyHandler(void *pData, int lockNum)
+ {
+@@ -36,8 +39,22 @@
+ 	return 1;
+ }
+ 
++// A function object to delete statements with for_each()
++struct DeleteStatementsFunc
++{
++	public:
++		void operator()(map&lt;string, sqlite3_stmt*&gt;::value_type &amp;p)
++		{
++			if (p.second != NULL)
++			{
++				sqlite3_finalize(p.second);
++			}
++		}
++};
++
+ SQLiteRow::SQLiteRow(const vector&lt;string&gt; &amp;rowColumns, unsigned int nColumns) :
+-	SQLRow(nColumns)
++	SQLRow(nColumns),
++	m_pStatement(NULL)
+ {
+ 	if (rowColumns.empty() == false)
+ 	{
+@@ -54,12 +71,32 @@
+ 	}
+ }
+ 
++SQLiteRow::SQLiteRow(sqlite3_stmt *pStatement, unsigned int nColumns) :
++	SQLRow(nColumns),
++	m_pStatement(pStatement)
++{
++}
++
+ SQLiteRow::~SQLiteRow()
+ {
+ }
+ 
+ string SQLiteRow::getColumn(unsigned int nColumn) const
+ {
++	if (m_pStatement != NULL)
++	{
++		const unsigned char *pTextColumn = sqlite3_column_text(m_pStatement, nColumn);
++		if (pTextColumn != NULL)
++		{
++			return (const char*)pTextColumn;
++		}
++#ifdef DEBUG
++		clog &lt;&lt; &quot;SQLiteRow::getColumn: couldn't get column &quot; &lt;&lt; nColumn &lt;&lt; endl;
++#endif
++
++		return &quot;&quot;;
++	}
++
+ 	if (nColumn &lt; m_nColumns)
+ 	{
+ 		vector&lt;string&gt;::const_iterator colIter = m_columns.begin();
+@@ -80,7 +117,8 @@
+ 
+ SQLiteResults::SQLiteResults(char **results, unsigned long nRows, unsigned int nColumns) :
+ 	SQLResults(nRows, nColumns),
+-	m_results(results)
++	m_results(results),
++	m_pStatement(NULL)
+ {
+ 	// Check we actually have results
+ 	if ((m_results == NULL) ||
+@@ -91,13 +129,43 @@
+ 	}
+ }
+ 
++SQLiteResults::SQLiteResults(sqlite3_stmt *pStatement) :
++	SQLResults(0, sqlite3_column_count(pStatement)),
++	m_results(NULL),
++	m_pStatement(pStatement)
++{
++}
++
+ SQLiteResults::~SQLiteResults()
+ {
+-	sqlite3_free_table(m_results);
++	if (m_results != NULL)
++	{
++		sqlite3_free_table(m_results);
++	}
++	if (m_pStatement != NULL)
++	{
++		rewind();
++	}
+ }
+ 
++bool SQLiteResults::hasMoreRows(void) const
++{
++	if (m_pStatement != NULL)
++	{
++		// There's no way to tell
++		return true;
++	}
++
++	return SQLResults::hasMoreRows();
++}
++
+ string SQLiteResults::getColumnName(unsigned int nColumn) const
+ {
++	if (m_pStatement != NULL)
++	{
++		return sqlite3_column_name(m_pStatement, (int)nColumn);
++	}
++
+ 	if (nColumn &lt; m_nColumns)
+ 	{
+ 		return m_results[nColumn];
+@@ -108,6 +176,20 @@
+ 
+ SQLRow *SQLiteResults::nextRow(void)
+ {
++	if (m_pStatement != NULL)
++	{
++		if (sqlite3_step(m_pStatement) == SQLITE_ROW)
++		{
++			++m_nCurrentRow;
++			return new SQLiteRow(m_pStatement, m_nColumns);
++		}
++#ifdef DEBUG
++		clog &lt;&lt; &quot;SQLiteResults::nextRow: no more row&quot; &lt;&lt; endl;
++#endif
++
++		return NULL;
++	}
++
+ 	if ((m_nCurrentRow &lt; 0) ||
+ 		(m_nCurrentRow &gt;= m_nRows))
+ 	{
+@@ -135,6 +217,17 @@
+ 	return new SQLiteRow(rowColumns, m_nColumns);
+ }
+ 
++bool SQLiteResults::rewind(void)
++{
++	SQLResults::rewind();
++	if (m_pStatement != NULL)
++	{
++		sqlite3_reset(m_pStatement);
++	}
++
++	return true;
++}
++
+ SQLiteBase::SQLiteBase(const string &amp;databaseName,
+ 	bool readOnly, bool onDemand) :
+ 	SQLDB(databaseName, readOnly),
+@@ -207,6 +300,9 @@
+ {
+ 	if (m_pDatabase != NULL)
+ 	{
++		for_each(m_statements.begin(), m_statements.end(),
++			DeleteStatementsFunc());
++
+ 		sqlite3_close(m_pDatabase);
+ 	}
+ }
+@@ -263,6 +359,28 @@
+ 	return executeSimpleStatement(sql);
+ }
+ 
++bool SQLiteBase::beginTransaction(void)
++{
++	if (m_onDemand == true)
++	{
++		// Not applicable
++		return true;
++	}
++
++	return executeSimpleStatement(&quot;BEGIN TRANSACTION;&quot;);
++}
++
++bool SQLiteBase::endTransaction(void)
++{
++	if (m_onDemand == true)
++	{
++		// Not applicable
++		return true;
++	}
++
++	return executeSimpleStatement(&quot;END TRANSACTION;&quot;);
++}
++
+ bool SQLiteBase::executeSimpleStatement(const string &amp;sql)
+ {
+ 	char *errMsg = NULL;
+@@ -372,11 +490,11 @@
+ 	char *errMsg;
+ 	int nRows, nColumns;
+ 	if (sqlite3_get_table(m_pDatabase,
+-			stringBuff,
+-			&amp;results,
+-			&amp;nRows,
+-			&amp;nColumns,
+-			&amp;errMsg) != SQLITE_OK)
++		stringBuff,
++		&amp;results,
++		&amp;nRows,
++		&amp;nColumns,
++		&amp;errMsg) != SQLITE_OK)
+ 	{
+ 		if (errMsg != NULL)
+ 		{
+@@ -400,3 +518,84 @@
+ 
+ 	return pResults;
+ }
++
++bool SQLiteBase::prepareStatement(const string &amp;statementId,
++	const string &amp;sqlFormat)
++{
++	if ((sqlFormat.empty() == true) ||
++		(m_onDemand == true) ||
++		(m_pDatabase == NULL))
++	{
++		return false;
++	}
++
++	map&lt;string, sqlite3_stmt*&gt;::iterator statIter = m_statements.find(statementId);
++	if (statIter != m_statements.end())
++	{
++#ifdef DEBUG
++		clog &lt;&lt; &quot;SQLiteBase::prepareStatement: invalid statement ID &quot; &lt;&lt; statementId &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	sqlite3_stmt *pStatement = NULL;
++	if (sqlite3_prepare_v2(m_pDatabase,
++		sqlFormat.c_str(),
++		(int)sqlFormat.length(),
++		&amp;pStatement,
++		NULL) == SQLITE_OK)
++	{
++		if (pStatement != NULL)
++		{
++#ifdef DEBUG
++			clog &lt;&lt; &quot;SQLiteBase::prepareStatement: compiled statement ID &quot; &lt;&lt; statementId &lt;&lt; endl;
++#endif
++			m_statements.insert(pair&lt;string, sqlite3_stmt*&gt;(statementId, pStatement));
++			return true;
++		}
++	}
++
++	clog &lt;&lt; m_databaseName &lt;&lt; &quot;: failed to compile statement &lt;&quot; &lt;&lt; sqlFormat &lt;&lt; &quot;&gt;&quot; &lt;&lt; endl;
++
++	return false;
++}
++
++SQLResults * SQLiteBase::executePreparedStatement(const string &amp;statementId,
++	const vector&lt;string&gt; &amp;values)
++{
++	int paramIndex = 1;
++
++	map&lt;string, sqlite3_stmt*&gt;::iterator statIter = m_statements.find(statementId);
++	if (statIter == m_statements.end())
++	{
++#ifdef DEBUG
++		clog &lt;&lt; &quot;SQLiteBase::executePreparedStatement: invalid statement ID &quot; &lt;&lt; statementId &lt;&lt; endl;
++#endif
++		return NULL;
++	}
++
++	// Bind values
++	// The left-most parameter's index is 1
++	for (vector&lt;string&gt;::const_iterator valueIter = values.begin();
++		valueIter != values.end(); ++valueIter, ++paramIndex)
++	{
++		int errorCode = sqlite3_bind_text(statIter-&gt;second, paramIndex,
++			valueIter-&gt;c_str(), -1, SQLITE_TRANSIENT);
++		if (errorCode != SQLITE_OK)
++		{
++			clog &lt;&lt; m_databaseName &lt;&lt; &quot;: failed to bind parameter &quot; &lt;&lt; paramIndex
++				&lt;&lt; &quot; to statement ID &quot; &lt;&lt; statementId &lt;&lt; &quot;: error &quot; &lt;&lt; errorCode &lt;&lt; endl;
++			return NULL;
++		}
++#ifdef DEBUG
++		clog &lt;&lt; &quot;SQLiteBase::executePreparedStatement: bound parameter &quot; &lt;&lt; paramIndex
++			&lt;&lt; &quot; size &quot; &lt;&lt; valueIter-&gt;length() &lt;&lt; &quot; to statement ID &quot; &lt;&lt; statementId &lt;&lt; endl;
++#endif
++	}
++
++#ifdef DEBUG
++	clog &lt;&lt; &quot;SQLiteBase::executePreparedStatement: statement ID &quot; &lt;&lt; statementId &lt;&lt; endl;
++#endif
++	return new SQLiteResults(statIter-&gt;second);
++}
++
+
+Modified: trunk/SQL/SQLiteBase.h
+===================================================================
+--- trunk/SQL/SQLiteBase.h	2009-10-25 08:33:44 UTC (rev 1679)
++++ trunk/SQL/SQLiteBase.h	2009-11-01 14:48:44 UTC (rev 1680)
+@@ -21,6 +21,7 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
++#include &lt;map&gt;
+ 
+ #include &lt;sqlite3.h&gt;
+ 
+@@ -31,12 +32,14 @@
+ {
+ 	public:
+ 		SQLiteRow(const std::vector&lt;std::string&gt; &amp;rowColumns, unsigned int nColumns);
++		SQLiteRow(sqlite3_stmt *pStatement, unsigned int nColumns);
+ 		virtual ~SQLiteRow();
+ 
+ 		virtual std::string getColumn(unsigned int nColumn) const;
+ 
+ 	protected:
+ 		std::vector&lt;std::string&gt; m_columns;
++		sqlite3_stmt *m_pStatement;
+ 
+ };
+ 
+@@ -45,14 +48,20 @@
+ {
+ 	public:
+ 		SQLiteResults(char **results, unsigned long nRows, unsigned int nColumns);
++		SQLiteResults(sqlite3_stmt *pStatement);
+ 		virtual ~SQLiteResults();
+ 
++		virtual bool hasMoreRows(void) const;
++
+ 		virtual std::string getColumnName(unsigned int nColumn) const;
+ 
+ 		virtual SQLRow *nextRow(void);
+ 
++		virtual bool rewind(void);
++
+ 	protected:
+ 		char **m_results;
++		sqlite3_stmt *m_pStatement;
+ 
+ 	private:
+ 		SQLiteResults(const SQLiteResults &amp;other);
+@@ -76,13 +85,24 @@
+ 			const std::string &amp;columns,
+ 			const std::string &amp;newDefinition);
+ 
++		virtual bool beginTransaction(void);
++
++		virtual bool endTransaction(void);
++
+ 		virtual bool executeSimpleStatement(const std::string &amp;sql);
+ 
+ 		virtual SQLResults *executeStatement(const char *sqlFormat, ...);
+ 
++		virtual bool prepareStatement(const std::string &amp;statementId,
++			const std::string &amp;sqlFormat);
++
++		virtual SQLResults *executePreparedStatement(const std::string &amp;statementId,
++			const std::vector&lt;std::string&gt; &amp;values);
++
+ 	protected:
+ 		bool m_onDemand;
+ 		sqlite3 *m_pDatabase;
++		std::map&lt;std::string, sqlite3_stmt*&gt; m_statements;
+ 
+ 		void open(void);
+ 		void close(void);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001671.html">[Pinot-svn] r1681 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1670">[ date ]</a>
+              <a href="thread.html#1670">[ thread ]</a>
+              <a href="subject.html#1670">[ subject ]</a>
+              <a href="author.html#1670">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

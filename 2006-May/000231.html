@@ -1,0 +1,344 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r233 - in trunk: Search UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r233%20-%20in%20trunk%3A%20Search%20UI/GTK2/src&In-Reply-To=%3C200605060650.k466oGfc014083%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000230.html">
+   <LINK REL="Next"  HREF="000232.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r233 - in trunk: Search UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r233%20-%20in%20trunk%3A%20Search%20UI/GTK2/src&In-Reply-To=%3C200605060650.k466oGfc014083%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r233 - in trunk: Search UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat May  6 08:50:16 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000230.html">[Pinot-svn] r232 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000232.html">[Pinot-svn] r234 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#231">[ date ]</a>
+              <a href="thread.html#231">[ thread ]</a>
+              <a href="subject.html#231">[ subject ]</a>
+              <a href="author.html#231">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-06 08:50:11 +0200 (Sat, 06 May 2006)
+New Revision: 233
+
+Modified:
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+QueryProperties::getTerms() returns the terms that make up the query. This is
+used by ResultsPage to determine what parts of the extract field should be
+shown in bold text.
+Some other minor changes.
+
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2006-05-06 03:25:23 UTC (rev 232)
++++ trunk/Search/QueryProperties.cpp	2006-05-06 06:50:11 UTC (rev 233)
+@@ -17,7 +17,9 @@
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
+ 
++#include &quot;Document.h&quot;
+ #include &quot;Languages.h&quot;
++#include &quot;Tokenizer.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ QueryProperties::QueryProperties()
+@@ -239,6 +241,24 @@
+ 	return m_labelName;
+ }
+ 
++/// Returns the query's terms.
++void QueryProperties::getTerms(set&lt;string&gt; &amp;terms) const
++{
++	Document doc;
++	string termsString(m_andWords + m_phrase + m_anyWords + m_notWords);
++
++	doc.setData(termsString.c_str(), termsString.length());
++	Tokenizer tokens(&amp;doc);
++
++	terms.clear();
++
++	string token;
++	while (tokens.nextToken(token) == true)
++	{
++		terms.insert(token);
++	}
++}
++
+ /// Returns a displayable representation of this query's properties.
+ string QueryProperties::toString(bool forPresentation) const
+ {
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2006-05-06 03:25:23 UTC (rev 232)
++++ trunk/Search/QueryProperties.h	2006-05-06 06:50:11 UTC (rev 233)
+@@ -18,6 +18,7 @@
+ #define _QUERY_PROPERTIES_H
+ 
+ #include &lt;string&gt;
++#include &lt;set&gt;
+ 
+ #include &quot;Result.h&quot;
+ 
+@@ -95,7 +96,10 @@
+ 		/// Gets the name of the label to use for indexed documents.
+ 		string getLabelName(void) const;
+ 
+-		/// Returns a displayable representation of this query's properties.
++		/// Returns the query's terms.
++		void getTerms(std::set&lt;std::string&gt; &amp;terms) const;
++
++		/// Returns a string representation of this query's properties.
+ 		string toString(bool forPresentation = true) const;
+ 
+ 	protected:
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-05-06 03:25:23 UTC (rev 232)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-05-06 06:50:11 UTC (rev 233)
+@@ -24,6 +24,7 @@
+ #include &lt;gtkmm/textbuffer.h&gt;
+ 
+ #include &quot;HtmlTokenizer.h&quot;
++#include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+@@ -40,10 +41,10 @@
+ using namespace Gdk;
+ using namespace Gtk;
+ 
+-ResultsTree::ResultsTree(const ustring &amp;queryName, Menu *pPopupMenu,
++ResultsTree::ResultsTree(const QueryProperties &amp;queryProps, Menu *pPopupMenu,
+ 	PinotSettings &amp;settings) :
+ 	TreeView(),
+-	m_queryName(queryName),
++	m_queryProps(queryProps),
+ 	m_pPopupMenu(pPopupMenu),
+ 	m_pResultsScrolledwindow(NULL),
+ 	m_settings(settings),
+@@ -88,6 +89,11 @@
+ 	m_pExtractScrolledwindow-&gt;property_window_placement().set_value(CORNER_TOP_LEFT);
+ 	m_pExtractScrolledwindow-&gt;add(*m_extractTextview);
+ 
++	// Create a blod text tag to highlight extract terms with
++	RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
++	RefPtr&lt;TextBuffer::Tag&gt; refBoldTag = refBuffer-&gt;create_tag(&quot;bold-text&quot;);
++	refBoldTag-&gt;property_weight() = Pango::WEIGHT_BOLD;
++
+ 	// Associate the columns model to the results tree
+ 	m_refStore = TreeStore::create(m_resultsColumns);
+ 	set_model(m_refStore);
+@@ -146,6 +152,9 @@
+ 	m_upIconPixbuf = render_icon(Stock::GO_UP, ICON_SIZE_MENU, &quot;MetaSE-pinot&quot;);
+ 	m_downIconPixbuf = render_icon(Stock::GO_DOWN, ICON_SIZE_MENU, &quot;MetaSE-pinot&quot;);
+ 
++	// Get the query's terms now, we'll need them later
++	m_queryProps.getTerms(m_queryTerms);
++
+ 	// Show all
+ 	show();
+ 	m_pResultsScrolledwindow-&gt;show();
+@@ -302,7 +311,7 @@
+ 
+ void ResultsTree::onSelectionChanged(void)
+ {
+-	m_signalSelectionChanged(m_queryName);
++	m_signalSelectionChanged(m_queryProps.getName());
+ }
+ 
+ bool ResultsTree::onSearchEqual(const RefPtr&lt;TreeModel&gt;&amp; model, int column,
+@@ -338,7 +347,7 @@
+ 			set&lt;string&gt; engineNames, indexNames;
+ 			string extract;
+ 
+-			// m_queryName and row[m_resultsColumns.m_queryName] should be equal
++			// The query name and row[m_resultsColumns.m_queryName] should be equal
+ 			string url = from_utf8(row[m_resultsColumns.m_url]);
+ 			unsigned int engineIds = row[m_resultsColumns.m_engines];
+ 			unsigned int indexIds = row[m_resultsColumns.m_indexes];
+@@ -373,11 +382,26 @@
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;ResultsTree::onSelectionSelect: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
+ #endif
+-				extract = history.getItemExtract(from_utf8(m_queryName), engineName, url);
++				extract = history.getItemExtract(from_utf8(m_queryProps.getName()), engineName, url);
+ 			}
+ 
+ 			RefPtr&lt;TextBuffer&gt; refBuffer = m_extractTextview-&gt;get_buffer();
+ 			refBuffer-&gt;set_text(to_utf8(extract));
++
++			// Highlight the query's terms in the extract
++			string lowerExtract(StringManip::toLowerCase(extract));
++			for (set&lt;string&gt;::iterator termIter = m_queryTerms.begin();
++				termIter != m_queryTerms.end(); ++termIter)
++			{
++				string::size_type pos = lowerExtract.find(StringManip::toLowerCase(*termIter));
++				if (pos != string::npos)
++				{
++					// Apply the tag
++					refBuffer-&gt;apply_tag_by_name(&quot;bold-text&quot;, refBuffer-&gt;get_iter_at_offset(pos),
++						refBuffer-&gt;get_iter_at_offset(pos + termIter-&gt;length()));
++				}
++			}
++
+ 			// The extract is not editable
+ 			m_extractTextview-&gt;set_editable(false);
+ 			m_extractTextview-&gt;set_cursor_visible(false);
+@@ -423,14 +447,13 @@
+ 	const vector&lt;Result&gt; &amp;resultsList, const string &amp;charset, bool groupBySearchEngine)
+ {
+ 	std::map&lt;string, TreeModel::iterator&gt; updatedGroups;
+-	string registeredEngineName = engineName;
++	string registeredEngineName(engineName);
++	string queryName(queryProps.getName());
++	string language(queryProps.getLanguage());
++	string labelName(queryProps.getLabelName());
+ 	unsigned int count = 0;
+ 	ResultsModelColumns::ResultType rootType;
+ 
+-	string queryName = queryProps.getName();
+-	string language = queryProps.getLanguage();
+-	string labelName = queryProps.getLabelName();
+-
+ 	// Unselect all
+ 	get_selection()-&gt;unselect_all();
+ 
+@@ -484,9 +507,9 @@
+ 	for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 		resultIter != resultsList.end(); ++resultIter)
+ 	{
+-		string title = resultIter-&gt;getTitle();
+-		string location = resultIter-&gt;getLocation();
+-		string extract = resultIter-&gt;getExtract();
++		string title(resultIter-&gt;getTitle());
++		string location(resultIter-&gt;getLocation());
++		string extract(resultIter-&gt;getExtract());
+ 		float currentScore = resultIter-&gt;getScore();
+ 		string score;
+ 		int rankDiff = 0;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2006-05-06 03:25:23 UTC (rev 232)
++++ trunk/UI/GTK2/src/ResultsTree.h	2006-05-06 06:50:11 UTC (rev 233)
+@@ -41,7 +41,7 @@
+ class ResultsTree : public Gtk::TreeView
+ {
+ 	public:
+-		ResultsTree(const Glib::ustring &amp;queryName, Gtk::Menu *pPopupMenu,
++		ResultsTree(const QueryProperties &amp;queryProps, Gtk::Menu *pPopupMenu,
+ 			PinotSettings &amp;settings);
+ 		virtual ~ResultsTree();
+ 
+@@ -93,7 +93,7 @@
+ 		SigC::Signal1&lt;void, Glib::ustring&gt;&amp; getSelectionChangedSignal(void);
+ 
+ 	protected:
+-		Glib::ustring m_queryName;
++		QueryProperties m_queryProps;
+ 		Gtk::Menu *m_pPopupMenu;
+ 		Gtk::ScrolledWindow *m_pResultsScrolledwindow;
+ 		Glib::RefPtr&lt;Gtk::TreeStore&gt; m_refStore;
+@@ -109,6 +109,7 @@
+ 		Gtk::TextView *m_extractTextview;
+ 		std::set&lt;std::string&gt; m_indexNames;
+ 		bool m_showExtract;
++		std::set&lt;std::string&gt; m_queryTerms;
+ 
+ 		void renderViewStatus(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter);
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-06 03:25:23 UTC (rev 232)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-06 06:50:11 UTC (rev 233)
+@@ -543,8 +543,9 @@
+ 		for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
+-			string title = _(&quot;No title&quot;);
+-			string extract = HtmlTokenizer::stripTags(resultIter-&gt;getExtract());
++			string title(_(&quot;No title&quot;));
++			string extract(HtmlTokenizer::stripTags(resultIter-&gt;getExtract()));
++			string language(resultIter-&gt;getLanguage());
+ 
+ 			// The title may contain formatting
+ 			if (resultIter-&gt;getTitle().empty() == false)
+@@ -552,10 +553,9 @@
+ 				title = HtmlTokenizer::stripTags(resultIter-&gt;getTitle());
+ 			}
+ 
+-			string language = resultIter-&gt;getLanguage();
++			// Use the query's language if the result's is unknown
+ 			if (language.empty() == true)
+ 			{
+-				// Use the query's language
+ 				language = m_queryProps.getLanguage();
+ 			}
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-05-06 03:25:23 UTC (rev 232)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-05-06 06:50:11 UTC (rev 233)
+@@ -888,7 +888,7 @@
+ 				SigC::slot(*this, &amp;mainWindow::on_close_page));
+ 
+ 			// Position the results tree
+-			pResultsTree = manage(new ResultsTree(queryName, resultsMenuitem-&gt;get_submenu(), m_settings));
++			pResultsTree = manage(new ResultsTree(queryProps, resultsMenuitem-&gt;get_submenu(), m_settings));
+ 			pResultsPage = manage(new ResultsPage(queryName, pResultsTree, m_pNotebook-&gt;get_height(), m_settings));
+ 			// Connect to the &quot;changed&quot; signal
+ 			pResultsTree-&gt;getSelectionChangedSignal().connect(
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000230.html">[Pinot-svn] r232 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000232.html">[Pinot-svn] r234 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#231">[ date ]</a>
+              <a href="thread.html#231">[ thread ]</a>
+              <a href="subject.html#231">[ subject ]</a>
+              <a href="author.html#231">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

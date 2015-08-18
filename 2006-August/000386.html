@@ -1,0 +1,413 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r393 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r393%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608111520.k7BFKUNW025063%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000385.html">
+   <LINK REL="Next"  HREF="000387.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r393 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r393%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608111520.k7BFKUNW025063%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r393 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug 11 17:20:30 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000385.html">[Pinot-svn] r392 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000387.html">[Pinot-svn] r394 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#386">[ date ]</a>
+              <a href="thread.html#386">[ thread ]</a>
+              <a href="subject.html#386">[ subject ]</a>
+              <a href="author.html#386">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-11 17:20:29 +0200 (Fri, 11 Aug 2006)
+New Revision: 393
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+The index queue is now a queue, not a set. Uniqueness is guaranteed by
+ThreadsManager::m_beingIndexed, which now covers indexing and updating.
+URLs are removed from it by pop_queue().
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2006-08-11 15:13:19 UTC (rev 392)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2006-08-11 15:20:29 UTC (rev 393)
+@@ -106,6 +106,8 @@
+ 
+ void DaemonState::on_thread_end(WorkerThread *pThread)
+ {
++	string indexedUrl;
++
+ 	if (pThread == NULL)
+ 	{
+ 		return;
+@@ -196,24 +198,9 @@
+ 			return;
+ 		}
+ 
+-		// Did the thread perform an update ?
+-		if (pIndexThread-&gt;isNewDocument() == true)
+-		{
+-			string url(pIndexThread-&gt;getURL());
++		// Get the URL we have just indexed
++		indexedUrl = pIndexThread-&gt;getURL();
+ 
+-			// Update the in-progress list
+-			if (write_lock_lists() == true)
+-			{
+-				set&lt;string&gt;::iterator urlIter = m_beingIndexed.find(url);
+-				if (urlIter != m_beingIndexed.end())
+-				{
+-					m_beingIndexed.erase(urlIter);
+-				}
+-
+-				unlock_lists();
+-			}
+-		}
+-
+ 		// Get another file from the directory scanner if possible
+ 		if (m_crawling == true)
+ 		{
+@@ -240,7 +227,7 @@
+ 	delete pThread;;
+ 
+ 	// We might be able to run a queued action
+-	pop_queue();
++	pop_queue(indexedUrl);
+ }
+ 
+ void DaemonState::on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, string indexName)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-11 15:13:19 UTC (rev 392)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-11 15:20:29 UTC (rev 393)
+@@ -30,6 +30,7 @@
+ 
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;XmlTokenizer.h&quot;
++#include &quot;MIMEScanner.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+@@ -172,7 +173,7 @@
+ 	SigC::Object(),
+ 	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+-	m_nextId(1),
++	m_nextThreadId(1),
+ 	m_backgroundThreadsCount(0),
+ 	m_numCPUs(1)
+ {
+@@ -291,13 +292,33 @@
+ 		return false;
+ 	}
+ 
+-	// If the document is mail, we can't index it again
++	// If the document is a mail message, we can't index it again
+ 	Url urlObj(location);
+ 	if (urlObj.getProtocol() == &quot;mailbox&quot;)
+ 	{
+ 		return false;
+ 	}
+ 
++	// Is the document being indexed/updated ?
++	if (write_lock_lists() == true)
++	{
++		bool beingProcessed = true;
++
++		if (m_beingIndexed.find(location) == m_beingIndexed.end())
++		{
++			m_beingIndexed.insert(location);
++			beingProcessed = false;
++		}
++
++		unlock_lists();
++
++		if (beingProcessed == true)
++		{
++			// FIXME: we may have to set labels on this document
++			return false;
++		}
++	}
++
+ 	// Is it an update ?
+ 	XapianIndex index(m_defaultIndexLocation);
+ 	unsigned int docId = index.hasDocument(docInfo.getLocation());
+@@ -308,26 +329,6 @@
+ 	}
+ 	else
+ 	{
+-		bool isNewDocument = false;
+-
+-		// Is the document being indexed ?
+-		if (write_lock_lists() == true)
+-		{
+-			if (m_beingIndexed.find(location) == m_beingIndexed.end())
+-			{
+-				m_beingIndexed.insert(location);
+-				isNewDocument = true;
+-			}
+-
+-			unlock_lists();
+-		}
+-
+-		if (isNewDocument == false)
+-		{
+-			// FIXME: the document is being indexed but we may have to set labels on it
+-			return false;
+-		}
+-
+ 		// This is a new document
+ 		start_thread(new IndexingThread(docInfo, docId, m_defaultIndexLocation));
+ 	}
+@@ -342,7 +343,7 @@
+ 		return false;
+ 	}
+ 
+-	pWorkerThread-&gt;setId(m_nextId);
++	pWorkerThread-&gt;setId(m_nextThreadId);
+ 	if (inBackground == true)
+ 	{
+ 		pWorkerThread-&gt;inBackground();
+@@ -365,7 +366,7 @@
+ 
+ 		unlock_threads();
+ 	}
+-	++m_nextId;
++	++m_nextThreadId;
+ 
+ 	return true;
+ }
+@@ -478,12 +479,11 @@
+ 		}
+ 	}
+ 
+-
+ 	if (addToQueue == true)
+ 	{
+ 		if (write_lock_lists() == true)
+ 		{
+-			m_indexQueue.insert(docInfo);
++			m_indexQueue.push(docInfo);
+ 
+ 			unlock_lists();
+ 		}
+@@ -494,34 +494,42 @@
+ 	return index_document(docInfo);
+ }
+ 
+-bool ThreadsManager::pop_queue(void)
++bool ThreadsManager::pop_queue(const string &amp;urlWasIndexed)
+ {
++	bool getItem = true;
++	bool foundItem = false;
++
+ 	if (get_threads_count() &gt;= m_maxIndexThreads)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;ThreadsManager::pop_queue: too many threads&quot; &lt;&lt; endl;
+ #endif
+-		return false;
++		getItem = false;
+ 	}
+ 
+ 	DocumentInfo docInfo;
+-	bool foundItem = false;
+ 
+ 	if (write_lock_lists() == true)
+ 	{
+-		if (m_indexQueue.empty() == false)
++		// Update the in-progress list
++		if (urlWasIndexed.empty() == false)
+ 		{
+-			// Get the first item
+-			std::set&lt;DocumentInfo&gt;::iterator queueIter = m_indexQueue.begin();
+-			if (queueIter != m_indexQueue.end())
++			set&lt;string&gt;::iterator urlIter = m_beingIndexed.find(urlWasIndexed);
++			if (urlIter != m_beingIndexed.end())
+ 			{
+-				docInfo = *queueIter;
+-				foundItem = true;
+-
+-				m_indexQueue.erase(queueIter);
++				m_beingIndexed.erase(urlIter);
+ 			}
+ 		}
+ 
++		// Get the first item ?
++		if ((getItem == true) &amp;&amp;
++			(m_indexQueue.empty() == false))
++		{
++			docInfo = m_indexQueue.front();
++			m_indexQueue.pop();
++			foundItem = true;
++		}
++
+ 		unlock_lists();
+ 	}
+ 
+@@ -534,6 +542,18 @@
+ 	return index_document(docInfo);
+ }
+ 
++void ThreadsManager::get_statistics(unsigned int &amp;queueSize)
++{
++	if (read_lock_lists() == true)
++	{
++		// We want the number of documents being indexed,
++		// not the number of document waiting in the queue
++		queueSize = m_beingIndexed.size();
++
++		unlock_lists();
++	}
++}
++
+ IndexBrowserThread::IndexBrowserThread(const string &amp;indexName,
+ 	const string &amp;labelName, unsigned int maxDocsCount, unsigned int startDoc) :
+ 	WorkerThread(),
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-11 15:13:19 UTC (rev 392)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-11 15:20:29 UTC (rev 393)
+@@ -20,6 +20,7 @@
+ #include &lt;time.h&gt;
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
++#include &lt;queue&gt;
+ #include &lt;set&gt;
+ #include &lt;map&gt;
+ #include &lt;pthread.h&gt;
+@@ -120,9 +121,9 @@
+ 
+ 		bool queue_index(const DocumentInfo &amp;docInfo);
+ 
+-		bool pop_queue(void);
++		bool pop_queue(const std::string &amp;urlWasIndexed = &quot;&quot;);
+ 
+-		std::set&lt;std::string&gt; m_beingIndexed;
++		void get_statistics(unsigned int &amp;queueSize);
+ 
+ 	protected:
+ 		SigC::Connection m_threadsEndConnection;
+@@ -131,11 +132,12 @@
+ 		std::map&lt;WorkerThread *, Glib::Thread *&gt; m_threads;
+ 		std::string m_defaultIndexLocation;
+ 		unsigned int m_maxIndexThreads;
+-		unsigned int m_nextId;
++		unsigned int m_nextThreadId;
+ 		unsigned int m_backgroundThreadsCount;
+ 		long m_numCPUs;
+ 		SigC::Signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+-		std::set&lt;DocumentInfo&gt; m_indexQueue;
++		std::queue&lt;DocumentInfo&gt; m_indexQueue;
++		std::set&lt;std::string&gt; m_beingIndexed;
+ 
+ 		bool read_lock_threads(void);
+ 		bool write_lock_threads(void);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-08-11 15:13:19 UTC (rev 392)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-08-11 15:20:29 UTC (rev 393)
+@@ -807,6 +807,7 @@
+ void mainWindow::on_thread_end(WorkerThread *pThread)
+ {
+ 	ustring status;
++	string indexedUrl;
+ 
+ 	if (pThread == NULL)
+ 	{
+@@ -1121,6 +1122,9 @@
+ 			return;
+ 		}
+ 
++		// Get the URL we have just indexed
++		indexedUrl = pIndexThread-&gt;getURL();
++
+ 		// Get the document properties
+ 		unsigned int docId = pIndexThread-&gt;getDocumentID();
+ 		DocumentInfo docInfo = pIndexThread-&gt;getDocumentInfo();
+@@ -1150,24 +1154,10 @@
+ 		}
+ 		else
+ 		{
+-			string url = pIndexThread-&gt;getURL();
+-
+ 			status = _(&quot;Indexed&quot;);
+ 			status += &quot; &quot;;
+-			status += to_utf8(url);
++			status += to_utf8(indexedUrl);
+ 
+-			// Update the in-progress list
+-			if (m_state.write_lock_lists() == true)
+-			{
+-				set&lt;string&gt;::iterator urlIter = m_state.m_beingIndexed.find(url);
+-				if (urlIter != m_state.m_beingIndexed.end())
+-				{
+-					m_state.m_beingIndexed.erase(urlIter);
+-				}
+-
+-				m_state.unlock_lists();
+-			}
+-
+ 			if (pIndexTree != NULL)
+ 			{
+ 				unsigned int rowsCount = pIndexTree-&gt;getRowsCount();
+@@ -1253,7 +1243,7 @@
+ 	delete pThread;;
+ 
+ 	// We might be able to run a queued action
+-	m_state.pop_queue();
++	m_state.pop_queue(indexedUrl);
+ 
+ 	// Any threads left to return ?
+ 	if (m_state.get_threads_count() == 0)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000385.html">[Pinot-svn] r392 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000387.html">[Pinot-svn] r394 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#386">[ date ]</a>
+              <a href="thread.html#386">[ thread ]</a>
+              <a href="subject.html#386">[ subject ]</a>
+              <a href="author.html#386">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

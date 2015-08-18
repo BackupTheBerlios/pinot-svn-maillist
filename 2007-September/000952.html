@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r958 - in trunk: Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r958%20-%20in%20trunk%3A%20Search%20Utils&In-Reply-To=%3C200709010507.l8157hd2021173%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000951.html">
+   <LINK REL="Next"  HREF="000953.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r958 - in trunk: Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r958%20-%20in%20trunk%3A%20Search%20Utils&In-Reply-To=%3C200709010507.l8157hd2021173%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r958 - in trunk: Search Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep  1 07:07:43 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000951.html">[Pinot-svn] r957 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000953.html">[Pinot-svn] r959 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#952">[ date ]</a>
+              <a href="thread.html#952">[ thread ]</a>
+              <a href="subject.html#952">[ subject ]</a>
+              <a href="author.html#952">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-01 07:07:38 +0200 (Sat, 01 Sep 2007)
+New Revision: 958
+
+Modified:
+   trunk/Search/OpenSearchParser.cpp
+   trunk/Utils/StringManip.cpp
+   trunk/Utils/Url.cpp
+Log:
+Fixed variable shadowing.
+
+
+Modified: trunk/Search/OpenSearchParser.cpp
+===================================================================
+--- trunk/Search/OpenSearchParser.cpp	2007-09-01 05:05:22 UTC (rev 957)
++++ trunk/Search/OpenSearchParser.cpp	2007-09-01 05:07:38 UTC (rev 958)
+@@ -185,11 +185,10 @@
+ 		for (Node::NodeList::const_iterator iter = childNodes.begin();
+ 			iter != childNodes.end(); ++iter)
+ 		{
+-			Node *pNode = (*iter);
++			Node *pChildNode = (*iter);
++			ustring nodeName(pChildNode-&gt;get_name());
++			ustring nodeContent(getNodeContent(pChildNode));
+ 
+-			ustring nodeName = pNode-&gt;get_name();
+-			ustring nodeContent = getNodeContent(pNode);
+-
+ 			// Is this an OpenSearch extension ?
+ 			// FIXME: make sure namespace is opensearch
+ 			if (nodeName == &quot;totalResults&quot;)
+@@ -222,7 +221,7 @@
+ 
+ 			// Go through the item's subnodes
+ 			ustring title, url, extract;
+-			const Node::NodeList itemChildNodes = pNode-&gt;get_children();
++			const Node::NodeList itemChildNodes = pChildNode-&gt;get_children();
+ 			for (Node::NodeList::const_iterator itemIter = itemChildNodes.begin();
+ 				itemIter != itemChildNodes.end(); ++itemIter)
+ 			{
+@@ -342,15 +341,16 @@
+ 		{
+ 			for (Node::NodeList::const_iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+ 			{
+-				Node *pNode = (*iter);
+-				Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++				Node *pChildNode = (*iter);
++				Element *pElem = dynamic_cast&lt;Element*&gt;(pChildNode);
+ 				if (pElem == NULL)
+ 				{
+ 					continue;
+ 				}
+ 
+-				ustring nodeName = pNode-&gt;get_name();
+-				ustring nodeContent = getNodeContent(pNode);
++				ustring nodeName(pChildNode-&gt;get_name());
++				ustring nodeContent(getNodeContent(pChildNode));
++
+ 				if (nodeName == &quot;ShortName&quot;)
+ 				{
+ 					properties.m_name = nodeContent;
+
+Modified: trunk/Utils/StringManip.cpp
+===================================================================
+--- trunk/Utils/StringManip.cpp	2007-09-01 05:05:22 UTC (rev 957)
++++ trunk/Utils/StringManip.cpp	2007-09-01 05:07:38 UTC (rev 958)
+@@ -223,7 +223,7 @@
+ /// Trims spaces at the start and end of a string.
+ unsigned int StringManip::trimSpaces(string &amp;str)
+ {
+-	unsigned int pos = 0;
++	string::size_type pos = 0;
+ 	unsigned int count = 0;
+ 
+ 	while ((str.empty() == false) &amp;&amp; (pos &lt; str.length()))
+@@ -238,7 +238,7 @@
+ 		++count;
+ 	}
+ 
+-	for (unsigned int pos = str.length() - 1;
++	for (pos = str.length() - 1;
+ 		(str.empty() == false) &amp;&amp; (pos &gt;= 0); --pos)
+ 	{
+ 		if (isspace(str[pos]) == 0)
+
+Modified: trunk/Utils/Url.cpp
+===================================================================
+--- trunk/Utils/Url.cpp	2007-09-01 05:05:22 UTC (rev 957)
++++ trunk/Utils/Url.cpp	2007-09-01 05:07:38 UTC (rev 958)
+@@ -357,9 +357,9 @@
+ 		}
+ 		else
+ 		{
+-			string level(hostName.substr(pos + 1, endPos - pos));
+-			level += reducedHost;
+-			reducedHost = level;
++			string levelled(hostName.substr(pos + 1, endPos - pos));
++			levelled += reducedHost;
++			reducedHost = levelled;
+ 		}
+ 
+ 		// Next
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000951.html">[Pinot-svn] r957 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000953.html">[Pinot-svn] r959 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#952">[ date ]</a>
+              <a href="thread.html#952">[ thread ]</a>
+              <a href="subject.html#952">[ subject ]</a>
+              <a href="author.html#952">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

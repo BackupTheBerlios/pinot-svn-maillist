@@ -1,0 +1,352 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1263 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1263%20-%20trunk/SQL&In-Reply-To=%3C200805201249.m4KCnZsA015666%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001256.html">
+   <LINK REL="Next"  HREF="001258.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1263 - trunk/SQL</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1263%20-%20trunk/SQL&In-Reply-To=%3C200805201249.m4KCnZsA015666%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1263 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue May 20 14:49:35 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001256.html">[Pinot-svn] r1262 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001258.html">[Pinot-svn] r1264 - in trunk: SQL UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1257">[ date ]</a>
+              <a href="thread.html#1257">[ thread ]</a>
+              <a href="subject.html#1257">[ subject ]</a>
+              <a href="author.html#1257">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-20 14:49:34 +0200 (Tue, 20 May 2008)
+New Revision: 1263
+
+Modified:
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/QueryHistory.h
+Log:
+Date is now part of the primary key so that we can have several snapshots of
+query results.
+
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2008-05-19 10:05:32 UTC (rev 1262)
++++ trunk/SQL/QueryHistory.cpp	2008-05-20 12:49:34 UTC (rev 1263)
+@@ -23,7 +23,6 @@
+ #include &lt;cstdlib&gt;
+ 
+ #include &quot;Url.h&quot;
+-#include &quot;TimeConverter.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ 
+ using std::cout;
+@@ -44,8 +43,6 @@
+ /// Creates the QueryHistory table in the database.
+ bool QueryHistory::create(const string &amp;database)
+ {
+-	bool success = true;
+-
+ 	// The specified path must be a file
+ 	if (SQLiteBase::check(database) == false)
+ 	{
+@@ -53,24 +50,34 @@
+ 	}
+ 
+ 	SQLiteBase db(database);
++	string tableDefinition(&quot;QueryName VARCHAR(255), EngineName VARCHAR(255), HostName VARCHAR(255), \
++		Url VARCHAR(255), Title VARCHAR(255), Extract VARCHAR(255), Language VARCHAR(255), \
++		Score FLOAT, Date INTEGER, PRIMARY KEY(QueryName, EngineName, Url, Date)&quot;);
+ 
+ 	// Does QueryHistory exist ?
+ 	if (db.executeSimpleStatement(&quot;SELECT * FROM QueryHistory LIMIT 1;&quot;) == false)
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;QueryHistory::create: QueryHistory doesn't exist&quot; &lt;&lt; endl;
+-#endif
+ 		// Create the table
+-		if (db.executeSimpleStatement(&quot;CREATE TABLE QueryHistory (QueryName VARCHAR(255), \
+-			EngineName VARCHAR(255), HostName VARCHAR(255), Url VARCHAR(255), Title VARCHAR(255), \
+-			Extract VARCHAR(255), Language VARCHAR(255), Score FLOAT, PrevScore FLOAT, Date INTEGER, \
+-			PRIMARY KEY(QueryName, EngineName, Url));&quot;) == false)
++		if (db.executeSimpleStatement(&quot;CREATE TABLE QueryHistory (&quot; + tableDefinition + &quot;);&quot;) == false)
+ 		{
+-			success = false;
++			return false;
+ 		}
+ 	}
++	else
++	{
++		// Previous versions had a PrevScore field, so check for it
++		if (db.executeSimpleStatement(&quot;SELECT PrevScore FROM QueryHistory LIMIT 1;&quot;) == true)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;QueryHistory::create: QueryHistory needs updating&quot; &lt;&lt; endl;
++#endif
++			db.alterTable(&quot;QueryHistory&quot;,
++				&quot;QueryName, EngineName, HostName, Url, Title, Extract, Language, Score, Date&quot;,
++				tableDefinition);
++		}
++	}
+ 
+-	return success;
++	return true;
+ }
+ 
+ /// Inserts an URL.
+@@ -82,7 +89,7 @@
+ 	bool success = false;
+ 
+ 	SQLResults *results = executeStatement(&quot;INSERT INTO QueryHistory \
+-		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%q', '%f', '0.0', '%d');&quot;,
++		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%q', '%f', '%d');&quot;,
+ 		queryName.c_str(), engineName.c_str(), hostName.c_str(),
+ 		Url::escapeUrl(url).c_str(), title.c_str(), extract.c_str(), charset.c_str(),
+ 		score, time(NULL));
+@@ -101,18 +108,28 @@
+ {
+ 	float score = 0;
+ 
+-	SQLResults *results = executeStatement(&quot;SELECT Score, PrevScore FROM QueryHistory \
+-		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';&quot;,
++	SQLResults *results = executeStatement(&quot;SELECT Score FROM QueryHistory \
++		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q' ORDER BY Date DESC;&quot;,
+ 		queryName.c_str(), engineName.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
++		previousScore = 0;
++
+ 		SQLRow *row = results-&gt;nextRow();
+ 		if (row != NULL)
+ 		{
+ 			score = (float)atof(row-&gt;getColumn(0).c_str());
+-			previousScore = (float)atof(row-&gt;getColumn(1).c_str());
+ 
+ 			delete row;
++
++			// Get the score of the second last run
++			SQLRow *row = results-&gt;nextRow();
++			if (row != NULL)
++			{
++				previousScore = (float)atof(row-&gt;getColumn(0).c_str());
++
++				delete row;
++			}
+ 		}
+ 
+ 		delete results;
+@@ -121,26 +138,6 @@
+ 	return score;
+ }
+ 
+-/// Updates an URL's details.
+-bool QueryHistory::updateItem(const string &amp;queryName, const string &amp;engineName, const string &amp;url,
+-	const string &amp;title, const string &amp;extract, const string &amp;charset, float score)
+-{
+-	bool success = false;
+-
+-	SQLResults *results = executeStatement(&quot;UPDATE QueryHistory SET PrevScore=Score, \
+-		Score=%f, Date='%d', Title='%q', Extract='%q', Language='%q' \
+-		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';&quot;,
+-		score, time(NULL), title.c_str(), extract.c_str(), charset.c_str(),
+-		queryName.c_str(), engineName.c_str(), Url::escapeUrl(url).c_str());
+-	if (results != NULL)
+-	{
+-		success = true;
+-		delete results;
+-	}
+-
+-	return success;
+-}
+-
+ /// Gets the list of engines the query was run on.
+ bool QueryHistory::getEngines(const string &amp;queryName, set&lt;string&gt; &amp;enginesList)
+ {
+@@ -178,7 +175,7 @@
+ 	bool success = false;
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Title, Url, Language, Extract, Score \
+-		FROM QueryHistory WHERE QueryName='%q' AND EngineName='%q' ORDER BY Score DESC \
++		FROM QueryHistory WHERE QueryName='%q' AND EngineName='%q' ORDER BY Date, Score DESC \
+ 		LIMIT %u;&quot;, queryName.c_str(), engineName.c_str(), max);
+ 	if (results != NULL)
+ 	{
+@@ -215,7 +212,7 @@
+ 	string extract;
+ 
+ 	SQLResults *results = executeStatement(&quot;SELECT Extract, Language FROM QueryHistory \
+-		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';&quot;,
++		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q' ORDER BY Date DESC;&quot;,
+ 		queryName.c_str(), engineName.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+@@ -269,55 +266,69 @@
+ 	return success;
+ }
+ 
+-/// Gets a query's last run time.
+-string QueryHistory::getLastRun(const string &amp;queryName, const string &amp;engineName)
++/// Gets a query's latest run times.
++bool QueryHistory::getLatestRuns(const string &amp;queryName, const string &amp;engineName,
++	unsigned int runCount, set&lt;time_t&gt; &amp;runTimes)
+ {
+ 	SQLResults *results = NULL;
+-	string lastRun;
++	bool success = false;
+ 
+ 	if (queryName.empty() == true)
+ 	{
+-		return &quot;&quot;;
++		return false;
+ 	}
+ 
+ 	if (engineName.empty() == true)
+ 	{
+-		results = executeStatement(&quot;SELECT MAX(Date) FROM QueryHistory \
+-			WHERE QueryName='%q';&quot;, queryName.c_str());
++		results = executeStatement(&quot;SELECT Date FROM QueryHistory \
++			WHERE QueryName='%q' GROUP BY EngineName ORDER By Date DESC LIMIT %u;&quot;,
++			queryName.c_str(), runCount);
+ 	}
+ 	else
+ 	{
+-		results = executeStatement(&quot;SELECT MAX(Date) FROM QueryHistory \
+-			WHERE QueryName='%q' AND EngineName='%q';&quot;,
+-			queryName.c_str(), engineName.c_str());
++		results = executeStatement(&quot;SELECT Date FROM QueryHistory \
++			WHERE QueryName='%q' AND EngineName='%q' GROUP BY Date ORDER By Date DESC LIMIT %u;&quot;,
++			queryName.c_str(), engineName.c_str(), runCount);
+ 	}
+ 
+ 	if (results != NULL)
+ 	{
+-		SQLRow *row = results-&gt;nextRow();
+-		if (row != NULL)
++		while (results-&gt;hasMoreRows() == true)
+ 		{
+-			int latestDate = atoi(row-&gt;getColumn(0).c_str());
+-			if (latestDate &gt; 0)
++			SQLRow *row = results-&gt;nextRow();
++			if (row == NULL)
+ 			{
+-				lastRun = TimeConverter::toTimestamp((time_t)latestDate);
++				break;
+ 			}
+ 
++			int runDate = atoi(row-&gt;getColumn(0).c_str());
++			if (runDate &gt; 0)
++			{
++				runTimes.insert((time_t)runDate);
++			}
++			success = true;
++
+ 			delete row;
+ 		}
+ 
+ 		delete results;
+ 	}
+ 
+-	return lastRun;
++	return success;
+ }
+ 
+ /// Deletes items at least as old as the given date.
+ bool QueryHistory::deleteItems(const string &amp;queryName, const string &amp;engineName,
+ 	time_t cutOffDate)
+ {
++	if (cutOffDate == 0)
++	{
++		// Nothing to delete
++		return true;
++	}
++
+ 	SQLResults *results = executeStatement(&quot;DELETE FROM QueryHistory \
+-		WHERE QueryName='%q' AND EngineName='%q' AND Date&lt;='%d';&quot;,
++		WHERE QueryName='%q' AND EngineName='%q' AND Date&lt;'%d';&quot;,
+ 		queryName.c_str(), engineName.c_str(), cutOffDate);
+ 	if (results != NULL)
+ 	{
+@@ -358,6 +369,12 @@
+ /// Expires items older than the given date.
+ bool QueryHistory::expireItems(time_t expiryDate)
+ {
++	if (expiryDate == 0)
++	{
++		// Nothing to delete
++		return true;
++	}
++
+ 	SQLResults *results = executeStatement(&quot;DELETE FROM QueryHistory \
+ 		WHERE Date&lt;'%d';&quot;, expiryDate);
+ 	if (results != NULL)
+
+Modified: trunk/SQL/QueryHistory.h
+===================================================================
+--- trunk/SQL/QueryHistory.h	2008-05-19 10:05:32 UTC (rev 1262)
++++ trunk/SQL/QueryHistory.h	2008-05-20 12:49:34 UTC (rev 1263)
+@@ -47,10 +47,6 @@
+ 		float hasItem(const std::string &amp;queryName, const std::string &amp;engineName, const std::string &amp;url,
+ 			float &amp;previousScore);
+ 
+-		/// Updates an URL's details.
+-		bool updateItem(const std::string &amp;queryName, const std::string &amp;engineName, const std::string &amp;url,
+-			const std::string &amp;title, const std::string &amp;extract, const std::string &amp;charset, float score);
+-
+ 		/// Gets the list of engines the query was run on.
+ 		bool getEngines(const std::string &amp;queryName, std::set&lt;std::string&gt; &amp;enginesList);
+ 
+@@ -66,8 +62,9 @@
+ 		bool findUrlsLike(const std::string &amp;url, unsigned int count,
+ 			std::set&lt;std::string&gt; &amp;urls);
+ 
+-		/// Gets a query's last run time.
+-		std::string getLastRun(const std::string &amp;queryName, const std::string &amp;engineName = &quot;&quot;);
++		/// Gets a query's latest run times.
++		bool getLatestRuns(const std::string &amp;queryName, const std::string &amp;engineName,
++			unsigned int runCount, std::set&lt;time_t&gt; &amp;runTimes);
+ 
+ 		/// Deletes items at least as old as the given date.
+ 		bool deleteItems(const std::string &amp;queryName, const std::string &amp;engineName,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001256.html">[Pinot-svn] r1262 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001258.html">[Pinot-svn] r1264 - in trunk: SQL UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1257">[ date ]</a>
+              <a href="thread.html#1257">[ thread ]</a>
+              <a href="subject.html#1257">[ subject ]</a>
+              <a href="author.html#1257">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

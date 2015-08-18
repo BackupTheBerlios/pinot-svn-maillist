@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r830 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r830%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200705060258.l462wov8020690%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000823.html">
+   <LINK REL="Next"  HREF="000825.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r830 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r830%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200705060258.l462wov8020690%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r830 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun May  6 04:58:50 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000823.html">[Pinot-svn] r829 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000825.html">[Pinot-svn] r831 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#824">[ date ]</a>
+              <a href="thread.html#824">[ thread ]</a>
+              <a href="subject.html#824">[ subject ]</a>
+              <a href="author.html#824">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-06 04:58:49 +0200 (Sun, 06 May 2007)
+New Revision: 830
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+Log:
+In flat mode, don't attempt updating the parent group, there isn't any. This
+fixes a crash when unindexing documents.
+This bug was reported by Marco &lt;visik7 at tin dot it&gt;.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-05-06 02:15:53 UTC (rev 829)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-05-06 02:58:49 UTC (rev 830)
+@@ -848,6 +848,7 @@
+ 	list&lt;TreeModel::Path&gt;::iterator itemPath = selectedItems.begin();
+ 	TreeModel::iterator iter = m_refStore-&gt;get_iter(*itemPath);
+ 	TreeModel::Row row = *iter;
++
+ 	return row[m_resultsColumns.m_url];
+ }
+ 
+@@ -869,7 +870,8 @@
+ 		TreeModel::iterator iter = m_refStore-&gt;get_iter(*itemPath);
+ 		TreeModel::Row row = *iter;
+ 
+-		if (row[m_resultsColumns.m_resultType] != ResultsModelColumns::ROW_RESULT)
++		ResultsModelColumns::RowType type = row[m_resultsColumns.m_resultType];
++		if (type != ResultsModelColumns::ROW_RESULT)
+ 		{
+ 			continue;
+ 		}
+@@ -929,8 +931,9 @@
+ 	{
+ 		TreeModel::iterator iter = m_refStore-&gt;get_iter(*itemPath);
+ 		TreeModel::Row row = *iter;
+-
+-		if (row[m_resultsColumns.m_resultType] != ResultsModelColumns::ROW_RESULT)
++  
++		ResultsModelColumns::RowType type = row[m_resultsColumns.m_resultType];
++		if (type != ResultsModelColumns::ROW_RESULT)
+ 		{
+ 			continue;
+ 		}
+@@ -992,7 +995,8 @@
+ 		bool updateParent = false;
+ 
+ 		// This could be a group that's in the map and should be removed first
+-		if (row[m_resultsColumns.m_resultType] != ResultsModelColumns::ROW_RESULT)
++		ResultsModelColumns::RowType type = row[m_resultsColumns.m_resultType];
++		if (type != ResultsModelColumns::ROW_RESULT)
+ 		{
+ 			string groupName(from_utf8(row[m_resultsColumns.m_text]));
+ 			std::map&lt;string, TreeModel::iterator&gt;::iterator mapIter = m_resultsGroups.find(groupName);
+@@ -1004,7 +1008,7 @@
+ #endif
+ 			}
+ 		}
+-		else
++		else if (m_groupMode != FLAT)
+ 		{
+ 			// This item is a result
+ 			parentIter = row.parent();
+@@ -1061,8 +1065,9 @@
+ 	{
+ 		TreeModel::Row row = *parentIter;
+ 
+-		if ((row[m_resultsColumns.m_resultType] != ResultsModelColumns::ROW_ENGINE) &amp;&amp;
+-			(row[m_resultsColumns.m_resultType] != ResultsModelColumns::ROW_HOST))
++		ResultsModelColumns::RowType type = row[m_resultsColumns.m_resultType];
++		if ((type != ResultsModelColumns::ROW_ENGINE) &amp;&amp;
++			(type != ResultsModelColumns::ROW_HOST))
+ 		{
+ 			continue;
+ 		}
+@@ -1073,7 +1078,8 @@
+ 		{
+ 			row = *iter;
+ 
+-			if ((row[m_resultsColumns.m_resultType] == ResultsModelColumns::ROW_RESULT) &amp;&amp;
++			type = row[m_resultsColumns.m_resultType];
++			if ((type == ResultsModelColumns::ROW_RESULT) &amp;&amp;
+ 				(row[m_resultsColumns.m_engines] == engineId) &amp;&amp;
+ 				(row[m_resultsColumns.m_indexes] == indexId))
+ 			{
+@@ -1407,7 +1413,8 @@
+ 	int averageScore = 0;
+ 
+ 	// Check the iterator doesn't point to a result
+-	if (groupRow[m_resultsColumns.m_resultType] == ResultsModelColumns::ROW_RESULT)
++	ResultsModelColumns::RowType type = groupRow[m_resultsColumns.m_resultType];
++	if (type == ResultsModelColumns::ROW_RESULT)
+ 	{
+ 		return;
+ 	}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000823.html">[Pinot-svn] r829 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000825.html">[Pinot-svn] r831 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#824">[ date ]</a>
+              <a href="thread.html#824">[ thread ]</a>
+              <a href="subject.html#824">[ subject ]</a>
+              <a href="author.html#824">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

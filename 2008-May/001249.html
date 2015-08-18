@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1255 - trunk/IndexSearch
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1255%20-%20trunk/IndexSearch&In-Reply-To=%3C200805161508.m4GF87e9030772%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001248.html">
+   <LINK REL="Next"  HREF="001250.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1255 - trunk/IndexSearch</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1255%20-%20trunk/IndexSearch&In-Reply-To=%3C200805161508.m4GF87e9030772%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1255 - trunk/IndexSearch">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri May 16 17:08:07 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001248.html">[Pinot-svn] r1254 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001250.html">[Pinot-svn] r1256 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1249">[ date ]</a>
+              <a href="thread.html#1249">[ thread ]</a>
+              <a href="subject.html#1249">[ subject ]</a>
+              <a href="author.html#1249">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-16 17:08:07 +0200 (Fri, 16 May 2008)
+New Revision: 1255
+
+Modified:
+   trunk/IndexSearch/DBusIndex.cpp
+Log:
+Don't serialize to DBus empty fields. Added extract to the mix.
+Both getLabels() and getDocumentLabels() now always query the daemon and not
+the index.
+
+
+Modified: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2008-05-16 13:54:18 UTC (rev 1254)
++++ trunk/IndexSearch/DBusIndex.cpp	2008-05-16 15:08:07 UTC (rev 1255)
+@@ -30,7 +30,7 @@
+ using std::map;
+ using std::min;
+ 
+-static const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, NULL };
++static const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, &quot;extract&quot;, NULL };
+ 
+ static DBusGConnection *getBusConnection(void)
+ {
+@@ -188,6 +188,10 @@
+ 		{
+ 			docInfo.setSize((off_t )atoi(pValue));
+ 		}
++		else if (fieldName == g_fieldNames[6])
++		{
++			docInfo.setExtract(pValue);
++		}
+ 	}
+ 	while (dbus_message_iter_next(&amp;array_iter));
+ 
+@@ -225,42 +229,53 @@
+ 
+ 	for (unsigned int fieldNum = 0; g_fieldNames[fieldNum] != NULL; ++fieldNum)
+ 	{
+-		const char *pValue = NULL;
++		string value;
+ 		char sizeStr[64];
+ 
+-		if (!dbus_message_iter_open_container(&amp;array_iter,
+-			DBUS_TYPE_STRUCT, NULL, &amp;struct_iter))
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: couldn't open struct container&quot; &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-
+-		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;g_fieldNames[fieldNum]);
+ 		switch (fieldNum)
+ 		{
+ 			case 0:
+-				pValue = docInfo.getTitle().c_str();
++				value = docInfo.getTitle();
+ 				break;
+ 			case 1:
+-				pValue = docInfo.getLocation().c_str();
++				value = docInfo.getLocation();
+ 				break;
+ 			case 2:
+-				pValue = docInfo.getType().c_str();
++				value = docInfo.getType();
+ 				break;
+ 			case 3:
+-				pValue = Languages::toEnglish(docInfo.getLanguage()).c_str();
++				value = Languages::toEnglish(docInfo.getLanguage());
+ 				break;
+ 			case 4:
+-				pValue = docInfo.getTimestamp().c_str();
++				value = docInfo.getTimestamp();
+ 				break;
+ 			case 5:
+-			default:
+ 				snprintf(sizeStr, 64, &quot;%u&quot;, docInfo.getSize());
+-				pValue = sizeStr;
++				value = sizeStr;
+ 				break;
++			case 6:
++				value = docInfo.getExtract();
++				break;
++			default:
++				break;
+ 		}
++
++		if (value.empty() == true)
++		{
++			continue;
++		}
++
++		if (!dbus_message_iter_open_container(&amp;array_iter,
++			DBUS_TYPE_STRUCT, NULL, &amp;struct_iter))
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: couldn't open struct container&quot; &lt;&lt; endl;
++#endif
++			return false;
++		}
++
++		const char *pValue = value.c_str();
++		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;g_fieldNames[fieldNum]);
+ 		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;pValue);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: field &quot; &lt;&lt; g_fieldNames[fieldNum] &lt;&lt; &quot;=&quot; &lt;&lt; pValue &lt;&lt; endl;
+@@ -425,13 +440,6 @@
+ {
+ 	bool gotLabels = false;
+ 
+-	if (m_pROIndex != NULL)
+-	{
+-		reopen();
+-
+-		return m_pROIndex-&gt;getLabels(labels);
+-	}
+-
+ 	DBusGConnection *pBus = getBusConnection();
+ 	if (pBus == NULL)
+ 	{
+@@ -631,13 +639,6 @@
+ {
+ 	bool gotLabels = false;
+ 
+-	if (m_pROIndex != NULL)
+-	{
+-		reopen();
+-
+-		return m_pROIndex-&gt;getDocumentLabels(docId, labels);
+-	}
+-
+ 	DBusGConnection *pBus = getBusConnection();
+ 	if (pBus == NULL)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001248.html">[Pinot-svn] r1254 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001250.html">[Pinot-svn] r1256 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1249">[ date ]</a>
+              <a href="thread.html#1249">[ thread ]</a>
+              <a href="subject.html#1249">[ subject ]</a>
+              <a href="author.html#1249">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,486 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r44 - in trunk: Index Search UI/GTK2 UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r44%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2%20UI/GTK2/src&In-Reply-To=%3C200601011813.k01IDCj0012731%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000044.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r44 - in trunk: Index Search UI/GTK2 UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r44%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2%20UI/GTK2/src&In-Reply-To=%3C200601011813.k01IDCj0012731%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r44 - in trunk: Index Search UI/GTK2 UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun Jan  1 19:13:12 CET 2006</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000044.html">[Pinot-svn] r45 - in trunk: . UI/GTK2 UI/GTK2/src po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#43">[ date ]</a>
+              <a href="thread.html#43">[ thread ]</a>
+              <a href="subject.html#43">[ subject ]</a>
+              <a href="author.html#43">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-01 19:13:07 +0100 (Sun, 01 Jan 2006)
+New Revision: 44
+
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/mainWindow_glade.cc
+   trunk/UI/GTK2/src/mainWindow_glade.hh
+Log:
+Enabled completion on the query field, based on terms present in the documents
+index.
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/Index/IndexInterface.h	2006-01-01 18:13:07 UTC (rev 44)
+@@ -75,6 +75,9 @@
+ 		/// Unindexes documents with the given label.
+ 		virtual bool unindexDocuments(const std::string &amp;labelName) = 0;
+ 
++		/// Suggests terms.
++		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions) = 0;
++
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName) = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/Index/XapianIndex.cpp	2006-01-01 18:13:07 UTC (rev 44)
+@@ -837,6 +837,63 @@
+ 	return unindexed;
+ }
+ 
++/// Suggests terms.
++unsigned int XapianIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
++{
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return 0;
++	}
++
++	suggestions.clear();
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			Xapian::TermIterator termIter = pIndex-&gt;allterms_begin();
++
++			if (termIter != pIndex-&gt;allterms_end())
++			{
++				string baseTerm(StringManip::toLowerCase(term));
++				unsigned int count = 0;
++
++				// Get the next 10 terms
++				termIter.skip_to(baseTerm);
++				while ((termIter != pIndex-&gt;allterms_end()) &amp;&amp;
++					(count &lt; 10))
++				{
++					string suggestedTerm(*termIter);
++
++					if (suggestedTerm.find(baseTerm) != 0)
++					{
++						// This term doesn't have the same root
++						break;
++					}
++					suggestions.insert(*termIter);
++
++					// Next
++					++count;
++					++termIter;
++				}
++			}
++		}
++		pDatabase-&gt;unlock();
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get terms: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get terms, unknown exception occured&quot; &lt;&lt; endl;
++	}
++
++	return suggestions.size();
++}
++
+ /// Renames a label.
+ bool XapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+ {
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/Index/XapianIndex.h	2006-01-01 18:13:07 UTC (rev 44)
+@@ -69,6 +69,9 @@
+ 		/// Unindexes documents with the given label.
+ 		virtual bool unindexDocuments(const std::string &amp;labelName);
+ 
++		/// Suggests terms.
++		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions);
++
+ 		/// Renames a label.
+ 		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+ 
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/Search/XapianEngine.cpp	2006-01-01 18:13:07 UTC (rev 44)
+@@ -124,17 +124,17 @@
+ 			// Give the query object to the enquire session
+ 			enquire.set_query(query);
+ 
+-			// Get the top N results of the query
++			// Get the top results of the query
+ 			Xapian::MSet matches = enquire.get_mset(0, m_maxResultsCount);
+ 
+ 			// Get the results
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.get_matches_estimated() &lt;&lt; &quot;/&quot; &lt;&lt; m_maxResultsCount &lt;&lt; &quot; results found&quot; &lt;&lt; endl;
+ #endif
+-			for (Xapian::MSetIterator i = matches.begin(); i != matches.end(); ++i)
++			for (Xapian::MSetIterator mIter = matches.begin(); mIter != matches.end(); ++mIter)
+ 			{
+ 				// Get the document data
+-				string record = i.get_document().get_data();
++				string record = mIter.get_document().get_data();
+ 
+ 				// Get the title
+ 				string title = StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;);
+@@ -147,7 +147,7 @@
+ 				{
+ 					// Hmmm this shouldn't be empty...
+ 					// Use this instead, even though the document isn't cached in the index
+-					url = buildUrl(m_databaseName, *i);
++					url = buildUrl(m_databaseName, *mIter);
+ 				}
+ 				else
+ 				{
+@@ -167,7 +167,7 @@
+ 				string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
+ 
+ 				// Add this result
+-				Result thisResult(url, title, summary, language, (float)i.get_percent());
++				Result thisResult(url, title, summary, language, (float)mIter.get_percent());
+ 				m_resultsList.push_back(thisResult);
+ 			}
+ 
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/UI/GTK2/metase-gtk2.glade	2006-01-01 18:13:07 UTC (rev 44)
+@@ -562,6 +562,7 @@
+ 		      &lt;property name=&quot;has_frame&quot;&gt;True&lt;/property&gt;
+ 		      &lt;property name=&quot;invisible_char&quot;&gt;*&lt;/property&gt;
+ 		      &lt;property name=&quot;activates_default&quot;&gt;False&lt;/property&gt;
++		      &lt;signal name=&quot;changed&quot; handler=&quot;on_liveQueryEntry_changed&quot; last_modification_time=&quot;Sun, 01 Jan 2006 00:46:09 GMT&quot;/&gt;
+ 		    &lt;/widget&gt;
+ 		    &lt;packing&gt;
+ 		      &lt;property name=&quot;padding&quot;&gt;4&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-01-01 18:13:07 UTC (rev 44)
+@@ -149,18 +149,29 @@
+ 		mainHpaned-&gt;set_position(m_settings.m_panePos);
+ 	}
+ 
++	// Set an icon for this and other windows
++	set_icon_from_file(&quot;/usr/share/icons/hicolor/48x48/apps/pinot.png&quot;);
++	set_default_icon_from_file(&quot;/usr/share/icons/hicolor/48x48/apps/pinot.png&quot;);
++
+ 	// Position the engine tree
+ 	m_pEnginesTree = manage(new EnginesTree(enginesVbox, m_settings));
+ 	// Connect to the &quot;changed&quot; signal
+-	m_pEnginesTree-&gt;get_selection()-&gt;signal_changed().connect(SigC::slot(*this,
+-		&amp;mainWindow::on_enginesTreeviewSelection_changed));
++	m_pEnginesTree-&gt;get_selection()-&gt;signal_changed().connect(
++		SigC::slot(*this, &amp;mainWindow::on_enginesTreeviewSelection_changed));
+ 	// Connect to the edit index signal
+-	m_pEnginesTree-&gt;getEditIndexSignal().connect(SigC::slot(*this,
+-		&amp;mainWindow::on_editindex));
++	m_pEnginesTree-&gt;getEditIndexSignal().connect(
++		SigC::slot(*this, &amp;mainWindow::on_editindex));
+ 
+-	// Set an icon for this and other windows
+-	set_icon_from_file(&quot;/usr/share/icons/hicolor/48x48/apps/pinot.png&quot;);
+-	set_default_icon_from_file(&quot;/usr/share/icons/hicolor/48x48/apps/pinot.png&quot;);
++	// Enable completion on the live query field
++	m_refLiveQueryList = ListStore::create(m_liveQueryColumns);
++	m_refLiveQueryCompletion = EntryCompletion::create();
++	m_refLiveQueryCompletion-&gt;set_model(m_refLiveQueryList);
++	m_refLiveQueryCompletion-&gt;set_text_column(m_liveQueryColumns.m_name);
++	m_refLiveQueryCompletion-&gt;set_minimum_key_length(3);
++	m_refLiveQueryCompletion-&gt;set_popup_completion(true);
++	m_refLiveQueryCompletion-&gt;set_match_func(
++		SigC::slot(*this, &amp;mainWindow::on_queryCompletion_match));
++	liveQueryEntry-&gt;set_completion(m_refLiveQueryCompletion);
+ 
+ 	// Associate the columns model to the query tree
+ 	m_refQueryTree = ListStore::create(m_queryColumns);
+@@ -175,8 +186,8 @@
+ 	// Allow only single selection
+ 	queryTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	// Connect to the &quot;changed&quot; signal
+-	queryTreeview-&gt;get_selection()-&gt;signal_changed().connect(SigC::slot(*this, 
+-		&amp;mainWindow::on_queryTreeviewSelection_changed));
++	queryTreeview-&gt;get_selection()-&gt;signal_changed().connect(
++		SigC::slot(*this, &amp;mainWindow::on_queryTreeviewSelection_changed));
+ 	// Populate
+ 	populate_queryTreeview();
+ 
+@@ -227,9 +238,6 @@
+ 	// ...and buttons
+ 	removeIndexButton-&gt;set_sensitive(false);
+ 
+-	// Set focus on the query entry field
+-	set_focus(*liveQueryEntry);
+-
+ 	// Set tooltips
+ 	m_tooltips.set_tip(*addIndexButton, _(&quot;Add index&quot;));
+ 	m_tooltips.set_tip(*removeIndexButton, _(&quot;Remove index&quot;));
+@@ -238,15 +246,15 @@
+ 	// Fire up a listener thread
+ 	ListenerThread *pListenThread = new ListenerThread(PinotSettings::getConfigurationDirectory() + string(&quot;/fifo&quot;));
+ 	// Connect to its reception signal
+-	pListenThread-&gt;getReceptionSignal().connect(SigC::slot(*this,
+-		&amp;mainWindow::on_message_reception));
++	pListenThread-&gt;getReceptionSignal().connect(
++		SigC::slot(*this, &amp;mainWindow::on_message_reception));
+ 	start_thread(pListenThread, true);
+ 
+ 	// Fire up the mail monitor thread
+ 	MboxHandler *pMbox = new MboxHandler();
+ 	// Connect to its update signal
+-	pMbox-&gt;getUpdateSignal().connect(SigC::slot(*this,
+-		&amp;mainWindow::on_message_indexupdate));
++	pMbox-&gt;getUpdateSignal().connect(
++		SigC::slot(*this, &amp;mainWindow::on_message_indexupdate));
+ 	MonitorThread *pMonitorThread = new MonitorThread(pMbox);
+ 	start_thread(pMonitorThread, true);
+ 	// The handler object will be deleted when the thread terminates
+@@ -405,6 +413,18 @@
+ 	}
+ }
+ 
++bool mainWindow::on_queryCompletion_match(const ustring &amp;key, const TreeModel::const_iterator &amp;iter)
++{
++	TreeModel::Row row = *iter;
++
++	ustring match = row[m_liveQueryColumns.m_name];
++#ifdef DEBUG
++	cout &lt;&lt; &quot;mainWindow::on_queryCompletion_match: &quot; &lt;&lt; key &lt;&lt; &quot;, &quot; &lt;&lt; match &lt;&lt; endl;
++#endif
++
++	return true;
++}
++
+ //
+ // Engines tree selection changed
+ //
+@@ -424,7 +444,6 @@
+ 	}
+ 
+ 	TreeModel::iterator engineIter = m_pEnginesTree-&gt;getIter(*enginePath);
+-	TreeModel::Row engineRow = *engineIter;
+ 	bool enableRemoveIndex = false;
+ 
+ 	// Make sure it's a leaf node
+@@ -2238,6 +2257,64 @@
+ }
+ 
+ //
++// Live query entry change
++//
++void mainWindow::on_liveQueryEntry_changed()
++{
++	ustring liveQuery = liveQueryEntry-&gt;get_text();
++
++	// Reset the list
++	m_refLiveQueryList-&gt;clear();
++
++	if (m_refLiveQueryCompletion-&gt;get_minimum_key_length() &gt; liveQuery.length())
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::on_liveQueryEntry_changed: too short&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++
++	// FIXME: relying on other indices may also be useful
++	XapianIndex docsIndex(m_settings.m_indexLocation);
++	if (docsIndex.isGood() == true)
++	{
++		ustring prefix, term = liveQuery;
++
++		// Get the last term from the entry field
++		ustring::size_type pos = liveQuery.find_last_of(&quot; &quot;);
++		if (pos != ustring::npos)
++		{
++			prefix = liveQuery.substr(0, pos);
++			prefix += &quot; &quot;;
++			term = liveQuery.substr(pos + 1);
++		}
++
++		if (term.empty() == false)
++		{
++			set&lt;string&gt; suggestedTerms;
++			int termIndex = 0;
++
++			// Get a list of suggestions
++			docsIndex.getCloseTerms(locale_from_utf8(term), suggestedTerms);
++
++			// Populate the list
++			for (set&lt;string&gt;::iterator termIter = suggestedTerms.begin();
++				termIter != suggestedTerms.end(); ++termIter)
++			{
++				TreeModel::iterator iter = m_refLiveQueryList-&gt;append();
++				TreeModel::Row row = *iter;
++
++				row[m_liveQueryColumns.m_name] = prefix + to_utf8(*termIter);
++				++termIndex;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;mainWindow::on_liveQueryEntry_changed: &quot; &lt;&lt; termIndex &lt;&lt; &quot; suggestions&quot; &lt;&lt; endl;
++#endif
++		}
++	}
++}
++
++//
+ // Find button click
+ //
+ void mainWindow::on_findButton_clicked()
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-01-01 18:13:07 UTC (rev 44)
+@@ -24,6 +24,7 @@
+ #include &lt;glibmm/refptr.h&gt;
+ #include &lt;gdkmm/pixbuf.h&gt;
+ #include &lt;gdkmm/color.h&gt;
++#include &lt;gtkmm/entrycompletion.h&gt;
+ #include &lt;gtkmm/rc.h&gt;
+ #include &lt;gtkmm/notebook.h&gt;
+ #include &lt;gtkmm/liststore.h&gt;
+@@ -59,6 +60,7 @@
+ 	void populate_indexMenu();
+ 
+ 	// Handlers
++	bool on_queryCompletion_match(const Glib::ustring &amp;key, const Gtk::TreeModel::const_iterator &amp;iter);
+ 	void on_enginesTreeviewSelection_changed();
+ 	void on_queryTreeviewSelection_changed();
+ 	void on_resultsTreeviewSelection_changed(Glib::ustring queryName);
+@@ -100,6 +102,7 @@
+ 	virtual void on_addIndexButton_clicked();
+ 	virtual void on_removeIndexButton_clicked();
+ 
++	virtual void on_liveQueryEntry_changed();
+ 	virtual void on_findButton_clicked();
+ 	virtual void on_addQueryButton_clicked();
+ 	virtual void on_editQueryButton_clicked();
+@@ -144,6 +147,9 @@
+ 	// Engine
+ 	EnginesTree *m_pEnginesTree;
+ 	// Query
++	ComboModelColumns m_liveQueryColumns;
++	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refLiveQueryList;
++	Glib::RefPtr&lt;Gtk::EntryCompletion&gt; m_refLiveQueryCompletion;
+ 	QueryModelColumns m_queryColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refQueryTree;
+ 	// Notebook
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.cc	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/UI/GTK2/src/mainWindow_glade.cc	2006-01-01 18:13:07 UTC (rev 44)
+@@ -1,4 +1,4 @@
+-// generated 2005/12/29 5:49:01 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
++// generated 2006/1/1 8:46:21 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
+ // using glademm V2.6.0
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+@@ -448,6 +448,7 @@
+    about1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_about_activate), false);
+    addIndexButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;mainWindow_glade::on_addIndexButton_clicked), false);
+    removeIndexButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;mainWindow_glade::on_removeIndexButton_clicked), false);
++   liveQueryEntry-&gt;signal_changed().connect(SigC::slot(*this, &amp;mainWindow_glade::on_liveQueryEntry_changed), false);
+    findButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;mainWindow_glade::on_findButton_clicked), false);
+    queryTreeview-&gt;signal_button_press_event().connect(SigC::slot(*this, &amp;mainWindow_glade::on_queryTreeview_button_press_event), false);
+    addQueryButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;mainWindow_glade::on_addQueryButton_clicked), false);
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.hh	2005-12-31 16:08:45 UTC (rev 43)
++++ trunk/UI/GTK2/src/mainWindow_glade.hh	2006-01-01 18:13:07 UTC (rev 44)
+@@ -1,4 +1,4 @@
+-// generated 2005/12/29 5:49:01 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
++// generated 2006/1/1 8:46:21 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at thorgrim.dyndns.org.</A>(none)
+ // using glademm V2.6.0
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+@@ -127,6 +127,7 @@
+         virtual void on_about_activate() = 0;
+         virtual void on_addIndexButton_clicked() = 0;
+         virtual void on_removeIndexButton_clicked() = 0;
++        virtual void on_liveQueryEntry_changed() = 0;
+         virtual void on_findButton_clicked() = 0;
+         virtual bool on_queryTreeview_button_press_event(GdkEventButton *ev) = 0;
+         virtual void on_addQueryButton_clicked() = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000044.html">[Pinot-svn] r45 - in trunk: . UI/GTK2 UI/GTK2/src po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#43">[ date ]</a>
+              <a href="thread.html#43">[ thread ]</a>
+              <a href="subject.html#43">[ subject ]</a>
+              <a href="author.html#43">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,489 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r34 - in trunk: . Index Search po
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r34%20-%20in%20trunk%3A%20.%20Index%20Search%20po&In-Reply-To=%3C200512301346.jBUDkt7X014902%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000032.html">
+   <LINK REL="Next"  HREF="000034.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r34 - in trunk: . Index Search po</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r34%20-%20in%20trunk%3A%20.%20Index%20Search%20po&In-Reply-To=%3C200512301346.jBUDkt7X014902%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r34 - in trunk: . Index Search po">fabricecolin at berlios.de
+       </A><BR>
+    <I>Fri Dec 30 14:46:55 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000032.html">[Pinot-svn] r33 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000034.html">[Pinot-svn] r35 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33">[ date ]</a>
+              <a href="thread.html#33">[ thread ]</a>
+              <a href="subject.html#33">[ subject ]</a>
+              <a href="author.html#33">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-30 14:46:55 +0100 (Fri, 30 Dec 2005)
+New Revision: 34
+
+Modified:
+   trunk/Index/Summarizer.cpp
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/po/en_GB.po
+   trunk/po/fr_FR.po
+   trunk/textcat_conf.txt
+Log:
+Fixed issues with documents and queries language (whether it should in the
+current locale or in English).
+
+
+Modified: trunk/Index/Summarizer.cpp
+===================================================================
+--- trunk/Index/Summarizer.cpp	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/Index/Summarizer.cpp	2005-12-30 13:46:55 UTC (rev 34)
+@@ -14,6 +14,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;string.h&gt;
+ #include &lt;sys/time.h&gt;
+ #include &lt;map&gt;
+ #include &lt;iostream&gt;
+@@ -39,14 +40,14 @@
+ 	m_wordsCount(wordsCount),
+ 	m_dictionaryCode(&quot;en&quot;)
+ {
+-	string lang = StringManip::toLowerCase(language);
+-
+ 	// Look up the language code
+-	for (unsigned int count = 0; count &lt; Languages::m_count; ++count)
++	for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
+ 	{
+-		if (lang == Languages::m_names[count])
++		if (strncasecmp(language.c_str(), Languages::m_names[langNum],
++			min(language.length(), strlen(Languages::m_names[langNum]))) == 0)
+ 		{
+-			m_dictionaryCode = Languages::m_codes[count];
++			m_dictionaryCode = Languages::m_codes[langNum];
++			break;
+ 		}
+ 	}
+ }
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/Index/XapianIndex.cpp	2005-12-30 13:46:55 UTC (rev 34)
+@@ -24,17 +24,20 @@
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+ #include &lt;algorithm&gt;
++#include &lt;utility&gt;
+ 
++#include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
++#include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;Summarizer.h&quot;
+-#include &quot;TimeConverter.h&quot;
+ #include &quot;LanguageDetector.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;XapianIndex.h&quot;
+ 
+ using std::string;
+ using std::set;
++using std::min;
+ 
+ // This puts a limit to terms length.
+ const unsigned int XapianIndex::m_maxTermLength = 64;
+@@ -284,7 +287,6 @@
+ 			return false;
+ 		}
+ 
+-		// Obtain a summary
+ 		const char *pData = pDocument-&gt;getData(dataLength);
+ 		if (pData == NULL)
+ 		{
+@@ -366,10 +368,24 @@
+ 			string record = doc.get_data();
+ 			if (record.empty() == false)
+ 			{
++				string language = StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;);
++
++				// Get the language name in the current locale
++				for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
++				{
++					if (strncasecmp(language.c_str(), Languages::m_names[langNum],
++						min(language.length(), strlen(Languages::m_names[langNum]))) == 0)
++					{
++						// That's the one !
++						language = Languages::getIntlName(langNum);
++						break;
++					}
++				}
++
+ 				docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
+ 					StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
+ 					StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
+-					StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;));
++					language);
+ 				docInfo.setTimestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;XapianIndex::getDocumentInfo: language is &quot;
+@@ -547,7 +563,6 @@
+ 		return false;
+ 	}
+ 
+-	// Obtain a summary
+ 	const char *pData = pDocument-&gt;getData(dataLength);
+ 	if (pData == NULL)
+ 	{
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/Search/XapianEngine.cpp	2005-12-30 13:46:55 UTC (rev 34)
+@@ -20,7 +20,9 @@
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
+ #include &lt;iostream&gt;
++#include &lt;utility&gt;
+ 
++#include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;Tokenizer.h&quot;
+ #include &quot;Url.h&quot;
+@@ -33,8 +35,9 @@
+ using std::cout;
+ using std::cerr;
+ using std::endl;
++using std::min;
+ 
+-static bool extractWords(const string &amp;text, const string &amp;language, vector&lt;string&gt; &amp;wordsList)
++static bool extractWords(const string &amp;text, const string &amp;stemLanguage, vector&lt;string&gt; &amp;wordsList)
+ {
+ 	Xapian::Stem *pStemmer = NULL;
+ 
+@@ -43,9 +46,9 @@
+ 		return false;
+ 	}
+ 
+-	if (language.empty() == false)
++	if (stemLanguage.empty() == false)
+ 	{
+-		pStemmer = new Xapian::Stem(StringManip::toLowerCase(language));
++		pStemmer = new Xapian::Stem(StringManip::toLowerCase(stemLanguage));
+ 	}
+ 
+ 	Document doc;
+@@ -79,6 +82,23 @@
+ 	return true;
+ }
+ 
++static string getLanguageNameInEnglish(const string &amp;language)
++{
++	for (unsigned int langNum = 0; langNum &lt; Languages::m_count; ++langNum)
++	{
++		string intlLanguage = Languages::getIntlName(langNum);
++
++		if (strncasecmp(language.c_str(), intlLanguage.c_str(),
++			min(language.length(), intlLanguage.length())) == 0)
++		{
++			// That's the one !
++			return StringManip::toLowerCase(Languages::m_names[langNum]);
++		}
++	}
++
++	return language;
++}
++
+ XapianEngine::XapianEngine(const string &amp;database) :
+ 	SearchEngineInterface()
+ {
+@@ -183,7 +203,7 @@
+ }
+ 
+ void XapianEngine::stackQuery(const QueryProperties &amp;queryProps,
+-	stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;language, bool followOperators)
++	stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;stemLanguage, bool followOperators)
+ {
+ 	Xapian::Query::op queryOp = Xapian::Query::OP_OR;
+ 	string term;
+@@ -193,7 +213,7 @@
+ 	{
+ 		vector&lt;string&gt; andTerms;
+ 
+-		if (extractWords(queryProps.getAndWords(), language, andTerms) == true)
++		if (extractWords(queryProps.getAndWords(), stemLanguage, andTerms) == true)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_AND &quot;  &lt;&lt; andTerms.size() &lt;&lt; endl;
+@@ -211,7 +231,7 @@
+ 	{
+ 		vector&lt;string&gt; phraseTerms;
+ 
+-		if (extractWords(queryProps.getPhrase(), language, phraseTerms) == true)
++		if (extractWords(queryProps.getPhrase(), stemLanguage, phraseTerms) == true)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_PHRASE &quot;  &lt;&lt; phraseTerms.size() &lt;&lt; endl;
+@@ -229,7 +249,7 @@
+ 	{
+ 		vector&lt;string&gt; orTerms;
+ 
+-		if (extractWords(queryProps.getAnyWords(), language, orTerms) == true)
++		if (extractWords(queryProps.getAnyWords(), stemLanguage, orTerms) == true)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_OR &quot;  &lt;&lt; orTerms.size() &lt;&lt; endl;
+@@ -247,7 +267,7 @@
+ 	{
+ 		vector&lt;string&gt; notTerms;
+ 
+-		if (extractWords(queryProps.getNotWords(), language, notTerms) == true)
++		if (extractWords(queryProps.getNotWords(), stemLanguage, notTerms) == true)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::stackQuery: OP_AND_NOT &quot;  &lt;&lt; notTerms.size() &lt;&lt; endl;
+@@ -312,12 +332,16 @@
+ 	}
+ 
+ 	// Get the language filter
+-	if (queryProps.getLanguage().empty() == false)
++	string language = queryProps.getLanguage();
++	if (language.empty() == false)
+ 	{
+ 		vector&lt;string&gt; languageTerms;
+ 
+ 		term = &quot;L&quot;;
+-		term += StringManip::toLowerCase(queryProps.getLanguage());
++		term += getLanguageNameInEnglish(language);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::stackQuery: filter &quot;  &lt;&lt; term &lt;&lt; endl;
++#endif
+ 		languageTerms.push_back(term);
+ 		if (followOperators == true)
+ 		{
+@@ -351,10 +375,10 @@
+ 	{
+ 		vector&lt;string&gt; keywordTerms;
+ 		keywordTerms.push_back(keyword);
+-		Xapian::Query keyworkQuery(Xapian::Query::OP_AND, keywordTerms.begin(), keywordTerms.end());
++		Xapian::Query keywordQuery(Xapian::Query::OP_AND, keywordTerms.begin(), keywordTerms.end());
+ 
+ 		// Query the database with the full query
+-		return queryDatabase(keyworkQuery);
++		return queryDatabase(keywordQuery);
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+@@ -377,7 +401,7 @@
+ 	try
+ 	{
+ 		stack&lt;Xapian::Query&gt; queryStack;
+-		string language;
++		string stemLanguage;
+ 		unsigned int searchStep = 1;
+ 		bool followOperators = true;
+ 
+@@ -387,7 +411,7 @@
+ 		// 3. if no results, don't follow operators and don't stem terms
+ 		// 4. if no results, don't follow operators and stem terms
+ 		// Steps 2 and 4 depend on a language being defined for the query
+-		stackQuery(queryProps, queryStack, language, followOperators);
++		stackQuery(queryProps, queryStack, &quot;&quot;, followOperators);
+ 		while (queryStack.empty() == false)
+ 		{
+ 			while (queryStack.size() &gt; 1)
+@@ -416,20 +440,20 @@
+ 					{
+ 						case 2:
+ 							followOperators = true;
+-							language = queryProps.getLanguage();
+-							if (language.empty() == false)
++							stemLanguage = queryProps.getLanguage();
++							if (stemLanguage.empty() == false)
+ 							{
+ 								break;
+ 							}
+ 							++searchStep;
+ 						case 3:
+ 							followOperators = false;
+-							language.clear();
++							stemLanguage.clear();
+ 							break;
+ 						case 4:
+ 							followOperators = false;
+-							language = queryProps.getLanguage();
+-							if (language.empty() == false)
++							stemLanguage = queryProps.getLanguage();
++							if (stemLanguage.empty() == false)
+ 							{
+ 								break;
+ 							}
+@@ -446,7 +470,8 @@
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
+ #endif
+-					stackQuery(queryProps, queryStack, language, followOperators);
++					stackQuery(queryProps, queryStack,
++						getLanguageNameInEnglish(stemLanguage), followOperators);
+ 					continue;
+ 				}
+ 
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/Search/XapianEngine.h	2005-12-30 13:46:55 UTC (rev 34)
+@@ -50,7 +50,7 @@
+ 		bool queryDatabase(Xapian::Query &amp;query);
+ 
+ 		void stackQuery(const QueryProperties &amp;queryProps,
+-			std::stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;language,
++			std::stack&lt;Xapian::Query&gt; &amp;queryStack, const string &amp;stemLanguage,
+ 			bool followOperators);
+ 
+ 	private:
+
+Modified: trunk/po/en_GB.po
+===================================================================
+--- trunk/po/en_GB.po	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/po/en_GB.po	2005-12-30 13:46:55 UTC (rev 34)
+@@ -17,10 +17,10 @@
+ #, fuzzy
+ msgid &quot;&quot;
+ msgstr &quot;&quot;
+-&quot;Project-Id-Version: pinot 0.20\n&quot;
++&quot;Project-Id-Version: pinot 0.35\n&quot;
+ &quot;Report-Msgid-Bugs-To: \n&quot;
+-&quot;POT-Creation-Date: 2005-12-08 19:20+0800\n&quot;
+-&quot;PO-Revision-Date: 2005-12-08 19:20+0800\n&quot;
++&quot;POT-Creation-Date: 2005-12-30 17:20+0800\n&quot;
++&quot;PO-Revision-Date: 2005-12-30 17:20+0800\n&quot;
+ &quot;Last-Translator: Fabrice Colin &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">colinf at chez.com</A>&gt;\n&quot;
+ &quot;Language-Team: en_GB &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">colinf at chez.com</A>&gt;\n&quot;
+ &quot;MIME-Version: 1.0\n&quot;
+
+Modified: trunk/po/fr_FR.po
+===================================================================
+--- trunk/po/fr_FR.po	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/po/fr_FR.po	2005-12-30 13:46:55 UTC (rev 34)
+@@ -17,10 +17,10 @@
+ #, fuzzy
+ msgid &quot;&quot;
+ msgstr &quot;&quot;
+-&quot;Project-Id-Version: pinot 0.20\n&quot;
++&quot;Project-Id-Version: pinot 0.35\n&quot;
+ &quot;Report-Msgid-Bugs-To: \n&quot;
+-&quot;POT-Creation-Date: 2005-12-08 19:20+0800\n&quot;
+-&quot;PO-Revision-Date: 2005-12-08 19:20+0800\n&quot;
++&quot;POT-Creation-Date: 2005-12-30 17:20+0800\n&quot;
++&quot;PO-Revision-Date: 2005-12-30 17:20+0800\n&quot;
+ &quot;Last-Translator: Fabrice Colin &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">colinf at chez.com</A>&gt;\n&quot;
+ &quot;Language-Team: en_GB &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">colinf at chez.com</A>&gt;\n&quot;
+ &quot;MIME-Version: 1.0\n&quot;
+@@ -423,7 +423,7 @@
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:195 UI/GTK2/src/mainWindow_glade.cc:231
+ msgid &quot;_Index&quot;
+-msgstr &quot;Indexer&quot;
++msgstr &quot;Index&quot;
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:198
+ msgid &quot;List Contents Of&quot;
+@@ -693,7 +693,7 @@
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:73
+ msgid &quot;File name:&quot;
+-msgstr &quot;Nom de machine:&quot;
++msgstr &quot;Nom de ficher:&quot;
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:74
+ msgid &quot;Number of results:&quot;
+@@ -701,11 +701,11 @@
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:77
+ msgid &quot;Host name:&quot;
+-msgstr &quot;Nom de fichier:&quot;
++msgstr &quot;Nom de machine:&quot;
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:78
+ msgid &quot;None of the words:&quot;
+-msgstr &quot;Nombre de resultats:&quot;
++msgstr &quot;Aucun des mots:&quot;
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:84
+ msgid &quot;Limit to documents that match&quot;
+@@ -717,15 +717,15 @@
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:88
+ msgid &quot;the language:&quot;
+-msgstr &quot;aucun des mots&quot;
++msgstr &quot;la langue&quot;
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:92
+ msgid &quot;all the words:&quot;
+-msgstr &quot;la langue&quot;
++msgstr &quot;tous les mots&quot;
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:93
+ msgid &quot;the label:&quot;
+-msgstr &quot;tous les mots&quot;
++msgstr &quot;l'etiquette&quot;
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:98
+ msgid &quot;Advanced&quot;
+
+Modified: trunk/textcat_conf.txt
+===================================================================
+--- trunk/textcat_conf.txt	2005-12-30 12:12:53 UTC (rev 33)
++++ trunk/textcat_conf.txt	2005-12-30 13:46:55 UTC (rev 34)
+@@ -1,6 +1,7 @@
+ #
+ # libtextcat 2.2 config file
+ # The following languages are supported by Xapian::Stem
++# Languages names MUST be in English
+ #
+ /usr/share/libtextcat/LM/english.lm                     english
+ /usr/share/libtextcat/LM/spanish.lm                     spanish
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000032.html">[Pinot-svn] r33 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000034.html">[Pinot-svn] r35 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33">[ date ]</a>
+              <a href="thread.html#33">[ thread ]</a>
+              <a href="subject.html#33">[ subject ]</a>
+              <a href="author.html#33">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

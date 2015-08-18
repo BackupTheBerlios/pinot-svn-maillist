@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r479 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r479%20-%20trunk/Index&In-Reply-To=%3C200609131251.k8DCpWGK011957%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000471.html">
+   <LINK REL="Next"  HREF="000473.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r479 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r479%20-%20trunk/Index&In-Reply-To=%3C200609131251.k8DCpWGK011957%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r479 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 13 14:51:32 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000471.html">[Pinot-svn] r478 - in trunk: UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000473.html">[Pinot-svn] r480 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#472">[ date ]</a>
+              <a href="thread.html#472">[ thread ]</a>
+              <a href="subject.html#472">[ subject ]</a>
+              <a href="author.html#472">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-13 14:51:31 +0200 (Wed, 13 Sep 2006)
+New Revision: 479
+
+Modified:
+   trunk/Index/pinot-index.1
+   trunk/Index/pinot-index.cpp
+Log:
+Added --showinfo option. This outputs the document's DocumentInfo, with labels.
+
+
+Modified: trunk/Index/pinot-index.1
+===================================================================
+--- trunk/Index/pinot-index.1	2006-09-13 12:48:00 UTC (rev 478)
++++ trunk/Index/pinot-index.1	2006-09-13 12:51:31 UTC (rev 479)
+@@ -18,10 +18,13 @@
+ \fB\-i\fR, \fB\-\-index\fR
+ index the given URL
+ .TP
++\fB\-s\fR, \fB\-\-showinfo\fR
++show information about the document
++.TP
+ \fB\-v\fR, \fB\-\-version\fR
+ output version information and exit
+ .SH EXAMPLES
+-pinot\-index \fB\-\-check\fR <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A> xapian ~/.pinot/daemon
++pinot\-index \fB\-\-check\fR <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A> \fB\-\-showinfo\fR xapian ~/.pinot/daemon
+ .PP
+ pinot\-index \fB\-\-index\fR <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A> xapian ~/.pinot/index
+ .SH &quot;REPORTING BUGS&quot;
+
+Modified: trunk/Index/pinot-index.cpp
+===================================================================
+--- trunk/Index/pinot-index.cpp	2006-09-13 12:48:00 UTC (rev 478)
++++ trunk/Index/pinot-index.cpp	2006-09-13 12:51:31 UTC (rev 479)
+@@ -36,6 +36,7 @@
+ 	{&quot;check&quot;, 1, 0, 'c'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
+ 	{&quot;index&quot;, 1, 0, 'i'},
++	{&quot;showinfo&quot;, 0, 0, 's'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
+@@ -43,12 +44,13 @@
+ int main(int argc, char **argv)
+ {
+ 	string type, option;
++	string urlToCheck, urlToIndex;
+ 	int longOptionIndex = 0;
+-	string urlToCheck, urlToIndex;
+-	bool checkDocument = false, indexDocument = false, success = false;
++	unsigned int docId = 0;
++	bool checkDocument = false, indexDocument = false, showInfo = false, success = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:hi:v&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;c:hi:sv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		set&lt;string&gt; engines;
+@@ -70,11 +72,12 @@
+ 					&lt;&lt; &quot;  -c, --check		check whether the given URL is in the index\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+ 					&lt;&lt; &quot;  -i, --index		index the given URL\n&quot;
++					&lt;&lt; &quot;  -s, --showinfo		show information about the document\n&quot;
+ 					&lt;&lt; &quot;  -v, --version		output version information and exit\n\n&quot;;
+ 				// Don't mention type dbus here as it doesn't support indexing and
+ 				// is identical to xapian when checking for URLs
+ 				cout &lt;&lt; &quot;Examples:\n&quot;
+-					&lt;&lt; &quot;pinot-index --check <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A> xapian ~/.pinot/daemon\n\n&quot;
++					&lt;&lt; &quot;pinot-index --check <A HREF="file:///home/fabrice/Documents/Bozo.txt">file:///home/fabrice/Documents/Bozo.txt</A> --showinfo xapian ~/.pinot/daemon\n\n&quot;
+ 					&lt;&lt; &quot;pinot-index --index <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A> xapian ~/.pinot/index\n\n&quot;
+ 					&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ 				return EXIT_SUCCESS;
+@@ -85,6 +88,9 @@
+ 				}
+ 				indexDocument = true;
+ 				break;
++			case 's':
++				showInfo = true;
++				break;
+ 			case 'v':
+ 				cout &lt;&lt; &quot;pinot-index - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot;
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+@@ -96,7 +102,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:hi:v&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;c:hi:sv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if ((argc &lt; 3) ||
+@@ -143,7 +149,7 @@
+ 	{
+ 		if (pIndex-&gt;isGood() == true)
+ 		{
+-			unsigned int docId = pIndex-&gt;hasDocument(urlToCheck);
++			docId = pIndex-&gt;hasDocument(urlToCheck);
+ 			if (docId &gt; 0)
+ 			{
+ 				cout &lt;&lt; urlToCheck &lt;&lt; &quot;: document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+@@ -186,7 +192,7 @@
+ 				pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
+ 
+ 				// Update an existing document or add to the index ?
+-				unsigned int docId = pIndex-&gt;hasDocument(urlToIndex);
++				docId = pIndex-&gt;hasDocument(urlToIndex);
+ 				if (docId &gt; 0)
+ 				{
+ 					// Update the document
+@@ -215,6 +221,31 @@
+ 
+ 		delete pDownloader;
+ 	}
++	if ((showInfo == true) &amp;&amp;
++		(docId &gt; 0))
++	{
++		DocumentInfo docInfo;
++		set&lt;string&gt; labels;
++
++		if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
++		{
++			cout &lt;&lt; &quot;Title: &quot; &lt;&lt; docInfo.getTitle() &lt;&lt; endl;
++			cout &lt;&lt; &quot;Location: &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; endl;
++			cout &lt;&lt; &quot;Type: &quot; &lt;&lt; docInfo.getType() &lt;&lt; endl;
++			cout &lt;&lt; &quot;Language: &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
++			cout &lt;&lt; &quot;Timestamp: &quot; &lt;&lt; docInfo.getTimestamp() &lt;&lt; endl;
++		}
++		if (pIndex-&gt;getDocumentLabels(docId, labels) == true)
++		{
++			cout &lt;&lt; &quot;Labels:&quot;;
++			for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++				labelIter != labels.end(); ++labelIter)
++			{
++				cout &lt;&lt; &quot; '&quot; &lt;&lt; *labelIter &lt;&lt; &quot;'&quot;;
++			}
++			cout &lt;&lt; endl;
++		}
++	}
+ 	delete pIndex;
+ 
+ 	XapianDatabaseFactory::closeAll();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000471.html">[Pinot-svn] r478 - in trunk: UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000473.html">[Pinot-svn] r480 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#472">[ date ]</a>
+              <a href="thread.html#472">[ thread ]</a>
+              <a href="subject.html#472">[ subject ]</a>
+              <a href="author.html#472">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

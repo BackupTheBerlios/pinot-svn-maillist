@@ -1,0 +1,862 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1146 - in trunk: IndexSearch UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1146%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200712191239.lBJCdfKc010351%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001139.html">
+   <LINK REL="Next"  HREF="001141.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1146 - in trunk: IndexSearch UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1146%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200712191239.lBJCdfKc010351%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1146 - in trunk: IndexSearch UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Dec 19 13:39:41 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001139.html">[Pinot-svn] r1145 - in trunk: . Collect IndexSearch	IndexSearch/Google IndexSearch/Xapian Tokenize UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="001141.html">[Pinot-svn] r1147 - trunk/IndexSearch/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1140">[ date ]</a>
+              <a href="thread.html#1140">[ thread ]</a>
+              <a href="subject.html#1140">[ subject ]</a>
+              <a href="author.html#1140">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-19 13:39:39 +0100 (Wed, 19 Dec 2007)
+New Revision: 1146
+
+Modified:
+   trunk/IndexSearch/pinot-index.cpp
+   trunk/IndexSearch/pinot-label.cpp
+   trunk/IndexSearch/pinot-search.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/UI/GTK2/src/prefsDialog.cc
+Log:
+Rely on ModuleFactory instead of other other factories, load modules.
+pinot-label uses a pure DBusIndex object, pinot-search sets proxy options only
+if the engine is a WebEngine.
+Added .a .la .o .so and backup files to blacklist in PinotSettings.
+Don't aapply spelling correction to More Like and previously corrected queries.
+
+
+Modified: trunk/IndexSearch/pinot-index.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-index.cpp	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/IndexSearch/pinot-index.cpp	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -23,14 +23,14 @@
+ #include &lt;string&gt;
+ #include &lt;fstream&gt;
+ 
++#include &quot;config.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;FilterFactory.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+-#include &quot;IndexFactory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;config.h&quot;
+ 
+ using namespace std;
+@@ -160,29 +160,31 @@
+ 
+ 	MIMEScanner::initialize(&quot;&quot;, &quot;&quot;);
+ 	DownloaderInterface::initialize();
+-	// Localize language names
+-	Languages::setIntlName(0, &quot;Unknown&quot;);
+-	Languages::setIntlName(1, &quot;Danish&quot;);
+-	Languages::setIntlName(2, &quot;Dutch&quot;);
+-	Languages::setIntlName(3, &quot;English&quot;);
+-	Languages::setIntlName(4, &quot;Finnish&quot;);
+-	Languages::setIntlName(5, &quot;French&quot;);
+-	Languages::setIntlName(6, &quot;German&quot;);
+-	Languages::setIntlName(7, &quot;Hungarian&quot;);
+-	Languages::setIntlName(8, &quot;Italian&quot;);
+-	Languages::setIntlName(9, &quot;Norwegian&quot;);
+-	Languages::setIntlName(10, &quot;Portuguese&quot;);
+-	Languages::setIntlName(11, &quot;Romanian&quot;);
+-	Languages::setIntlName(12, &quot;Russian&quot;);
+-	Languages::setIntlName(13, &quot;Spanish&quot;);
+-	Languages::setIntlName(14, &quot;Swedish&quot;);
+-	Languages::setIntlName(15, &quot;Turkish&quot;);
+ 	Dijon::HtmlFilter::initialize();
+ 	Dijon::FilterFactory::loadFilters(string(LIBDIR) + string(&quot;/pinot/filters&quot;));
++	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/modules&quot;));
+ 
++	// Localize language names
++	Languages::setIntlName (0, &quot;Unknown&quot;);
++	Languages::setIntlName (1, &quot;Danish&quot;);
++	Languages::setIntlName (2, &quot;Dutch&quot;);
++	Languages::setIntlName (3, &quot;English&quot;);
++	Languages::setIntlName (4, &quot;Finnish&quot;);
++	Languages::setIntlName (5, &quot;French&quot;);
++	Languages::setIntlName (6, &quot;German&quot;);
++	Languages::setIntlName (7, &quot;Hungarian&quot;);
++	Languages::setIntlName (8, &quot;Italian&quot;);
++	Languages::setIntlName (9, &quot;Norwegian&quot;);
++	Languages::setIntlName (10, &quot;Portuguese&quot;);
++	Languages::setIntlName (11, &quot;Romanian&quot;);
++	Languages::setIntlName (12, &quot;Russian&quot;);
++	Languages::setIntlName (13, &quot;Spanish&quot;);
++	Languages::setIntlName (14, &quot;Swedish&quot;);
++	Languages::setIntlName (15, &quot;Turkish&quot;);
++
+ 	// Make sure the index is open in the correct mode
+-	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(databaseName, (indexDocument ? false : true));
+-	if (pDb == NULL)
++	bool wasObsoleteFormat = false;
++	if (ModuleFactory::openOrCreateIndex(&quot;xapian&quot;, databaseName, wasObsoleteFormat, (indexDocument ? false : true)) == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't open index &quot; &lt;&lt; databaseName &lt;&lt; endl;
+ 
+@@ -195,12 +197,12 @@
+ 	}
+ 
+ 	// Get a read-write index of the given type
+-	IndexInterface *pIndex = IndexFactory::getIndex(&quot;xapian&quot;, databaseName);
++	IndexInterface *pIndex = ModuleFactory::getIndex(&quot;xapian&quot;, databaseName);
+ 	if (pIndex == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain index for &quot; &lt;&lt; databaseName &lt;&lt; endl;
+ 
+-		XapianDatabaseFactory::closeAll();
++		ModuleFactory::unloadModules();
+ 		Dijon::FilterFactory::unloadFilters();
+ 		Dijon::HtmlFilter::shutdown();
+ 		DownloaderInterface::shutdown();
+@@ -322,7 +324,7 @@
+ 	}
+ 	delete pIndex;
+ 
+-	XapianDatabaseFactory::closeAll();
++	ModuleFactory::unloadModules();
+ 	Dijon::FilterFactory::unloadFilters();
+ 	Dijon::HtmlFilter::shutdown();
+ 	DownloaderInterface::shutdown();
+
+Modified: trunk/IndexSearch/pinot-label.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-label.cpp	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/IndexSearch/pinot-label.cpp	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -22,23 +22,12 @@
+ #include &lt;iostream&gt;
+ #include &lt;string&gt;
+ #include &lt;set&gt;
+-#include &quot;config.h&quot;
+-extern &quot;C&quot;
+-{
+-#if DBUS_NUM_VERSION &lt; 1000000
+-#define DBUS_API_SUBJECT_TO_CHANGE
+-#endif
+-#include &lt;dbus/dbus.h&gt;
+-#include &lt;dbus/dbus-glib.h&gt;
+-#include &lt;dbus/dbus-glib-lowlevel.h&gt;
+-}
+ 
++#include &quot;config.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;DBusIndex.h&quot;
+-#include &quot;IndexFactory.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
+ 
+ using namespace std;
+ 
+@@ -184,22 +173,12 @@
+ 
+ 	MIMEScanner::initialize(&quot;&quot;, &quot;&quot;);
+ 
+-	// We need a DBusIndex object
+-	string indexLocation(getHomeDirectory() + &quot;/.pinot/daemon&quot;);
+-	DBusIndex index(IndexFactory::getIndex(&quot;xapian&quot;, indexLocation));
+-	if (index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't obtain index for &quot; &lt;&lt; indexLocation &lt;&lt; endl;
++	// We need a pure DBusIndex object
++	DBusIndex index(NULL);
+ 
+-		XapianDatabaseFactory::closeAll();
+-		MIMEScanner::shutdown();
+-
+-		return EXIT_FAILURE;
+-	}
+-
+ 	if (getLabels == true)
+ 	{
+-		if (index.getLabels(labels, true) == true)
++		if (index.getLabels(labels) == true)
+ 		{
+ 			printLabels(labels, &quot;&quot;);
+ 
+@@ -230,7 +209,7 @@
+ 		{
+ 			labels.clear();
+ 
+-			if (index.getDocumentLabels(docId, labels, true) == true)
++			if (index.getDocumentLabels(docId, labels) == true)
+ 			{
+ 				printLabels(labels, fileParam);
+ 
+@@ -267,7 +246,6 @@
+ 		++optind;
+ 	}
+ 
+-	XapianDatabaseFactory::closeAll();
+ 	MIMEScanner::shutdown();
+ 
+ 	// Did whatever operation we carried out succeed ?
+
+Modified: trunk/IndexSearch/pinot-search.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-search.cpp	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/IndexSearch/pinot-search.cpp	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -23,14 +23,14 @@
+ #include &lt;fstream&gt;
+ #include &lt;string&gt;
+ 
++#include &quot;config.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
+-#include &quot;SearchEngineFactory.h&quot;
++#include &quot;DownloaderFactory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;ResultsExporter.h&quot;
+-#include &quot;DownloaderFactory.h&quot;
+-#include &quot;config.h&quot;
++#include &quot;WebEngine.h&quot;
+ 
+ using namespace std;
+ 
+@@ -81,7 +81,9 @@
+ 	set&lt;string&gt; engines;
+ 
+ 	// Help
+-	SearchEngineFactory::getSupportedEngines(engines);
++	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/modules&quot;));
++	ModuleFactory::getSupportedEngines(engines);
++	ModuleFactory::unloadModules();
+ 	cout &lt;&lt; &quot;pinot-search - Query search engines from the command-line\n\n&quot;
+ 		&lt;&lt; &quot;Usage: pinot-search [OPTIONS] SEARCHENGINETYPE SEARCHENGINENAME|SEARCHENGINEOPTION QUERYINPUT\n\n&quot;
+ 		&lt;&lt; &quot;Options:\n&quot;
+@@ -106,7 +108,7 @@
+ #endif
+ 		&lt;&lt; &quot;pinot-search opensearch &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/KrustyDescription.xml \&quot;clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;pinot-search --max 20 sherlock &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/Bozo.src \&quot;clowns\&quot;\n\n&quot;
+-		&lt;&lt; &quot;pinot-search --max 10 xapian ~/.pinot/index \&quot;clowns\&quot;\n\n&quot;
++		&lt;&lt; &quot;pinot-search xapian ~/.pinot/index \&quot;label:Clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;pinot-search xapian somehostname:12345 \&quot;clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ }
+@@ -201,6 +203,8 @@
+ 
+ 	MIMEScanner::initialize(&quot;&quot;, &quot;&quot;);
+ 	DownloaderInterface::initialize();
++	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/modules&quot;));
++
+ 	// Localize language names
+ 	Languages::setIntlName(0, &quot;Unknown&quot;);
+ 	Languages::setIntlName(1, &quot;Danish&quot;);
+@@ -224,7 +228,7 @@
+ 	char *pQueryInput = argv[optind + 2];
+ 
+ 	// Which SearchEngine ?
+-	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(engineType, option);
++	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(engineType, option);
+ 	if (pEngine == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain search engine instance&quot; &lt;&lt; endl;
+@@ -236,14 +240,18 @@
+ 	}
+ 
+ 	// Set up the proxy
+-	DownloaderInterface *pDownloader = pEngine-&gt;getDownloader();
+-	if ((pDownloader != NULL) &amp;&amp;
+-		(proxyAddress.empty() == false) &amp;&amp;
+-		(proxyPort.empty() == false))
++	WebEngine *pWebEngine = dynamic_cast&lt;WebEngine *&gt;(pEngine);
++	if (pWebEngine != NULL)
+ 	{
+-		pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, proxyAddress);
+-		pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
+-		pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
++		DownloaderInterface *pDownloader = pWebEngine-&gt;getDownloader();
++		if ((pDownloader != NULL) &amp;&amp;
++			(proxyAddress.empty() == false) &amp;&amp;
++			(proxyPort.empty() == false))
++		{
++			pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, proxyAddress);
++			pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
++			pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
++		}
+ 	}
+ 
+ 	// Set the query
+@@ -307,7 +315,7 @@
+ 			}
+ 			else
+ 			{
+-				string engineName(SearchEngineFactory::getSearchEngineName(engineType, option));
++				string engineName(ModuleFactory::getSearchEngineName(engineType, option));
+ 
+ 				if (csvExport.empty() == false)
+ 				{
+@@ -336,7 +344,7 @@
+ 
+ 	delete pEngine;
+ 
+-	XapianDatabaseFactory::closeAll();
++	ModuleFactory::unloadModules();
+ 	DownloaderInterface::shutdown();
+ 	MIMEScanner::shutdown();
+ 
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -34,11 +34,10 @@
+ #include &lt;libxml++/nodes/textnode.h&gt;
+ 
+ #include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
+ #include &quot;CommandLine.h&quot;
+-#include &quot;Languages.h&quot;
+-#include &quot;NLS.h&quot;
+ #include &quot;StringManip.h&quot;
+-#include &quot;IndexFactory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;PluginWebEngine.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+@@ -329,21 +328,26 @@
+ 		m_labels.insert(_(&quot;New&quot;));
+ 		m_labels.insert(_(&quot;Personal&quot;));
+ 		// Skip common image, video and archive types
++		m_filePatternsList.insert(&quot;*~&quot;);
+ 		m_filePatternsList.insert(&quot;*.Z&quot;);
++		m_filePatternsList.insert(&quot;*.a&quot;);
+ 		m_filePatternsList.insert(&quot;*.avi&quot;);
+ 		m_filePatternsList.insert(&quot;*.asf&quot;);
+ 		m_filePatternsList.insert(&quot;*.gif&quot;);
+ 		m_filePatternsList.insert(&quot;*.iso&quot;);
+ 		m_filePatternsList.insert(&quot;*.jpeg&quot;);
+ 		m_filePatternsList.insert(&quot;*.jpg&quot;);
++		m_filePatternsList.insert(&quot;*.la&quot;);
+ 		m_filePatternsList.insert(&quot;*.lha&quot;);
+ 		m_filePatternsList.insert(&quot;*.mov&quot;);
+ 		m_filePatternsList.insert(&quot;*.msf&quot;);
+ 		m_filePatternsList.insert(&quot;*.mpeg&quot;);
+ 		m_filePatternsList.insert(&quot;*.mpg&quot;);
++		m_filePatternsList.insert(&quot;*.o&quot;);
+ 		m_filePatternsList.insert(&quot;*.png&quot;);
+ 		m_filePatternsList.insert(&quot;*.rar&quot;);
+ 		m_filePatternsList.insert(&quot;*.sh&quot;);
++		m_filePatternsList.insert(&quot;*.so&quot;);
+ 		m_filePatternsList.insert(&quot;*.tiff&quot;);
+ 		m_filePatternsList.insert(&quot;*.wmv&quot;);
+ 		m_filePatternsList.insert(&quot;*.xbm&quot;);
+@@ -1567,15 +1571,15 @@
+ {
+ 	if (location == m_docsIndexLocation)
+ 	{
+-		return IndexFactory::getIndex(&quot;xapian&quot;, m_docsIndexLocation);
++		return ModuleFactory::getIndex(&quot;xapian&quot;, m_docsIndexLocation);
+ 	}
+ 	else if ((m_clientMode == true) &amp;&amp;
+ 		(location == m_daemonIndexLocation))
+ 	{
+-		return IndexFactory::getIndex(&quot;dbus-xapian&quot;, m_daemonIndexLocation);
++		return ModuleFactory::getIndex(&quot;dbus-xapian&quot;, m_daemonIndexLocation);
+ 	}
+ 
+-	return IndexFactory::getIndex(&quot;xapian&quot;, location);
++	return ModuleFactory::getIndex(&quot;xapian&quot;, location);
+ }
+ 
+ /// Returns the search engines set.
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -30,15 +30,14 @@
+ #include &lt;fstream&gt;
+ #include &lt;glibmm/miscutils.h&gt;
+ 
+-#include &quot;Languages.h&quot;
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;DBusIndex.h&quot;
+-#include &quot;SearchEngineFactory.h&quot;
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;ServerThreads.h&quot;
+@@ -314,7 +313,12 @@
+ 				if (m_pMonitor != NULL)
+ 				{
+ 					// Monitor first so that we don't miss events
+-					m_pMonitor-&gt;addLocation(entryName, true);
++					// If monitoring is not possible, record the first case
++					if ((m_pMonitor-&gt;addLocation(entryName, true) == false) &amp;&amp;
++						(entryStatus != MONITORING_FAILED))
++					{
++						entryStatus = MONITORING_FAILED;
++					}
+ 				}
+ 
+ 				// Iterate through this directory's entries
+@@ -377,27 +381,14 @@
+ 		scanSuccess = false;
+ 	}
+ 
+-	// Did an error occur ?
+-	if (scanSuccess == false)
++	// If a major error occured, this won't be true
++	if (reportFile == true)
+ 	{
+-		time_t timeNow = time(NULL);
+-
+-		// Record this error
+ 		if (itemExists == false)
+ 		{
+-			history.insertItem(location, CrawlHistory::ERROR, m_sourceId, timeNow, entryStatus);
+-		}
+-		else
+-		{
+-			history.updateItem(location, CrawlHistory::ERROR, timeNow, entryStatus);
+-		}
+-	}
+-	else if (reportFile == true)
+-	{
+-		if (itemExists == false)
+-		{
+ 			// Record it
+ 			history.insertItem(location, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++			itemExists = true;
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+@@ -445,6 +436,22 @@
+ 		}
+ 	}
+ 
++	// Did an error occur ?
++	if (entryStatus != 0)
++	{
++		time_t timeNow = time(NULL);
++
++		// Record this error
++		if (itemExists == false)
++		{
++			history.insertItem(location, CrawlHistory::ERROR, m_sourceId, timeNow, entryStatus);
++		}
++		else
++		{
++			history.updateItem(location, CrawlHistory::ERROR, timeNow, entryStatus);
++		}
++	}
++
+ 	return scanSuccess;
+ }
+ 
+@@ -562,7 +569,7 @@
+ {
+ 	docIds.clear();
+ 
+-	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;,
++	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(&quot;xapian&quot;,
+ 		PinotSettings::getInstance().m_daemonIndexLocation);
+ 	if (pEngine == NULL)
+ 	{
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -31,22 +31,22 @@
+ #include &lt;glibmm/miscutils.h&gt;
+ #include &lt;glibmm/exception.h&gt;
+ 
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;HtmlFilter.h&quot;
+-#include &quot;FilterFactory.h&quot;
+ #include &quot;FilterUtils.h&quot;
+-#include &quot;FilterWrapper.h&quot;
+-#include &quot;DBusIndex.h&quot;
+ #include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+-#include &quot;SearchEngineFactory.h&quot;
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
++#include &quot;FilterWrapper.h&quot;
++#include &quot;DBusIndex.h&quot;
++#include &quot;ModuleFactory.h&quot;
++#include &quot;WebEngine.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ 
+@@ -101,7 +101,7 @@
+ 		case DOWNLOAD_FAILED:
+ 			return _(&quot;Couldn't retrieve document&quot;);
+ 		case MONITORING_FAILED:
+-			return _(&quot;Couldn't initialize file monitor&quot;);
++			return _(&quot;File monitor error&quot;);
+ 		case OPENDIR_FAILED:
+ 			return _(&quot;Couldn't open directory&quot;);
+ 		case UNKNOWN_INDEX:
+@@ -1040,7 +1040,7 @@
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+ 
+ 	// Get the SearchEngine
+-	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
++	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(m_engineName, m_engineOption);
+ 	if (pEngine == NULL)
+ 	{
+ 		m_errorNum = UNKNOWN_ENGINE;
+@@ -1049,17 +1049,21 @@
+ 	}
+ 
+ 	// Set up the proxy
+-	DownloaderInterface *pDownloader = pEngine-&gt;getDownloader();
+-	if ((pDownloader != NULL) &amp;&amp;
+-		(settings.m_proxyEnabled == true) &amp;&amp;
+-		(settings.m_proxyAddress.empty() == false))
++	WebEngine *pWebEngine = dynamic_cast&lt;WebEngine *&gt;(pEngine);
++	if (pWebEngine != NULL)
+ 	{
+-		char portStr[64];
++		DownloaderInterface *pDownloader = pWebEngine-&gt;getDownloader();
++		if ((pDownloader != NULL) &amp;&amp;
++			(settings.m_proxyEnabled == true) &amp;&amp;
++			(settings.m_proxyAddress.empty() == false))
++		{
++			char portStr[64];
+ 
+-		pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, settings.m_proxyAddress);
+-		snprintf(portStr, 64, &quot;%u&quot;, settings.m_proxyPort);
+-		pDownloader-&gt;setSetting(&quot;proxyport&quot;, portStr);
+-		pDownloader-&gt;setSetting(&quot;proxytype&quot;, settings.m_proxyType);
++			pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, settings.m_proxyAddress);
++			snprintf(portStr, 64, &quot;%u&quot;, settings.m_proxyPort);
++			pDownloader-&gt;setSetting(&quot;proxyport&quot;, portStr);
++			pDownloader-&gt;setSetting(&quot;proxytype&quot;, settings.m_proxyType);
++		}
+ 	}
+ 
+ 	if (m_listingIndex == false)
+@@ -1097,12 +1101,17 @@
+ 				PinotSettings::getInstance().getIndexIdByName(m_engineDisplayableName));
+ 		}
+ 
+-		// Any spelling correction ?
+-		string correctedFreeQuery(pEngine-&gt;getSpellingCorrection());
+-		if (correctedFreeQuery.empty() == false)
++		// Don't spellcheck if the query was modified in any way
++		if (m_queryProps.getModified() == false)
+ 		{
+-			m_correctedSpelling = true;
+-			m_queryProps.setFreeQuery(correctedFreeQuery);
++			string correctedFreeQuery(pEngine-&gt;getSpellingCorrection());
++
++			// Any spelling correction ?
++			if (correctedFreeQuery.empty() == false)
++			{
++				m_correctedSpelling = true;
++				m_queryProps.setFreeQuery(correctedFreeQuery);
++			}
+ 		}
+ 	}
+ 
+@@ -1173,7 +1182,7 @@
+ void ExpandQueryThread::doWork(void)
+ {
+ 	// Get the SearchEngine
+-	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;, &quot;MERGED&quot;);
++	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(&quot;xapian&quot;, &quot;MERGED&quot;);
+ 	if (pEngine == NULL)
+ 	{
+ 		m_errorNum = UNKNOWN_ENGINE;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -1284,6 +1284,7 @@
+ 				correctedQueryName += queryName;
+ 			}
+ 			queryProps.setName(correctedQueryName);
++			queryProps.setModified(true);
+ 
+ 			add_query(queryProps, true);
+ 		}
+@@ -1391,6 +1392,7 @@
+ 			moreLike += *termIter;
+ 		}
+ 		queryProps.setFreeQuery(queryProps.getFreeQuery() + moreLike);
++		queryProps.setModified(true);
+ 
+ 		add_query(queryProps, false);
+ 	}
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -35,18 +35,17 @@
+ #include &lt;glibmm/object.h&gt;
+ #include &lt;glibmm/main.h&gt;
+ 
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
+ #include &quot;FilterFactory.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+-#include &quot;XapianDatabase.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;ServerThreads.h&quot;
+@@ -80,10 +79,8 @@
+ {
+ 	cout &lt;&lt; &quot;Exiting...&quot; &lt;&lt; endl;
+ 
+-	// Close all indexes we may have opened
+-	XapianDatabaseFactory::closeAll();
+-
+-	// Close the tokenizer libraries
++	// Close everything
++	ModuleFactory::unloadModules();
+ 	Dijon::FilterFactory::unloadFilters();
+ 	Dijon::HtmlFilter::shutdown();
+ 
+@@ -398,6 +395,13 @@
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+ 	DownloaderInterface::initialize();
++	// Load tokenizer libraries, if any
++	Dijon::HtmlFilter::initialize();
++	Dijon::FilterFactory::loadFilters(string(LIBDIR) + &quot;/pinot/filters&quot;);
++	Dijon::FilterFactory::loadFilters(confDirectory + &quot;/filters&quot;);
++	// Load modules, if any
++	ModuleFactory::loadModules(string(LIBDIR) + &quot;/pinot/modules&quot;);
++	ModuleFactory::loadModules(confDirectory + &quot;/modules&quot;);
+ 
+ 	// Localize language names
+ 	Languages::setIntlName(0, _(&quot;Unknown&quot;));
+@@ -417,10 +421,6 @@
+ 	Languages::setIntlName(14, _(&quot;Swedish&quot;));
+ 	Languages::setIntlName(15, _(&quot;Turkish&quot;));
+ 
+-	// Load tokenizer libraries, if any
+-	Dijon::HtmlFilter::initialize();
+-	Dijon::FilterFactory::loadFilters(string(LIBDIR) + &quot;/pinot/filters&quot;);
+-	Dijon::FilterFactory::loadFilters(confDirectory + &quot;/filters&quot;);
+ 	// Load the settings
+ 	settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
+ 	settings.load();
+@@ -434,14 +434,13 @@
+ 	sigaction(SIGQUIT, &amp;newAction, NULL);
+ 
+ 	// Open the daemon index in read-write mode 
+-	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(settings.m_daemonIndexLocation, false);
+-	if ((pDb == NULL) ||
+-		(pDb-&gt;isOpen() == false))
++	bool wasObsoleteFormat = false;
++	if (ModuleFactory::openOrCreateIndex(&quot;xapian&quot;, settings.m_daemonIndexLocation, wasObsoleteFormat, false) == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't open index &quot; &lt;&lt; settings.m_daemonIndexLocation &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
+-	if (pDb-&gt;wasObsoleteFormat() == true)
++	if (wasObsoleteFormat == true)
+ 	{
+ 		resetHistory = resetLabels = true;
+ 	}
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/pinot.cc	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -41,16 +41,15 @@
+ }
+ #include &lt;gtkmm/main.h&gt;
+ 
++#include &quot;NLS.h&quot;
+ #include &quot;FilterFactory.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+-#include &quot;XapianDatabase.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;ActionQueue.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+-#include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;mainWindow.hh&quot;
+ 
+@@ -76,10 +75,8 @@
+ 		cerr &lt;&lt; &quot;Couldn't save configuration file&quot; &lt;&lt; endl;
+ 	}
+ 
+-	// Close all indexes we may have opened
+-	XapianDatabaseFactory::closeAll();
+-
+-	// Close the tokenizer libraries
++	// Close everything
++	ModuleFactory::unloadModules();
+ 	Dijon::FilterFactory::unloadFilters();
+ 	Dijon::HtmlFilter::shutdown();
+ 
+@@ -226,8 +223,15 @@
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+-
+ 	DownloaderInterface::initialize();
++	// Load tokenizer libraries, if any
++	Dijon::HtmlFilter::initialize();
++	Dijon::FilterFactory::loadFilters(string(LIBDIR) + &quot;/pinot/filters&quot;);
++	Dijon::FilterFactory::loadFilters(confDirectory + &quot;/filters&quot;);
++	// Load modules, if any
++	ModuleFactory::loadModules(string(LIBDIR) + &quot;/pinot/modules&quot;);
++	ModuleFactory::loadModules(confDirectory + &quot;/modules&quot;);
++
+ 	// Localize language names
+ 	Languages::setIntlName(0, _(&quot;Unknown&quot;));
+ 	Languages::setIntlName(1, _(&quot;Danish&quot;));
+@@ -249,10 +253,6 @@
+ 	// Load search engines
+ 	settings.loadSearchEngines(prefixDir + &quot;/share/pinot/engines&quot;);
+ 	settings.loadSearchEngines(confDirectory + &quot;/engines&quot;);
+-	// Load tokenizer libraries, if any
+-	Dijon::HtmlFilter::initialize();
+-	Dijon::FilterFactory::loadFilters(string(LIBDIR) + &quot;/pinot/filters&quot;);
+-	Dijon::FilterFactory::loadFilters(confDirectory + &quot;/filters&quot;);
+ 	// Load the settings
+ 	settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
+ 	settings.load();
+@@ -265,9 +265,8 @@
+ 	sigaction(SIGQUIT, &amp;newAction, NULL);
+ 
+ 	// Open this index read-write
+-	XapianDatabase *pFirstDb = XapianDatabaseFactory::getDatabase(settings.m_docsIndexLocation, false);
+-	if ((pFirstDb == NULL) ||
+-		(pFirstDb-&gt;isOpen() == false))
++	bool wasObsoleteFormat = false;
++	if (ModuleFactory::openOrCreateIndex(&quot;xapian&quot;, settings.m_docsIndexLocation, wasObsoleteFormat, false) == false)
+ 	{
+ 		errorMsg = _(&quot;Couldn't open index&quot;);
+ 		errorMsg += &quot; &quot;;
+@@ -275,13 +274,13 @@
+ 	}
+ 	else
+ 	{
+-		warnAboutVersion = pFirstDb-&gt;wasObsoleteFormat();
++		warnAboutVersion = wasObsoleteFormat;
+ 	}
+ 	// ...and the daemon index in read-only mode
+ 	// If it can't be open, it just means the daemon has not yet created it
+-	XapianDatabase *pSecondDb = XapianDatabaseFactory::getDatabase(settings.m_daemonIndexLocation);
++	ModuleFactory::openOrCreateIndex(&quot;xapian&quot;, settings.m_daemonIndexLocation, wasObsoleteFormat, true);
+ 	// Merge these two, this will be useful later
+-	XapianDatabaseFactory::mergeDatabases(&quot;MERGED&quot;, pFirstDb, pSecondDb);
++	ModuleFactory::mergeIndexes(&quot;xapian&quot;, &quot;MERGED&quot;, settings.m_docsIndexLocation, settings.m_daemonIndexLocation);
+ 
+ 	// Do the same for the history database
+ 	string historyDatabase(settings.getHistoryDatabaseName());
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2007-12-19 12:31:34 UTC (rev 1145)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2007-12-19 12:39:39 UTC (rev 1146)
+@@ -28,7 +28,7 @@
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;StringManip.h&quot;
+-#include &quot;SearchEngineFactory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;prefsDialog.hh&quot;
+ 
+@@ -103,7 +103,7 @@
+ 	populate_patternsTreeview();
+ 
+ 	// Hide the Google API entry field ?
+-	if (SearchEngineFactory::isSupported(&quot;googleapi&quot;) == false)
++	if (ModuleFactory::isSupported(&quot;googleapi&quot;) == false)
+ 	{
+ 		apiKeyLabel-&gt;hide();
+ 		apiKeyEntry-&gt;hide();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001139.html">[Pinot-svn] r1145 - in trunk: . Collect IndexSearch	IndexSearch/Google IndexSearch/Xapian Tokenize UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="001141.html">[Pinot-svn] r1147 - trunk/IndexSearch/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1140">[ date ]</a>
+              <a href="thread.html#1140">[ thread ]</a>
+              <a href="subject.html#1140">[ subject ]</a>
+              <a href="author.html#1140">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

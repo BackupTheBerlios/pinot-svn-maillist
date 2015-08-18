@@ -1,0 +1,358 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r932 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r932%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708161628.l7GGSXvL007232%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000925.html">
+   <LINK REL="Next"  HREF="000927.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r932 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r932%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708161628.l7GGSXvL007232%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r932 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug 16 18:28:33 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000925.html">[Pinot-svn] r931 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000927.html">[Pinot-svn] r933 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#926">[ date ]</a>
+              <a href="thread.html#926">[ thread ]</a>
+              <a href="subject.html#926">[ subject ]</a>
+              <a href="author.html#926">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-16 18:28:32 +0200 (Thu, 16 Aug 2007)
+New Revision: 932
+
+Modified:
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+Log:
+Unified handling of moving and deleting a file or directory.
+
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-08-16 16:26:35 UTC (rev 931)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-08-16 16:28:32 UTC (rev 932)
+@@ -50,6 +50,115 @@
+ 	pthread_mutex_destroy(&amp;m_mutex);
+ }
+ 
++bool OnDiskHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName,
++	IndexInterface::NameType type)
++{
++	set&lt;unsigned int&gt; docIdList;
++	bool handledEvent = false;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;OnDiskHandler::fileMoved: &quot; &lt;&lt; fileName &lt;&lt; endl;
++#endif
++	pthread_mutex_lock(&amp;m_mutex);
++	// Get a list of documents in that directory/file
++	if (type == IndexInterface::BY_FILE)
++	{
++		m_index.listDocuments(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName, docIdList, type);
++	}
++	else
++	{
++		m_index.listDocuments(previousFileName, docIdList, type);
++	}
++	// ...and the directory/file itself
++	unsigned int baseDocId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName);
++	if (baseDocId &gt; 0)
++	{
++		docIdList.insert(baseDocId);
++	}
++	if (docIdList.empty() == false)
++	{
++		for (set&lt;unsigned int&gt;::const_iterator iter = docIdList.begin();
++			iter != docIdList.end(); ++iter)
++		{
++			DocumentInfo docInfo;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;OnDiskHandler::fileMoved: moving &quot; &lt;&lt; *iter &lt;&lt; endl;
++#endif
++			if (m_index.getDocumentInfo(*iter, docInfo) == true)
++			{
++				string newLocation(docInfo.getLocation());
++
++				if (baseDocId == *iter)
++				{
++					Url previousUrlObj(previousFileName), urlObj(fileName);
++
++					// Update the title if it was the directory/file name
++					if (docInfo.getTitle() == previousUrlObj.getFile())
++					{
++						docInfo.setTitle(urlObj.getFile());
++					}
++				}
++
++				string::size_type pos = newLocation.find(previousFileName);
++				if (pos != string::npos)
++				{
++					newLocation.replace(pos, previousFileName.length(), fileName);
++
++					// Change the location
++					docInfo.setLocation(newLocation);
++
++					handledEvent = replaceFile(*iter, docInfo);
++#ifdef DEBUG
++					cout &lt;&lt; &quot;OnDiskHandler::fileMoved: moved &quot; &lt;&lt; *iter &lt;&lt; &quot;, &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; endl;
++#endif
++				}
++#ifdef DEBUG
++				else cout &lt;&lt; &quot;OnDiskHandler::fileMoved: skipping &quot; &lt;&lt; newLocation &lt;&lt; endl;
++#endif
++			}
++		}
++	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;OnDiskHandler::fileMoved: no documents in &quot; &lt;&lt; previousFileName &lt;&lt; endl;
++#endif
++	pthread_mutex_unlock(&amp;m_mutex);
++
++	return handledEvent;
++}
++
++bool OnDiskHandler::fileDeleted(const string &amp;fileName, IndexInterface::NameType type)
++{
++	set&lt;unsigned int&gt; docIdList;
++	string location(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
++	bool unindexedDocs = false, handledEvent = false;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;OnDiskHandler::fileDeleted: &quot; &lt;&lt; fileName &lt;&lt; endl;
++#endif
++	pthread_mutex_lock(&amp;m_mutex);
++	// Unindex all of the directory/file's documents
++	if (type == IndexInterface::BY_FILE)
++	{
++		unindexedDocs = m_index.unindexDocuments(location, type);
++	}
++	else
++	{
++		unindexedDocs = m_index.unindexDocuments(fileName, type);
++	}
++	if (unindexedDocs == true)
++	{
++		// ...as well as the actual directory/file
++		m_index.unindexDocument(location);
++
++		m_history.deleteItems(location);
++		handledEvent = true;
++	}
++	pthread_mutex_unlock(&amp;m_mutex);
++
++	return handledEvent;
++}
++
+ bool OnDiskHandler::indexFile(const string &amp;fileName, bool alwaysUpdate, unsigned int &amp;sourceId)
+ {
+ 	string location(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+@@ -259,142 +368,22 @@
+ 
+ bool OnDiskHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName)
+ {
+-	bool handledEvent = false;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::fileMoved: &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-	pthread_mutex_lock(&amp;m_mutex);
+-	unsigned int oldDocId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + previousFileName);
+-	if (oldDocId &gt; 0)
+-	{
+-		DocumentInfo docInfo;
+-
+-		if (m_index.getDocumentInfo(oldDocId, docInfo) == true)
+-		{
+-			// Change the location
+-			docInfo.setLocation(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+-
+-			handledEvent = replaceFile(oldDocId, docInfo);
+-		}
+-	}
+-	pthread_mutex_unlock(&amp;m_mutex);
+-
+-	return handledEvent;
++	return fileMoved(fileName, previousFileName, IndexInterface::BY_FILE);
+ }
+ 
+ bool OnDiskHandler::directoryMoved(const string &amp;dirName,
+ 	const string &amp;previousDirName)
+ {
+-	set&lt;unsigned int&gt; docIdList;
+-	bool handledEvent = false;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::directoryMoved: &quot; &lt;&lt; dirName &lt;&lt; endl;
+-#endif
+-	pthread_mutex_lock(&amp;m_mutex);
+-	// Get a list of documents in that directory
+-	m_index.listDocumentsInDirectory(previousDirName, docIdList);
+-	// ...and the directory itself
+-	unsigned int dirDocId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + previousDirName);
+-	if (dirDocId &gt; 0)
+-	{
+-		docIdList.insert(dirDocId);
+-	}
+-	if (docIdList.empty() == false)
+-	{
+-		// FIXME: check the actual directory is updated too !
+-		for (set&lt;unsigned int&gt;::const_iterator iter = docIdList.begin();
+-			iter != docIdList.end(); ++iter)
+-		{
+-			DocumentInfo docInfo;
+-
+-			if (m_index.getDocumentInfo(*iter, docInfo) == true)
+-			{
+-				string newLocation(docInfo.getLocation());
+-
+-				if (dirDocId == *iter)
+-				{
+-					Url previousUrlObj(previousDirName), urlObj(dirName);
+-
+-					// Update the title to the new directory
+-					if (docInfo.getTitle() == previousUrlObj.getFile())
+-					{
+-						docInfo.setTitle(urlObj.getFile());
+-					}
+-				}
+-
+-				string::size_type pos = newLocation.find(previousDirName);
+-				if (pos != string::npos)
+-				{
+-					newLocation.replace(pos, previousDirName.length(), dirName);
+-
+-					// Change the location
+-					docInfo.setLocation(newLocation);
+-
+-					replaceFile(*iter, docInfo);
+-				}
+-#ifdef DEBUG
+-				else cout &lt;&lt; &quot;OnDiskHandler::directoryMoved: skipping &quot; &lt;&lt; newLocation &lt;&lt; endl;
+-#endif
+-			}
+-		}
+-
+-		handledEvent = true;
+-	}
+-#ifdef DEBUG
+-	else cout &lt;&lt; &quot;OnDiskHandler::directoryMoved: no documents in &quot; &lt;&lt; previousDirName &lt;&lt; endl;
+-#endif
+-	pthread_mutex_unlock(&amp;m_mutex);
+-
+-	return handledEvent;
++	return fileMoved(dirName, previousDirName, IndexInterface::BY_DIRECTORY);
+ }
+ 
+ bool OnDiskHandler::fileDeleted(const string &amp;fileName)
+ {
+-	FilterWrapper wrapFilter(&amp;m_index);
+-	string location(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+-	bool handledEvent = true;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::fileDeleted: &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-	pthread_mutex_lock(&amp;m_mutex);
+-	unsigned int docId = m_index.hasDocument(location);
+-	if (docId &gt; 0)
+-	{
+-		// Unindex the file
+-		handledEvent = wrapFilter.unindexDocument(location);
+-		if (handledEvent == true)
+-		{
+-			m_history.deleteItem(location);
+-		}
+-	}
+-	pthread_mutex_unlock(&amp;m_mutex);
+-
+-	return handledEvent;
++	return fileDeleted(fileName, IndexInterface::BY_FILE);
+ }
+ 
+ bool OnDiskHandler::directoryDeleted(const string &amp;dirName)
+ {
+-	set&lt;unsigned int&gt; docIdList;
+-	bool handledEvent = false;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: &quot; &lt;&lt; dirName &lt;&lt; endl;
+-#endif
+-	pthread_mutex_lock(&amp;m_mutex);
+-	// Unindex all of the directory's documents
+-	if (m_index.unindexDocuments(dirName, IndexInterface::BY_DIRECTORY) == true)
+-	{
+-		// ...as well as the actual directory
+-		m_index.unindexDocument(dirName);
+-
+-		m_history.deleteItems(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName);
+-		handledEvent = true;
+-	}
+-	pthread_mutex_unlock(&amp;m_mutex);
+-
+-	return handledEvent;
++	return fileDeleted(dirName, IndexInterface::BY_DIRECTORY);
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2007-08-16 16:26:35 UTC (rev 931)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2007-08-16 16:28:32 UTC (rev 932)
+@@ -71,6 +71,12 @@
+ 		CrawlHistory m_history;
+ 		XapianIndex m_index;
+ 
++		bool fileMoved(const std::string &amp;fileName,
++			const std::string &amp;previousFileName,
++			IndexInterface::NameType type);
++
++		bool fileDeleted(const std::string &amp;fileName, IndexInterface::NameType type);
++
+ 		bool indexFile(const std::string &amp;fileName, bool alwaysUpdate, unsigned int &amp;sourceId);
+ 
+ 		bool replaceFile(unsigned int docId, DocumentInfo &amp;docInfo);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000925.html">[Pinot-svn] r931 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000927.html">[Pinot-svn] r933 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#926">[ date ]</a>
+              <a href="thread.html#926">[ thread ]</a>
+              <a href="subject.html#926">[ subject ]</a>
+              <a href="author.html#926">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

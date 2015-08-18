@@ -1,0 +1,414 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1429 - in trunk: . Collect UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1429%20-%20in%20trunk%3A%20.%20Collect%20UI/GTK2/src&In-Reply-To=%3C200812031510.mB3FAigS013408%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001419.html">
+   <LINK REL="Next"  HREF="001421.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1429 - in trunk: . Collect UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1429%20-%20in%20trunk%3A%20.%20Collect%20UI/GTK2/src&In-Reply-To=%3C200812031510.mB3FAigS013408%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1429 - in trunk: . Collect UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Dec  3 16:10:44 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001419.html">[Pinot-svn] r1428 - in trunk: . IndexSearch/Xapian SQL
+</A></li>
+        <LI>Next message: <A HREF="001421.html">[Pinot-svn] r1430 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1420">[ date ]</a>
+              <a href="thread.html#1420">[ thread ]</a>
+              <a href="subject.html#1420">[ subject ]</a>
+              <a href="author.html#1420">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-03 16:10:26 +0100 (Wed, 03 Dec 2008)
+New Revision: 1429
+
+Modified:
+   trunk/Collect/DownloaderInterface.cpp
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/configure.in
+Log:
+In DownloaderInterface, GetCurrentThreadId() is specific to Windows, not to
+MingW.
+Check for fnmatch.h, pwd.h, sigaction(), sysconf(), getloadavg() and pipe().
+
+
+Modified: trunk/Collect/DownloaderInterface.cpp
+===================================================================
+--- trunk/Collect/DownloaderInterface.cpp	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/Collect/DownloaderInterface.cpp	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -16,7 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#ifdef __MINGW32__
++#ifdef WIN32
+ #include &lt;windows.h&gt;
+ #endif
+ #include &lt;stdlib.h&gt;
+@@ -64,7 +64,7 @@
+ 
+ static unsigned long idCallback(void)
+ {
+-#ifdef __MINGW32__
++#ifdef WIN32
+ 	return (unsigned long)GetCurrentThreadId();
+ #else
+ 	return (unsigned long)pthread_self();
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -651,7 +651,7 @@
+ 			CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 
+ 			// An entry should already exist for this
+-			crawlHistory.updateItem(indexedUrl, CrawlHistory::ERROR, time(NULL), errorNum);
++			crawlHistory.updateItem(indexedUrl, CrawlHistory::CRAWL_ERROR, time(NULL), errorNum);
+ 		}
+ 	}
+ 	else if (type == &quot;UnindexingThread&quot;)
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &quot;config.h&quot;
+ #include &lt;stdio.h&gt;
+ #include &lt;stdlib.h&gt;
+ #include &lt;ctype.h&gt;
+@@ -24,8 +25,12 @@
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;dirent.h&gt;
++#ifdef HAVE_PWD_H
+ #include &lt;pwd.h&gt;
++#endif
++#ifdef HAVE_FNMATCH_H
+ #include &lt;fnmatch.h&gt;
++#endif
+ #include &lt;algorithm&gt;
+ #include &lt;iostream&gt;
+ 
+@@ -35,7 +40,6 @@
+ #include &lt;libxml++/nodes/node.h&gt;
+ #include &lt;libxml++/nodes/textnode.h&gt;
+ 
+-#include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;CommandLine.h&quot;
+ #include &quot;Languages.h&quot;
+@@ -120,7 +124,11 @@
+ 	if (stat(directoryName.c_str(), &amp;fileStat) != 0)
+ 	{
+ 		// No, create it then
++#ifdef WIN32
++		if (mkdir(directoryName.c_str()) == 0)
++#else
+ 		if (mkdir(directoryName.c_str(), (mode_t)S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IXOTH) == 0)
++#endif
+ 		{
+ 			cerr &lt;&lt; &quot;Created directory &quot; &lt;&lt; directoryName &lt;&lt; endl;
+ 			m_firstRun = true;
+@@ -167,6 +175,7 @@
+ 
+ string PinotSettings::getHomeDirectory(void)
+ {
++#ifdef HAVE_PWD_H
+ 	struct passwd *pPasswd = getpwuid(geteuid());
+ 
+ 	if ((pPasswd != NULL) &amp;&amp;
+@@ -176,14 +185,17 @@
+ 	}
+ 	else
+ 	{
++#endif
+ 		char *homeDir = getenv(&quot;HOME&quot;);
+ 		if (homeDir != NULL)
+ 		{
+ 			return homeDir;
+ 		}
++#ifdef HAVE_PWD_H
+ 	}
+ 
+ 	return &quot;~&quot;;
++#endif
+ }
+ 
+ string PinotSettings::getConfigurationDirectory(void)
+@@ -217,6 +229,7 @@
+ 
+ string PinotSettings::getCurrentUserName(void)
+ {
++#ifdef HAVE_PWD_H
+ 	struct passwd *pPasswd = getpwuid(geteuid());
+ 
+ 	if ((pPasswd != NULL) &amp;&amp;
+@@ -224,6 +237,7 @@
+ 	{
+ 		return pPasswd-&gt;pw_name;
+ 	}
++#endif
+ 
+ 	return &quot;&quot;;
+ }
+@@ -406,6 +420,7 @@
+ 		m_isBlackList = getDefaultPatterns(m_filePatternsList);
+ 
+ 		// Create default queries
++#ifdef HAVE_PWD_H
+ 		struct passwd *pPasswd = getpwuid(geteuid());
+ 		if (pPasswd != NULL)
+ 		{
+@@ -429,6 +444,7 @@
+ 				addQuery(queryProps);
+ 			}
+ 		}
++#endif
+ 
+ 		QueryProperties queryProps(_(&quot;Latest First&quot;), &quot;dir:/&quot;);
+ 		queryProps.setSortOrder(QueryProperties::DATE);
+@@ -1971,6 +1987,7 @@
+ 		return true;
+ 	}
+ 
++#ifdef HAVE_FNMATCH_H
+ 	// Any pattern matches this file name ?
+ 	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsList.begin(); patternIter != m_filePatternsList.end() ; ++patternIter)
+ 	{
+@@ -1983,6 +2000,7 @@
+ 			return m_isBlackList;
+ 		}
+ 	}
++#endif
+ 
+ 	return !m_isBlackList;
+ }
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -492,11 +492,11 @@
+ 		// Record this error
+ 		if (itemExists == false)
+ 		{
+-			crawlHistory.insertItem(location, CrawlHistory::ERROR, m_sourceId, timeNow, entryStatus);
++			crawlHistory.insertItem(location, CrawlHistory::CRAWL_ERROR, m_sourceId, timeNow, entryStatus);
+ 		}
+ 		else
+ 		{
+-			crawlHistory.updateItem(location, CrawlHistory::ERROR, timeNow, entryStatus);
++			crawlHistory.updateItem(location, CrawlHistory::CRAWL_ERROR, timeNow, entryStatus);
+ 		}
+ 	}
+ 
+@@ -526,7 +526,7 @@
+ 			m_sourceId);
+ 	}
+ 	// Remove errors
+-	crawlHistory.deleteItems(m_sourceId, CrawlHistory::ERROR);
++	crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_ERROR);
+ 
+ 	if (scanEntry(m_dirName, crawlHistory) == false)
+ 	{
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -226,7 +226,7 @@
+ void WorkerThread::threadHandler(void)
+ {
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;WorkerThread::threadHandler: thread &quot; &lt;&lt; m_id &lt;&lt; &quot; &quot; &lt;&lt; pthread_self() &lt;&lt; endl;
++	cout &lt;&lt; &quot;WorkerThread::threadHandler: thread &quot; &lt;&lt; m_id &lt;&lt; endl;
+ #endif
+ 	try
+ 	{
+@@ -281,7 +281,9 @@
+ 	pthread_rwlock_init(&amp;m_threadsLock, NULL);
+ 	pthread_rwlock_init(&amp;m_listsLock, NULL);
+ 
++#ifdef HAVE_SYSCONF
+ 	m_numCPUs = sysconf(_SC_NPROCESSORS_ONLN);
++#endif
+ }
+ 
+ ThreadsManager::~ThreadsManager()
+@@ -633,7 +635,6 @@
+ 
+ ustring ThreadsManager::queue_index(const DocumentInfo &amp;docInfo)
+ {
+-	double averageLoad[3];
+ 	bool addToQueue = false;
+ 
+ 	if (get_threads_count() &gt;= m_maxIndexThreads)
+@@ -643,16 +644,23 @@
+ #endif
+ 		addToQueue = true;
+ 	}
++#ifdef HAVE_GETLOADAVG
+ 	// Get the load averaged over the last minute
+-	else if (getloadavg(averageLoad, 3) != -1)
++	else
+ 	{
+-		// FIXME: is LOADAVG_1MIN Solaris specific ?
+-		if (averageLoad[0] &gt;= (double)m_numCPUs * 4)
++		double averageLoad[3];
++
++		if (getloadavg(averageLoad, 3) != -1)
+ 		{
+-			// Don't add to the load, queue this
+-			addToQueue = true;
++			// FIXME: is LOADAVG_1MIN Solaris specific ?
++			if (averageLoad[0] &gt;= (double)m_numCPUs * 4)
++			{
++				// Don't add to the load, queue this
++				addToQueue = true;
++			}
+ 		}
+ 	}
++#endif
+ 
+ 	if (addToQueue == true)
+ 	{
+@@ -1986,18 +1994,26 @@
+ {
+ 	int pipeFds[2];
+ 
++#ifdef HAVE_PIPE
+ 	if (pipe(pipeFds) == 0)
+ 	{
+ 		// This pipe will allow to stop select()
+ 		m_ctrlReadPipe = pipeFds[0];
+ 		m_ctrlWritePipe = pipeFds[1];
+ 	}
++#endif
+ }
+ 
+ MonitorThread::~MonitorThread()
+ {
+-	close(m_ctrlReadPipe);
+-	close(m_ctrlWritePipe);
++	if (m_ctrlReadPipe &gt;= 0)
++	{
++		close(m_ctrlReadPipe);
++	}
++	if (m_ctrlWritePipe &gt;= 0)
++	{
++		close(m_ctrlWritePipe);
++	}
+ }
+ 
+ string MonitorThread::getType(void) const
+@@ -2008,7 +2024,10 @@
+ void MonitorThread::stop(void)
+ {
+ 	WorkerThread::stop();
+-	write(m_ctrlWritePipe, &quot;X&quot;, 1);
++	if (m_ctrlWritePipe &gt;= 0)
++	{
++		write(m_ctrlWritePipe, &quot;X&quot;, 1);
++	}
+ }
+ 
+ void MonitorThread::processEvents(void)
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -364,7 +364,7 @@
+ 
+ 		// Did any error occur on this source ?
+ 		unsigned int errorCount = crawlHistory.getSourceItems(sourceNum,
+-			CrawlHistory::ERROR, errors, currentOffset, currentOffset + 100,
++			CrawlHistory::CRAWL_ERROR, errors, currentOffset, currentOffset + 100,
+ 			latestErrorDate);
+ 		while ((errorCount &gt; 0) &amp;&amp;
+ 			(errors.empty() == false))
+@@ -427,7 +427,7 @@
+ 			}
+ 			currentOffset += 100;
+ 			errorCount = crawlHistory.getSourceItems(sourceNum,
+-				CrawlHistory::ERROR, errors, currentOffset, currentOffset + 100,
++				CrawlHistory::CRAWL_ERROR, errors, currentOffset, 100, // currentOffset + 100,
+ 				latestErrorDate);
+ 		}
+ 
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2008-12-02 15:54:50 UTC (rev 1428)
++++ trunk/configure.in	2008-12-03 15:10:26 UTC (rev 1429)
+@@ -354,7 +354,7 @@
+ MISC_LIBS=&quot;$PTHREAD_LIBS&quot;
+ AC_SUBST(MISC_CFLAGS)
+ AC_SUBST(MISC_LIBS)
+-AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h dlfcn.h regex.h])
++AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h dlfcn.h regex.h fnmatch.h pwd.h])
+ PKG_CHECK_MODULES(MIMEINFO, shared-mime-info )
+ SHARED_MIME_INFO_PREFIX=`pkg-config --variable=prefix shared-mime-info`
+ AC_SUBST(SHARED_MIME_INFO_PREFIX)
+@@ -425,6 +425,10 @@
+ AC_CHECK_FUNCS(statfs)
+ AC_CHECK_FUNCS(sysctlbyname)
+ AC_CHECK_FUNCS(mkstemp)
++AC_CHECK_FUNCS(sigaction)
++AC_CHECK_FUNCS(sysconf)
++AC_CHECK_FUNCS(getloadavg)
++AC_CHECK_FUNCS(pipe)
+ 
+ AC_OUTPUT( pinot.spec UI/GTK2/src/de.berlios.Pinot.service Makefile \
+ 	Utils/Makefile Tokenize/Makefile SQL/Makefile po/Makefile.in Collect/Makefile \
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001419.html">[Pinot-svn] r1428 - in trunk: . IndexSearch/Xapian SQL
+</A></li>
+	<LI>Next message: <A HREF="001421.html">[Pinot-svn] r1430 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1420">[ date ]</a>
+              <a href="thread.html#1420">[ thread ]</a>
+              <a href="subject.html#1420">[ subject ]</a>
+              <a href="author.html#1420">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

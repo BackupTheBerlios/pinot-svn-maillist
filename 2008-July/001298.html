@@ -1,0 +1,249 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1304 - trunk/Collect
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1304%20-%20trunk/Collect&In-Reply-To=%3C200807190958.m6J9wic6004655%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001297.html">
+   <LINK REL="Next"  HREF="001299.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1304 - trunk/Collect</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1304%20-%20trunk/Collect&In-Reply-To=%3C200807190958.m6J9wic6004655%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1304 - trunk/Collect">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 19 11:58:44 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001297.html">[Pinot-svn] r1303 - trunk/IndexSearch/XesamGLib
+</A></li>
+        <LI>Next message: <A HREF="001299.html">[Pinot-svn] r1305 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1298">[ date ]</a>
+              <a href="thread.html#1298">[ thread ]</a>
+              <a href="subject.html#1298">[ subject ]</a>
+              <a href="author.html#1298">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-19 11:58:39 +0200 (Sat, 19 Jul 2008)
+New Revision: 1304
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+Log:
+Follow META REFRESH if set.
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2008-07-19 09:29:42 UTC (rev 1303)
++++ trunk/Collect/CurlDownloader.cpp	2008-07-19 09:58:39 UTC (rev 1304)
+@@ -26,6 +26,8 @@
+ #include &lt;curl/curl.h&gt;
+ 
+ #include &quot;Url.h&quot;
++#include &quot;HtmlFilter.h&quot;
++#include &quot;FilterUtils.h&quot;
+ #include &quot;CurlDownloader.h&quot;
+ 
+ using namespace std;
+@@ -37,8 +39,23 @@
+ 	string m_lastModified;
+ };
+ 
+-size_t writeCallback(void *pData, size_t dataSize, size_t elementsCount, void *pStream)
++static void freeContentInfo(struct ContentInfo *pInfo)
+ {
++	if (pInfo == NULL)
++	{
++		return;
++	}
++
++	if (pInfo-&gt;m_pContent != NULL)
++	{
++		free(pInfo-&gt;m_pContent);
++		pInfo-&gt;m_pContent = NULL;
++		pInfo-&gt;m_contentLen = 0;
++	}
++}
++
++static size_t writeCallback(void *pData, size_t dataSize, size_t elementsCount, void *pStream)
++{
+ 	ContentInfo *pInfo = NULL;
+ 	size_t totalSize = elementsCount * dataSize;
+ 
+@@ -54,12 +71,7 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;writeCallback: failed to enlarge buffer&quot; &lt;&lt; endl;
+ #endif
+-		if (pInfo-&gt;m_pContent != NULL)
+-		{
+-			free(pInfo-&gt;m_pContent);
+-			pInfo-&gt;m_pContent = NULL;
+-			pInfo-&gt;m_contentLen = 0;
+-		}
++		freeContentInfo(pInfo);
+ 		return 0;
+ 	}
+ 
+@@ -82,7 +94,7 @@
+ 	return totalSize;
+ }
+ 
+-size_t headerCallback(void *pData, size_t dataSize, size_t elementsCount, void *pStream)
++static size_t headerCallback(void *pData, size_t dataSize, size_t elementsCount, void *pStream)
+ {
+ 	ContentInfo *pInfo = NULL;
+ 	size_t totalSize = elementsCount * dataSize;
+@@ -96,8 +108,8 @@
+ 	pInfo = (ContentInfo *)pStream;
+ 
+ 	string header((const char*)pData, totalSize);
++
+ 	string::size_type pos = header.find(&quot;Last-Modified: &quot;);
+-
+ 	if (pos != string::npos)
+ 	{
+ 		pInfo-&gt;m_lastModified = header.substr(15);
+@@ -182,7 +194,7 @@
+ {
+ 	Document *pDocument = NULL;
+ 	string url(Url::escapeUrl(docInfo.getLocation()));
+-	long maxRedirectionsCount = 10;
++	unsigned int redirectionsCount = 0;
+ 
+ 	if (url.empty() == true)
+ 	{
+@@ -203,7 +215,7 @@
+ 
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_AUTOREFERER, 1);
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_FOLLOWLOCATION, 1);
+-		curl_easy_setopt(pCurlHandler, CURLOPT_MAXREDIRS, maxRedirectionsCount);
++		curl_easy_setopt(pCurlHandler, CURLOPT_MAXREDIRS, 10);
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_USERAGENT, m_userAgent.c_str());
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_NOSIGNAL, (long)1);
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_TIMEOUT, (long)m_timeout);
+@@ -214,10 +226,7 @@
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_WRITEDATA, pContentInfo);
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_HEADERFUNCTION, headerCallback);
+ 		curl_easy_setopt(pCurlHandler, CURLOPT_HEADERDATA, pContentInfo);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: URL is &quot; &lt;&lt; url &lt;&lt; endl;
+-#endif
+-		curl_easy_setopt(pCurlHandler, CURLOPT_URL, url.c_str());
++
+ 		// Is a proxy defined ?
+ 		// Curl automatically checks and makes use of the *_proxy environment variables 
+ 		if ((m_proxyAddress.empty() == false) &amp;&amp;
+@@ -242,10 +251,16 @@
+ 			curl_easy_setopt(pCurlHandler, CURLOPT_PROXYTYPE, proxyType);
+ 		}
+ 
+-		CURLcode res = curl_easy_perform(pCurlHandler);
+-		if (res == CURLE_OK)
++#ifdef DEBUG
++		cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: URL is &quot; &lt;&lt; url &lt;&lt; endl;
++#endif
++		while (redirectionsCount &lt; 10)
+ 		{
+-			if ((pContentInfo-&gt;m_pContent != NULL) &amp;&amp;
++			curl_easy_setopt(pCurlHandler, CURLOPT_URL, url.c_str());
++
++			CURLcode res = curl_easy_perform(pCurlHandler);
++			if ((res == CURLE_OK) &amp;&amp;
++				(pContentInfo-&gt;m_pContent != NULL) &amp;&amp;
+ 				(pContentInfo-&gt;m_contentLen &gt; 0))
+ 			{
+ 				char *pContentType = NULL;
+@@ -269,20 +284,45 @@
+ 				{
+ 					pDocument-&gt;setTimestamp(pContentInfo-&gt;m_lastModified);
+ 				}
+-			}
++
++				// Any REFRESH META tag ?
++				Dijon::HtmlFilter htmlFilter(&quot;text/html&quot;);
++				if ((FilterUtils::feedFilter(*pDocument, &amp;htmlFilter) == true) &amp;&amp;
++					(htmlFilter.next_document() == true))
++				{
++					const map&lt;string, string&gt; &amp;metaData = htmlFilter.get_meta_data();
++					map&lt;string, string&gt;::const_iterator refreshIter = metaData.find(&quot;refresh&quot;);
++					if (refreshIter != metaData.end())
++					{
++						// Try again
++						string::size_type urlPos = refreshIter-&gt;second.find(&quot;URL=&quot;);
++						if (urlPos != string::npos)
++						{
++							url = refreshIter-&gt;second.substr(urlPos + 4);
+ #ifdef DEBUG
+-			else cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: no content for &quot; &lt;&lt; url &lt;&lt; endl;
++							cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: redirected to URL &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
++							delete pDocument;
++							pDocument = NULL;
++							freeContentInfo(pContentInfo);
++							++redirectionsCount;
++							continue;
++						}
++					}
++				}
++#ifdef DEBUG
++				else cout &lt;&lt; &quot;CurlDownloader::retrieveUrl: failed to parse HTML&quot; &lt;&lt; endl;
++#endif
++			}
++			else
++			{
++				cerr &lt;&lt; &quot;Couldn't download &quot; &lt;&lt; url &lt;&lt; &quot;: &quot; &lt;&lt; curl_easy_strerror(res) &lt;&lt; endl;
++			}
++
++			break;
+ 		}
+-		else
+-		{
+-			cerr &lt;&lt; &quot;Couldn't download &quot; &lt;&lt; url &lt;&lt; &quot;: &quot; &lt;&lt; curl_easy_strerror(res) &lt;&lt; endl;
+-		}
+ 
+-		if (pContentInfo-&gt;m_pContent != NULL)
+-		{
+-			free(pContentInfo-&gt;m_pContent);
+-		}
++		freeContentInfo(pContentInfo);
+ 		delete pContentInfo;
+ 
+ 		// Cleanup
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001297.html">[Pinot-svn] r1303 - trunk/IndexSearch/XesamGLib
+</A></li>
+	<LI>Next message: <A HREF="001299.html">[Pinot-svn] r1305 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1298">[ date ]</a>
+              <a href="thread.html#1298">[ thread ]</a>
+              <a href="subject.html#1298">[ subject ]</a>
+              <a href="author.html#1298">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

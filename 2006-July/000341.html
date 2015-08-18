@@ -1,0 +1,1179 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r348 - in trunk: UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r348%20-%20in%20trunk%3A%20UI/GTK2/src%20Utils&In-Reply-To=%3C200607141213.k6ECDNPE009344%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000340.html">
+   <LINK REL="Next"  HREF="000342.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r348 - in trunk: UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r348%20-%20in%20trunk%3A%20UI/GTK2/src%20Utils&In-Reply-To=%3C200607141213.k6ECDNPE009344%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r348 - in trunk: UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 14 14:13:23 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000340.html">[Pinot-svn] r347 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000342.html">[Pinot-svn] r349 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#341">[ date ]</a>
+              <a href="thread.html#341">[ thread ]</a>
+              <a href="subject.html#341">[ subject ]</a>
+              <a href="author.html#341">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-14 14:12:57 +0200 (Fri, 14 Jul 2006)
+New Revision: 348
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/Utils/DocumentInfo.cpp
+   trunk/Utils/DocumentInfo.h
+Log:
+Simplified/refactored indexing code in the UI. Moved stuff useful to both the
+UI and the future D-Bus daemon into ThreadsManager when it makes sense.
+DocumentInfo can now hold a labels set.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-07-14 12:12:57 UTC (rev 348)
+@@ -161,24 +161,27 @@
+ 	m_dispatcher.emit();
+ }
+ 
+-ThreadsManager::ThreadsManager() :
++ThreadsManager::ThreadsManager(unsigned int maxIndexThreads) :
+ 	SigC::Object(),
++	m_maxIndexThreads(maxIndexThreads),
+ 	m_nextId(1),
+ 	m_backgroundThreadsCount(0)
+ {
+-	pthread_rwlock_init(&amp;m_rwLock, NULL);
++	pthread_rwlock_init(&amp;m_threadsLock, NULL);
++	pthread_rwlock_init(&amp;m_listsLock, NULL);
+ }
+ 
+ ThreadsManager::~ThreadsManager()
+ {
+ 	stop_threads();
+-	// Destroy the read/write lock
+-	pthread_rwlock_destroy(&amp;m_rwLock);
++	// Destroy the read/write locks
++	pthread_rwlock_destroy(&amp;m_listsLock);
++	pthread_rwlock_destroy(&amp;m_threadsLock);
+ }
+ 
+-bool ThreadsManager::read_lock(void)
++bool ThreadsManager::read_lock_threads(void)
+ {
+-	if (pthread_rwlock_rdlock(&amp;m_rwLock) == 0)
++	if (pthread_rwlock_rdlock(&amp;m_threadsLock) == 0)
+ 	{
+ 		return true;
+ 	}
+@@ -186,9 +189,9 @@
+ 	return false;
+ }
+ 
+-bool ThreadsManager::write_lock(void)
++bool ThreadsManager::write_lock_threads(void)
+ {
+-	if (pthread_rwlock_wrlock(&amp;m_rwLock) == 0)
++	if (pthread_rwlock_wrlock(&amp;m_threadsLock) == 0)
+ 	{
+ 		return true;
+ 	}
+@@ -196,17 +199,42 @@
+ 	return false;
+ }
+ 
+-void ThreadsManager::unlock(void)
++void ThreadsManager::unlock_threads(void)
+ {
+-	pthread_rwlock_unlock(&amp;m_rwLock);
++	pthread_rwlock_unlock(&amp;m_threadsLock);
+ }
+ 
++bool ThreadsManager::read_lock_lists(void)
++{
++	if (pthread_rwlock_rdlock(&amp;m_listsLock) == 0)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++bool ThreadsManager::write_lock_lists(void)
++{
++	if (pthread_rwlock_wrlock(&amp;m_listsLock) == 0)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++void ThreadsManager::unlock_lists(void)
++{
++	pthread_rwlock_unlock(&amp;m_listsLock);
++}
++
+ WorkerThread *ThreadsManager::get_thread(void)
+ {
+ 	WorkerThread *pWorkerThread = NULL;
+ 
+ 	// Get the first thread that's finished
+-	if (read_lock() == true)
++	if (read_lock_threads() == true)
+ 	{
+ 		for (map&lt;WorkerThread *, Thread *&gt;::iterator threadIter = m_threads.begin();
+ 			threadIter != m_threads.end(); ++threadIter)
+@@ -226,7 +254,7 @@
+ #endif
+ 		}
+ 
+-		unlock();
++		unlock_threads();
+ 	}
+ 
+ 	if (pWorkerThread == NULL)
+@@ -242,6 +270,60 @@
+ 	return pWorkerThread;
+ }
+ 
++bool ThreadsManager::index_document(const DocumentInfo &amp;docInfo)
++{
++	string location(docInfo.getLocation());
++
++	if (location.empty() == true)
++	{
++		// Nothing to do
++		return false;
++	}
++
++	// If the document is mail, we can't index it again
++	Url urlObj(location);
++	if (urlObj.getProtocol() == &quot;mailbox&quot;)
++	{
++		return false;
++	}
++
++	// Is it an update ?
++	XapianIndex docsIndex(PinotSettings::getInstance().m_indexLocation);
++	unsigned int docId = docsIndex.hasDocument(docInfo.getLocation());
++	if (docId &gt; 0)
++	{
++		// Yes, it is
++		start_thread(new IndexingThread(docInfo, docId));
++	}
++	else
++	{
++		bool isNewDocument = false;
++
++		// Is the document being indexed ?
++		if (write_lock_lists() == true)
++		{
++			if (m_beingIndexed.find(location) == m_beingIndexed.end())
++			{
++				m_beingIndexed.insert(location);
++				isNewDocument = true;
++			}
++
++			unlock_lists();
++		}
++
++		if (isNewDocument == false)
++		{
++			// FIXME: the document is being indexed but we may have to set labels on it
++			return false;
++		}
++
++		// This is a new document
++		start_thread(new IndexingThread(docInfo));
++	}
++
++	return true;
++}
++
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+ {
+ 	if (pWorkerThread == NULL)
+@@ -264,11 +346,11 @@
+ 	}
+ 
+ 	// Insert
+-	if (write_lock() == true)
++	if (write_lock_threads() == true)
+ 	{
+ 		m_threads[pWorkerThread] = pThread;
+ 
+-		unlock();
++		unlock_threads();
+ 	}
+ 	++m_nextId;
+ 
+@@ -279,11 +361,11 @@
+ {
+ 	int count = 0;
+ 
+-	if (read_lock() == true)
++	if (read_lock_threads() == true)
+ 	{
+ 		count = m_threads.size() - m_backgroundThreadsCount;
+ 
+-		unlock();
++		unlock_threads();
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ThreadsManager::get_threads_count: &quot; &lt;&lt; count &lt;&lt; &quot; threads left&quot; &lt;&lt; endl;
+@@ -308,12 +390,12 @@
+ {
+ 	if (m_threads.empty() == false)
+ 	{
+-		if (read_lock() == true)
++		if (read_lock_threads() == true)
+ 		{
+ 			for_each(m_threads.begin(), m_threads.end(), DeleteMapPointer());
+ 			m_threads.clear();
+ 
+-			unlock();
++			unlock_threads();
+ 		}
+ 	}
+ }
+@@ -363,6 +445,63 @@
+ 	m_onThreadEndSignal.emit(pThread);
+ }
+ 
++bool ThreadsManager::queue_index(const DocumentInfo &amp;docInfo)
++{
++	if (get_threads_count() &gt;= m_maxIndexThreads)
++	{
++		if (write_lock_lists() == true)
++		{
++			m_indexQueue.insert(docInfo);
++
++			unlock_lists();
++		}
++
++		return true;
++	}
++
++	return index_document(docInfo);
++}
++
++bool ThreadsManager::pop_queue(void)
++{
++	if (get_threads_count() &gt;= m_maxIndexThreads)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::pop_queue: too many threads&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	DocumentInfo docInfo;
++	bool foundItem = false;
++
++	if (write_lock_lists() == true)
++	{
++		if (m_indexQueue.empty() == false)
++		{
++			// Get the first item
++			std::set&lt;DocumentInfo&gt;::iterator queueIter = m_indexQueue.begin();
++			if (queueIter != m_indexQueue.end())
++			{
++				docInfo = *queueIter;
++				foundItem = true;
++
++				m_indexQueue.erase(queueIter);
++			}
++		}
++
++		unlock_lists();
++	}
++
++	if (foundItem == false)
++	{
++		// Nothing to do
++		return false;
++	}
++
++	return index_document(docInfo);
++}
++
+ IndexBrowserThread::IndexBrowserThread(const string &amp;indexName,
+ 	const string &amp;labelName, unsigned int maxDocsCount, unsigned int startDoc) :
+ 	WorkerThread(),
+@@ -785,11 +924,10 @@
+ 	}
+ }
+ 
+-IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, const string &amp;labelName,
+-	unsigned int docId, bool allowAllMIMETypes) :
++IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId,
++	bool allowAllMIMETypes) :
+ 	DownloadingThread(docInfo, false),
+ 	m_docInfo(docInfo),
+-	m_labelName(labelName),
+ 	m_docId(docId),
+ 	m_allowAllMIMETypes(allowAllMIMETypes)
+ {
+@@ -822,11 +960,6 @@
+ 	return m_docInfo;
+ }
+ 
+-string IndexingThread::getLabelName(void) const
+-{
+-	return m_labelName;
+-}
+-
+ unsigned int IndexingThread::getDocumentID(void) const
+ {
+ 	return m_docId;
+@@ -949,42 +1082,26 @@
+ 
+ 		if (m_done == false)
+ 		{
+-			set&lt;string&gt; labels;
++			const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+ 
+ 			index.setStemmingMode(IndexInterface::STORE_BOTH);
+ 
+ 			// Update an existing document or add to the index ?
+ 			if (m_update == true)
+ 			{
+-				// Get the document's current labels
+-				index.getDocumentLabels(m_docId, labels);
+-
+ 				// Update the document
+ 				if (index.updateDocument(m_docId, *pTokens) == true)
+ 				{
+-					if (m_labelName.empty() == false)
+-					{
+-						// Add the label if it's a new one
+-						if (labels.find(m_labelName) == labels.end())
+-						{
+-							labels.clear();
+-							labels.insert(m_labelName);
+-
+-							index.setDocumentLabels(m_docId, labels, false);
+-						}
+-					}
+ 					success = true;
+ 				}
++
++				// Set the document's labels
++				index.setDocumentLabels(m_docId, labels, false);
+ 			}
+ 			else
+ 			{
+ 				unsigned int docId = 0;
+ 
+-				if (m_labelName.empty() == false)
+-				{
+-					labels.insert(m_labelName);
+-				}
+-
+ 				// Index the document
+ 				success = index.indexDocument(*pTokens, labels, docId);
+ 				if (success == true)
+@@ -999,7 +1116,7 @@
+ 				m_status += &quot; &quot;;
+ 				m_status += m_docInfo.getLocation();
+ 			}
+-			else if (m_done == false)
++			else
+ 			{
+ 				// Flush the index
+ 				index.flush();
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-07-14 12:12:57 UTC (rev 348)
+@@ -91,10 +91,10 @@
+ class ThreadsManager : public SigC::Object
+ {
+ 	public:
+-		ThreadsManager();
++		ThreadsManager(unsigned int maxIndexThreads);
+ 		virtual ~ThreadsManager();
+ 
+-		bool start_thread(WorkerThread *pWorkerThread, bool inBackground);
++		bool start_thread(WorkerThread *pWorkerThread, bool inBackground = false);
+ 
+ 		unsigned int get_threads_count(void);
+ 
+@@ -108,19 +108,34 @@
+ 
+ 		void on_thread_end();
+ 
++		bool read_lock_lists(void);
++
++		bool write_lock_lists(void);
++
++		void unlock_lists(void);
++
++		bool queue_index(const DocumentInfo &amp;docInfo);
++
++		bool pop_queue(void);
++
++		std::set&lt;std::string&gt; m_beingIndexed;
++
+ 	protected:
+ 		SigC::Connection m_threadsEndConnection;
+-		// Read/write lock
+-		pthread_rwlock_t m_rwLock;
++		pthread_rwlock_t m_threadsLock;
++		pthread_rwlock_t m_listsLock;
+ 		std::map&lt;WorkerThread *, Glib::Thread *&gt; m_threads;
++		unsigned int m_maxIndexThreads;
+ 		unsigned int m_nextId;
+ 		unsigned int m_backgroundThreadsCount;
+ 		SigC::Signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
++		std::set&lt;DocumentInfo&gt; m_indexQueue;
+ 
+-		bool read_lock(void);
+-		bool write_lock(void);
+-		void unlock(void);
++		bool read_lock_threads(void);
++		bool write_lock_threads(void);
++		void unlock_threads(void);
+ 		WorkerThread *get_thread(void);
++		bool index_document(const DocumentInfo &amp;docInfo);
+ 
+ 	private:
+ 		ThreadsManager(const ThreadsManager &amp;other);
+@@ -257,8 +272,8 @@
+ class IndexingThread : public DownloadingThread
+ {
+ 	public:
+-		IndexingThread(const DocumentInfo &amp;docInfo, const std::string &amp;labelName,
+-			unsigned int docId = 0, bool allowAllMIMETypes = false);
++		IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId = 0,
++			bool allowAllMIMETypes = false);
+ 		virtual ~IndexingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -275,7 +290,6 @@
+ 
+ 	protected:
+ 		DocumentInfo m_docInfo;
+-		std::string m_labelName;
+ 		unsigned int m_docId;
+ 		bool m_allowAllMIMETypes;
+ 		std::string m_indexLocation;
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-07-14 12:12:57 UTC (rev 348)
+@@ -38,8 +38,8 @@
+ 
+ string importDialog::InternalState::m_defaultDirectory = &quot;&quot;;
+ 
+-importDialog::InternalState::InternalState(importDialog *pWindow) :
+-	ThreadsManager(),
++importDialog::InternalState::InternalState(unsigned int maxIndexThreads, importDialog *pWindow) :
++	ThreadsManager(maxIndexThreads),
+ 	m_importing(false)
+ {
+ 	m_onThreadEndSignal.connect(SigC::slot(*pWindow, &amp;importDialog::on_thread_end));
+@@ -54,7 +54,7 @@
+ 	m_docsCount(0),
+ 	m_importDirectory(false),
+ 	m_pScannerThread(NULL),
+-	m_state(this)
++	m_state(10, this)
+ {
+ 	set_title(title);
+ 
+@@ -168,17 +168,19 @@
+ 
+ bool importDialog::on_import_url(const string &amp;location)
+ {
+-	Url urlObj(location);
+-
+ 	XapianIndex index(PinotSettings::getInstance().m_indexLocation);
+ 	IndexingThread *pThread = NULL;
++	Url urlObj(location);
++	set&lt;string&gt; labels;
+ 	string title = from_utf8(m_title);
+ 	unsigned int docId = 0;
+ 
+ 	if (index.isGood() == true)
+ 	{
+ 		docId = index.hasDocument(location);
++		index.getDocumentLabels(docId, labels);
+ 	}
++	labels.insert(m_labelName);
+ 
+ 	if (m_importDirectory == true)
+ 	{
+@@ -188,17 +190,19 @@
+ 		}
+ 		title += urlObj.getFile();
+ 	}
++
+ 	DocumentInfo docInfo(title, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
++	docInfo.setLabels(labels);
+ 
+ 	if (docId &gt; 0)
+ 	{
+ 		// This document needs updating
+ 		index.getDocumentInfo(docId, docInfo);
+-		pThread = new IndexingThread(docInfo, m_labelName, docId);
++		pThread = new IndexingThread(docInfo, docId);
+ 	}
+ 	else
+ 	{
+-		pThread = new IndexingThread(docInfo, m_labelName);
++		pThread = new IndexingThread(docInfo);
+ 	}
+ 
+ 	// Launch the new thread
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-07-14 12:12:57 UTC (rev 348)
+@@ -70,7 +70,7 @@
+ 	class InternalState : public ThreadsManager
+ 	{
+ 		public:
+-			InternalState(importDialog *pWindow);
++			InternalState(unsigned int maxIndexThreads, importDialog *pWindow);
+ 			~InternalState();
+ 
+ 			// Directory scanning
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-07-14 12:12:57 UTC (rev 348)
+@@ -63,57 +63,21 @@
+ 
+ // FIXME: this ought to be configurable
+ unsigned int mainWindow::m_maxDocsCount = 100;
+-unsigned int mainWindow::m_maxThreads = 2;
++unsigned int mainWindow::m_maxIndexThreads = 2;
+ 
+-mainWindow::InternalState::InternalState(mainWindow *pWindow) :
+-	ThreadsManager(),
++mainWindow::InternalState::InternalState(unsigned int maxIndexThreads, mainWindow *pWindow) :
++	ThreadsManager(maxIndexThreads),
+ 	m_liveQueryLength(0),
+ 	m_currentPage(0),
+ 	m_browsingIndex(false)
+ {
+-	pthread_rwlock_init(&amp;m_listsLock, NULL);
+ 	m_onThreadEndSignal.connect(SigC::slot(*pWindow, &amp;mainWindow::on_thread_end));
+ }
+ 
+ mainWindow::InternalState::~InternalState()
+ {
+-	pthread_rwlock_destroy(&amp;m_listsLock);
+ }
+ 
+-bool mainWindow::InternalState::read_lock_lists(unsigned int where)
+-{
+-	if (pthread_rwlock_rdlock(&amp;m_listsLock) == 0)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::read_lock_lists: &quot; &lt;&lt; where &lt;&lt; endl;
+-#endif
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-bool mainWindow::InternalState::write_lock_lists(unsigned int where)
+-{
+-	if (pthread_rwlock_wrlock(&amp;m_listsLock) == 0)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::write_lock_lists: &quot; &lt;&lt; where &lt;&lt; endl;
+-#endif
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-void mainWindow::InternalState::unlock_lists(void)
+-{
+-	pthread_rwlock_unlock(&amp;m_listsLock);
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::unlock_lists&quot; &lt;&lt; endl;
+-#endif
+-}
+-
+ //
+ // Constructor
+ //
+@@ -123,7 +87,7 @@
+ 	m_pNotebook(NULL),
+ 	m_pIndexMenu(NULL),
+ 	m_pCacheMenu(NULL),
+-	m_state(this)
++	m_state(m_maxIndexThreads, this)
+ {
+ 	// Reposition and resize the window
+ 	// Make sure the coordinates and sizes make sense
+@@ -650,7 +614,7 @@
+ 			SigC::slot(*this, &amp;mainWindow::on_indexForwardButton_clicked));
+ 
+ 		// Append the page
+-		if (m_state.write_lock_lists(1) == true)
++		if (m_state.write_lock_lists() == true)
+ 		{
+ 			int pageNum = m_pNotebook-&gt;append_page(*pIndexPage, *pTab);
+ 			m_pNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+@@ -824,7 +788,7 @@
+ 	int pageNum = get_page_number(title, type);
+ 	if (pageNum &gt;= 0)
+ 	{
+-		if (m_state.write_lock_lists(2) == true)
++		if (m_state.write_lock_lists() == true)
+ 		{
+ 			// Remove the page
+ 			m_pNotebook-&gt;remove_page(pageNum);
+@@ -985,7 +949,7 @@
+ 				SigC::slot(*this, &amp;mainWindow::on_viewresults_activate));
+ 
+ 			// Append the page
+-			if (m_state.write_lock_lists(3) == true)
++			if (m_state.write_lock_lists() == true)
+ 			{
+ 				pageNum = m_pNotebook-&gt;append_page(*pResultsPage, *pTab);
+ 				m_pNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+@@ -1018,10 +982,14 @@
+ 			for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 				resultIter != resultsList.end(); ++resultIter)
+ 			{
+-				// Queue this action
+-				queue_index(DocumentInfo(resultIter-&gt;getTitle(), resultIter-&gt;getLocation(),
+-					resultIter-&gt;getType(), resultIter-&gt;getLanguage()),
+-					labelName);
++				set&lt;string&gt; labels;
++				DocumentInfo docInfo(resultIter-&gt;getTitle(), resultIter-&gt;getLocation(),
++					resultIter-&gt;getType(), resultIter-&gt;getLanguage());
++
++				// Queue this
++				labels.insert(labelName);
++				docInfo.setLabels(labels);
++				m_state.queue_index(docInfo);
+ 			}
+ 		}
+ 
+@@ -1192,7 +1160,7 @@
+ 			status += to_utf8(url);
+ 
+ 			// Update the in-progress list
+-			if (m_state.write_lock_lists(4) == true)
++			if (m_state.write_lock_lists() == true)
+ 			{
+ 				set&lt;string&gt;::iterator urlIter = m_state.m_beingIndexed.find(url);
+ 				if (urlIter != m_state.m_beingIndexed.end())
+@@ -1292,7 +1260,7 @@
+ 	delete pThread;;
+ 
+ 	// We might be able to run a queued action
+-	check_queue();
++	m_state.pop_queue();
+ 
+ 	// Any threads left to return ?
+ 	if (m_state.get_threads_count() == 0)
+@@ -1367,18 +1335,10 @@
+ //
+ // Message reception from ListenerThread
+ //
+-void mainWindow::on_message_reception(DocumentInfo docInfo, string labelName)
++void mainWindow::on_message_reception(DocumentInfo docInfo)
+ {
+-	string location = docInfo.getLocation();
+-
+-	if (location.empty() == false)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_message_reception: indexing &quot; &lt;&lt; location &lt;&lt; endl;
+-#endif
+-		// Queue this
+-		queue_index(docInfo, labelName);
+-	}
++	// Queue this
++	m_state.queue_index(docInfo);
+ }
+ 
+ //
+@@ -1418,7 +1378,7 @@
+ 	// FIXME: if mail accounts are configured, make sure the MonitorThread
+ 	// is running and knows about the new accounts
+ 
+-	if (m_state.read_lock_lists(5) == true)
++	if (m_state.read_lock_lists() == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+ 		{
+@@ -1834,7 +1794,7 @@
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;mainWindow::on_indexresults_activate: URL is &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
+ #endif
+-					queue_index(*resultIter, &quot;&quot;);
++					m_state.queue_index(*resultIter);
+ 				}
+ 
+ 				// We can update the rows right now
+@@ -1944,7 +1904,7 @@
+ 		DocumentInfo docInfo(docIter-&gt;getTitle(), url,
+ 			docIter-&gt;getType(), docIter-&gt;getLanguage());
+ 		docInfo.setTimestamp(docIter-&gt;getTimestamp());
+-		queue_index(docInfo, &quot;&quot;);
++		m_state.queue_index(docInfo);
+ 	}
+ }
+ 
+@@ -2609,7 +2569,7 @@
+ {
+ 	NotebookPageBox *pNotebookPage = NULL;
+ 
+-	if (m_state.read_lock_lists(6) == true)
++	if (m_state.read_lock_lists() == true)
+ 	{
+ 		Widget *pPage = m_pNotebook-&gt;get_nth_page(m_pNotebook-&gt;get_current_page());
+ 		if (pPage != NULL)
+@@ -2630,7 +2590,7 @@
+ {
+ 	NotebookPageBox *pNotebookPage = NULL;
+ 
+-	if (m_state.read_lock_lists(7) == true)
++	if (m_state.read_lock_lists() == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+ 		{
+@@ -2667,7 +2627,7 @@
+ {
+ 	int pageNumber = -1;
+ 
+-	if (m_state.read_lock_lists(8) == true)
++	if (m_state.read_lock_lists() == true)
+ 	{
+ 		for (int pageNum = 0; pageNum &lt; m_pNotebook-&gt;get_n_pages(); ++pageNum)
+ 		{
+@@ -2698,40 +2658,6 @@
+ }
+ 
+ //
+-// Queues additions to the index.
+-//
+-bool mainWindow::queue_index(const DocumentInfo &amp;docInfo,
+-	const string &amp;labelName)
+-{
+-	if (m_state.get_threads_count() &gt;= m_maxThreads)
+-	{
+-		if (m_state.write_lock_lists(9) == true)
+-		{
+-			m_state.m_indexQueue[docInfo] = labelName;
+-
+-			m_state.unlock_lists();
+-		}
+-
+-		return true;
+-	}
+-
+-	// Is it an update ?
+-	XapianIndex docsIndex(m_settings.m_indexLocation);
+-	unsigned int docId = docsIndex.hasDocument(docInfo.getLocation());
+-	if (docId &gt; 0)
+-	{
+-		// Yes, it is
+-		index_document(docInfo, labelName, docId);
+-	}
+-	else
+-	{
+-		index_document(docInfo, labelName);
+-	}
+-
+-	return false;
+-}
+-
+-//
+ // Edits a query
+ //
+ void mainWindow::edit_query(QueryProperties &amp;queryProps, bool newQuery)
+@@ -2974,85 +2900,6 @@
+ }
+ 
+ //
+-// Index (or update) a document
+-//
+-void mainWindow::index_document(const DocumentInfo &amp;docInfo,
+-	const string &amp;labelName, unsigned int docId)
+-{
+-	string location(docInfo.getLocation());
+-
+-	if (location.empty() == true)
+-	{
+-		// Nothing to do
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::index_document: empty queue&quot; &lt;&lt; endl;
+-#endif
+-		return;
+-	}
+-
+-	Url urlObj(location);
+-	string indexLocation(m_settings.m_indexLocation);
+-
+-	// If the document is mail, we need the My Email index
+-	if (urlObj.getProtocol() == &quot;mailbox&quot;)
+-	{
+-		indexLocation = m_settings.m_mailIndexLocation;
+-	}
+-
+-	// Is it an update ?
+-	if (docId &gt; 0)
+-	{
+-		// Yes, it is
+-		start_thread(new IndexingThread(docInfo, labelName, docId));
+-
+-		// We may have to update its labels
+-		if (labelName.empty() == false)
+-		{
+-			XapianIndex index(indexLocation);
+-			set&lt;string&gt; docLabels;
+-
+-			// Add this new label
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::index_document: applying label &quot; &lt;&lt; labelName &lt;&lt; &quot; to document &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			docLabels.insert(labelName);
+-			index.setDocumentLabels(docId, docLabels, false);
+-		}
+-	}
+-	else
+-	{
+-		string url(docInfo.getLocation());
+-		bool isNewDocument = false;
+-
+-		// Is the document being indexed ?
+-		if (m_state.write_lock_lists(10) == true)
+-		{
+-			if (m_state.m_beingIndexed.find(url) == m_state.m_beingIndexed.end())
+-			{
+-				m_state.m_beingIndexed.insert(url);
+-				isNewDocument = true;
+-			}
+-
+-			m_state.unlock_lists();
+-		}
+-
+-		if (isNewDocument == true)
+-		{
+-			// This is a new document
+-			start_thread(new IndexingThread(docInfo, labelName));
+-		}
+-		// Complain about already indexed files only if we aren't going to set a label on them
+-		else if (labelName.empty() == true)
+-		{
+-			ustring status = url;
+-			status += &quot; &quot;;
+-			status += _(&quot;is already indexed or is being indexed&quot;);
+-			set_status(status);
+-		}
+-	}
+-}
+-
+-//
+ // View documents
+ //
+ void mainWindow::view_documents(vector&lt;DocumentInfo&gt; &amp;documentsList)
+@@ -3251,64 +3098,6 @@
+ }
+ 
+ //
+-// Checks the queue and runs the oldest action if possible.
+-//
+-bool mainWindow::check_queue(void)
+-{
+-	if (m_state.get_threads_count() &gt;= m_maxThreads)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::check_queue: too many threads&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	DocumentInfo docInfo;
+-	string labelName;
+-	bool foundItem = false;
+-
+-	if (m_state.write_lock_lists(12) == true)
+-	{
+-		if (m_state.m_indexQueue.empty() == false)
+-		{
+-			// Get the first item
+-			std::map&lt;DocumentInfo, string&gt;::iterator queueIter = m_state.m_indexQueue.begin();
+-			if (queueIter != m_state.m_indexQueue.end())
+-			{
+-				docInfo = queueIter-&gt;first;
+-				labelName = queueIter-&gt;second;
+-				foundItem = true;
+-
+-				m_state.m_indexQueue.erase(queueIter);
+-			}
+-		}
+-
+-		m_state.unlock_lists();
+-	}
+-
+-	if (foundItem == false)
+-	{
+-		// Nothing to do
+-		return false;
+-	}
+-
+-	// Is it an update ?
+-	XapianIndex docsIndex(m_settings.m_indexLocation);
+-	unsigned int docId = docsIndex.hasDocument(docInfo.getLocation());
+-	if (docId &gt; 0)
+-	{
+-		// Yes, it is
+-		index_document(docInfo, labelName, docId);
+-	}
+-	else
+-	{
+-		index_document(docInfo, labelName);
+-	}
+-
+-	return true;
+-}
+-
+-//
+ // Sets the status bar text.
+ //
+ void mainWindow::set_status(const ustring &amp;text, bool canBeSkipped)
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-07-14 12:12:57 UTC (rev 348)
+@@ -18,7 +18,6 @@
+ #define _MAINWINDOW_HH
+ 
+ #include &lt;string&gt;
+-#include &lt;map&gt;
+ #include &lt;set&gt;
+ #include &lt;sigc++/connection.h&gt;
+ #include &lt;glibmm/refptr.h&gt;
+@@ -73,7 +72,7 @@
+ 	void on_close_page(Glib::ustring title, NotebookPageBox::PageType type);
+ 	void on_thread_end(WorkerThread *pThread);
+ 	void on_editindex(Glib::ustring indexName, Glib::ustring location);
+-	void on_message_reception(DocumentInfo docInfo, std::string labelName);
++	void on_message_reception(DocumentInfo docInfo);
+ 	void on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, std::string indexName);
+ 
+ 	// Handlers inherited from the base class
+@@ -125,18 +124,14 @@
+ 		NotebookPageBox::PageType type);
+ 	int get_page_number(const Glib::ustring &amp;title,
+ 		NotebookPageBox::PageType type);
+-	bool queue_index(const DocumentInfo &amp;docInfo, const std::string &amp;labelName);
+ 	void edit_query(QueryProperties &amp;queryProps, bool newQuery);
+ 	void run_search(const QueryProperties &amp;queryProps);
+ 	void browse_index(const Glib::ustring &amp;indexName,
+ 		const Glib::ustring &amp;labelName, unsigned int startDoc);
+-	void index_document(const DocumentInfo &amp;docInfo, const std::string &amp;labelName,
+-		unsigned int docId = 0);
+ 	void view_documents(std::vector&lt;DocumentInfo&gt; &amp;documentsList);
+ 	bool append_document(IndexPage *pIndexPage, const Glib::ustring &amp;indexName,
+ 		const IndexedDocument &amp;docInfo);
+ 	bool start_thread(WorkerThread *pNewThread, bool inBackground = false);
+-	bool check_queue(void);
+ 
+ 	// Status methods
+ 	bool on_activity_timeout(void);
+@@ -169,29 +164,19 @@
+ 	class InternalState : public ThreadsManager
+ 	{
+ 		public:
+-			InternalState(mainWindow *pWindow);
+-			~InternalState();
++			InternalState(unsigned int maxIndexThreads, mainWindow *pWindow);
++			virtual ~InternalState();
+ 
+-			bool read_lock_lists(unsigned int where);
+-			bool write_lock_lists(unsigned int where);
+-			void unlock_lists(void);
+-
+ 			// Query
+ 			unsigned int m_liveQueryLength;
+ 			// Notebook pages
+ 			int m_currentPage;
+-			// In-progress actions
+-			std::set&lt;std::string&gt; m_beingIndexed;
++			// Current actions
+ 			bool m_browsingIndex;
+-			// Action queue
+-			std::map&lt;DocumentInfo, string&gt; m_indexQueue;
+ 
+-		protected:
+-			pthread_rwlock_t m_listsLock;
+-
+ 	} m_state;
+ 	static unsigned int m_maxDocsCount;
+-	static unsigned int m_maxThreads;
++	static unsigned int m_maxIndexThreads;
+ 
+ };
+ 
+
+Modified: trunk/Utils/DocumentInfo.cpp
+===================================================================
+--- trunk/Utils/DocumentInfo.cpp	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/Utils/DocumentInfo.cpp	2006-07-14 12:12:57 UTC (rev 348)
+@@ -14,10 +14,13 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;algorithm&gt;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;DocumentInfo.h&quot;
+ 
+ using std::string;
++using std::copy;
++using std::inserter;
+ 
+ DocumentInfo::DocumentInfo()
+ {
+@@ -34,13 +37,15 @@
+ 	m_timestamp = TimeConverter::toTimestamp(time(NULL));
+ }
+ 
+-DocumentInfo::DocumentInfo(const DocumentInfo &amp;other)
++DocumentInfo::DocumentInfo(const DocumentInfo &amp;other) :
++	m_title(other.m_title),
++	m_location(other.m_location),
++	m_type(other.m_type),
++	m_language(other.m_language),
++	m_timestamp(other.m_timestamp)
+ {
+-	m_title = other.m_title;
+-	m_location = other.m_location;
+-	m_type = other.m_type;
+-	m_language = other.m_language;
+-	m_timestamp = other.m_timestamp;
++	copy(other.m_labels.begin(), other.m_labels.end(),
++		inserter(m_labels, m_labels.begin()));
+ }
+ 
+ DocumentInfo::~DocumentInfo()
+@@ -54,6 +59,9 @@
+ 	m_type = other.m_type;
+ 	m_language = other.m_language;
+ 	m_timestamp = other.m_timestamp;
++	m_labels.clear();
++	copy(other.m_labels.begin(), other.m_labels.end(),
++		inserter(m_labels, m_labels.begin()));
+ 
+ 	return *this;
+ }
+@@ -127,3 +135,16 @@
+ {
+ 	return m_timestamp;
+ }
++/// Sets the document's labels.
++void DocumentInfo::setLabels(const set&lt;string&gt; &amp;labels)
++{
++	copy(labels.begin(), labels.end(),
++		inserter(m_labels, m_labels.begin()));
++}
++
++/// Returns the document's labels.
++const set&lt;string&gt; &amp;DocumentInfo::getLabels(void) const
++{
++	return m_labels;
++}
++
+
+Modified: trunk/Utils/DocumentInfo.h
+===================================================================
+--- trunk/Utils/DocumentInfo.h	2006-07-14 12:08:55 UTC (rev 347)
++++ trunk/Utils/DocumentInfo.h	2006-07-14 12:12:57 UTC (rev 348)
+@@ -18,6 +18,7 @@
+ #define _DOCUMENT_INFO_H
+ 
+ #include &lt;string&gt;
++#include &lt;set&gt;
+ 
+ class DocumentInfo
+ {
+@@ -62,12 +63,19 @@
+ 		/// Returns the document's timestamp.
+ 		virtual std::string getTimestamp(void) const;
+ 
++		/// Sets the document's labels.
++		virtual void setLabels(const std::set&lt;std::string&gt; &amp;labels);
++
++		/// Returns the document's labels.
++		virtual const std::set&lt;std::string&gt; &amp;getLabels(void) const;
++
+ 	protected:
+ 		std::string m_title;
+ 		std::string m_location;
+ 		std::string m_type;
+ 		std::string m_language;
+ 		std::string m_timestamp;
++		std::set&lt;std::string&gt; m_labels;
+ 
+ };
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000340.html">[Pinot-svn] r347 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000342.html">[Pinot-svn] r349 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#341">[ date ]</a>
+              <a href="thread.html#341">[ thread ]</a>
+              <a href="subject.html#341">[ subject ]</a>
+              <a href="author.html#341">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

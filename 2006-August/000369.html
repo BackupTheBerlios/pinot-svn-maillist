@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r376 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r376%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608090253.k792rGig018526%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000368.html">
+   <LINK REL="Next"  HREF="000370.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r376 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r376%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608090253.k792rGig018526%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r376 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  9 04:53:16 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000368.html">[Pinot-svn] r375 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="000370.html">[Pinot-svn] r377 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#369">[ date ]</a>
+              <a href="thread.html#369">[ thread ]</a>
+              <a href="subject.html#369">[ subject ]</a>
+              <a href="author.html#369">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-09 04:53:12 +0200 (Wed, 09 Aug 2006)
+New Revision: 376
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+DirectoryScannerThread records directories in CrawlHistory. The table is created
+at startup if necessary by the daemon program.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-08 15:05:09 UTC (rev 375)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-09 02:53:12 UTC (rev 376)
+@@ -36,6 +36,7 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabase.h&quot;
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+@@ -1553,7 +1554,8 @@
+ 	m_followSymLinks(followSymLinks),
+ 	m_pMutex(pMutex),
+ 	m_pCondVar(pCondVar),
+-	m_currentLevel(0)
++	m_currentLevel(0),
++	m_sourceId(0)
+ {
+ #ifdef DEBUG
+ 	if (m_followSymLinks == true)
+@@ -1663,10 +1665,25 @@
+ 	}
+ 	else if (S_ISDIR(fileStat.st_mode))
+ 	{
+-		// A directory : scan it
++		CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++		CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
++
++		// A directory : check whether it has been crawled already
++		if ((history.hasItem(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName, status) == true) &amp;&amp;
++			(status != CrawlHistory::UNKNOWN))
++		{
++			// Skip it
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: skipping &quot; &lt;&lt; dirName &lt;&lt; endl;
++#endif
++			return true;
++		}
++
++		// Scan it !
+ 		DIR *pDir = opendir(dirName.c_str());
+ 		if (pDir == NULL)
+ 		{
++			history.insertItem(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName, CrawlHistory::CRAWLED, m_sourceId);
+ 			return false;
+ 		}
+ #ifdef DEBUG
+@@ -1729,6 +1746,9 @@
+ 			pDirEntry = readdir(pDir);
+ 		}
+ 		closedir(pDir);
++
++		// Update the directory's status
++		history.insertItem(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName, CrawlHistory::CRAWLED, m_sourceId);
+ 	}
+ 
+ 	return true;
+@@ -1736,6 +1756,16 @@
+ 
+ void DirectoryScannerThread::doWork(void)
+ {
++	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++
++	// Does this source exist ?
++	if ((m_dirName.empty() == false) &amp;&amp;
++		(history.hasSource(string(&quot;<A HREF="file://">file://</A>&quot;) + m_dirName, m_sourceId) == false))
++	{
++		// Create it
++		m_sourceId = history.insertSource(string(&quot;<A HREF="file://">file://</A>&quot;) + m_dirName);
++	}
++
+ 	if (scanDirectory(m_dirName) == false)
+ 	{
+ 		m_status = _(&quot;Couldn't open directory&quot;);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-08 15:05:09 UTC (rev 375)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-09 02:53:12 UTC (rev 376)
+@@ -414,6 +414,7 @@
+ 		Glib::Mutex *m_pMutex;
+ 		Glib::Cond *m_pCondVar;
+ 		unsigned int m_currentLevel;
++		unsigned int m_sourceId;
+ 		SigC::Signal1&lt;bool, const std::string&amp;&gt; m_signalFileFound;
+ 
+ 		void foundFile(const std::string &amp;fileName);
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-08-08 15:05:09 UTC (rev 375)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2006-08-09 02:53:12 UTC (rev 376)
+@@ -40,6 +40,7 @@
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+@@ -336,6 +337,7 @@
+ 
+ 	// Do the same for the history database
+ 	if ((settings.m_historyDatabase.empty() == true) ||
++		(CrawlHistory::create(settings.m_historyDatabase) == false) ||
+ 		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+ 		(ViewHistory::create(settings.m_historyDatabase) == false))
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000368.html">[Pinot-svn] r375 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="000370.html">[Pinot-svn] r377 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#369">[ date ]</a>
+              <a href="thread.html#369">[ thread ]</a>
+              <a href="subject.html#369">[ subject ]</a>
+              <a href="author.html#369">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

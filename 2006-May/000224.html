@@ -1,0 +1,429 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r226 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r226%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200605021516.k42FGCnj028684%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000223.html">
+   <LINK REL="Next"  HREF="000225.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r226 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r226%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200605021516.k42FGCnj028684%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r226 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue May  2 17:16:12 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000223.html">[Pinot-svn] r225 - in trunk: Search/Plugins UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000225.html">[Pinot-svn] r227 - in trunk: . Collect Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#224">[ date ]</a>
+              <a href="thread.html#224">[ thread ]</a>
+              <a href="subject.html#224">[ subject ]</a>
+              <a href="author.html#224">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-02 17:16:11 +0200 (Tue, 02 May 2006)
+New Revision: 226
+
+Modified:
+   trunk/UI/GTK2/src/EnginesTree.cpp
+   trunk/UI/GTK2/src/EnginesTree.h
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Load and save channels whose group is collapsed in the engines tree.
+
+
+Modified: trunk/UI/GTK2/src/EnginesTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/EnginesTree.cpp	2006-05-02 13:00:24 UTC (rev 225)
++++ trunk/UI/GTK2/src/EnginesTree.cpp	2006-05-02 15:16:11 UTC (rev 226)
+@@ -99,6 +99,32 @@
+ {
+ }
+ 
++void EnginesTree::save(void)
++{
++	std::map&lt;string, bool&gt; &amp;channels = m_settings.getSearchEnginesChannels();
++
++	TreeModel::Children children = m_refStore-&gt;children();
++	for (TreeModel::Children::iterator iter = children.begin(); iter != children.end(); ++iter)
++	{
++		TreeModel::Row row = *iter;
++
++		if (row[m_enginesColumns.m_type] == EnginesModelColumns::ENGINE_FOLDER)
++		{
++			ustring channelName(row[m_enginesColumns.m_name]);
++			TreeModel::Path path = m_refStore-&gt;get_path(iter);
++
++			std::map&lt;string, bool&gt;::iterator channelIter = channels.find(from_utf8(channelName));
++			if (channelIter != channels.end())
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;EnginesTree::save: &quot; &lt;&lt; channelName &lt;&lt; &quot; is &quot; &lt;&lt; row_expanded(path) &lt;&lt; endl;
++#endif
++				channelIter-&gt;second = row_expanded(path);
++			}
++		}
++	}
++}
++
+ void EnginesTree::renderEngineIcon(Gtk::CellRenderer *renderer, const Gtk::TreeModel::iterator &amp;iter)
+ {
+ 	TreeModel::Row row = *iter;
+@@ -231,11 +257,12 @@
+ 	m_refStore-&gt;clear();
+ 
+ 	// Populate the tree with search engines
+-	const set&lt;string&gt; &amp;channels = m_settings.getSearchEnginesChannels();
+-	for (set&lt;string&gt;::const_iterator channelIter = channels.begin();
++	std::map&lt;string, bool&gt; &amp;channels = m_settings.getSearchEnginesChannels();
++	for (std::map&lt;string, bool&gt;::const_iterator channelIter = channels.begin();
+ 		channelIter != channels.end(); ++channelIter)
+ 	{
+-		string channelName = *channelIter;
++		string channelName(channelIter-&gt;first);
++		bool isExpanded(channelIter-&gt;second);
+ 
+ 		// Enumerate search engines for this channel
+ 		engines.clear();
+@@ -254,7 +281,6 @@
+ 		row[m_enginesColumns.m_option] = &quot;&quot;;
+ 		row[m_enginesColumns.m_type] = EnginesModelColumns::ENGINE_FOLDER;
+ 
+-		// FIXME: for some reason, without &quot;std::&quot;'s the compiler fails with a parse error before the comma
+ 		std::set&lt;PinotSettings::Engine&gt;::const_iterator engineIter = engines.begin();
+ 		for (; engineIter != engines.end(); ++engineIter)
+ 		{
+@@ -283,6 +309,18 @@
+ 			}
+ 			row[m_enginesColumns.m_type] = EnginesModelColumns::WEB_ENGINE;
+ 		}
++
++		TreeModel::Path folderPath = m_refStore-&gt;get_path(folderIter);
++		if (isExpanded == true)
++		{
++			// Expand this
++			expand_row(folderPath, true);
++		}
++		else
++		{
++			// Collapse this
++			collapse_row(folderPath);
++		}
+ 	}
+ 
+ 	// Local engines
+@@ -293,7 +331,6 @@
+ 	row[m_enginesColumns.m_option] = &quot;&quot;;
+ 	row[m_enginesColumns.m_type] = EnginesModelColumns::ENGINE_FOLDER;
+ 
+-	// FIXME: for some reason, without &quot;std::&quot;'s the compiler fails with a parse error before the comma
+ 	std::map&lt;std::string, std::string&gt;::const_iterator indexIter = m_settings.getIndexes().begin();
+ 	for (; indexIter != m_settings.getIndexes().end(); ++indexIter)
+ 	{
+@@ -317,9 +354,10 @@
+ 		row[m_enginesColumns.m_type] = indexType;
+ 	}
+ 
++	// Expand this
++	expand_row(m_refStore-&gt;get_path(localIter), true);
++
+ 	get_selection()-&gt;select(localIter);
+-
+-	expand_all();
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/EnginesTree.h
+===================================================================
+--- trunk/UI/GTK2/src/EnginesTree.h	2006-05-02 13:00:24 UTC (rev 225)
++++ trunk/UI/GTK2/src/EnginesTree.h	2006-05-02 15:16:11 UTC (rev 226)
+@@ -59,6 +59,9 @@
+ 		/// Clear the tree.
+ 		void clear(void);
+ 
++		/// Save the tree's state.
++		void save(void);
++
+ 		/// Returns the index edit signal.
+ 		SigC::Signal2&lt;void, std::string, std::string&gt;&amp; getEditIndexSignal(void);
+ 
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-05-02 13:00:24 UTC (rev 225)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-05-02 15:16:11 UTC (rev 226)
+@@ -178,16 +178,19 @@
+ 	return &quot;&quot;;
+ }
+ 
+-bool PinotSettings::load(void)
++bool PinotSettings::load(bool reload)
+ {
+-	// Clear lists
+-	m_indexNames.clear();
+-	m_indexIds.clear();
+-	m_engines.clear();
+-	m_engineIds.clear();
+-	m_queries.clear();
+-	m_labels.clear();
+-	m_mailAccounts.clear();
++	if (reload == true)
++	{
++		// Clear lists
++		m_indexNames.clear();
++		m_indexIds.clear();
++		m_engines.clear();
++		m_engineIds.clear();
++		m_queries.clear();
++		m_labels.clear();
++		m_mailAccounts.clear();
++	}
+ 
+ 	// Load the configuration file
+ 	string fileName = getConfigurationFileName();
+@@ -212,12 +215,12 @@
+ #ifdef HAS_GOOGLEAPI
+ 	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;Google API&quot;;
+ 	m_engines.insert(Engine(&quot;Google API&quot;, &quot;googleapi&quot;, &quot;&quot;, &quot;The Web&quot;));
+-	m_engineChannels.insert(&quot;The Web&quot;);
++	m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;The Web&quot;, true));
+ #endif
+ #ifdef HAS_OSAPI
+ 	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;ObjectsSearch API&quot;;
+ 	m_engines.insert(Engine(&quot;ObjectsSearch API&quot;, &quot;objectssearchapi&quot;, &quot;&quot;, &quot;The Web&quot;));
+-	m_engineChannels.insert(&quot;The Web&quot;);
++	m_engineChannels.insert(pair&lt;string, bool&gt;(&quot;The Web&quot;, true));
+ #endif
+ 	m_engineIds[1 &lt;&lt; m_engines.size()] = &quot;Xapian&quot;;
+ 	m_engines.insert(Engine(&quot;Xapian&quot;, &quot;xapian&quot;, &quot;&quot;, &quot;&quot;));
+@@ -289,6 +292,10 @@
+ 				{
+ 					loadIndexes(pElem);
+ 				}
++				else if (nodeName == &quot;channel&quot;)
++				{
++					loadEngineChannels(pElem);
++				}
+ 				else if (nodeName == &quot;storedquery&quot;)
+ 				{
+ 					loadQueries(pElem);
+@@ -438,6 +445,47 @@
+ 	return true;
+ }
+ 
++bool PinotSettings::loadEngineChannels(const Element *pElem)
++{
++	if (pElem == NULL)
++	{
++		return false;
++	}
++
++	Node::NodeList childNodes = pElem-&gt;get_children();
++	if (childNodes.empty() == true)
++	{
++		return false;
++	}
++
++	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++	{
++		Node *pNode = (*iter);
++		Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++		if (pElem == NULL)
++		{
++			continue;
++		}
++
++		string nodeName = pElem-&gt;get_name();
++		string nodeContent = getElementContent(pElem);
++		if (nodeName == &quot;name&quot;)
++		{
++			std::map&lt;string, bool&gt;::iterator channelIter = m_engineChannels.find(nodeContent);
++
++			if (channelIter != m_engineChannels.end())
++			{
++				channelIter-&gt;second = false;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;PinotSettings::loadEngineChannels: &quot; &lt;&lt; nodeContent &lt;&lt; &quot; is collapsed&quot; &lt;&lt; endl;
++#endif
++		}
++	}
++
++	return true;
++}
++
+ bool PinotSettings::loadQueries(const Element *pElem)
+ {
+ 	if (pElem == NULL)
+@@ -754,7 +802,7 @@
+ 						engineChannel = _(&quot;Unclassified&quot;);
+ 					}
+ 					m_engines.insert(Engine(engineName, &quot;sherlock&quot;, location, engineChannel));
+-					m_engineChannels.insert(engineChannel);
++					m_engineChannels.insert(pair&lt;string, bool&gt;(engineChannel, true));
+ 				}
+ 			}
+ 		}
+@@ -817,6 +865,24 @@
+ 		addChildElement(pElem, &quot;name&quot;, indexIter-&gt;first);
+ 		addChildElement(pElem, &quot;location&quot;, indexIter-&gt;second);
+ 	}
++	// Engine channels
++	for (map&lt;string, bool&gt;::iterator channelIter = m_engineChannels.begin();
++		channelIter != m_engineChannels.end(); ++channelIter)
++	{
++		// Only save those whose group was collapsed
++		if (channelIter-&gt;second == false)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;PinotSettings::save: &quot; &lt;&lt; channelIter-&gt;first &lt;&lt; &quot; is collapsed&quot; &lt;&lt; endl;
++#endif
++			pElem = pRootElem-&gt;add_child(&quot;channel&quot;);
++			if (pElem == NULL)
++			{
++				return false;
++			}
++			addChildElement(pElem, &quot;name&quot;, channelIter-&gt;first);
++		}
++	}
+ 	// User-defined queries
+ 	for (map&lt;string, QueryProperties&gt;::iterator queryIter = m_queries.begin();
+ 		queryIter != m_queries.end(); ++queryIter)
+@@ -827,7 +893,6 @@
+ 			return false;
+ 		}
+ 		addChildElement(pElem, &quot;name&quot;, queryIter-&gt;first);
+-		addChildElement(pElem, &quot;type&quot;, &quot;FIXED&quot;);
+ 		addChildElement(pElem, &quot;and&quot;, queryIter-&gt;second.getAndWords());
+ 		addChildElement(pElem, &quot;phrase&quot;, queryIter-&gt;second.getPhrase());
+ 		addChildElement(pElem, &quot;any&quot;, queryIter-&gt;second.getAnyWords());
+@@ -1088,7 +1153,7 @@
+ }
+ 
+ /// Returns the search engines channels.
+-const set&lt;string&gt; &amp;PinotSettings::getSearchEnginesChannels(void) const
++map&lt;string, bool&gt; &amp;PinotSettings::getSearchEnginesChannels(void)
+ {
+ 	return m_engineChannels;
+ }
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2006-05-02 13:00:24 UTC (rev 225)
++++ trunk/UI/GTK2/src/PinotSettings.h	2006-05-02 15:16:11 UTC (rev 226)
+@@ -41,7 +41,7 @@
+ 
+ 		static std::string getCurrentUserName(void);
+ 
+-		bool load(void);
++		bool load(bool reload = false);
+ 
+ 		bool loadSearchEngines(const std::string &amp;directoryName);
+ 
+@@ -94,7 +94,7 @@
+ 		void getEngineNames(unsigned int id, std::set&lt;std::string&gt; &amp;names);
+ 
+ 		/// Returns the search engines channels.
+-		const std::set&lt;std::string&gt; &amp;getSearchEnginesChannels(void) const;
++		std::map&lt;std::string, bool&gt; &amp;getSearchEnginesChannels(void);
+ 
+ 		/// Returns the queries map, keyed by name.
+ 		const std::map&lt;std::string, QueryProperties&gt; &amp;getQueries(void) const;
+@@ -160,7 +160,7 @@
+ 		std::map&lt;unsigned int, std::string&gt; m_indexIds;
+ 		std::set&lt;Engine&gt; m_engines;
+ 		std::map&lt;unsigned int, std::string&gt; m_engineIds;
+-		std::set&lt;std::string&gt; m_engineChannels;
++		std::map&lt;std::string, bool&gt; m_engineChannels;
+ 		std::map&lt;std::string, QueryProperties&gt; m_queries;
+ 		std::set&lt;std::string&gt; m_labels;
+ 
+@@ -168,6 +168,7 @@
+ 		bool loadConfiguration(const std::string &amp;fileName);
+ 		bool loadUi(const xmlpp::Element *pElem);
+ 		bool loadIndexes(const xmlpp::Element *pElem);
++		bool loadEngineChannels(const xmlpp::Element *pElem);
+ 		bool loadQueries(const xmlpp::Element *pElem);
+ 		bool loadResults(const xmlpp::Element *pElem);
+ 		bool loadLabels(const xmlpp::Element *pElem);
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-05-02 13:00:24 UTC (rev 225)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-05-02 15:16:11 UTC (rev 226)
+@@ -270,6 +270,9 @@
+ //
+ mainWindow::~mainWindow()
+ {
++	// Save engines
++	m_pEnginesTree-&gt;save();
++
+ 	// Save queries
+ 	save_queryTreeview();
+ 
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-05-02 13:00:24 UTC (rev 225)
++++ trunk/UI/GTK2/src/pinot.cc	2006-05-02 15:16:11 UTC (rev 226)
+@@ -130,13 +130,14 @@
+ 	Languages::setIntlName(10, _(&quot;Spanish&quot;));
+ 	Languages::setIntlName(11, _(&quot;Swedish&quot;));
+ 
+-	// Load the settings
+-	settings.load();
++	// Load search engines
+ 	settings.loadSearchEngines(prefixDir + string(&quot;/share/pinot/engines&quot;));
+ 	settings.loadSearchEngines(confDirectory + string(&quot;/engines&quot;));
+ 	// Load tokenizer libraries, if any
+ 	TokenizerFactory::loadTokenizers(prefixDir + string(&quot;/share/pinot/tokenizers&quot;));
+ 	TokenizerFactory::loadTokenizers(confDirectory + string(&quot;/tokenizers&quot;));
++	// Load the settings
++	settings.load();
+ 
+ 	// Catch interrupts
+ 	sigemptyset(&amp;newAction.sa_mask);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000223.html">[Pinot-svn] r225 - in trunk: Search/Plugins UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000225.html">[Pinot-svn] r227 - in trunk: . Collect Search UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#224">[ date ]</a>
+              <a href="thread.html#224">[ thread ]</a>
+              <a href="subject.html#224">[ subject ]</a>
+              <a href="author.html#224">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

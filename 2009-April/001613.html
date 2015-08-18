@@ -1,0 +1,413 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1623 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1623%20-%20trunk/Core&In-Reply-To=%3C200904130322.n3D3MP7u005837%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001612.html">
+   <LINK REL="Next"  HREF="001614.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1623 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1623%20-%20trunk/Core&In-Reply-To=%3C200904130322.n3D3MP7u005837%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1623 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 13 05:22:25 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001612.html">[Pinot-svn] r1622 - tags
+</A></li>
+        <LI>Next message: <A HREF="001614.html">[Pinot-svn] r1624 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1613">[ date ]</a>
+              <a href="thread.html#1613">[ thread ]</a>
+              <a href="subject.html#1613">[ subject ]</a>
+              <a href="author.html#1613">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-04-13 05:22:14 +0200 (Mon, 13 Apr 2009)
+New Revision: 1623
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/DaemonState.h
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/ServerThreads.h
+   trunk/Core/pinot-dbus-daemon.cpp
+Log:
+Unless run in full scan mode, the daemon would reindex all files on every run !
+That probably stems from changes made in 0.91.
+There's no justification for not doing a full scan on every run. All scans are
+from now on full by default.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-04-10 08:35:26 UTC (rev 1622)
++++ trunk/Core/DaemonState.cpp	2009-04-13 03:22:14 UTC (rev 1623)
+@@ -312,7 +312,6 @@
+ 
+ DaemonState::DaemonState() :
+ 	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 4),
+-	m_fullScan(false),
+ 	m_isReindex(false),
+ 	m_reload(false),
+ 	m_flush(false),
+@@ -460,12 +459,12 @@
+ 		// Monitoring is not necessary, but we still have to pass the handler
+ 		// so that we can act on documents that have been deleted
+ 		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+-			m_fullScan, m_isReindex, NULL, m_pDiskHandler);
++			m_isReindex, NULL, m_pDiskHandler);
+ 	}
+ 	else
+ 	{
+ 		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+-			m_fullScan, m_isReindex, m_pDiskMonitor, m_pDiskHandler);
++			m_isReindex, m_pDiskMonitor, m_pDiskHandler);
+ 	}
+ 	pCrawlerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
+ 
+@@ -480,31 +479,11 @@
+ 	return false;
+ }
+ 
+-void DaemonState::start(bool forceFullScan, bool isReindex)
++void DaemonState::start(bool isReindex)
+ {
+ 	// Disable implicit flushing after a change
+ 	WorkerThread::immediateFlush(false);
+ 
+-	// Do full scans ?
+-	if (forceFullScan == true)
+-	{
+-		m_fullScan = true;
+-	}
+-	else
+-	{
+-		Rand randomStuff;
+-		guint32 randomArray[5];
+-
+-		randomStuff.set_seed(randomArray[2]);
+-		gint32 randomNum = randomStuff.get_int_range(0, 10);
+-		if (randomNum &gt;= 7)
+-		{
+-			m_fullScan = true;
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DaemonState::start: picked &quot; &lt;&lt; randomNum &lt;&lt; endl;
+-#endif
+-	}
+ 	m_isReindex = isReindex;
+ 
+ 	// Fire up the disk monitor thread
+@@ -526,15 +505,12 @@
+ 	cout &lt;&lt; &quot;DaemonState::start: &quot; &lt;&lt; m_crawlQueue.size() &lt;&lt; &quot; locations to crawl&quot; &lt;&lt; endl;
+ #endif
+ 
+-	if (m_fullScan == true)
+-	{
+-		CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
++	CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 
+-		// Update all items status so that we can get rid of files from deleted sources
+-		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLING, CrawlHistory::TO_CRAWL, 0, true);
+-		crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, 0, true);
+-		crawlHistory.updateItemsStatus(CrawlHistory::CRAWL_ERROR, CrawlHistory::TO_CRAWL, 0, true);
+-	}
++	// Update all items status so that we can get rid of files from deleted sources
++	crawlHistory.updateItemsStatus(CrawlHistory::CRAWLING, CrawlHistory::TO_CRAWL, 0, true);
++	crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, 0, true);
++	crawlHistory.updateItemsStatus(CrawlHistory::CRAWL_ERROR, CrawlHistory::TO_CRAWL, 0, true);
+ 
+ 	// Initiate crawling
+ 	start_crawling();
+@@ -567,7 +543,7 @@
+ 
+ 				startedCrawler = crawl_location(nextLocation);
+ 			}
+-			else if (m_fullScan == true)
++			else
+ 			{
+ 				CrawlHistory crawlHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+ 				set&lt;string&gt; deletedFiles;
+@@ -785,7 +761,7 @@
+ 		m_reload = false;
+ 
+ 		// ...and restart everything 
+-		start(true, false);
++		start(false);
+ 	}
+ 
+ 	// Try to run a queued action unless threads were stopped
+
+Modified: trunk/Core/DaemonState.h
+===================================================================
+--- trunk/Core/DaemonState.h	2009-04-10 08:35:26 UTC (rev 1622)
++++ trunk/Core/DaemonState.h	2009-04-13 03:22:14 UTC (rev 1623)
+@@ -80,7 +80,7 @@
+ 
+ 		typedef enum { LOW_DISK_SPACE = 0, ON_BATTERY, CRAWLING, STOPPED, DISCONNECTED } StatusFlag;
+ 
+-		void start(bool forceFullScan, bool isReindex);
++		void start(bool isReindex);
+ 
+ 		void reload(void);
+ 
+@@ -101,7 +101,6 @@
+ 		void reset_flag(StatusFlag flag);
+ 
+ 	protected:
+-		bool m_fullScan;
+ 		bool m_isReindex;
+ 		bool m_reload;
+ 		bool m_flush;
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-04-10 08:35:26 UTC (rev 1622)
++++ trunk/Core/ServerThreads.cpp	2009-04-13 03:22:14 UTC (rev 1623)
+@@ -116,12 +116,11 @@
+ }
+ 
+ CrawlerThread::CrawlerThread(const string &amp;dirName,
+-	bool isSource, bool fullScan, bool isReindex,
++	bool isSource, bool isReindex,
+ 	MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+ 	DirectoryScannerThread(dirName,
+ 		PinotSettings::getInstance().m_daemonIndexLocation,
+ 		0, false, true),
+-	m_fullScan(fullScan),
+ 	m_isReindex(isReindex),
+ 	m_sourceId(0),
+ 	m_pMonitor(pMonitor),
+@@ -175,11 +174,6 @@
+ 
+ void CrawlerThread::cacheUpdate(const string &amp;location, time_t itemDate)
+ {
+-	if (m_fullScan == false)
+-	{
+-		return;
+-	}
+-
+ 	m_updateCache[location] = itemDate;
+ 	if (m_updateCache.size() &gt; 500)
+ 	{
+@@ -225,7 +219,7 @@
+ 		// Record it
+ 		m_crawlHistory.insertItem(location, CrawlHistory::CRAWLING, m_sourceId, itemDate);
+ 	}
+-	else if (m_fullScan == true)
++	else
+ 	{
+ 		// Change the status from TO_CRAWL to CRAWLING
+ 		m_crawlHistory.updateItem(location, CrawlHistory::CRAWLING, itemDate);
+@@ -294,26 +288,24 @@
+ 	}
+ 	scanTimer.start();
+ 
++	cout &lt;&lt; &quot;Scanning &quot; &lt;&lt; m_dirName &lt;&lt; endl;
++
+ 	// Remove errors and links
+ 	m_crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_ERROR);
+ 	m_crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWL_LINK);
+ 	// ...and entries the previous instance didn't have time to crawl
+ 	m_crawlHistory.deleteItems(m_sourceId, CrawlHistory::CRAWLING);
+ 
+-	if (m_fullScan == true)
+-	{
+-		cout &lt;&lt; &quot;Doing a full scan on &quot; &lt;&lt; m_dirName &lt;&lt; endl;
++	// Update this source's items status so that we can detect files that have been deleted
++	m_crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, m_sourceId);
+ 
+-		// Update this source's items status so that we can detect files that have been deleted
+-		m_crawlHistory.updateItemsStatus(CrawlHistory::CRAWLED, CrawlHistory::TO_CRAWL, m_sourceId);
+-	}
+-
+ 	if (scanEntry(m_dirName) == false)
+ 	{
+ 		m_errorNum = OPENDIR_FAILED;
+ 		m_errorParam = m_dirName;
+ 	}
+ 	flushUpdates();
++
+ 	cout &lt;&lt; &quot;Scanned &quot; &lt;&lt; m_dirName &lt;&lt; &quot; in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ 
+ 	if (m_done == true)
+@@ -324,38 +316,36 @@
+ 		return;
+ 	}
+ 
+-	if (m_fullScan == true)
+-	{
+-		scanTimer.start();
++	scanTimer.start();
+ 
+-		// All files left with status TO_CRAWL were not found in this crawl
+-		// Chances are they were removed after the last full scan
+-		while ((m_pHandler != NULL) &amp;&amp;
+-			(m_crawlHistory.getSourceItems(m_sourceId, CrawlHistory::TO_CRAWL, urls,
+-				currentOffset, currentOffset + 100) &gt; 0))
++	// All files left with status TO_CRAWL were not found in this crawl
++	// Chances are they were removed after the last full scan
++	while ((m_pHandler != NULL) &amp;&amp;
++		(m_crawlHistory.getSourceItems(m_sourceId, CrawlHistory::TO_CRAWL, urls,
++			currentOffset, currentOffset + 100) &gt; 0))
++	{
++		for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
++			urlIter != urls.end(); ++urlIter)
+ 		{
+-			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
+-				urlIter != urls.end(); ++urlIter)
+-			{
+-				// Inform the MonitorHandler
+-				m_pHandler-&gt;fileDeleted(urlIter-&gt;substr(7));
++			// Inform the MonitorHandler
++			m_pHandler-&gt;fileDeleted(urlIter-&gt;substr(7));
+ 
+-				// Delete this item
+-				m_crawlHistory.deleteItem(*urlIter);
+-				metaData.deleteItem(DocumentInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;), DocumentInfo::SERIAL_ALL);
+-			}
++			// Delete this item
++			m_crawlHistory.deleteItem(*urlIter);
++			metaData.deleteItem(DocumentInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;), DocumentInfo::SERIAL_ALL);
++		}
+ 
+-			// Next
+-			if (urls.size() &lt; 100)
+-			{
+-				break;
+-			}
+-			currentOffset += 100;
++		// Next
++		if (urls.size() &lt; 100)
++		{
++			break;
+ 		}
+-		cout &lt;&lt; &quot;Cleaned up &quot; &lt;&lt; currentOffset + urls.size()
+-			&lt;&lt; &quot; history entries in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++		currentOffset += 100;
+ 	}
+ 
++	cout &lt;&lt; &quot;Cleaned up &quot; &lt;&lt; currentOffset + urls.size()
++		&lt;&lt; &quot; history entries in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++
+ 	if (m_isReindex == true)
+ 	{
+ 		urls.clear();
+
+Modified: trunk/Core/ServerThreads.h
+===================================================================
+--- trunk/Core/ServerThreads.h	2009-04-10 08:35:26 UTC (rev 1622)
++++ trunk/Core/ServerThreads.h	2009-04-13 03:22:14 UTC (rev 1623)
+@@ -37,14 +37,13 @@
+ {
+ 	public:
+ 		CrawlerThread(const std::string &amp;dirName,
+-			bool isSource, bool fullScan, bool isReindex,
++			bool isSource, bool isReindex,
+ 			MonitorInterface *pMonitor, MonitorHandler *pHandler);
+ 		virtual ~CrawlerThread();
+ 
+ 		virtual std::string getType(void) const;
+ 
+ 	protected:
+-		bool m_fullScan;
+ 		bool m_isReindex;
+ 		unsigned int m_sourceId;
+ 		MonitorInterface *m_pMonitor;
+
+Modified: trunk/Core/pinot-dbus-daemon.cpp
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.cpp	2009-04-10 08:35:26 UTC (rev 1622)
++++ trunk/Core/pinot-dbus-daemon.cpp	2009-04-13 03:22:14 UTC (rev 1623)
+@@ -66,7 +66,6 @@
+ static streambuf *g_coutBuf = NULL;
+ static streambuf *g_cerrBuf = NULL;
+ static struct option g_longOptions[] = {
+-	{&quot;fullscan&quot;, 0, 0, 'f'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
+ 	{&quot;ignore-version&quot;, 0, 0, 'i'},
+ 	{&quot;priority&quot;, 1, 0, 'p'},
+@@ -278,25 +277,20 @@
+ 	int longOptionIndex = 0, priority = 15;
+ 	bool resetHistory = false;
+ 	bool resetLabels = false;
+-	bool fullScan = false;
+ 	bool reindex = false;
+ 	bool ignoreVersion = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;fhip:rv&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;hip:rv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+ 		{
+-			case 'f':
+-				fullScan = true;
+-				break;
+ 			case 'h':
+ 				// Help
+ 				cout &lt;&lt; &quot;pinot-dbus-daemon - D-Bus search and index daemon\n\n&quot;
+ 					&lt;&lt; &quot;Usage: pinot-dbus-daemon [OPTIONS]\n\n&quot;
+ 					&lt;&lt; &quot;Options:\n&quot;
+-					&lt;&lt; &quot;  -f, --fullscan	force a full scan\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+ 					&lt;&lt; &quot;  -i, --ignore-version	ignore the index version number\n&quot;
+ 					&lt;&lt; &quot;  -p, --priority	set the daemon's priority (default 15)\n&quot;
+@@ -332,7 +326,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;fhip:rv&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;hip:rv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ #if defined(ENABLE_NLS)
+@@ -714,7 +708,7 @@
+ 				cout &lt;&lt; &quot;System is on battery&quot; &lt;&lt; endl;
+ 			}
+ 
+-			server.start(fullScan, reindex);
++			server.start(reindex);
+ 
+ 			// Run the main loop
+ 			g_refMainLoop-&gt;run();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001612.html">[Pinot-svn] r1622 - tags
+</A></li>
+	<LI>Next message: <A HREF="001614.html">[Pinot-svn] r1624 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1613">[ date ]</a>
+              <a href="thread.html#1613">[ thread ]</a>
+              <a href="subject.html#1613">[ subject ]</a>
+              <a href="author.html#1613">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

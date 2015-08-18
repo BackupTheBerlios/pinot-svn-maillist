@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r154 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r154%20-%20trunk/Index&In-Reply-To=%3C200603181132.k2IBWSwp022213%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000152.html">
+   <LINK REL="Next"  HREF="000153.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r154 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r154%20-%20trunk/Index&In-Reply-To=%3C200603181132.k2IBWSwp022213%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r154 - trunk/Index">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Mar 18 12:32:28 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000152.html">[Pinot-svn] r153 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="000153.html">[Pinot-svn] r155 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#154">[ date ]</a>
+              <a href="thread.html#154">[ thread ]</a>
+              <a href="subject.html#154">[ subject ]</a>
+              <a href="author.html#154">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-18 12:32:16 +0100 (Sat, 18 Mar 2006)
+New Revision: 154
+
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+getDocumentsCount() can return the number of documents that have a label.
+setDocumentLabels() skips empty labels.
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2006-03-17 12:16:41 UTC (rev 153)
++++ trunk/Index/IndexInterface.h	2006-03-18 11:32:16 UTC (rev 154)
+@@ -85,7 +85,7 @@
+ 		virtual bool flush(void) = 0;
+ 
+ 		/// Returns the number of documents.
+-		virtual unsigned int getDocumentsCount(void) const = 0;
++		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const = 0;
+ 
+ 		/// Lists document IDs.
+ 		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-03-17 12:16:41 UTC (rev 153)
++++ trunk/Index/XapianIndex.cpp	2006-03-18 11:32:16 UTC (rev 154)
+@@ -771,7 +771,10 @@
+ 			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+ 				++labelIter)
+ 			{
+-				doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++				if (labelIter-&gt;empty() == false)
++				{
++					doc.add_term(limitTermLength(string(&quot;XLABEL:&quot;) + *labelIter));
++				}
+ 			}
+ 
+ 			pIndex-&gt;replace_document(docId, doc);
+@@ -1116,7 +1119,7 @@
+ }
+ 
+ /// Returns the number of documents.
+-unsigned int XapianIndex::getDocumentsCount(void) const
++unsigned int XapianIndex::getDocumentsCount(const string &amp;labelName) const
+ {
+ 	unsigned int docCount = 0;
+ 
+@@ -1132,7 +1135,18 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
+-			docCount = pIndex-&gt;get_doccount();
++			if (labelName.empty() == true)
++			{
++				docCount = pIndex-&gt;get_doccount();
++			}
++			else
++			{
++				string term(&quot;XLABEL:&quot;);
++
++				// Each label appears only one per document so the collection frequency
++				// is the number of documents that have this label
++				docCount = pIndex-&gt;get_collection_freq(term + labelName);
++			}
+ 		}
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-03-17 12:16:41 UTC (rev 153)
++++ trunk/Index/XapianIndex.h	2006-03-18 11:32:16 UTC (rev 154)
+@@ -79,7 +79,7 @@
+ 		virtual bool flush(void);
+ 
+ 		/// Returns the number of documents.
+-		virtual unsigned int getDocumentsCount(void) const;
++		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
+ 
+ 		/// Lists document IDs.
+ 		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIds,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000152.html">[Pinot-svn] r153 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="000153.html">[Pinot-svn] r155 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#154">[ date ]</a>
+              <a href="thread.html#154">[ thread ]</a>
+              <a href="subject.html#154">[ subject ]</a>
+              <a href="author.html#154">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,246 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r962 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r962%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200709041130.l84BUMNs010631%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000955.html">
+   <LINK REL="Next"  HREF="000957.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r962 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r962%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200709041130.l84BUMNs010631%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r962 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep  4 13:30:22 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000955.html">[Pinot-svn] r961 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000957.html">[Pinot-svn] r963 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#956">[ date ]</a>
+              <a href="thread.html#956">[ thread ]</a>
+              <a href="subject.html#956">[ subject ]</a>
+              <a href="author.html#956">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-04 13:30:21 +0200 (Tue, 04 Sep 2007)
+New Revision: 962
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+Show external indexes in the List Contents Of menu, repopulate when one is
+added/edited/removed. Properties of documents from external indexes are
+-for the time being- not shown.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-09-03 12:14:49 UTC (rev 961)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-09-04 11:30:21 UTC (rev 962)
+@@ -157,7 +157,8 @@
+ 	populate_queryTreeview(&quot;&quot;);
+ 
+ 	// Populate the menus
+-	populate_menus();
++	populate_cacheMenu();
++	populate_indexMenu();
+ 
+ 	// Create a notebook, without any page initially
+ 	m_pNotebook = manage(new Notebook());
+@@ -298,36 +299,10 @@
+ }
+ 
+ //
+-// Populate menus
++// Populate the cache menu
+ //
+-void mainWindow::populate_menus()
++void mainWindow::populate_cacheMenu()
+ {
+-	if (m_pIndexMenu == NULL)
+-	{
+-		m_pIndexMenu = manage(new Menu());
+-		list1-&gt;set_submenu(*m_pIndexMenu);
+-	}
+-	else
+-	{
+-		// Clear the submenu
+-		m_pIndexMenu-&gt;items().clear();
+-	}
+-
+-	SigC::Slot1&lt;void, ustring&gt; indexSlot = SigC::slot(*this, &amp;mainWindow::on_index_changed);
+-
+-	// Populate the submenu
+-	m_pIndexMenu-&gt;items().push_back(Menu_Helpers::MenuElem(_(&quot;My Documents&quot;)));
+-	MenuItem *pMenuItem = &amp;m_pIndexMenu-&gt;items().back();
+-	// Bind the callback's parameter to the index name
+-	SigC::Slot0&lt;void&gt; daemonActivateSlot = sigc::bind(indexSlot, _(&quot;My Documents&quot;));
+-	pMenuItem-&gt;signal_activate().connect(daemonActivateSlot);
+-
+-	m_pIndexMenu-&gt;items().push_back(Menu_Helpers::MenuElem(_(&quot;My Web Pages&quot;)));
+-	pMenuItem = &amp;m_pIndexMenu-&gt;items().back();
+-	// Bind the callback's parameter to the index name
+-	SigC::Slot0&lt;void&gt; documentsActivateSlot = sigc::bind(indexSlot, _(&quot;My Web Pages&quot;));
+-	pMenuItem-&gt;signal_activate().connect(documentsActivateSlot);
+-
+ 	if (m_pCacheMenu == NULL)
+ 	{
+ 		m_pCacheMenu = manage(new Menu());
+@@ -363,6 +338,38 @@
+ }
+ 
+ //
++// Populate the index menu
++//
++void mainWindow::populate_indexMenu()
++{
++	if (m_pIndexMenu == NULL)
++	{
++		m_pIndexMenu = manage(new Menu());
++		list1-&gt;set_submenu(*m_pIndexMenu);
++	}
++	else
++	{
++		// Clear the submenu
++		m_pIndexMenu-&gt;items().clear();
++	}
++
++	SigC::Slot1&lt;void, ustring&gt; indexSlot = SigC::slot(*this, &amp;mainWindow::on_index_changed);
++
++	std::map&lt;std::string, std::string&gt; indexes = m_settings.getIndexes();
++	for (std::map&lt;std::string, std::string&gt;::const_iterator indexIter = indexes.begin();
++		indexIter != indexes.end(); ++indexIter)
++	{
++		ustring indexName(to_utf8(indexIter-&gt;first));
++
++		m_pIndexMenu-&gt;items().push_back(Menu_Helpers::MenuElem(indexName));
++		MenuItem &amp;menuItem = m_pIndexMenu-&gt;items().back();
++		// Bind the callback's parameter to the index name
++		SigC::Slot0&lt;void&gt; menuItemSlot = sigc::bind(indexSlot, indexName);
++		menuItem.signal_activate().connect(menuItemSlot);
++	}
++}
++
++//
+ // Query list selection changed
+ //
+ void mainWindow::on_queryTreeviewSelection_changed()
+@@ -535,16 +542,21 @@
+ 		if (url.empty() == false)
+ 		{
+ 			bool isDocumentsIndex = true;
++			bool editDocument = true;
+ 
+ 			// Enable these menu items unless it is not the documents index
+ 			if (indexName != _(&quot;My Web Pages&quot;))
+ 			{
+ 				isDocumentsIndex = false;
++				if (indexName != _(&quot;My Documents&quot;))
++				{
++					editDocument = false;
++				}
+ 			}
+ 			viewfromindex1-&gt;set_sensitive(true);
+ 			refreshindex1-&gt;set_sensitive(isDocumentsIndex);
+ 			unindex1-&gt;set_sensitive(isDocumentsIndex);
+-			showfromindex1-&gt;set_sensitive(true);
++			showfromindex1-&gt;set_sensitive(editDocument);
+ 
+ 			// Show the URL in the status bar
+ 			ustring statusText = _(&quot;Document location is&quot;);
+@@ -1383,6 +1395,8 @@
+ 
+ 		// Refresh the engines list
+ 		m_pEnginesTree-&gt;populate();
++		// ...and the index menu
++		populate_indexMenu();
+ 	}
+ 
+ 	set_status(_(&quot;Edited index&quot;));
+@@ -2014,6 +2028,13 @@
+ 		pResultsTree = pIndexPage-&gt;getTree();
+ 	}
+ 
++	// Allow this only for internal indexes
++	if ((indexName != _(&quot;My Web Pages&quot;)) &amp;&amp;
++		(indexName != _(&quot;My Documents&quot;)))
++	{
++		return;
++	}
++
+ 	const std::map&lt;string, string&gt; &amp;indexesMap = m_settings.getIndexes();
+ 	std::map&lt;string, string&gt;::const_iterator mapIter = indexesMap.find(indexName);
+ 	if (mapIter == indexesMap.end())
+@@ -2315,6 +2336,8 @@
+ 		// Refresh the indexes list
+ 		removeIndexButton-&gt;set_sensitive(false);
+ 		m_pEnginesTree-&gt;populate();
++		// ...and the index menu
++		populate_indexMenu();
+ 	}
+ 
+ 	set_status(_(&quot;Added new index&quot;));
+@@ -2364,6 +2387,8 @@
+ 			// Refresh the indexes list
+ 			removeIndexButton-&gt;set_sensitive(false);
+ 			m_pEnginesTree-&gt;populate();
++			// ...and the index menu
++			populate_indexMenu();
+ 		}
+ 	}
+ }
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2007-09-03 12:14:49 UTC (rev 961)
++++ trunk/UI/GTK2/src/mainWindow.hh	2007-09-04 11:30:21 UTC (rev 962)
+@@ -58,7 +58,8 @@
+ 	// Utility methods
+ 	void populate_queryTreeview(const std::string &amp;selectedQueryName);
+ 	void save_queryTreeview();
+-	void populate_menus();
++	void populate_cacheMenu();
++	void populate_indexMenu();
+ 
+ 	// Handlers
+ 	bool on_queryCompletion_match(const Glib::ustring &amp;key, const Gtk::TreeModel::const_iterator &amp;iter);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000955.html">[Pinot-svn] r961 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000957.html">[Pinot-svn] r963 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#956">[ date ]</a>
+              <a href="thread.html#956">[ thread ]</a>
+              <a href="subject.html#956">[ subject ]</a>
+              <a href="author.html#956">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

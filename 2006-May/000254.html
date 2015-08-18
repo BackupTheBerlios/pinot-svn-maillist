@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r260 - in trunk: Monitor UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r260%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200605201209.k4KC9PTL004155%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000253.html">
+   <LINK REL="Next"  HREF="000255.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r260 - in trunk: Monitor UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r260%20-%20in%20trunk%3A%20Monitor%20UI/GTK2/src&In-Reply-To=%3C200605201209.k4KC9PTL004155%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r260 - in trunk: Monitor UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat May 20 14:09:25 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000253.html">[Pinot-svn] r255 - in trunk: . UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000255.html">[Pinot-svn] r261 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#254">[ date ]</a>
+              <a href="thread.html#254">[ thread ]</a>
+              <a href="subject.html#254">[ subject ]</a>
+              <a href="author.html#254">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-20 14:08:49 +0200 (Sat, 20 May 2006)
+New Revision: 260
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+No need to listen for event IN_ATTRIB. Make sure the monitor's file descriptor
+is in the set MonitorThread select()'s on !
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2006-05-20 10:13:58 UTC (rev 259)
++++ trunk/Monitor/INotifyMonitor.cpp	2006-05-20 12:08:49 UTC (rev 260)
+@@ -51,7 +51,7 @@
+ /// Starts monitoring a location.
+ bool INotifyMonitor::addLocation(const string &amp;directory)
+ {
+-	uint32_t eventsMask = IN_ATTRIB|IN_CLOSE_WRITE|IN_MOVE|IN_CREATE|IN_DELETE|IN_UNMOUNT|IN_MOVE_SELF|IN_DELETE_SELF;
++	uint32_t eventsMask = IN_CLOSE_WRITE|IN_MOVE|IN_CREATE|IN_DELETE|IN_UNMOUNT|IN_MOVE_SELF|IN_DELETE_SELF;
+ 
+ 	if ((directory.empty() == true) ||
+ 		(directory == &quot;/&quot;) ||
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-20 10:13:58 UTC (rev 259)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-05-20 12:08:49 UTC (rev 260)
+@@ -1189,8 +1189,6 @@
+ 	MonitorInterface *pMonitor = MonitorFactory::getMonitor();
+ 	set&lt;string&gt; newLocations;
+ 	set&lt;string&gt; locationsToRemove;
+-	bool setLocationsToMonitor = true;
+-	bool resumeMonitor = false;
+ 
+ 	if ((m_pHandler == NULL) ||
+ 		(pMonitor == NULL))
+@@ -1204,7 +1202,6 @@
+ 	{
+ 		struct timeval selectTimeout;
+ 		fd_set listenSet;
+-		int monitorFd = -1;
+ 
+ 		selectTimeout.tv_sec = 60;
+ 		selectTimeout.tv_usec = 0;
+@@ -1215,44 +1212,37 @@
+ 			FD_SET(m_ctrlReadPipe, &amp;listenSet);
+ 		}
+ 
+-		if (setLocationsToMonitor == true)
++		// Did a change occur ?
++		if (m_pHandler-&gt;getLocations(newLocations, locationsToRemove) == true)
+ 		{
+-			// Did a change occur ?
+-			if (m_pHandler-&gt;getLocations(newLocations, locationsToRemove) == true)
+-			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;MonitorThread::doWork: change detected&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;MonitorThread::doWork: change detected&quot; &lt;&lt; endl;
+ #endif
+-				resumeMonitor = false;
+ 
+-				// Add new locations
+-				for (set&lt;string&gt;::const_iterator locationIter = newLocations.begin();
+-					(locationIter != newLocations.end()) &amp;&amp; (m_done == false); ++locationIter)
++			// Add new locations
++			for (set&lt;string&gt;::const_iterator locationIter = newLocations.begin();
++				(locationIter != newLocations.end()) &amp;&amp; (m_done == false); ++locationIter)
++			{
++				// Monitor this
++				if (pMonitor-&gt;addLocation(*locationIter) == true)
+ 				{
+-					// Monitor this
+-					if (pMonitor-&gt;addLocation(*locationIter) == true)
+-					{
+-						// Confirm the file exists
+-						m_pHandler-&gt;fileExists(*locationIter);
+-					}
++					// Confirm the file exists
++					m_pHandler-&gt;fileExists(*locationIter);
+ 				}
+-
+-				// Remove others
+-				for (set&lt;string&gt;::const_iterator locationIter = locationsToRemove.begin();
+-					(locationIter != locationsToRemove.end()) &amp;&amp; (m_done == false); ++locationIter)
+-				{
+-					// Stop monitoring this
+-					pMonitor-&gt;removeLocation(*locationIter);
+-				}
+ 			}
+ 
+-			// The file descriptor may change over time so get it when changes occur
+-			// rather than just once at the very beginning
+-			monitorFd = pMonitor-&gt;getFileDescriptor();
+-			FD_SET(monitorFd, &amp;listenSet);
++			// Remove others
++			for (set&lt;string&gt;::const_iterator locationIter = locationsToRemove.begin();
++				(locationIter != locationsToRemove.end()) &amp;&amp; (m_done == false); ++locationIter)
++			{
++				// Stop monitoring this
++				pMonitor-&gt;removeLocation(*locationIter);
++			}
+ 		}
+-		setLocationsToMonitor = false;
+ 
++		// The file descriptor may change over time
++		int monitorFd = pMonitor-&gt;getFileDescriptor();
++		FD_SET(monitorFd, &amp;listenSet);
+ 		if (monitorFd &lt; 0)
+ 		{
+ 			m_status = _(&quot;Couldn't initialize file monitor&quot;);
+@@ -1297,7 +1287,6 @@
+ 						cout &lt;&lt; &quot;MonitorThread::doWork: ignoring events because of load (&quot;
+ 							&lt;&lt; averageLoad[0] &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+ #endif
+-						resumeMonitor = true;
+ 						break;
+ 					}
+ 				}
+@@ -1334,21 +1323,6 @@
+ 				events.pop();
+ 			}
+ 		}
+-		else
+-		{
+-			if (resumeMonitor == true)
+-			{
+-				// Resume
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;MonitorThread::doWork: resuming monitoring&quot; &lt;&lt; endl;
+-#endif
+-				resumeMonitor = false;
+-			}
+-
+-			// Chances are the timeout expired
+-			// See if the locations to monitor have changed
+-			setLocationsToMonitor = true;
+-		}
+ 	}
+ 
+ 	delete pMonitor;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000253.html">[Pinot-svn] r255 - in trunk: . UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000255.html">[Pinot-svn] r261 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#254">[ date ]</a>
+              <a href="thread.html#254">[ thread ]</a>
+              <a href="subject.html#254">[ subject ]</a>
+              <a href="author.html#254">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

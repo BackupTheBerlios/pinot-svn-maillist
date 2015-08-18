@@ -1,0 +1,199 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1192 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1192%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200802251554.m1PFsH7M015916%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001185.html">
+   <LINK REL="Next"  HREF="001187.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1192 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1192%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200802251554.m1PFsH7M015916%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1192 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb 25 16:54:17 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001185.html">[Pinot-svn] r1191 - in trunk: . po
+</A></li>
+        <LI>Next message: <A HREF="001187.html">[Pinot-svn] r1193 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1186">[ date ]</a>
+              <a href="thread.html#1186">[ thread ]</a>
+              <a href="subject.html#1186">[ subject ]</a>
+              <a href="author.html#1186">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-02-25 16:54:15 +0100 (Mon, 25 Feb 2008)
+New Revision: 1192
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+Mostly cosmetic changes.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-02-25 13:50:45 UTC (rev 1191)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-02-25 15:54:15 UTC (rev 1192)
+@@ -316,18 +316,45 @@
+ 			}
+ 			++nGramCount;
+ 		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: \&quot;&quot; &lt;&lt; term &lt;&lt; &quot;\&quot; at position &quot; &lt;&lt; termPos &lt;&lt; endl;
+-#endif
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: &quot; &lt;&lt; nGramCount &lt;&lt; &quot; CJKV terms to position &quot; &lt;&lt; termPos &lt;&lt; endl;
++	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: CJKV terms to position &quot; &lt;&lt; termPos &lt;&lt; endl;
+ #endif
+ 
+ 	// This will help identify which documents were processed here
+ 	doc.add_term(&quot;XTOK:CJKV&quot;);
+ }
+ 
++void XapianIndex::addLabelsToDocument(Xapian::Document &amp;doc, const set&lt;string&gt; &amp;labels,
++	bool skipInternals)
++{
++	if (labels.empty() == true)
++	{
++		return;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianIndex::addLabelsToDocument: &quot; &lt;&lt; labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
++#endif
++
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
++			++labelIter)
++	{
++		string labelName(*labelIter);
++
++		// Prevent from setting internal labels ?
++		if ((labelName.empty() == true) ||
++			((skipInternals == true) &amp;&amp; (labelName.substr(0, 2) == &quot;X-&quot;)))
++		{
++			continue;
++		}
++
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianIndex::addLabelsToDocument: label \&quot;&quot; &lt;&lt; labelName &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
++#endif
++		doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(labelName)));
++	}
++}
++
+ void XapianIndex::removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+ 	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, const string &amp;language,
+ 	bool noStemming, bool &amp;doSpelling) const
+@@ -1481,16 +1508,7 @@
+ 			}
+ 
+ 			// Set new labels
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
+-			{
+-				// Prevent from setting internal labels
+-				if ((labelIter-&gt;empty() == false) &amp;&amp;
+-					(labelIter-&gt;substr(0, 2) != &quot;X-&quot;))
+-				{
+-					doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
+-				}
+-			}
++			addLabelsToDocument(doc, labels, true);
+ 
+ 			pIndex-&gt;replace_document(docId, doc);
+ 			updatedLabels = true;
+@@ -1740,6 +1758,9 @@
+ 	docInfo.setTimestamp(document.getTimestamp());
+ 	docInfo.setSize(document.getSize());
+ 	docInfo.setLocation(Url::canonicalizeUrl(docInfo.getLocation()));
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianIndex::indexDocument: URL &quot; &lt;&lt; docInfo.getLocation() &lt;&lt; endl;
++#endif
+ 
+ 	unsigned int dataLength = 0;
+ 	const char *pData = document.getData(dataLength);
+@@ -1769,14 +1790,7 @@
+ 			}
+ 
+ 			// Add labels
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
+-			{
+-				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
+-			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::indexDocument: &quot; &lt;&lt; labels.size() &lt;&lt; &quot; labels&quot; &lt;&lt; endl;
+-#endif
++			addLabelsToDocument(doc, labels, false);
+ 
+ 			// Set data
+ 			setDocumentData(docInfo, doc, m_stemLanguage);
+@@ -1858,11 +1872,7 @@
+ 			}
+ 
+ 			// Add labels
+-			for (set&lt;string&gt;::const_iterator labelIter = labels.begin(); labelIter != labels.end();
+-				++labelIter)
+-			{
+-				doc.add_term(string(&quot;XLABEL:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(*labelIter)));
+-			}
++			addLabelsToDocument(doc, labels, false);
+ 
+ 			// Set data
+ 			setDocumentData(docInfo, doc, m_stemLanguage);
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2008-02-25 13:50:45 UTC (rev 1191)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2008-02-25 15:54:15 UTC (rev 1192)
+@@ -166,6 +166,9 @@
+ 			const std::string &amp;text, Xapian::Document &amp;doc, const std::string &amp;prefix,
+ 			Xapian::termcount &amp;termPos) const;
+ 
++		static void addLabelsToDocument(Xapian::Document &amp;doc,
++			const std::set&lt;std::string&gt; &amp;labels, bool skipInternals);
++
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+ 			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix,
+ 			const std::string &amp;language, bool noStemming, bool &amp;doSpelling) const;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001185.html">[Pinot-svn] r1191 - in trunk: . po
+</A></li>
+	<LI>Next message: <A HREF="001187.html">[Pinot-svn] r1193 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1186">[ date ]</a>
+              <a href="thread.html#1186">[ thread ]</a>
+              <a href="subject.html#1186">[ subject ]</a>
+              <a href="author.html#1186">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

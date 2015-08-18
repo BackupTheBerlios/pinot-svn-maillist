@@ -1,0 +1,285 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r399 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r399%20-%20trunk/Monitor&In-Reply-To=%3C200608181056.k7IAutaw008629%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000391.html">
+   <LINK REL="Next"  HREF="000393.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r399 - trunk/Monitor</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r399%20-%20trunk/Monitor&In-Reply-To=%3C200608181056.k7IAutaw008629%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r399 - trunk/Monitor">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug 18 12:56:55 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000391.html">[Pinot-svn] r398 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000393.html">[Pinot-svn] r400 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#392">[ date ]</a>
+              <a href="thread.html#392">[ thread ]</a>
+              <a href="subject.html#392">[ subject ]</a>
+              <a href="author.html#392">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-18 12:56:52 +0200 (Fri, 18 Aug 2006)
+New Revision: 399
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/INotifyMonitor.h
+   trunk/Monitor/MonitorEvent.h
+   trunk/Monitor/MonitorHandler.cpp
+   trunk/Monitor/MonitorHandler.h
+   trunk/Monitor/MonitorInterface.h
+Log:
+Upon success, addLocation() generates an internal event of type EXISTS that's
+returned by the next call to retrievePendingEvents().
+Some minor tweaks.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2006-08-16 14:55:41 UTC (rev 398)
++++ trunk/Monitor/INotifyMonitor.cpp	2006-08-18 10:56:52 UTC (rev 399)
+@@ -56,18 +56,18 @@
+ }
+ 
+ /// Starts monitoring a location.
+-bool INotifyMonitor::addLocation(const string &amp;directory)
++bool INotifyMonitor::addLocation(const string &amp;location, bool isDirectory)
+ {
+ 	uint32_t eventsMask = IN_CLOSE_WRITE|IN_MOVE|IN_CREATE|IN_DELETE|IN_UNMOUNT|IN_MOVE_SELF|IN_DELETE_SELF;
+ 
+-	if ((directory.empty() == true) ||
+-		(directory == &quot;/&quot;) ||
++	if ((location.empty() == true) ||
++		(location == &quot;/&quot;) ||
+ 		(m_monitorFd &lt; 0))
+ 	{
+ 		return false;
+ 	}
+ 
+-	map&lt;string, int&gt;::iterator locationIter = m_locations.find(directory);
++	map&lt;string, int&gt;::iterator locationIter = m_locations.find(location);
+ 	if (locationIter != m_locations.end())
+ 	{
+ 		// This is already being monitored
+@@ -75,32 +75,42 @@
+ 	}
+ 
+ 	// FIXME: check the maximum number of watches hasn't been reached (MAX_FILE_WATCHES ?)
+-	int dirWd = inotify_add_watch(m_monitorFd, directory.c_str(), eventsMask);
+-	if (dirWd &gt;= 0)
++	int watchNum = inotify_add_watch(m_monitorFd, location.c_str(), eventsMask);
++	if (watchNum &gt;= 0)
+ 	{
+-		m_watches.insert(pair&lt;int, string&gt;(dirWd, directory));
+-		m_locations.insert(pair&lt;string, int&gt;(directory, dirWd));
++		MonitorEvent monEvent;
++
++		// Generate an event to signal it exists and is being monitored
++		monEvent.m_location = location;
++		monEvent.m_isWatch = true;
++		monEvent.m_type = MonitorEvent::EXISTS;
++		monEvent.m_isDirectory = isDirectory;
++		m_internalEvents.push(monEvent);
++
++		m_watches.insert(pair&lt;int, string&gt;(watchNum, location));
++		m_locations.insert(pair&lt;string, int&gt;(location, watchNum));
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;INotifyMonitor::addLocation: added watch &quot; &lt;&lt; dirWd &lt;&lt; &quot; &quot; &lt;&lt; directory &lt;&lt; endl;
++		cout &lt;&lt; &quot;INotifyMonitor::addLocation: added watch &quot;
++			&lt;&lt; watchNum &lt;&lt; &quot; &quot; &lt;&lt; location &lt;&lt; endl;
+ #endif
+ 
+ 		return true;
+ 	}
+-	cerr &lt;&lt; &quot;INotifyMonitor::addLocation: couldn't monitor &quot; &lt;&lt; directory &lt;&lt; endl;
++	cerr &lt;&lt; &quot;INotifyMonitor::addLocation: couldn't monitor &quot; &lt;&lt; location &lt;&lt; endl;
+ 
+ 	return false;
+ }
+ 
+ /// Stops monitoring a location.
+-bool INotifyMonitor::removeLocation(const string &amp;directory)
++bool INotifyMonitor::removeLocation(const string &amp;location)
+ {
+-	if ((directory.empty() == true) ||
++	if ((location.empty() == true) ||
+ 		(m_monitorFd &lt; 0))
+ 	{
+ 		return false;
+ 	}
+ 
+-	map&lt;string, int&gt;::iterator locationIter = m_locations.find(directory);
++	map&lt;string, int&gt;::iterator locationIter = m_locations.find(location);
+ 	if (locationIter != m_locations.end())
+ 	{
+ 		inotify_rm_watch(m_monitorFd, locationIter-&gt;second);
+@@ -113,7 +123,8 @@
+ 
+ 		return true;
+ 	}
+-	cerr &lt;&lt; &quot;INotifyMonitor::removeLocation: &quot; &lt;&lt; directory &lt;&lt; &quot; is not being monitored&quot; &lt;&lt; endl;
++	cerr &lt;&lt; &quot;INotifyMonitor::removeLocation: &quot; &lt;&lt; location
++		&lt;&lt; &quot; is not being monitored&quot; &lt;&lt; endl;
+ 
+ 	return false;
+ }
+@@ -130,6 +141,16 @@
+ 		return false;
+ 	}
+ 
++	// Copy internal events
++	while (m_internalEvents.empty() == false)
++	{
++		MonitorEvent &amp;internalEvent = m_internalEvents.front();
++		events.push(internalEvent);
++
++		// Next
++		events.pop();
++	}
++
+ 	if (ioctl (m_monitorFd, FIONREAD, &amp;queueLen) == 0)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/Monitor/INotifyMonitor.h
+===================================================================
+--- trunk/Monitor/INotifyMonitor.h	2006-08-16 14:55:41 UTC (rev 398)
++++ trunk/Monitor/INotifyMonitor.h	2006-08-18 10:56:52 UTC (rev 399)
+@@ -30,15 +30,16 @@
+ 		virtual ~INotifyMonitor();
+ 
+ 		/// Adds a watch for the specified location.
+-		virtual bool addLocation(const std::string &amp;directory);
++		virtual bool addLocation(const std::string &amp;location, bool isDirectory);
+ 
+ 		/// Removed the watch for the specified location.
+-		virtual bool removeLocation(const std::string &amp;directory);
++		virtual bool removeLocation(const std::string &amp;location);
+ 
+ 		/// Retrieves pending events.
+ 		virtual bool retrievePendingEvents(std::queue&lt;MonitorEvent&gt; &amp;events);
+ 
+ 	protected:
++		std::queue&lt;MonitorEvent&gt; m_internalEvents;
+ 		std::map&lt;std::string, int&gt; m_locations;
+ 		std::map&lt;uint32_t, std::string&gt; m_movedFrom;
+ 
+
+Modified: trunk/Monitor/MonitorEvent.h
+===================================================================
+--- trunk/Monitor/MonitorEvent.h	2006-08-16 14:55:41 UTC (rev 398)
++++ trunk/Monitor/MonitorEvent.h	2006-08-18 10:56:52 UTC (rev 399)
+@@ -30,7 +30,7 @@
+ 
+ 		bool operator&lt;(const MonitorEvent&amp; other) const;
+ 
+-		typedef enum { UNKNOWN = 0, CREATED, WRITE_CLOSED, MOVED, DELETED } EventType;
++		typedef enum { UNKNOWN = 0, EXISTS, CREATED, WRITE_CLOSED, MOVED, DELETED } EventType;
+ 
+ 		std::string m_location;
+ 		std::string m_previousLocation;
+
+Modified: trunk/Monitor/MonitorHandler.cpp
+===================================================================
+--- trunk/Monitor/MonitorHandler.cpp	2006-08-16 14:55:41 UTC (rev 398)
++++ trunk/Monitor/MonitorHandler.cpp	2006-08-18 10:56:52 UTC (rev 399)
+@@ -27,6 +27,11 @@
+ {
+ }
+ 
++const set&lt;string&gt; &amp;MonitorHandler::getLocations(void) const
++{
++	return m_locations;
++}
++
+ Signal3&lt;void, IndexedDocument, unsigned int, string&gt;&amp; MonitorHandler::getUpdateSignal(void)
+ {
+ 	return m_signalUpdate;
+
+Modified: trunk/Monitor/MonitorHandler.h
+===================================================================
+--- trunk/Monitor/MonitorHandler.h	2006-08-16 14:55:41 UTC (rev 398)
++++ trunk/Monitor/MonitorHandler.h	2006-08-18 10:56:52 UTC (rev 399)
+@@ -35,8 +35,8 @@
+ 		/// Initializes things before starting monitoring.
+ 		virtual void initialize(void) = 0;
+ 
+-		/// Returns locations.
+-		virtual const std::set&lt;std::string&gt; &amp;getLocations(void) const = 0;
++		/// Handles flushing the index.
++		virtual void flushIndex(void) = 0;
+ 
+ 		/// Handles file existence events.
+ 		virtual bool fileExists(const std::string &amp;fileName) = 0;
+@@ -54,6 +54,10 @@
+ 		/// Handles file deleted events.
+ 		virtual bool fileDeleted(const std::string &amp;fileName) = 0;
+ 
++		/// Returns locations.
++		const std::set&lt;std::string&gt; &amp;getLocations(void) const;
++
++		/// Returns the file update signal.
+ 		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
+ 
+ 	protected:
+
+Modified: trunk/Monitor/MonitorInterface.h
+===================================================================
+--- trunk/Monitor/MonitorInterface.h	2006-08-16 14:55:41 UTC (rev 398)
++++ trunk/Monitor/MonitorInterface.h	2006-08-18 10:56:52 UTC (rev 399)
+@@ -37,10 +37,10 @@
+ 		}
+ 
+ 		/// Adds a watch for the specified location.
+-		virtual bool addLocation(const std::string &amp;directory) = 0;
++		virtual bool addLocation(const std::string &amp;location, bool isDirectory) = 0;
+ 
+ 		/// Removed the watch for the specified location.
+-		virtual bool removeLocation(const std::string &amp;directory) = 0;
++		virtual bool removeLocation(const std::string &amp;location) = 0;
+ 
+ 		/// Retrieves pending events.
+ 		virtual bool retrievePendingEvents(std::queue&lt;MonitorEvent&gt; &amp;events) = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000391.html">[Pinot-svn] r398 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000393.html">[Pinot-svn] r400 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#392">[ date ]</a>
+              <a href="thread.html#392">[ thread ]</a>
+              <a href="subject.html#392">[ subject ]</a>
+              <a href="author.html#392">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,274 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1410 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1410%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811150623.mAF6Ni2P018743%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001400.html">
+   <LINK REL="Next"  HREF="001402.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1410 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1410%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811150623.mAF6Ni2P018743%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1410 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Nov 15 07:23:44 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001400.html">[Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001402.html">[Pinot-svn] r1411 - trunk/scripts/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1401">[ date ]</a>
+              <a href="thread.html#1401">[ thread ]</a>
+              <a href="subject.html#1401">[ subject ]</a>
+              <a href="author.html#1401">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-15 07:23:35 +0100 (Sat, 15 Nov 2008)
+New Revision: 1410
+
+Modified:
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+Log:
+Fixed default engine parameters supported by Query.
+If EngineQueryThread can't find the requested engine, it looks for a plugin
+that matches the given name and use that instead.
+
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-11-15 03:59:05 UTC (rev 1409)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-11-15 06:23:35 UTC (rev 1410)
+@@ -1176,32 +1176,20 @@
+ 				string engineType, engineOption;
+ 
+ 				// Provide reasonable defaults 
+-				if ((pEngineType == NULL) ||
+-					(strlen(pEngineType) == 0))
++				if (((pEngineType == NULL) || (strlen(pEngineType) == 0)) &amp;&amp;
++					((pEngineOption == NULL) || (strlen(pEngineOption) == 0)))
+ 				{
+ 					engineType = settings.m_defaultBackend;
++					engineOption = settings.m_daemonIndexLocation;
+ 				}
+ 				else
+ 				{
+ 					engineType = pEngineType;
+-				}
+-				if ((pEngineOption == NULL) ||
+-					(strlen(pEngineOption) == 0))
+-				{
+-					if (engineType == settings.m_defaultBackend)
+-					{
+-						// This wouldn't make sense with any other engine type
+-						engineOption = settings.m_daemonIndexLocation;
+-					}
+-				}
+-				else
+-				{
+ 					engineOption = pEngineOption;
+ 				}
+ 
+-				m_pServletInfo-&gt;m_pThread = new EngineQueryThread(pEngineType,
+-					engineType, engineOption,
+-					queryProps, startDoc);
++				m_pServletInfo-&gt;m_pThread = new EngineQueryThread(engineType,
++					engineType, engineOption, queryProps, startDoc);
+ 			}
+ 
+ 			if (replyWithError == true)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-11-15 03:59:05 UTC (rev 1409)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-11-15 06:23:35 UTC (rev 1410)
+@@ -874,6 +874,10 @@
+ 	m_correctedSpelling(false),
+ 	m_isLive(true)
+ {
++#ifdef DEBUG
++	cout &lt;&lt; &quot;QueryingThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
++		&lt;&lt; &quot;, mode &quot; &lt;&lt; m_listingIndex &lt;&lt; endl;
++#endif
+ }
+ 
+ QueryingThread::~QueryingThread()
+@@ -911,15 +915,61 @@
+ 	return m_resultsCharset;
+ }
+ 
++bool QueryingThread::findPlugin(void)
++{
++	string pluginName;
++
++	if ((m_engineName.empty() == true) &amp;&amp;
++		(m_engineOption.empty() == false))
++	{
++		pluginName = m_engineOption;
++	}
++	else if ((m_engineName.empty() == false) &amp;&amp;
++		(m_engineOption.empty() == true))
++	{
++		pluginName = m_engineName;
++	}
++
++	if (pluginName.empty() == false)
++	{
++		set&lt;ModuleProperties&gt; engines;
++		PinotSettings::getInstance().getSearchEngines(engines, &quot;&quot;);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;QueryingThread::findPlugin: looking for a plugin named &quot; &lt;&lt; pluginName &lt;&lt; endl;
++#endif
++
++		// Is there a plugin with such a name ?
++		ModuleProperties modProps(&quot;sherlock&quot;, pluginName, &quot;&quot;, &quot;&quot;);
++		set&lt;ModuleProperties&gt;::const_iterator engineIter = engines.find(modProps);
++		if (engineIter == engines.end())
++		{
++			// Try again
++			modProps.m_name = &quot;opensearch&quot;;
++			engineIter = engines.find(modProps);
++		}
++
++		if (engineIter != engines.end())
++		{
++			// Yes, there is !
++			m_engineName = engineIter-&gt;m_name;
++			m_engineDisplayableName = engineIter-&gt;m_longName;
++			m_engineOption = engineIter-&gt;m_option;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;QueryingThread::findPlugin: found &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineDisplayableName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption &lt;&lt; endl;
++#endif
++
++			return true;
++		}
++	}
++
++	return false;
++}
++
+ EngineQueryThread::EngineQueryThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+ 	const string &amp;engineOption, const QueryProperties &amp;queryProps,
+ 	unsigned int startDoc, bool listingIndex) :
+ 	QueryingThread(engineName, engineDisplayableName, engineOption, queryProps, startDoc, listingIndex)
+ {
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;EngineQueryThread::EngineQueryThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
+-		&lt;&lt; &quot;, mode &quot; &lt;&lt; m_listingIndex &lt;&lt; endl;
+-#endif
+ }
+ 
+ EngineQueryThread::EngineQueryThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+@@ -929,10 +979,6 @@
+ {
+ 	copy(limitToDocsSet.begin(), limitToDocsSet.end(),
+ 		inserter(m_limitToDocsSet, m_limitToDocsSet.begin()));
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;EngineQueryThread::EngineQueryThread: engine &quot; &lt;&lt; m_engineName &lt;&lt; &quot;, &quot; &lt;&lt; m_engineOption
+-		&lt;&lt; &quot;, limited to &quot; &lt;&lt; m_limitToDocsSet.size() &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
+-#endif
+ }
+ 
+ EngineQueryThread::~EngineQueryThread()
+@@ -1073,9 +1119,18 @@
+ 	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(m_engineName, m_engineOption);
+ 	if (pEngine == NULL)
+ 	{
+-		m_errorNum = UNKNOWN_ENGINE;
+-		m_errorParam = m_engineDisplayableName;
+-		return;
++		// Try again
++		if (findPlugin() == true)
++		{
++			pEngine = ModuleFactory::getSearchEngine(m_engineName, m_engineOption);
++		}
++
++		if (pEngine == NULL)
++		{
++			m_errorNum = UNKNOWN_ENGINE;
++			m_errorParam = m_engineDisplayableName;
++			return;
++		}
+ 	}
+ 
+ 	// Set up the proxy
+@@ -1155,9 +1210,6 @@
+ 	QueryingThread(&quot;&quot;, engineDisplayableName, &quot;&quot;, queryProps, 0, false),
+ 	m_maxDocsCount(maxDocsCount)
+ {
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;EngineHistoryThread::EngineHistoryThread: engine &quot; &lt;&lt; m_engineDisplayableName &lt;&lt; endl;
+-#endif
+ 	// Results are converted to UTF-8 prior to insertion in the history database
+ 	m_resultsCharset = &quot;UTF-8&quot;;
+ 	m_isLive = false;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-11-15 03:59:05 UTC (rev 1409)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-11-15 06:23:35 UTC (rev 1410)
+@@ -244,6 +244,8 @@
+ 		bool m_correctedSpelling;
+ 		bool m_isLive;
+ 
++		bool findPlugin(void);
++
+ 	private:
+ 		QueryingThread(const QueryingThread &amp;other);
+ 		QueryingThread &amp;operator=(const QueryingThread &amp;other);
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-11-15 03:59:05 UTC (rev 1409)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2008-11-15 06:23:35 UTC (rev 1410)
+@@ -136,8 +136,8 @@
+     &lt;/method&gt;
+     &lt;!--
+ 	Queries the index.
+-	 engineType : engine type. See pinot-search(1) for a list of supported types
+-	 engineName : engine name. See pinot-search(1) for examples
++	 engineType : engine type (defaults to &quot;xapian&quot;). See pinot-search(1) for a list of supported types
++	 engineName : engine name (defaults to &quot;~/.pinot/daemon&quot;). See pinot-search(1) for examples
+ 	 searchText : search text, as would be entered in Pinot's live query field
+ 	 startDoc: the first result to return, starting from 0
+ 	 maxHits: the maximum number of hits desired
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001400.html">[Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001402.html">[Pinot-svn] r1411 - trunk/scripts/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1401">[ date ]</a>
+              <a href="thread.html#1401">[ thread ]</a>
+              <a href="subject.html#1401">[ subject ]</a>
+              <a href="author.html#1401">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

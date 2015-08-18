@@ -1,0 +1,1895 @@
+From fabricecolin at mail.berlios.de  Sat Oct 10 13:52:21 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sat, 10 Oct 2009 13:52:21 +0200
+Subject: [Pinot-svn] r1672 - in trunk/UI/GTK2: . src
+Message-ID: <200910101152.n9ABqKpk028961@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-10 13:52:09 +0200 (Sat, 10 Oct 2009)
+New Revision: 1672
+
+Modified:
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/mainWindow_glade.cc
+Log:
+If gtkmm >= 2.16 is available, replace the find button with a QueryEntry icon.
+
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/metase-gtk2.glade	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -674,7 +674,7 @@
+ 
+ 		  <child>
+ 		    <widget class="GtkVButtonBox" id="findVbuttonbox">
+-		      <property name="visible">True</property>
++		      <property name="visible">False</property>
+ 		      <property name="layout_style">GTK_BUTTONBOX_DEFAULT_STYLE</property>
+ 		      <property name="spacing">0</property>
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/src/mainWindow.cc	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -27,6 +27,7 @@
+ #include <iostream>
+ #include <fstream>
+ #include <list>
++#include <glibmmconfig.h>
+ #include <glibmm/ustring.h>
+ #include <glibmm/stringutils.h>
+ #include <glibmm/convert.h>
+@@ -183,6 +184,16 @@
+ 	m_refLiveQueryCompletion->set_popup_completion(true);
+ 	liveQueryEntry->set_completion(m_refLiveQueryCompletion);
+ 
++#if GTKMM_MAJOR_VERSION>=2 && GTKMM_MINOR_VERSION>=16
++	// Enable the find icon
++	liveQueryEntry->set_icon_from_stock(Stock::FIND, ENTRY_ICON_SECONDARY);
++	liveQueryEntry->signal_icon_press().connect(sigc::mem_fun(*this, &mainWindow::on_liveQueryEntry_icon), false);
++	liveQueryEntry->set_icon_sensitive(ENTRY_ICON_SECONDARY, false);
++#else
++	findButton->set_sensitive(false);
++	findVbuttonbox->show();
++#endif
++
+ 	// Associate the columns model to the query tree
+ 	m_refQueryTree = ListStore::create(m_queryColumns);
+ 	queryTreeview->set_model(m_refQueryTree);
+@@ -230,17 +241,20 @@
+ 		sigc::mem_fun(*this, &mainWindow::on_switch_page), false);
+ 
+ 	// Gray out menu items
+-	removeQueryButton->set_sensitive(false);
+-	queryHistoryButton->set_sensitive(false);
+-	findQueryButton->set_sensitive(false);
+ 	show_pagebased_menuitems(false);
+ 	show_selectionbased_menuitems(false);
+ 	// ...and buttons
+ 	removeIndexButton->set_sensitive(false);
++	removeQueryButton->set_sensitive(false);
++	queryHistoryButton->set_sensitive(false);
+ 
+ 	// Set tooltips
+ 	m_tooltips.set_tip(*enginesTogglebutton, _("Show all search engines"));
++#if GTKMM_MAJOR_VERSION>=2 && GTKMM_MINOR_VERSION>=16
++	liveQueryEntry->set_icon_tooltip_text(_("Find documents that match the query"), ENTRY_ICON_SECONDARY);
++#else
+ 	m_tooltips.set_tip(*findButton, _("Find documents that match the query string"));
++#endif
+ 	m_tooltips.set_tip(*addIndexButton, _("Add an index"));
+ 	m_tooltips.set_tip(*removeIndexButton, _("Remove an index"));
+ 	m_tooltips.set_tip(*addQueryButton, _("Add a query"));
+@@ -2719,13 +2733,26 @@
+ //
+ void mainWindow::on_liveQueryEntry_changed()
+ {
++	ustring term(liveQueryEntry->get_text());
++	bool enableFindButton = true;
++
++	if (term.empty() == true)
++	{
++		enableFindButton = false;
++	}
++#if GTKMM_MAJOR_VERSION>=2 && GTKMM_MINOR_VERSION>=16
++	liveQueryEntry->set_icon_sensitive(ENTRY_ICON_SECONDARY, enableFindButton);
++#else
++	findButton->set_sensitive(enableFindButton);
++#endif
++
+ 	if (m_settings.m_suggestQueryTerms == false)
+ 	{
+-		// This functionality is disabled
++		// Suggestions are disabled
+ 		return;
+ 	}
+ 
+-	ustring prefix, term = liveQueryEntry->get_text();
++	ustring prefix;
+ 	unsigned int liveQueryLength = term.length();
+ 
+ 	// Reset the list
+@@ -2782,12 +2809,23 @@
+ 	}
+ }
+ 
++//
++// Live query entry activate
++//
+ void mainWindow::on_liveQueryEntry_activate()
+ {
+ 	on_findButton_clicked();
+ }
+ 
+ //
++// Live query entry icon press
++//
++void mainWindow::on_liveQueryEntry_icon(EntryIconPosition position, const GdkEventButton *ev)
++{
++	on_findButton_clicked();
++}
++
++//
+ // Find button click
+ //
+ void mainWindow::on_findButton_clicked()
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/src/mainWindow.hh	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -114,6 +114,7 @@
+         virtual void on_enginesTogglebutton_toggled();
+         virtual void on_liveQueryEntry_changed();
+         virtual void on_liveQueryEntry_activate();
++	virtual void on_liveQueryEntry_icon(Gtk::EntryIconPosition position, const GdkEventButton *ev);
+         virtual void on_findButton_clicked();
+         virtual bool on_queryTreeview_button_press_event(GdkEventButton *ev);
+         virtual void on_addQueryButton_clicked();
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.cc	2009-09-19 04:45:58 UTC (rev 1671)
++++ trunk/UI/GTK2/src/mainWindow_glade.cc	2009-10-10 11:52:09 UTC (rev 1672)
+@@ -452,7 +452,6 @@
+    liveQueryLabel->show();
+    liveQueryEntry->show();
+    findButton->show();
+-   findVbuttonbox->show();
+    liveQueryHbox->show();
+    queryTreeview->show();
+    queryScrolledwindow->show();
+
+
+
+From fabricecolin at mail.berlios.de  Wed Oct 21 15:22:13 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Wed, 21 Oct 2009 15:22:13 +0200
+Subject: [Pinot-svn] r1673 - trunk/IndexSearch/Xapian
+Message-ID: <200910211322.n9LDMDNb025065@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-21 15:22:04 +0200 (Wed, 21 Oct 2009)
+New Revision: 1673
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.h
+Log:
+Use the Query API to limit the query to a set of documents (Search This For)
+instead of mangling the query string.
+Escape and hash terms with prefix "path".
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2009-10-10 11:52:09 UTC (rev 1672)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2009-10-21 13:22:04 UTC (rev 1673)
+@@ -77,7 +77,8 @@
+ 	// In XapianIndex, these are escaped and hashed
+ 	if ((filterName == "file") ||
+ 		(filterName =="dir") ||
+-		(filterName == "url"))
++		(filterName == "url") ||
++		(filterName == "path"))
+ 	{
+ 		escapeValue = hashValue = true;
+ 	}
+@@ -593,7 +594,7 @@
+ 
+ Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &queryProps,
+ 	const string &stemLanguage, DefaultOperator defaultOperator,
+-	const string &limitQuery, string &correctedFreeQuery, bool minimal)
++	string &correctedFreeQuery, bool minimal)
+ {
+ 	Xapian::QueryParser parser;
+ 	CJKVTokenizer tokenizer;
+@@ -702,20 +703,6 @@
+ 	parser.add_boolean_prefix("label", "XLABEL:");
+ 	parser.add_boolean_prefix("tokens", "XTOK:");
+ 
+-	// Any limit on what documents should be searched ?
+-	if (limitQuery.empty() == false)
+-	{
+-		string limitedQuery(limitQuery);
+-
+-		limitedQuery += " AND ( ";
+-		limitedQuery += freeQuery;
+-		limitedQuery += " )";
+-		freeQuery = limitedQuery;
+-#ifdef DEBUG
+-		cout << "XapianEngine::parseQuery: " << freeQuery << endl;
+-#endif
+-	}
+-
+ 	// Date range
+ 	Xapian::DateValueRangeProcessor dateProcessor(0);
+ 	parser.add_valuerangeprocessor(&dateProcessor);
+@@ -810,6 +797,9 @@
+ 				escapedValue = XapianDatabase::limitTermLength(escapedValue);
+ 			}
+ 
++#ifdef DEBUG
++			cout << "XapianEngine::parseQuery: escaping to " << escapedValue << endl;
++#endif
+ 			freeQuery.replace(escapedFilterStart + 1, escapedFilterEnd - escapedFilterStart,
+ 				escapedValue);
+ 			escapedFilterEnd = escapedFilterEnd + escapedValue.length() - filterValue.length();
+@@ -840,9 +830,22 @@
+ 	}
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+ #ifdef DEBUG
+-	cout << "XapianEngine::parseQuery: " << parsedQuery.get_description() << endl;
++	cout << "XapianEngine::parseQuery: query is " << parsedQuery.get_description() << endl;
+ #endif
+ 
++	// Any limit on what documents should be searched ?
++	if (m_limitDocuments.empty() == false)
++	{
++		Xapian::Query filterQuery(Xapian::Query::OP_OR,
++			m_limitDocuments.begin(), m_limitDocuments.end());
++
++		parsedQuery = Xapian::Query(Xapian::Query::OP_FILTER,
++			parsedQuery, filterQuery);
++#ifdef DEBUG
++		cout << "XapianEngine::parseQuery: limited query is " << parsedQuery.get_description() << endl;
++#endif
++	}
++
+ 	if (minimal == false)
+ 	{
+ #if ENABLE_XAPIAN_SPELLING_CORRECTION>0
+@@ -1075,39 +1078,17 @@
+ /// Sets the set of documents to limit to.
+ bool XapianEngine::setLimitSet(const set<string> &docsSet)
+ {
+-	unsigned int bracketsLevel = 1;
+-	bool firstLocation = true;
+-
+-	m_limitQuery.clear();
+-
+-	if (docsSet.empty() == true)
+-	{
+-		return true;
+-	}
+-
+-	// FIXME: there must be a better way !
+-	m_limitQuery = "( ";
+ 	for (set<string>::const_iterator docIter = docsSet.begin();
+ 		docIter != docsSet.end(); ++docIter)
+ 	{
+-		if (firstLocation == false)
+-		{
+-			m_limitQuery += " OR ( ";
+-			++bracketsLevel;
+-		}
++		string urlFilter("U");
+ 
+-		m_limitQuery += "url:\"";
+-		m_limitQuery += *docIter;
+-		m_limitQuery += "\"";
+-
+-		firstLocation = false;
++		// Escape and hash
++		urlFilter += XapianDatabase::limitTermLength(Url::escapeUrl(*docIter), true);
++		m_limitDocuments.insert(urlFilter);
+ 	}
+-	for (unsigned int count = 0; count < bracketsLevel; ++count)
+-	{
+-		m_limitQuery += " )";
+-	}
+ #ifdef DEBUG
+-	cout << "XapianEngine::setLimitSet: " << m_limitQuery << endl;
++	cout << "XapianEngine::setLimitSet: " << m_limitDocuments.size() << " documents" << endl;
+ #endif
+ 
+ 	return true;
+@@ -1177,7 +1158,7 @@
+ 		// 1. no stemming, exact matches only
+ 		// 2. stem terms if a language is defined for the query
+ 		Xapian::Query fullQuery = parseQuery(pIndex, queryProps, "",
+-			m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
++			m_defaultOperator, m_correctedFreeQuery);
+ 		while (fullQuery.empty() == false)
+ 		{
+ 			// Query the database
+@@ -1196,7 +1177,7 @@
+ 					cout << "XapianEngine::runQuery: trying again with stemming" << endl;
+ #endif
+ 					fullQuery = parseQuery(pIndex, queryProps, stemLanguage,
+-						m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
++						m_defaultOperator, m_correctedFreeQuery);
+ 					++searchStep;
+ 					continue;
+ 				}
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.h	2009-10-10 11:52:09 UTC (rev 1672)
++++ trunk/IndexSearch/Xapian/XapianEngine.h	2009-10-21 13:22:04 UTC (rev 1673)
+@@ -60,7 +60,7 @@
+ 
+ 	protected:
+ 		std::string m_databaseName;
+-		std::string m_limitQuery;
++		std::set<std::string> m_limitDocuments;
+ 		std::set<std::string> m_expandDocuments;
+ 		Xapian::Stem m_stemmer;
+ 
+@@ -70,7 +70,7 @@
+ 
+ 		Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &queryProps,
+ 			const string &stemLanguage, DefaultOperator defaultOperator,
+-			const string &limitQuery, string &correctedFreeQuery, bool minimal = false);
++			string &correctedFreeQuery, bool minimal = false);
+ 
+ 	private:
+ 		XapianEngine(const XapianEngine &other);
+
+
+
+From fabricecolin at mail.berlios.de  Wed Oct 21 16:06:24 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Wed, 21 Oct 2009 16:06:24 +0200
+Subject: [Pinot-svn] r1674 - trunk
+Message-ID: <200910211406.n9LE6OI0029792@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-21 16:06:19 +0200 (Wed, 21 Oct 2009)
+New Revision: 1674
+
+Modified:
+   trunk/pinot-dbus-daemon.desktop
+Log:
+Added Encoding and Version.
+
+
+Modified: trunk/pinot-dbus-daemon.desktop
+===================================================================
+--- trunk/pinot-dbus-daemon.desktop	2009-10-21 13:22:04 UTC (rev 1673)
++++ trunk/pinot-dbus-daemon.desktop	2009-10-21 14:06:19 UTC (rev 1674)
+@@ -1,7 +1,9 @@
+ [Desktop Entry]
++Encoding=UTF-8
++Type=Application
++Version=1.0
+ Name=Pinot
+ Comment=Search your documents
+-Type=Application
+ Exec=pinot-dbus-daemon
+ Terminal=false
+ Icon=pinot
+
+
+
+From fabricecolin at mail.berlios.de  Sun Oct 25 05:15:18 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 25 Oct 2009 05:15:18 +0100
+Subject: [Pinot-svn] r1675 - trunk/po
+Message-ID: <200910250415.n9P4FIHP021149@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-25 05:15:01 +0100 (Sun, 25 Oct 2009)
+New Revision: 1675
+
+Modified:
+   trunk/po/nl.po
+Log:
+Update from JW.
+
+
+Modified: trunk/po/nl.po
+===================================================================
+--- trunk/po/nl.po	2009-10-21 14:06:19 UTC (rev 1674)
++++ trunk/po/nl.po	2009-10-25 04:15:01 UTC (rev 1675)
+@@ -6,78 +6,78 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.94\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2009-06-27 11:03+0800\n"
+-"PO-Revision-Date: 2009-01-10 20:38+0000\n"
++"POT-Creation-Date: 2009-10-21 00:44+0800\n"
++"PO-Revision-Date: 2009-10-20 18:58+0000\n"
+ "Last-Translator: JW <jw00000 at gmail.com>\n"
+ "Language-Team: Dutch <nl at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2009-01-11 04:36+0000\n"
++"X-Launchpad-Export-Date: 2009-10-25 04:08+0000\n"
+ "X-Generator: Launchpad (build Unknown)\n"
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:440 UI/GTK2/src/pinot.cc:300
++#: Core/pinot-dbus-daemon.cpp:468 UI/GTK2/src/pinot.cc:309
+ msgid "Unknown"
+ msgstr "Niet bekend"
+ 
+-#: Core/pinot-dbus-daemon.cpp:441 UI/GTK2/src/pinot.cc:301
++#: Core/pinot-dbus-daemon.cpp:469 UI/GTK2/src/pinot.cc:310
+ msgid "Danish"
+ msgstr "Deens"
+ 
+-#: Core/pinot-dbus-daemon.cpp:442 UI/GTK2/src/pinot.cc:302
++#: Core/pinot-dbus-daemon.cpp:470 UI/GTK2/src/pinot.cc:311
+ msgid "Dutch"
+ msgstr "Nederlands"
+ 
+-#: Core/pinot-dbus-daemon.cpp:443 UI/GTK2/src/pinot.cc:303
++#: Core/pinot-dbus-daemon.cpp:471 UI/GTK2/src/pinot.cc:312
+ msgid "English"
+ msgstr "Engels"
+ 
+-#: Core/pinot-dbus-daemon.cpp:444 UI/GTK2/src/pinot.cc:304
++#: Core/pinot-dbus-daemon.cpp:472 UI/GTK2/src/pinot.cc:313
+ msgid "Finnish"
+ msgstr "Fins"
+ 
+-#: Core/pinot-dbus-daemon.cpp:445 UI/GTK2/src/pinot.cc:305
++#: Core/pinot-dbus-daemon.cpp:473 UI/GTK2/src/pinot.cc:314
+ msgid "French"
+ msgstr "Frans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:446 UI/GTK2/src/pinot.cc:306
++#: Core/pinot-dbus-daemon.cpp:474 UI/GTK2/src/pinot.cc:315
+ msgid "German"
+ msgstr "Duits"
+ 
+-#: Core/pinot-dbus-daemon.cpp:447 UI/GTK2/src/pinot.cc:307
++#: Core/pinot-dbus-daemon.cpp:475 UI/GTK2/src/pinot.cc:316
+ msgid "Hungarian"
+ msgstr "Hongaars"
+ 
+-#: Core/pinot-dbus-daemon.cpp:448 UI/GTK2/src/pinot.cc:308
++#: Core/pinot-dbus-daemon.cpp:476 UI/GTK2/src/pinot.cc:317
+ msgid "Italian"
+ msgstr "Italiaans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:449 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:477 UI/GTK2/src/pinot.cc:318
+ msgid "Norwegian"
+ msgstr "Noors"
+ 
+-#: Core/pinot-dbus-daemon.cpp:450 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:478 UI/GTK2/src/pinot.cc:319
+ msgid "Portuguese"
+ msgstr "Portugees"
+ 
+-#: Core/pinot-dbus-daemon.cpp:451 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:479 UI/GTK2/src/pinot.cc:320
+ msgid "Romanian"
+ msgstr "Roemeens"
+ 
+-#: Core/pinot-dbus-daemon.cpp:452 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:480 UI/GTK2/src/pinot.cc:321
+ msgid "Russian"
+ msgstr "Russisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:453 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:481 UI/GTK2/src/pinot.cc:322
+ msgid "Spanish"
+ msgstr "Spaans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:454 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:482 UI/GTK2/src/pinot.cc:323
+ msgid "Swedish"
+ msgstr "Zweeds"
+ 
+-#: Core/pinot-dbus-daemon.cpp:455 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:483 UI/GTK2/src/pinot.cc:324
+ msgid "Turkish"
+ msgstr "Turks"
+ 
+@@ -85,21 +85,21 @@
+ #. Apply this label
+ #. Is this an internal index ?
+ #: Core/PinotSettings.cpp:436 Core/PinotSettings.cpp:1712
+-#: Core/WorkerThreads.cpp:1026 UI/GTK2/src/mainWindow.cc:859
+-#: UI/GTK2/src/mainWindow.cc:1125 UI/GTK2/src/mainWindow.cc:1388
+-#: UI/GTK2/src/mainWindow.cc:1548 UI/GTK2/src/mainWindow.cc:1551
+-#: UI/GTK2/src/mainWindow.cc:1655 UI/GTK2/src/mainWindow.cc:1689
+-#: UI/GTK2/src/mainWindow.cc:1714 UI/GTK2/src/mainWindow.cc:2423
++#: Core/WorkerThreads.cpp:1042 UI/GTK2/src/mainWindow.cc:873
++#: UI/GTK2/src/mainWindow.cc:1139 UI/GTK2/src/mainWindow.cc:1402
++#: UI/GTK2/src/mainWindow.cc:1562 UI/GTK2/src/mainWindow.cc:1565
++#: UI/GTK2/src/mainWindow.cc:1669 UI/GTK2/src/mainWindow.cc:1703
++#: UI/GTK2/src/mainWindow.cc:1728 UI/GTK2/src/mainWindow.cc:2437
+ #: UI/GTK2/src/statisticsDialog.cc:157
+ msgid "My Web Pages"
+ msgstr "Mijn webpagina's"
+ 
+ #. Spawn new threads
+ #: Core/PinotSettings.cpp:437 Core/PinotSettings.cpp:1713
+-#: Core/WorkerThreads.cpp:1036 UI/GTK2/src/mainWindow.cc:1120
+-#: UI/GTK2/src/mainWindow.cc:1378 UI/GTK2/src/mainWindow.cc:1392
+-#: UI/GTK2/src/mainWindow.cc:1559 UI/GTK2/src/mainWindow.cc:1562
+-#: UI/GTK2/src/mainWindow.cc:2427 UI/GTK2/src/statisticsDialog.cc:163
++#: Core/WorkerThreads.cpp:1052 UI/GTK2/src/mainWindow.cc:1134
++#: UI/GTK2/src/mainWindow.cc:1392 UI/GTK2/src/mainWindow.cc:1406
++#: UI/GTK2/src/mainWindow.cc:1573 UI/GTK2/src/mainWindow.cc:1576
++#: UI/GTK2/src/mainWindow.cc:2441 UI/GTK2/src/statisticsDialog.cc:163
+ msgid "My Documents"
+ msgstr "Mijn documenten"
+ 
+@@ -148,88 +148,88 @@
+ msgid "Unclassified"
+ msgstr "Niet geclassificeerd"
+ 
+-#: Core/WorkerThreads.cpp:94
++#: Core/WorkerThreads.cpp:98
+ msgid "Index error"
+ msgstr "Indexfout"
+ 
+-#: Core/WorkerThreads.cpp:96
++#: Core/WorkerThreads.cpp:100
+ msgid "Couldn't index document"
+ msgstr "Het document kon niet ge?ndexeerd worden"
+ 
+-#: Core/WorkerThreads.cpp:98
++#: Core/WorkerThreads.cpp:102
+ msgid "Couldn't update document"
+ msgstr "Kan document niet actualiseren"
+ 
+-#: Core/WorkerThreads.cpp:100
++#: Core/WorkerThreads.cpp:104
+ msgid "Couldn't unindex document(s)"
+ msgstr "Kan indexering van bestand(en) niet ongedaan maken"
+ 
+-#: Core/WorkerThreads.cpp:102
++#: Core/WorkerThreads.cpp:106
+ msgid "Couldn't run query on search engine"
+ msgstr "Kon query niet uitvoeren op zoekmachine"
+ 
+-#: Core/WorkerThreads.cpp:104
++#: Core/WorkerThreads.cpp:108
+ msgid "Couldn't get history for search engine"
+ msgstr "De geschiedenis voor de zoekmachine kon niet verkregen worden"
+ 
+-#: Core/WorkerThreads.cpp:106
++#: Core/WorkerThreads.cpp:110
+ msgid "Couldn't retrieve document"
+ msgstr "Het document kon niet verkregen worden"
+ 
+-#: Core/WorkerThreads.cpp:108
++#: Core/WorkerThreads.cpp:112
+ msgid "File monitor error"
+ msgstr "Fout bij het bijhouden van bestanden"
+ 
+-#: Core/WorkerThreads.cpp:110
++#: Core/WorkerThreads.cpp:114
+ msgid "Couldn't open directory"
+ msgstr "De map kon niet geopend worden"
+ 
+-#: Core/WorkerThreads.cpp:112
++#: Core/WorkerThreads.cpp:116
+ msgid "Index doesn't exist"
+ msgstr "De index bestaat niet"
+ 
+-#: Core/WorkerThreads.cpp:114
++#: Core/WorkerThreads.cpp:118
+ msgid "Couldn't create search engine"
+ msgstr "Kon zoekmachine niet maken"
+ 
+-#: Core/WorkerThreads.cpp:116
++#: Core/WorkerThreads.cpp:120
+ msgid "Cannot index document type"
+ msgstr "Kan documenttype niet indexeren"
+ 
+-#: Core/WorkerThreads.cpp:118
++#: Core/WorkerThreads.cpp:122
+ msgid "No downloader for this protocol"
+ msgstr "Er is geen downloader voor dit protocol"
+ 
+-#: Core/WorkerThreads.cpp:120
++#: Core/WorkerThreads.cpp:124
+ msgid "Robots META tag forbids indexing"
+ msgstr "Robots META taf verbiedt indexeren"
+ 
+-#: Core/WorkerThreads.cpp:122
++#: Core/WorkerThreads.cpp:126
+ msgid "No monitoring handler"
+ msgstr "Geen monitoring handler"
+ 
+-#: Core/WorkerThreads.cpp:127 UI/GTK2/src/statisticsDialog.cc:245
++#: Core/WorkerThreads.cpp:131 UI/GTK2/src/statisticsDialog.cc:245
+ #: UI/GTK2/src/statisticsDialog.cc:263
+ msgid "Unknown error"
+ msgstr "Onbekende fout."
+ 
+-#: Core/WorkerThreads.cpp:424
++#: Core/WorkerThreads.cpp:440
+ msgid "Indexing was stopped"
+ msgstr "Indexeren is gestopt"
+ 
+-#: Core/WorkerThreads.cpp:437
++#: Core/WorkerThreads.cpp:453
+ msgid "Can't index mail here"
+ msgstr "Kan mail hier niet indexeren"
+ 
+-#: Core/WorkerThreads.cpp:458 Core/WorkerThreads.cpp:754
++#: Core/WorkerThreads.cpp:474 Core/WorkerThreads.cpp:770
+ msgid "is already being indexed"
+ msgstr "wordt al geindexeerd"
+ 
+-#: Core/WorkerThreads.cpp:468
++#: Core/WorkerThreads.cpp:484
+ msgid "is blacklisted"
+ msgstr "staat op blacklist"
+ 
+-#: Core/WorkerThreads.cpp:989
++#: Core/WorkerThreads.cpp:1005
+ msgid "No title"
+ msgstr "Geen titel"
+ 
+@@ -329,254 +329,254 @@
+ msgid "Helper application"
+ msgstr "Hulptoepassing"
+ 
+-#: UI/GTK2/src/mainWindow.cc:189
++#: UI/GTK2/src/mainWindow.cc:200
+ msgid "Query Name"
+ msgstr "Querynaam"
+ 
+-#: UI/GTK2/src/mainWindow.cc:194
++#: UI/GTK2/src/mainWindow.cc:205
+ msgid "Last Run"
+ msgstr "Laatst geopend"
+ 
+-#: UI/GTK2/src/mainWindow.cc:199
++#: UI/GTK2/src/mainWindow.cc:210
+ msgid "Summary"
+ msgstr "Samenvatting"
+ 
+ #. Set tooltips
+-#: UI/GTK2/src/mainWindow.cc:242
++#: UI/GTK2/src/mainWindow.cc:252
+ msgid "Show all search engines"
+ msgstr "Toon alle zoekmachines"
+ 
+-#: UI/GTK2/src/mainWindow.cc:243
++#: UI/GTK2/src/mainWindow.cc:254 UI/GTK2/src/mainWindow.cc:263
++msgid "Find documents that match the query"
++msgstr "Zoeken naar documenten die aan de zoekopdracht voldoen"
++
++#: UI/GTK2/src/mainWindow.cc:256
+ msgid "Find documents that match the query string"
+ msgstr "Zoeken naar documenten die aan de zoekopdracht voldoen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:244
++#: UI/GTK2/src/mainWindow.cc:258
+ msgid "Add an index"
+ msgstr "Een index toevoegen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:245
++#: UI/GTK2/src/mainWindow.cc:259
+ msgid "Remove an index"
+ msgstr "Een index verwijderen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:246
++#: UI/GTK2/src/mainWindow.cc:260
+ msgid "Add a query"
+ msgstr "Zoekopdracht toevoegen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:247
++#: UI/GTK2/src/mainWindow.cc:261
+ msgid "Remove a query"
+ msgstr "Een zoekopdracht verwijderen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:248
++#: UI/GTK2/src/mainWindow.cc:262
+ msgid "Show the query's previous results"
+ msgstr "De vorige resultaten van de zoekopdracht weergeven"
+ 
+-#: UI/GTK2/src/mainWindow.cc:249
+-msgid "Find documents that match the query"
+-msgstr "Zoeken naar documenten die aan de zoekopdracht voldoen"
+-
+ #. Now we are ready
+-#: UI/GTK2/src/mainWindow.cc:268
++#: UI/GTK2/src/mainWindow.cc:282
+ msgid "Ready"
+ msgstr "Gereed"
+ 
+-#: UI/GTK2/src/mainWindow.cc:280
++#: UI/GTK2/src/mainWindow.cc:294
+ msgid "Updating all documents in My Web Pages is recommended"
+ msgstr ""
+ "Het is aangeraden alle documenten in \"Mijn webpagina's\" te vernieuwen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:288
++#: UI/GTK2/src/mainWindow.cc:302
+ msgid "Don't warn me again"
+ msgstr "Geen waarschuwing meer geven"
+ 
+-#: UI/GTK2/src/mainWindow.cc:296 UI/GTK2/src/mainWindow_glade.cc:177
++#: UI/GTK2/src/mainWindow.cc:310 UI/GTK2/src/mainWindow_glade.cc:177
+ msgid "Update"
+ msgstr "Verversen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:357
++#: UI/GTK2/src/mainWindow.cc:371
+ msgid "N/A"
+ msgstr "NVT"
+ 
+-#: UI/GTK2/src/mainWindow.cc:375
++#: UI/GTK2/src/mainWindow.cc:389
+ msgid "Undefined"
+ msgstr "Niet gedefinieerd"
+ 
+ #. Find this query
+-#: UI/GTK2/src/mainWindow.cc:614 UI/GTK2/src/mainWindow.cc:2795
++#: UI/GTK2/src/mainWindow.cc:628 UI/GTK2/src/mainWindow.cc:2833
+ msgid "Live query"
+ msgstr "Rechtstreekse query"
+ 
+ #. Show the URL of the first document in the status bar
+-#: UI/GTK2/src/mainWindow.cc:887
++#: UI/GTK2/src/mainWindow.cc:901
+ msgid "Document location is"
+ msgstr "Documentlocatie is"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1106
++#: UI/GTK2/src/mainWindow.cc:1120
+ msgid "Couldn't search in results"
+ msgstr "Kon niet zoeken in resultaten"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1116
++#: UI/GTK2/src/mainWindow.cc:1130
+ msgid "In Results"
+ msgstr "In de resultaten"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1289
++#: UI/GTK2/src/mainWindow.cc:1303
+ msgid "Showing"
+ msgstr "Aan het tonen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1297
++#: UI/GTK2/src/mainWindow.cc:1311
+ msgid "of"
+ msgstr "van"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1339
++#: UI/GTK2/src/mainWindow.cc:1353
+ msgid "Query"
+ msgstr "Query"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1343 UI/GTK2/src/mainWindow.cc:3340
++#: UI/GTK2/src/mainWindow.cc:1357 UI/GTK2/src/mainWindow.cc:3378
+ msgid "on"
+ msgstr "op"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1347
++#: UI/GTK2/src/mainWindow.cc:1361
+ msgid "ended"
+ msgstr "Beeindigd"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1502
++#: UI/GTK2/src/mainWindow.cc:1516
+ msgid "More Like"
+ msgstr "Meer zoals"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1569
++#: UI/GTK2/src/mainWindow.cc:1583
+ msgid "Updated label(s)"
+ msgstr "Vernieuwde na(a)m(en)"
+ 
+ #. Yes, it did
+-#: UI/GTK2/src/mainWindow.cc:1665 UI/GTK2/src/mainWindow.cc:1755
++#: UI/GTK2/src/mainWindow.cc:1679 UI/GTK2/src/mainWindow.cc:1769
+ msgid "Updated document"
+ msgstr "Vernieuwd document"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1678
++#: UI/GTK2/src/mainWindow.cc:1692
+ msgid "Indexed"
+ msgstr "Geindexeerd"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1715
++#: UI/GTK2/src/mainWindow.cc:1729
+ msgid "Unindexed document(s)"
+ msgstr "Niet geindexeerd(e) document(en)"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1810
++#: UI/GTK2/src/mainWindow.cc:1824
+ msgid "Couldn't rename index, name"
+ msgstr "Kon index niet hernoemen, naam"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1814 UI/GTK2/src/mainWindow.cc:2623
+-#: UI/GTK2/src/mainWindow.cc:3146
++#: UI/GTK2/src/mainWindow.cc:1828 UI/GTK2/src/mainWindow.cc:2637
++#: UI/GTK2/src/mainWindow.cc:3184
+ msgid "is already in use"
+ msgstr "is reeds in gebruik"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1826
++#: UI/GTK2/src/mainWindow.cc:1840
+ msgid "Couldn't rename index"
+ msgstr "Kon index niet hernoemen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1841
++#: UI/GTK2/src/mainWindow.cc:1855
+ msgid "Edited index"
+ msgstr "Bewerkte index"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2151
++#: UI/GTK2/src/mainWindow.cc:2165
+ msgid "Export"
+ msgstr "Exporteren"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2196
++#: UI/GTK2/src/mainWindow.cc:2210
+ msgid "Couldn't find similar documents"
+ msgstr "Niet gevonden in gelijkaardige documenten"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2439
++#: UI/GTK2/src/mainWindow.cc:2453
+ msgid "Index"
+ msgstr "Inhoudsopgave"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2443
++#: UI/GTK2/src/mainWindow.cc:2457
+ msgid "doesn't exist"
+ msgstr "bestaat niet"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2510
++#: UI/GTK2/src/mainWindow.cc:2524
+ msgid "Remove this document from the index ?"
+ msgstr "Verwijder dit document uit de inhoudsopgave"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2529
++#: UI/GTK2/src/mainWindow.cc:2543
+ msgid "Remove these documents from the index ?"
+ msgstr "Verwijder deze documenten uit de inhoudsopgave"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2534 UI/GTK2/src/mainWindow_glade.cc:180
++#: UI/GTK2/src/mainWindow.cc:2548 UI/GTK2/src/mainWindow_glade.cc:180
+ msgid "Unindex"
+ msgstr "De-indexeren"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2573
++#: UI/GTK2/src/mainWindow.cc:2587
+ msgid "A metasearch tool for the Free Desktop"
+ msgstr "Een metazoek tool voor de Free Desktop"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2574
++#: UI/GTK2/src/mainWindow.cc:2588
+ msgid "Search the Web and your documents !"
+ msgstr "Zoek het web en uw documenten!"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2619
++#: UI/GTK2/src/mainWindow.cc:2633
+ msgid "Index name"
+ msgstr "Naam inhoudsopgave"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2633
++#: UI/GTK2/src/mainWindow.cc:2647
+ msgid "Couldn't add index"
+ msgstr "Kon inhoudsopgave niet toevoegen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2649
++#: UI/GTK2/src/mainWindow.cc:2663
+ msgid "Added new index"
+ msgstr "Nieuwe inhoudsopgave toegevoegd"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2684
++#: UI/GTK2/src/mainWindow.cc:2698
+ msgid "Couldn't remove index"
+ msgstr "Kon inhoudsopgave niet verwijderen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2884
++#: UI/GTK2/src/mainWindow.cc:2922
+ msgid "No history for"
+ msgstr "Geen geschiedenis voor"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2956 UI/GTK2/src/prefsWindow.cc:960
++#: UI/GTK2/src/mainWindow.cc:2994 UI/GTK2/src/prefsWindow.cc:960
+ msgid "At least one task hasn't completed yet. Quit now ?"
+ msgstr "Tenminste een taak is nog niet gereed. Nu stoppen?"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2958 UI/GTK2/src/prefsWindow.cc:962
++#: UI/GTK2/src/mainWindow.cc:2996 UI/GTK2/src/prefsWindow.cc:962
+ msgid "Quit"
+ msgstr "Afsluiten"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3142
++#: UI/GTK2/src/mainWindow.cc:3180
+ msgid "Query name"
+ msgstr "Naam query"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3169
++#: UI/GTK2/src/mainWindow.cc:3207
+ msgid "Couldn't update query"
+ msgstr "Kon query niet actualiseren"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3180
++#: UI/GTK2/src/mainWindow.cc:3218
+ msgid "Edited query"
+ msgstr "Bewerkte query"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3187
++#: UI/GTK2/src/mainWindow.cc:3225
+ msgid "Couldn't add query"
+ msgstr "Kon query niet toevoegen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3195
++#: UI/GTK2/src/mainWindow.cc:3233
+ msgid "Added new query"
+ msgstr "Nieuwe query toegevoegd"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3229
++#: UI/GTK2/src/mainWindow.cc:3267
+ msgid "Query is not set"
+ msgstr "Query niet vastgelegd"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3240
++#: UI/GTK2/src/mainWindow.cc:3278
+ msgid "No search engine selected"
+ msgstr "Geen zoekmachine geselecteerd"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3327
++#: UI/GTK2/src/mainWindow.cc:3365
+ msgid "Please set the Google API key first"
+ msgstr "Geef eerst de Google API sleutel in"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3336
++#: UI/GTK2/src/mainWindow.cc:3374
+ msgid "Running query"
+ msgstr "Lopende query"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3543
++#: UI/GTK2/src/mainWindow.cc:3581
+ msgid "No default application defined for type"
+ msgstr "Geen standaard toepassing gedefinieerd voor het type"
+ 
+@@ -669,21 +669,21 @@
+ msgid "Close"
+ msgstr "Sluiten"
+ 
+-#: UI/GTK2/src/pinot.cc:341
++#: UI/GTK2/src/pinot.cc:350
+ msgid "Couldn't open index"
+ msgstr "Kan index niet openen"
+ 
+-#: UI/GTK2/src/pinot.cc:362
++#: UI/GTK2/src/pinot.cc:371
+ msgid "Couldn't create history database"
+ msgstr "Kon historische database niet maken"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:149
+ msgid "File Indexing and Search"
+-msgstr ""
++msgstr "Bestandsindexering en zoekfunctie"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:150
+ msgid "Configure Pinot to index your files"
+-msgstr ""
++msgstr "Pinot configureren om uw bestanden te indexeren"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:208
+ msgid "Name"
+@@ -856,9 +856,8 @@
+ msgstr "Map"
+ 
+ #: UI/GTK2/src/queryDialog.cc:116
+-#, fuzzy
+ msgid "In URL"
+-msgstr "URL"
++msgstr "In URL"
+ 
+ #: UI/GTK2/src/queryDialog.cc:117
+ msgid "Path"
+@@ -1008,7 +1007,3 @@
+ #: UI/GTK2/src/statisticsDialog.cc:402
+ msgid "Errors"
+ msgstr "Fouten"
+-
+-#, fuzzy
+-#~ msgid "File container"
+-#~ msgstr "Bestandsnaam"
+
+
+
+From fabricecolin at mail.berlios.de  Sun Oct 25 09:14:07 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 25 Oct 2009 09:14:07 +0100
+Subject: [Pinot-svn] r1676 - trunk/IndexSearch/Xapian
+Message-ID: <200910250814.n9P8E737017485@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-25 09:13:51 +0100 (Sun, 25 Oct 2009)
+New Revision: 1676
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+XPATH/path is a probabilistic term prefix, and path terms should be generated
+with positional information.
+Get the tokenizer to break on spaces only. With the recent changes to the
+CJKVTokenizer, this should preserve dots, eg dots in acronyms and version
+numbers, similarly to what the QueryParser does.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-10-25 04:15:01 UTC (rev 1675)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-10-25 08:13:51 UTC (rev 1676)
+@@ -388,7 +388,7 @@
+ 		doSpelling, termPos);
+ 
+ 	// Get the terms
+-	tokenizer.tokenize(text, handler);
++	tokenizer.tokenize(text, handler, true);
+ #ifdef DEBUG
+ 	cout << "XapianIndex::addPostingsToDocument: terms to position " << termPos << endl;
+ #endif
+@@ -422,7 +422,7 @@
+ }
+ 
+ void XapianIndex::removePostingsFromDocument(const Xapian::Utf8Iterator &itor, Xapian::Document &doc,
+-	const Xapian::WritableDatabase &db, const string &prefix, const string &language,
++	const Xapian::WritableDatabase &db, const string &prefix,
+ 	bool noStemming, bool &doSpelling) const
+ {
+ 	Xapian::Document termsDoc;
+@@ -545,8 +545,6 @@
+ void XapianIndex::addCommonTerms(const DocumentInfo &info, Xapian::Document &doc,
+ 	const Xapian::WritableDatabase &db, Xapian::termcount &termPos)
+ {
+-	Dijon::CJKVTokenizer pathTokenizer;
+-	vector<string> paths;
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+ 	string type(removeCharsetFromType(info.getType()));
+@@ -614,12 +612,9 @@
+ 		}
+ 
+ 		// ...and all components as XPATH:
+-		pathTokenizer.tokenize(tree, paths);
+-		for (vector<string>::iterator pathIter = paths.begin();
+-			pathIter != paths.end(); ++pathIter)
+-		{
+-			doc.add_term(string("XPATH:") + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-		}
++		bool doSpellingOnPaths = false;
++		addPostingsToDocument(Xapian::Utf8Iterator(tree), doc, db, "XPATH:",
++			true, doSpellingOnPaths, termPos);
+ 	}
+ 	else
+ 	{
+@@ -634,14 +629,11 @@
+ 		doc.add_term(string("P") + XapianDatabase::limitTermLength(Url::escapeUrl(fileName), true));
+ 		if (fileName.find(' ') != string::npos)
+ 		{
++			bool doSpellingOnPaths = false;
++
+ 			// Add more XPATH: terms if there's a space in the file name
+-			paths.clear();
+-			pathTokenizer.tokenize(fileName, paths);
+-			for (vector<string>::iterator pathIter = paths.begin();
+-				pathIter != paths.end(); ++pathIter)
+-			{
+-				doc.add_term(string("XPATH:") + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-			}
++			addPostingsToDocument(Xapian::Utf8Iterator(fileName), doc, db, "XPATH:",
++				true, doSpellingOnPaths, termPos);
+ 		}
+ 
+ 		// Does it have an extension ?
+@@ -667,9 +659,7 @@
+ void XapianIndex::removeCommonTerms(Xapian::Document &doc, const Xapian::WritableDatabase &db)
+ {
+ 	DocumentInfo docInfo;
+-	Dijon::CJKVTokenizer pathTokenizer;
+ 	set<string> commonTerms;
+-	vector<string> paths;
+ 	string record(doc.get_data());
+ 
+ 	// First, remove the magic term
+@@ -691,7 +681,7 @@
+ 	if (title.empty() == false)
+ 	{
+ 		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, "S",
+-			language, true, m_doSpelling);
++			true, m_doSpelling);
+ 	}
+ 
+ 	// Location 
+@@ -748,12 +738,9 @@
+ 		}
+ 
+ 		// ...paths
+-		pathTokenizer.tokenize(tree, paths);
+-		for (vector<string>::iterator pathIter = paths.begin();
+-			pathIter != paths.end(); ++pathIter)
+-		{
+-			commonTerms.insert(string("XPATH:") + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-		}
++		bool doSpellingOnPaths = false;
++		removePostingsFromDocument(Xapian::Utf8Iterator(tree), doc, db, "XPATH:",
++			true, doSpellingOnPaths);
+ 	}
+ 	else
+ 	{
+@@ -768,13 +755,10 @@
+ 		commonTerms.insert(string("P") + XapianDatabase::limitTermLength(Url::escapeUrl(fileName), true));
+ 		if (fileName.find(' ') != string::npos)
+ 		{
+-			paths.clear();
+-			pathTokenizer.tokenize(fileName, paths);
+-			for (vector<string>::iterator pathIter = paths.begin();
+-				pathIter != paths.end(); ++pathIter)
+-			{
+-				commonTerms.insert(string("XPATH:") + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-			}
++			bool doSpellingOnPaths = false;
++
++			removePostingsFromDocument(Xapian::Utf8Iterator(fileName), doc, db, "XPATH:",
++				true, doSpellingOnPaths);
+ 		}
+ 
+ 		// Does it have an extension ?
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2009-10-25 04:15:01 UTC (rev 1675)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2009-10-25 08:13:51 UTC (rev 1676)
+@@ -169,7 +169,7 @@
+ 
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &itor, Xapian::Document &doc,
+ 			const Xapian::WritableDatabase &db, const std::string &prefix,
+-			const std::string &language, bool noStemming, bool &doSpelling) const;
++			bool noStemming, bool &doSpelling) const;
+ 
+ 		void addCommonTerms(const DocumentInfo &info, Xapian::Document &doc,
+ 			const Xapian::WritableDatabase &db, Xapian::termcount &termPos);
+
+
+
+From fabricecolin at mail.berlios.de  Sun Oct 25 09:15:14 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 25 Oct 2009 09:15:14 +0100
+Subject: [Pinot-svn] r1677 - trunk/IndexSearch/Xapian
+Message-ID: <200910250815.n9P8FERk017619@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-25 09:14:47 +0100 (Sun, 25 Oct 2009)
+New Revision: 1677
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianDatabase.cpp
+   trunk/IndexSearch/Xapian/XapianDatabase.h
+Log:
+Removed error checking on mutex.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.cpp	2009-10-25 08:13:51 UTC (rev 1676)
++++ trunk/IndexSearch/Xapian/XapianDatabase.cpp	2009-10-25 08:14:47 UTC (rev 1677)
+@@ -104,9 +104,6 @@
+ 		delete m_pDatabase;
+ 	}
+ 	pthread_mutex_destroy(&m_rwLock);
+-#ifdef DEBUG
+-	pthread_mutexattr_destroy(&m_rwLockAttr);
+-#endif
+ }
+ 
+ XapianDatabase &XapianDatabase::operator=(const XapianDatabase &other)
+@@ -138,13 +135,7 @@
+ 
+ void XapianDatabase::initializeLock(void)
+ {
+-#ifdef DEBUG
+-	pthread_mutexattr_init(&m_rwLockAttr);
+-	pthread_mutexattr_settype(&m_rwLockAttr, PTHREAD_MUTEX_ERRORCHECK);
+-	pthread_mutex_init(&m_rwLock, &m_rwLockAttr);
+-#else
+ 	pthread_mutex_init(&m_rwLock, NULL);
+-#endif
+ }
+ 
+ void XapianDatabase::openDatabase(void)
+
+Modified: trunk/IndexSearch/Xapian/XapianDatabase.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianDatabase.h	2009-10-25 08:13:51 UTC (rev 1676)
++++ trunk/IndexSearch/Xapian/XapianDatabase.h	2009-10-25 08:14:47 UTC (rev 1677)
+@@ -86,9 +86,6 @@
+ 		bool m_overwrite;
+ 		bool m_obsoleteFormat;
+ 		pthread_mutex_t m_rwLock;
+-#ifdef DEBUG
+-		pthread_mutexattr_t m_rwLockAttr;
+-#endif
+ 		Xapian::Database *m_pDatabase;
+ 		bool m_isOpen;
+ 		bool m_merge;
+
+
+
+From fabricecolin at mail.berlios.de  Sun Oct 25 09:32:10 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 25 Oct 2009 09:32:10 +0100
+Subject: [Pinot-svn] r1678 - trunk/po
+Message-ID: <200910250832.n9P8WAir002842@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-25 09:31:57 +0100 (Sun, 25 Oct 2009)
+New Revision: 1678
+
+Modified:
+   trunk/po/de.po
+Log:
+Update from Fabian Affolter.
+
+
+Modified: trunk/po/de.po
+===================================================================
+--- trunk/po/de.po	2009-10-25 08:14:47 UTC (rev 1677)
++++ trunk/po/de.po	2009-10-25 08:31:57 UTC (rev 1678)
+@@ -4,80 +4,80 @@
+ #
+ msgid ""
+ msgstr ""
+-"Project-Id-Version: pinot 0.94\n"
++"Project-Id-Version: pinot 0.88\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2009-06-27 11:03+0800\n"
+-"PO-Revision-Date: 2009-02-22 10:04+0000\n"
+-"Last-Translator: Gena Haltmair <Unknown>\n"
++"POT-Creation-Date: 2009-10-21 00:44+0800\n"
++"PO-Revision-Date: 2009-08-14 07:50+0000\n"
++"Last-Translator: Fabian Affolter <Unknown>\n"
+ "Language-Team: German <de at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2009-02-28 15:40+0000\n"
++"X-Launchpad-Export-Date: 2009-09-20 11:00+0000\n"
+ "X-Generator: Launchpad (build Unknown)\n"
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:440 UI/GTK2/src/pinot.cc:300
++#: Core/pinot-dbus-daemon.cpp:468 UI/GTK2/src/pinot.cc:309
+ msgid "Unknown"
+ msgstr "Unbekannt"
+ 
+-#: Core/pinot-dbus-daemon.cpp:441 UI/GTK2/src/pinot.cc:301
++#: Core/pinot-dbus-daemon.cpp:469 UI/GTK2/src/pinot.cc:310
+ msgid "Danish"
+ msgstr "D?nisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:442 UI/GTK2/src/pinot.cc:302
++#: Core/pinot-dbus-daemon.cpp:470 UI/GTK2/src/pinot.cc:311
+ msgid "Dutch"
+ msgstr "Niederl?nisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:443 UI/GTK2/src/pinot.cc:303
++#: Core/pinot-dbus-daemon.cpp:471 UI/GTK2/src/pinot.cc:312
+ msgid "English"
+ msgstr "Englisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:444 UI/GTK2/src/pinot.cc:304
++#: Core/pinot-dbus-daemon.cpp:472 UI/GTK2/src/pinot.cc:313
+ msgid "Finnish"
+ msgstr "Finnisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:445 UI/GTK2/src/pinot.cc:305
++#: Core/pinot-dbus-daemon.cpp:473 UI/GTK2/src/pinot.cc:314
+ msgid "French"
+ msgstr "Franz?sisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:446 UI/GTK2/src/pinot.cc:306
++#: Core/pinot-dbus-daemon.cpp:474 UI/GTK2/src/pinot.cc:315
+ msgid "German"
+ msgstr "Deutsch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:447 UI/GTK2/src/pinot.cc:307
++#: Core/pinot-dbus-daemon.cpp:475 UI/GTK2/src/pinot.cc:316
+ msgid "Hungarian"
+ msgstr "Ungarisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:448 UI/GTK2/src/pinot.cc:308
++#: Core/pinot-dbus-daemon.cpp:476 UI/GTK2/src/pinot.cc:317
+ msgid "Italian"
+ msgstr "Italienisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:449 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:477 UI/GTK2/src/pinot.cc:318
+ msgid "Norwegian"
+ msgstr "Norwegisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:450 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:478 UI/GTK2/src/pinot.cc:319
+ msgid "Portuguese"
+ msgstr "Portugiesisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:451 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:479 UI/GTK2/src/pinot.cc:320
+ msgid "Romanian"
+ msgstr "Rum?nisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:452 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:480 UI/GTK2/src/pinot.cc:321
+ msgid "Russian"
+ msgstr "Russisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:453 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:481 UI/GTK2/src/pinot.cc:322
+ msgid "Spanish"
+ msgstr "Spanisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:454 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:482 UI/GTK2/src/pinot.cc:323
+ msgid "Swedish"
+ msgstr "Schwedisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:455 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:483 UI/GTK2/src/pinot.cc:324
+ msgid "Turkish"
+ msgstr "T?rkisch"
+ 
+@@ -85,21 +85,21 @@
+ #. Apply this label
+ #. Is this an internal index ?
+ #: Core/PinotSettings.cpp:436 Core/PinotSettings.cpp:1712
+-#: Core/WorkerThreads.cpp:1026 UI/GTK2/src/mainWindow.cc:859
+-#: UI/GTK2/src/mainWindow.cc:1125 UI/GTK2/src/mainWindow.cc:1388
+-#: UI/GTK2/src/mainWindow.cc:1548 UI/GTK2/src/mainWindow.cc:1551
+-#: UI/GTK2/src/mainWindow.cc:1655 UI/GTK2/src/mainWindow.cc:1689
+-#: UI/GTK2/src/mainWindow.cc:1714 UI/GTK2/src/mainWindow.cc:2423
++#: Core/WorkerThreads.cpp:1042 UI/GTK2/src/mainWindow.cc:873
++#: UI/GTK2/src/mainWindow.cc:1139 UI/GTK2/src/mainWindow.cc:1402
++#: UI/GTK2/src/mainWindow.cc:1562 UI/GTK2/src/mainWindow.cc:1565
++#: UI/GTK2/src/mainWindow.cc:1669 UI/GTK2/src/mainWindow.cc:1703
++#: UI/GTK2/src/mainWindow.cc:1728 UI/GTK2/src/mainWindow.cc:2437
+ #: UI/GTK2/src/statisticsDialog.cc:157
+ msgid "My Web Pages"
+ msgstr "Meine Webseiten"
+ 
+ #. Spawn new threads
+ #: Core/PinotSettings.cpp:437 Core/PinotSettings.cpp:1713
+-#: Core/WorkerThreads.cpp:1036 UI/GTK2/src/mainWindow.cc:1120
+-#: UI/GTK2/src/mainWindow.cc:1378 UI/GTK2/src/mainWindow.cc:1392
+-#: UI/GTK2/src/mainWindow.cc:1559 UI/GTK2/src/mainWindow.cc:1562
+-#: UI/GTK2/src/mainWindow.cc:2427 UI/GTK2/src/statisticsDialog.cc:163
++#: Core/WorkerThreads.cpp:1052 UI/GTK2/src/mainWindow.cc:1134
++#: UI/GTK2/src/mainWindow.cc:1392 UI/GTK2/src/mainWindow.cc:1406
++#: UI/GTK2/src/mainWindow.cc:1573 UI/GTK2/src/mainWindow.cc:1576
++#: UI/GTK2/src/mainWindow.cc:2441 UI/GTK2/src/statisticsDialog.cc:163
+ msgid "My Documents"
+ msgstr "Meine Dokumente"
+ 
+@@ -148,88 +148,88 @@
+ msgid "Unclassified"
+ msgstr "nicht klassifiziert"
+ 
+-#: Core/WorkerThreads.cpp:94
++#: Core/WorkerThreads.cpp:98
+ msgid "Index error"
+ msgstr "Indizierungsfehler"
+ 
+-#: Core/WorkerThreads.cpp:96
++#: Core/WorkerThreads.cpp:100
+ msgid "Couldn't index document"
+ msgstr "Dokument konnte nicht indiziert werden"
+ 
+-#: Core/WorkerThreads.cpp:98
++#: Core/WorkerThreads.cpp:102
+ msgid "Couldn't update document"
+ msgstr "Dokument konnte nicht aktualisiert werden"
+ 
+-#: Core/WorkerThreads.cpp:100
++#: Core/WorkerThreads.cpp:104
+ msgid "Couldn't unindex document(s)"
+ msgstr "Dokument(e) konnte(n) nicht aus dem Index entfernt werden"
+ 
+-#: Core/WorkerThreads.cpp:102
++#: Core/WorkerThreads.cpp:106
+ msgid "Couldn't run query on search engine"
+ msgstr "Suchanfrange konnte nicht in der Suchmasche ausgef?hrt werden"
+ 
+-#: Core/WorkerThreads.cpp:104
++#: Core/WorkerThreads.cpp:108
+ msgid "Couldn't get history for search engine"
+ msgstr "Konnte Verlaufsdatenbank nicht anlegen"
+ 
+-#: Core/WorkerThreads.cpp:106
++#: Core/WorkerThreads.cpp:110
+ msgid "Couldn't retrieve document"
+ msgstr "Dokument konnte nicht aktualisiert werden"
+ 
+-#: Core/WorkerThreads.cpp:108
++#: Core/WorkerThreads.cpp:112
+ msgid "File monitor error"
+ msgstr "Fehler bei der Datei?berwachung"
+ 
+-#: Core/WorkerThreads.cpp:110
++#: Core/WorkerThreads.cpp:114
+ msgid "Couldn't open directory"
+ msgstr "Verzeichnis konnte nicht ge?ffnet werden"
+ 
+-#: Core/WorkerThreads.cpp:112
++#: Core/WorkerThreads.cpp:116
+ msgid "Index doesn't exist"
+ msgstr "Index existiert nicht"
+ 
+-#: Core/WorkerThreads.cpp:114
++#: Core/WorkerThreads.cpp:118
+ msgid "Couldn't create search engine"
+ msgstr "Suchmaschine konnte nicht angelegt werden"
+ 
+-#: Core/WorkerThreads.cpp:116
++#: Core/WorkerThreads.cpp:120
+ msgid "Cannot index document type"
+ msgstr "Kann Dokumenttyp nicht indizieren"
+ 
+-#: Core/WorkerThreads.cpp:118
++#: Core/WorkerThreads.cpp:122
+ msgid "No downloader for this protocol"
+ msgstr "Kein Downloadprogramm f?r dieses Protokoll vorhanden"
+ 
+-#: Core/WorkerThreads.cpp:120
++#: Core/WorkerThreads.cpp:124
+ msgid "Robots META tag forbids indexing"
+ msgstr "Robots META-Tag verbietet das Indizieren"
+ 
+-#: Core/WorkerThreads.cpp:122
++#: Core/WorkerThreads.cpp:126
+ msgid "No monitoring handler"
+ msgstr "Kein ?berwachungsprogramm vorhanden"
+ 
+-#: Core/WorkerThreads.cpp:127 UI/GTK2/src/statisticsDialog.cc:245
++#: Core/WorkerThreads.cpp:131 UI/GTK2/src/statisticsDialog.cc:245
+ #: UI/GTK2/src/statisticsDialog.cc:263
+ msgid "Unknown error"
+ msgstr "Unbekannter Fehler"
+ 
+-#: Core/WorkerThreads.cpp:424
++#: Core/WorkerThreads.cpp:440
+ msgid "Indexing was stopped"
+ msgstr "Indizierung angehalten"
+ 
+-#: Core/WorkerThreads.cpp:437
++#: Core/WorkerThreads.cpp:453
+ msgid "Can't index mail here"
+ msgstr "E-Mail kann hier nicht indiziert werden"
+ 
+-#: Core/WorkerThreads.cpp:458 Core/WorkerThreads.cpp:754
++#: Core/WorkerThreads.cpp:474 Core/WorkerThreads.cpp:770
+ msgid "is already being indexed"
+ msgstr "bereits indiziert"
+ 
+-#: Core/WorkerThreads.cpp:468
++#: Core/WorkerThreads.cpp:484
+ msgid "is blacklisted"
+ msgstr "auf Blacklist gesetzt"
+ 
+-#: Core/WorkerThreads.cpp:989
++#: Core/WorkerThreads.cpp:1005
+ msgid "No title"
+ msgstr "Kein Titel"
+ 
+@@ -329,255 +329,255 @@
+ msgid "Helper application"
+ msgstr "Anwendung"
+ 
+-#: UI/GTK2/src/mainWindow.cc:189
++#: UI/GTK2/src/mainWindow.cc:200
+ msgid "Query Name"
+ msgstr "Suchanfrage"
+ 
+-#: UI/GTK2/src/mainWindow.cc:194
++#: UI/GTK2/src/mainWindow.cc:205
+ msgid "Last Run"
+ msgstr "Zuletzt ausgef?hrt"
+ 
+-#: UI/GTK2/src/mainWindow.cc:199
++#: UI/GTK2/src/mainWindow.cc:210
+ msgid "Summary"
+ msgstr "?bersicht"
+ 
+ #. Set tooltips
+-#: UI/GTK2/src/mainWindow.cc:242
++#: UI/GTK2/src/mainWindow.cc:252
+ msgid "Show all search engines"
+ msgstr "Alle Suchmaschinen anzeigen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:243
++#: UI/GTK2/src/mainWindow.cc:254 UI/GTK2/src/mainWindow.cc:263
++msgid "Find documents that match the query"
++msgstr "Suche"
++
++#: UI/GTK2/src/mainWindow.cc:256
+ msgid "Find documents that match the query string"
+ msgstr "Finde Dokumente, die der Suchanfrage entsprechen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:244
++#: UI/GTK2/src/mainWindow.cc:258
+ msgid "Add an index"
+ msgstr "Index hinzuf?gen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:245
++#: UI/GTK2/src/mainWindow.cc:259
+ msgid "Remove an index"
+ msgstr "Index entfernen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:246
++#: UI/GTK2/src/mainWindow.cc:260
+ msgid "Add a query"
+ msgstr "Suchanfrage hinzuf?gen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:247
++#: UI/GTK2/src/mainWindow.cc:261
+ msgid "Remove a query"
+ msgstr "Suchanfrage entfernen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:248
++#: UI/GTK2/src/mainWindow.cc:262
+ msgid "Show the query's previous results"
+ msgstr "Vorhergehende Ergebnisse der Suchanfrage anzeigen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:249
+-msgid "Find documents that match the query"
+-msgstr "Suche"
+-
+ #. Now we are ready
+-#: UI/GTK2/src/mainWindow.cc:268
++#: UI/GTK2/src/mainWindow.cc:282
+ msgid "Ready"
+ msgstr "Bereit"
+ 
+-#: UI/GTK2/src/mainWindow.cc:280
++#: UI/GTK2/src/mainWindow.cc:294
+ msgid "Updating all documents in My Web Pages is recommended"
+ msgstr "Es wird empfohlen alle Dokumente in Meine Webseiten zu aktualisieren"
+ 
+-#: UI/GTK2/src/mainWindow.cc:288
++#: UI/GTK2/src/mainWindow.cc:302
+ msgid "Don't warn me again"
+ msgstr "Warnung ausblenden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:296 UI/GTK2/src/mainWindow_glade.cc:177
++#: UI/GTK2/src/mainWindow.cc:310 UI/GTK2/src/mainWindow_glade.cc:177
+ msgid "Update"
+ msgstr "Aktualisieren"
+ 
+-#: UI/GTK2/src/mainWindow.cc:357
++#: UI/GTK2/src/mainWindow.cc:371
+ msgid "N/A"
+ msgstr "N/V"
+ 
+-#: UI/GTK2/src/mainWindow.cc:375
++#: UI/GTK2/src/mainWindow.cc:389
+ msgid "Undefined"
+ msgstr "Unbestimmt"
+ 
+ #. Find this query
+-#: UI/GTK2/src/mainWindow.cc:614 UI/GTK2/src/mainWindow.cc:2795
++#: UI/GTK2/src/mainWindow.cc:628 UI/GTK2/src/mainWindow.cc:2833
+ msgid "Live query"
+ msgstr "Suche"
+ 
+ #. Show the URL of the first document in the status bar
+-#: UI/GTK2/src/mainWindow.cc:887
++#: UI/GTK2/src/mainWindow.cc:901
+ msgid "Document location is"
+ msgstr "Dokoment befindet sich in"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1106
++#: UI/GTK2/src/mainWindow.cc:1120
+ msgid "Couldn't search in results"
+ msgstr "Ergebnisse konnten nicht durchsucht werden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1116
++#: UI/GTK2/src/mainWindow.cc:1130
+ msgid "In Results"
+ msgstr "Ergebnisse"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1289
++#: UI/GTK2/src/mainWindow.cc:1303
+ msgid "Showing"
+ msgstr "Anzeigen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1297
++#: UI/GTK2/src/mainWindow.cc:1311
+ msgid "of"
+ msgstr "von"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1339
++#: UI/GTK2/src/mainWindow.cc:1353
+ msgid "Query"
+ msgstr "Suche"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1343 UI/GTK2/src/mainWindow.cc:3340
++#: UI/GTK2/src/mainWindow.cc:1357 UI/GTK2/src/mainWindow.cc:3378
+ msgid "on"
+ msgstr "am"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1347
++#: UI/GTK2/src/mainWindow.cc:1361
+ msgid "ended"
+ msgstr "beendet"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1502
++#: UI/GTK2/src/mainWindow.cc:1516
+ msgid "More Like"
+ msgstr "Mehr davon"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1569
++#: UI/GTK2/src/mainWindow.cc:1583
+ msgid "Updated label(s)"
+ msgstr "Aktualisierte Kategorie(n)"
+ 
+ #. Yes, it did
+-#: UI/GTK2/src/mainWindow.cc:1665 UI/GTK2/src/mainWindow.cc:1755
++#: UI/GTK2/src/mainWindow.cc:1679 UI/GTK2/src/mainWindow.cc:1769
+ msgid "Updated document"
+ msgstr "Dokument aktualisiert"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1678
++#: UI/GTK2/src/mainWindow.cc:1692
+ msgid "Indexed"
+ msgstr "Indiziert"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1715
++#: UI/GTK2/src/mainWindow.cc:1729
+ msgid "Unindexed document(s)"
+ msgstr "Nicht indizierte(s) Dokument(e)"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1810
++#: UI/GTK2/src/mainWindow.cc:1824
+ msgid "Couldn't rename index, name"
+ msgstr "Index konnte nicht umbenannt werden, Name"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1814 UI/GTK2/src/mainWindow.cc:2623
+-#: UI/GTK2/src/mainWindow.cc:3146
++#: UI/GTK2/src/mainWindow.cc:1828 UI/GTK2/src/mainWindow.cc:2637
++#: UI/GTK2/src/mainWindow.cc:3184
+ msgid "is already in use"
+ msgstr "wird bereits benutzt"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1826
++#: UI/GTK2/src/mainWindow.cc:1840
+ msgid "Couldn't rename index"
+ msgstr "Index konnte nicht umbenannt werden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:1841
++#: UI/GTK2/src/mainWindow.cc:1855
+ msgid "Edited index"
+ msgstr "Ge?nderter Index"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2151
++#: UI/GTK2/src/mainWindow.cc:2165
+ msgid "Export"
+ msgstr "Exportieren"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2196
++#: UI/GTK2/src/mainWindow.cc:2210
+ msgid "Couldn't find similar documents"
+ msgstr "Konnte keine ?hnliche Dokumente finden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2439
++#: UI/GTK2/src/mainWindow.cc:2453
+ msgid "Index"
+ msgstr "Index"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2443
++#: UI/GTK2/src/mainWindow.cc:2457
+ msgid "doesn't exist"
+ msgstr "existiert nicht"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2510
++#: UI/GTK2/src/mainWindow.cc:2524
+ msgid "Remove this document from the index ?"
+ msgstr "Soll dieses Dokument aus dem Index entfernt werden?"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2529
++#: UI/GTK2/src/mainWindow.cc:2543
+ msgid "Remove these documents from the index ?"
+ msgstr "Sollen diese Dokumente aus dem Index entfernt werden?"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2534 UI/GTK2/src/mainWindow_glade.cc:180
++#: UI/GTK2/src/mainWindow.cc:2548 UI/GTK2/src/mainWindow_glade.cc:180
+ msgid "Unindex"
+ msgstr "Indizierung entfernen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2573
++#: UI/GTK2/src/mainWindow.cc:2587
+ msgid "A metasearch tool for the Free Desktop"
+ msgstr "Ein Werkzeug zur Metasuche f?r den Freien Desktop"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2574
++#: UI/GTK2/src/mainWindow.cc:2588
+ msgid "Search the Web and your documents !"
+ msgstr "Durchsuchen Sie das Internet und Ihre Dokumente !"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2619
++#: UI/GTK2/src/mainWindow.cc:2633
+ msgid "Index name"
+ msgstr "Indexbezeichnung"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2633
++#: UI/GTK2/src/mainWindow.cc:2647
+ msgid "Couldn't add index"
+ msgstr "Konnte Index nicht hinzuf?gen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2649
++#: UI/GTK2/src/mainWindow.cc:2663
+ msgid "Added new index"
+ msgstr "Neuer Index hinzugef?gt"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2684
++#: UI/GTK2/src/mainWindow.cc:2698
+ msgid "Couldn't remove index"
+ msgstr "Konnte Index nicht entfernen"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2884
++#: UI/GTK2/src/mainWindow.cc:2922
+ msgid "No history for"
+ msgstr "Kein Verlauf vorhanden f?r"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2956 UI/GTK2/src/prefsWindow.cc:960
++#: UI/GTK2/src/mainWindow.cc:2994 UI/GTK2/src/prefsWindow.cc:960
+ msgid "At least one task hasn't completed yet. Quit now ?"
+ msgstr ""
+ "Mindestens ein Vorgang wurde noch nicht abgeschlossen. Jetzt trotzdem "
+ "beenden?"
+ 
+-#: UI/GTK2/src/mainWindow.cc:2958 UI/GTK2/src/prefsWindow.cc:962
++#: UI/GTK2/src/mainWindow.cc:2996 UI/GTK2/src/prefsWindow.cc:962
+ msgid "Quit"
+ msgstr "Beenden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3142
++#: UI/GTK2/src/mainWindow.cc:3180
+ msgid "Query name"
+ msgstr "Nache der Suchanfrage"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3169
++#: UI/GTK2/src/mainWindow.cc:3207
+ msgid "Couldn't update query"
+ msgstr "Suchanfrage konnte nicht aktualisiert werden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3180
++#: UI/GTK2/src/mainWindow.cc:3218
+ msgid "Edited query"
+ msgstr "Ge?nderte Suchanfrage"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3187
++#: UI/GTK2/src/mainWindow.cc:3225
+ msgid "Couldn't add query"
+ msgstr "Suchanfrage konnte nicht hinzugef?gt werden"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3195
++#: UI/GTK2/src/mainWindow.cc:3233
+ msgid "Added new query"
+ msgstr "Neue Suchanfrage hinzugef?gt"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3229
++#: UI/GTK2/src/mainWindow.cc:3267
+ msgid "Query is not set"
+ msgstr "Keine Suchanfrage eingestellt"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3240
++#: UI/GTK2/src/mainWindow.cc:3278
+ msgid "No search engine selected"
+ msgstr "Keine Suchmaschine ausgew?hlt"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3327
++#: UI/GTK2/src/mainWindow.cc:3365
+ msgid "Please set the Google API key first"
+ msgstr "Bitte geben Sie zuerst den Google API-Schl?ssel ein"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3336
++#: UI/GTK2/src/mainWindow.cc:3374
+ msgid "Running query"
+ msgstr "Suche l?uft"
+ 
+-#: UI/GTK2/src/mainWindow.cc:3543
++#: UI/GTK2/src/mainWindow.cc:3581
+ msgid "No default application defined for type"
+ msgstr "Keine Standardanwendung f?r Typ angegeben"
+ 
+@@ -670,11 +670,11 @@
+ msgid "Close"
+ msgstr "Schliessen"
+ 
+-#: UI/GTK2/src/pinot.cc:341
++#: UI/GTK2/src/pinot.cc:350
+ msgid "Couldn't open index"
+ msgstr "Konnte Index nicht ?ffnen"
+ 
+-#: UI/GTK2/src/pinot.cc:362
++#: UI/GTK2/src/pinot.cc:371
+ msgid "Couldn't create history database"
+ msgstr "Konnte Verlaufsdatenbank nicht anlegen"
+ 
+@@ -1007,7 +1007,3 @@
+ #: UI/GTK2/src/statisticsDialog.cc:402
+ msgid "Errors"
+ msgstr "Fehler"
+-
+-#, fuzzy
+-#~ msgid "File container"
+-#~ msgstr "Dateiname"
+
+
+
+From fabricecolin at mail.berlios.de  Sun Oct 25 09:33:51 2009
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 25 Oct 2009 09:33:51 +0100
+Subject: [Pinot-svn] r1679 - trunk
+Message-ID: <200910250833.n9P8XpVO003004@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2009-10-25 09:33:44 +0100 (Sun, 25 Oct 2009)
+New Revision: 1679
+
+Modified:
+   trunk/FAQ
+Log:
+Summarize all environment variables that can be tuned to lower memeory usage.
+
+
+Modified: trunk/FAQ
+===================================================================
+--- trunk/FAQ	2009-10-25 08:31:57 UTC (rev 1678)
++++ trunk/FAQ	2009-10-25 08:33:44 UTC (rev 1679)
+@@ -15,13 +15,20 @@
+ 
+   * Memory usage is too high ! How can I reduce it ?
+     Since 0.92, Pinot hints at the OS that it can reclaim unused memory on a
+-    regular basis. This works on Linux but maybe not on other OSes. 
+-    The environment variable XAPIAN_FLUSH_THRESHOLD controls how many documents
+-    are buffered in memory before changes are flushed to the disk. The default
+-    value is 10000. The daemon explicitely flushes the index once it has crawled
+-    the directories configured in Preferences.
+-    If the above doesn't help and there is a large number of documents to index,
+-    you may want to configure Pinot to index your corpus in stages.
++    regular basis. This works on Linux but maybe not on other OSes.
++    If your system is memory constrained, you can :
++    - increase the frequency at which memory is returned to the OS by setting
++      MALLOC_TRIM_THRESHOLD_ to a value lower than 128kb (the default) :
++      $ export MALLOC_TRIM_THRESHOLD_=65536
++    - reduce the number of indexing threads (defaults to 4) :
++      $ export PINOT_MAXIMUM_INDEX_THREADS=1
++    - reduce the number of documents Xapian buffers in memory before changes
++      are flushed to the disk (default is 10000) :
++      $ export XAPIAN_FLUSH_THRESHOLD=1000
++    Note that the daemon explicitely flushes the index once it has crawled one
++    of the directory configured in Preferences.
++    If the above doesn't help and there is a large number of big documents to
++    index, you may want to configure Pinot to index your corpus in stages.
+ 
+   * Pinot doesn't use my favourite browser XYZ to open HTML documents
+     Even if you have set XYZ as your favourite Web browser in your desktop
+
+
+

@@ -1,0 +1,914 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r408 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r408%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608191132.k7JBWeq8017936%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000400.html">
+   <LINK REL="Next"  HREF="000402.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r408 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r408%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608191132.k7JBWeq8017936%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r408 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 19 13:32:40 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000400.html">[Pinot-svn] r407 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000402.html">[Pinot-svn] r409 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#401">[ date ]</a>
+              <a href="thread.html#401">[ thread ]</a>
+              <a href="subject.html#401">[ subject ]</a>
+              <a href="author.html#401">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-19 13:32:36 +0200 (Sat, 19 Aug 2006)
+New Revision: 408
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+Use PinotSettings::getR?Index() methods to get an index.
+Definition of scanner's FileFound signal changed.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-19 11:29:25 UTC (rev 407)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-08-19 11:32:36 UTC (rev 408)
+@@ -39,13 +39,12 @@
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+-#include &quot;MonitorFactory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+ #ifdef HAS_GOOGLEAPI
+ #include &quot;GoogleAPIEngine.h&quot;
+ #endif
+-#include &quot;WritableXapianIndex.h&quot;
++#include &quot;IndexFactory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -320,8 +319,13 @@
+ 	}
+ 
+ 	// Is it an update ?
+-	XapianIndex index(m_defaultIndexLocation);
+-	unsigned int docId = index.hasDocument(docInfo.getLocation());
++	IndexInterface *pIndex = PinotSettings::getInstance().getROIndex(m_defaultIndexLocation);
++	if (pIndex == NULL)
++	{
++		return false;
++	}
++
++	unsigned int docId = pIndex-&gt;hasDocument(docInfo.getLocation());
+ 	if (docId &gt; 0)
+ 	{
+ 		// Yes, it is
+@@ -332,6 +336,7 @@
+ 		// This is a new document
+ 		start_thread(new IndexingThread(docInfo, docId, m_defaultIndexLocation));
+ 	}
++	delete pIndex;
+ 
+ 	return true;
+ }
+@@ -622,16 +627,21 @@
+ 	}
+ 
+ 	// Get the index at that location
+-	XapianIndex index(mapIter-&gt;second);
+-	if (index.isGood() == false)
++	IndexInterface *pIndex = PinotSettings::getInstance().getROIndex(mapIter-&gt;second);
++	if ((pIndex == NULL) ||
++		(pIndex-&gt;isGood() == false))
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+ 		m_status += &quot; &quot;;
+ 		m_status += mapIter-&gt;second;
++		if (pIndex != NULL)
++		{
++			delete pIndex;
++		}
+ 		return;
+ 	}
+ 
+-	m_indexDocsCount = index.getDocumentsCount(m_labelName);
++	m_indexDocsCount = pIndex-&gt;getDocumentsCount(m_labelName);
+ 	if (m_indexDocsCount == 0)
+ 	{
+ #ifdef DEBUG
+@@ -646,11 +656,11 @@
+ #endif
+ 	if (m_labelName.empty() == true)
+ 	{
+-		index.listDocuments(docIDList, m_maxDocsCount, m_startDoc);
++		pIndex-&gt;listDocuments(docIDList, m_maxDocsCount, m_startDoc);
+ 	}
+ 	else
+ 	{
+-		index.listDocumentsWithLabel(m_labelName, docIDList, m_maxDocsCount, m_startDoc);
++		pIndex-&gt;listDocumentsWithLabel(m_labelName, docIDList, m_maxDocsCount, m_startDoc);
+ 	}
+ 	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+ 	{
+@@ -665,7 +675,7 @@
+ 		string url = XapianDatabase::buildUrl(mapIter-&gt;second, docId);
+ 
+ 		DocumentInfo docInfo;
+-		if (index.getDocumentInfo(docId, docInfo) == true)
++		if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+ 		{
+ 			string type = docInfo.getType();
+ 			if (type.empty() == true)
+@@ -686,6 +696,7 @@
+ 		else cout &lt;&lt; &quot;IndexBrowserThread::doWork: couldn't retrieve document &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+ 	}
++	delete pIndex;
+ }
+ 
+ QueryingThread::QueryingThread(const string &amp;engineName, const string &amp;engineDisplayableName,
+@@ -853,8 +864,8 @@
+ 
+ void LabelUpdateThread::doWork(void)
+ {
+-	WritableXapianIndex docsIndex(PinotSettings::getInstance().m_docsIndexLocation);
+-	if (docsIndex.isGood() == false)
++	WritableIndexInterface *pDocsIndex = PinotSettings::getInstance().getRWIndex(PinotSettings::getInstance().m_docsIndexLocation);
++	if (pDocsIndex == NULL)
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+ 		m_status += &quot; &quot;;
+@@ -862,29 +873,31 @@
+ 		return;
+ 	}
+ 
+-	WritableXapianIndex mailIndex(PinotSettings::getInstance().m_mailIndexLocation);
+-	if (mailIndex.isGood() == false)
++	WritableIndexInterface *pDaemonIndex = PinotSettings::getInstance().getRWIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++	if (pDaemonIndex == NULL)
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+ 		m_status += &quot; &quot;;
+-		m_status += PinotSettings::getInstance().m_mailIndexLocation;
++		m_status += PinotSettings::getInstance().m_daemonIndexLocation;
++		delete pDocsIndex;
+ 		return;
+ 	}
+ 
+-	// FIXME: what about the daemon index ?
+-
+ 	// Delete labels
+ 	for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
+ 	{
+-		docsIndex.deleteLabel(*iter);
+-		mailIndex.deleteLabel(*iter);
++		pDocsIndex-&gt;deleteLabel(*iter);
++		pDaemonIndex-&gt;deleteLabel(*iter);
+ 	}
+ 	// Rename labels
+ 	for (map&lt;string, string&gt;::iterator iter = m_labelsToRename.begin(); iter != m_labelsToRename.end(); ++iter)
+ 	{
+-		docsIndex.renameLabel(iter-&gt;first, iter-&gt;second);
+-		mailIndex.renameLabel(iter-&gt;first, iter-&gt;second);
++		pDocsIndex-&gt;renameLabel(iter-&gt;first, iter-&gt;second);
++		pDaemonIndex-&gt;renameLabel(iter-&gt;first, iter-&gt;second);
+ 	}
++
++	delete pDaemonIndex;
++	delete pDocsIndex;
+ }
+ 
+ DownloadingThread::DownloadingThread(const DocumentInfo &amp;docInfo, bool fromCache) :
+@@ -1045,13 +1058,19 @@
+ 
+ void IndexingThread::doWork(void)
+ {
++	WritableIndexInterface *pIndex = PinotSettings::getInstance().getRWIndex(m_indexLocation);
++
+ 	// First things first, get the index
+-	WritableXapianIndex index(m_indexLocation);
+-	if (index.isGood() == false)
++	if ((pIndex == NULL) ||
++		(pIndex-&gt;isGood() == false))
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+ 		m_status += &quot; &quot;;
+ 		m_status += m_indexLocation;
++		if (pIndex != NULL)
++		{
++			delete pIndex;
++		}
+ 		return;
+ 	}
+ 
+@@ -1152,26 +1171,26 @@
+ 		{
+ 			const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+ 
+-			index.setStemmingMode(WritableIndexInterface::STORE_BOTH);
++			pIndex-&gt;setStemmingMode(WritableIndexInterface::STORE_BOTH);
+ 
+ 			// Update an existing document or add to the index ?
+ 			if (m_update == true)
+ 			{
+ 				// Update the document
+-				if (index.updateDocument(m_docId, *pTokens) == true)
++				if (pIndex-&gt;updateDocument(m_docId, *pTokens) == true)
+ 				{
+ 					success = true;
+ 				}
+ 
+ 				// Set the document's labels
+-				index.setDocumentLabels(m_docId, labels, false);
++				pIndex-&gt;setDocumentLabels(m_docId, labels, false);
+ 			}
+ 			else
+ 			{
+ 				unsigned int docId = 0;
+ 
+ 				// Index the document
+-				success = index.indexDocument(*pTokens, labels, docId);
++				success = pIndex-&gt;indexDocument(*pTokens, labels, docId);
+ 				if (success == true)
+ 				{
+ 					m_docId = docId;
+@@ -1189,16 +1208,18 @@
+ 				// Flush the index ?
+ 				if (m_immediateFlush == true)
+ 				{
+-					index.flush();
++					pIndex-&gt;flush();
+ 				}
+ 
+ 				// The document properties may have changed
+-				index.getDocumentInfo(m_docId, m_docInfo);
++				pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
+ 			}
+ 		}
+ 
+ 		delete pTokens;
+ 	}
++
++	delete pIndex;
+ }
+ 
+ UnindexingThread::UnindexingThread(const set&lt;unsigned int&gt; &amp;docIdList) :
+@@ -1244,74 +1265,78 @@
+ 
+ void UnindexingThread::doWork(void)
+ {
+-	if (m_done == false)
++	WritableIndexInterface *pIndex = PinotSettings::getInstance().getRWIndex(m_indexLocation);
++
++	if ((pIndex == NULL) ||
++		(pIndex-&gt;isGood() == false))
+ 	{
+-		WritableXapianIndex index(m_indexLocation);
+-
+-		if (index.isGood() == false)
++		m_status = _(&quot;Index error on&quot;);
++		m_status += &quot; &quot;;
++		m_status += m_indexLocation;
++		if (pIndex != NULL)
+ 		{
+-			m_status = _(&quot;Index error on&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_indexLocation;
+-			return;
++			delete pIndex;
+ 		}
++		return;
++	}
+ 
+-		// Be pessimistic and assume something will go wrong ;-)
+-		m_status = _(&quot;Couldn't unindex document(s)&quot;);
++	// Be pessimistic and assume something will go wrong ;-)
++	m_status = _(&quot;Couldn't unindex document(s)&quot;);
+ 
+-		// Are we supposed to remove documents based on labels ?
+-		if (m_docIdList.empty() == true)
++	// Are we supposed to remove documents based on labels ?
++	if (m_docIdList.empty() == true)
++	{
++		// Yep
++		// FIXME: better delete documents one label at a time
++		for (set&lt;string&gt;::iterator iter = m_labelNames.begin(); iter != m_labelNames.end(); ++iter)
+ 		{
+-			// Yep
+-			// FIXME: better delete documents one label at a time
+-			for (set&lt;string&gt;::iterator iter = m_labelNames.begin(); iter != m_labelNames.end(); ++iter)
++			string labelName = (*iter);
++
++			// By unindexing all documents that match the label,
++			// we effectively delete the label from the index
++			if (pIndex-&gt;unindexDocuments(labelName) == true)
+ 			{
+-				string labelName = (*iter);
+-
+-				// By unindexing all documents that match the label,
+-				// we effectively delete the label from the index
+-				if (index.unindexDocuments(labelName) == true)
+-				{
+-					// OK
+-					++m_docsCount;
+-				}
++				// OK
++				++m_docsCount;
+ 			}
++		}
+ 
+-			// Nothing to report
+-			m_status = &quot;&quot;;
+-		}
+-		else
++		// Nothing to report
++		m_status = &quot;&quot;;
++	}
++	else
++	{
++		for (set&lt;unsigned int&gt;::iterator iter = m_docIdList.begin(); iter != m_docIdList.end(); ++iter)
+ 		{
+-			for (set&lt;unsigned int&gt;::iterator iter = m_docIdList.begin(); iter != m_docIdList.end(); ++iter)
++			unsigned int docId = (*iter);
++
++			if (pIndex-&gt;unindexDocument(docId) == true)
+ 			{
+-				unsigned int docId = (*iter);
+-
+-				if (index.unindexDocument(docId) == true)
+-				{
+-					// OK
+-					++m_docsCount;
+-				}
++				// OK
++				++m_docsCount;
++			}
+ #ifdef DEBUG
+-				else cout &lt;&lt; &quot;UnindexingThread::doWork: couldn't remove &quot; &lt;&lt; docId &lt;&lt; endl;
++			else cout &lt;&lt; &quot;UnindexingThread::doWork: couldn't remove &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+-			}
++		}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;UnindexingThread::doWork: removed &quot; &lt;&lt; m_docsCount &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;UnindexingThread::doWork: removed &quot; &lt;&lt; m_docsCount &lt;&lt; &quot; documents&quot; &lt;&lt; endl;
+ #endif
+-		}
++	}
+ 
+-		if (m_docsCount &gt; 0)
++	if (m_docsCount &gt; 0)
++	{
++		// Flush the index ?
++		if (m_immediateFlush == true)
+ 		{
+-			// Flush the index ?
+-			if (m_immediateFlush == true)
+-			{
+-				index.flush();
+-			}
++			pIndex-&gt;flush();
++		}
+ 
+-			// Nothing to report
+-			m_status = &quot;&quot;;
+-		}
++		// Nothing to report
++		m_status = &quot;&quot;;
+ 	}
++
++	delete pIndex;
+ }
+ 
+ UpdateDocumentThread::UpdateDocumentThread(const string &amp;indexName,
+@@ -1369,16 +1394,21 @@
+ 		}
+ 
+ 		// Get the index at that location
+-		WritableXapianIndex index(mapIter-&gt;second);
+-		if (index.isGood() == false)
++		WritableIndexInterface *pIndex = PinotSettings::getInstance().getRWIndex(mapIter-&gt;second);
++		if ((pIndex == NULL) ||
++			(pIndex-&gt;isGood() == false))
+ 		{
+ 			m_status = _(&quot;Index error on&quot;);
+ 			m_status += &quot; &quot;;
+ 			m_status += mapIter-&gt;second;
++			if (pIndex != NULL)
++			{
++				delete pIndex;
++			}
+ 			return;
+ 		}
+ 
+-		if (index.updateDocumentInfo(m_docId, m_docInfo) == false)
++		if (pIndex-&gt;updateDocumentInfo(m_docId, m_docInfo) == false)
+ 		{
+ 			m_status = _(&quot;Couldn't update document&quot;);
+ 		}
+@@ -1387,19 +1417,22 @@
+ 			// Flush the index ?
+ 			if (m_immediateFlush == true)
+ 			{
+-				index.flush();
++				pIndex-&gt;flush();
+ 			}
+ 
+ 			// The document properties may have changed
+-			index.getDocumentInfo(m_docId, m_docInfo);
++			pIndex-&gt;getDocumentInfo(m_docId, m_docInfo);
+ 		}
++
++		delete pIndex;
+ 	}
+ }
+ 
+-MonitorThread::MonitorThread(MonitorHandler *pHandler) :
++MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+ 	WorkerThread(),
+ 	m_ctrlReadPipe(-1),
+ 	m_ctrlWritePipe(-1),
++	m_pMonitor(pMonitor),
+ 	m_pHandler(pHandler)
+ {
+ 	int pipeFds[2];
+@@ -1442,17 +1475,18 @@
+ 
+ void MonitorThread::doWork(void)
+ {
+-	MonitorInterface *pMonitor = MonitorFactory::getMonitor();
+-	set&lt;string&gt; newLocations;
+-	set&lt;string&gt; locationsToRemove;
+-
+ 	if ((m_pHandler == NULL) ||
+-		(pMonitor == NULL))
++		(m_pMonitor == NULL))
+ 	{
+ 		m_status = _(&quot;No monitoring handler&quot;);
+ 		return;
+ 	}
+ 
++	// Initialize the handler
++	m_pHandler-&gt;initialize();
++
++	// What locations to monitor is set by DirectoryScannerThread
++
+ 	// Wait for something to happen
+ 	while (m_done == false)
+ 	{
+@@ -1468,36 +1502,10 @@
+ 			FD_SET(m_ctrlReadPipe, &amp;listenSet);
+ 		}
+ 
+-		// Did a change occur ?
+-		if (m_pHandler-&gt;getLocations(newLocations, locationsToRemove) == true)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MonitorThread::doWork: change detected&quot; &lt;&lt; endl;
+-#endif
++		m_pHandler-&gt;flushIndex();
+ 
+-			// Add new locations
+-			for (set&lt;string&gt;::const_iterator locationIter = newLocations.begin();
+-				(locationIter != newLocations.end()) &amp;&amp; (m_done == false); ++locationIter)
+-			{
+-				// Monitor this
+-				if (pMonitor-&gt;addLocation(*locationIter) == true)
+-				{
+-					// Confirm the file exists
+-					m_pHandler-&gt;fileExists(*locationIter);
+-				}
+-			}
+-
+-			// Remove others
+-			for (set&lt;string&gt;::const_iterator locationIter = locationsToRemove.begin();
+-				(locationIter != locationsToRemove.end()) &amp;&amp; (m_done == false); ++locationIter)
+-			{
+-				// Stop monitoring this
+-				pMonitor-&gt;removeLocation(*locationIter);
+-			}
+-		}
+-
+ 		// The file descriptor may change over time
+-		int monitorFd = pMonitor-&gt;getFileDescriptor();
++		int monitorFd = m_pMonitor-&gt;getFileDescriptor();
+ 		FD_SET(monitorFd, &amp;listenSet);
+ 		if (monitorFd &lt; 0)
+ 		{
+@@ -1519,7 +1527,7 @@
+ 			queue&lt;MonitorEvent&gt; events;
+ 
+ 			// There might be more than one event waiting...
+-			if (pMonitor-&gt;retrievePendingEvents(events) == false)
++			if (m_pMonitor-&gt;retrievePendingEvents(events) == false)
+ 			{
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;MonitorThread::doWork: failed to retrieve pending events&quot; &lt;&lt; endl;
+@@ -1543,9 +1551,20 @@
+ 				bool updatedIndex = false;
+ 
+ 				// What's the event code ?
+-				if (event.m_type == MonitorEvent::CREATED)
++				if (event.m_type == MonitorEvent::EXISTS)
+ 				{
++					m_pHandler-&gt;fileExists(event.m_location);
++				}
++				else if (event.m_type == MonitorEvent::CREATED)
++				{
+ 					m_pHandler-&gt;fileCreated(event.m_location);
++
++					// If a whole directory was created, monitor it
++					if (event.m_isDirectory == true)
++					{
++						// FIXME: crawl it first !
++						m_pMonitor-&gt;addLocation(event.m_location, true);
++					}
+ 				}
+ 				else if (event.m_type == MonitorEvent::WRITE_CLOSED)
+ 				{
+@@ -1554,10 +1573,25 @@
+ 				else if (event.m_type == MonitorEvent::MOVED)
+ 				{
+ 					updatedIndex = m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
++
++					if ((event.m_isDirectory == true) &amp;&amp;
++						(event.m_isWatch == true))
++					{
++						// Stop monitoring
++						m_pMonitor-&gt;removeLocation(event.m_previousLocation);
++						// FIXME: monitor the new location
++					}
+ 				}
+ 				else if (event.m_type == MonitorEvent::DELETED)
+ 				{
+ 					updatedIndex = m_pHandler-&gt;fileDeleted(event.m_location);
++
++					if ((event.m_isDirectory == true) &amp;&amp;
++						(event.m_isWatch == true))
++					{
++						// Stop monitoring
++						m_pMonitor-&gt;removeLocation(event.m_location);
++					}
+ 				}
+ 
+ 				// Next
+@@ -1565,13 +1599,13 @@
+ 			}
+ 		}
+ 	}
+-
+-	delete pMonitor;
+ }
+ 
+-DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName,
+-	unsigned int maxLevel, bool followSymLinks, Mutex *pMutex, Cond *pCondVar) :
++DirectoryScannerThread::DirectoryScannerThread(MonitorInterface *pMonitor,
++	const string &amp;dirName, unsigned int maxLevel, bool followSymLinks,
++	Mutex *pMutex, Cond *pCondVar) :
+ 	WorkerThread(),
++	m_pMonitor(pMonitor),
+ 	m_dirName(dirName),
+ 	m_maxLevel(maxLevel),
+ 	m_followSymLinks(followSymLinks),
+@@ -1612,7 +1646,7 @@
+ 	return true;
+ }
+ 
+-Signal1&lt;bool, const string&amp;&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
++Signal2&lt;bool, const string&amp;, const std::string&amp;&gt;&amp; DirectoryScannerThread::getFileFoundSignal(void)
+ {
+ 	return m_signalFileFound;
+ }
+@@ -1628,9 +1662,13 @@
+ 		(m_pCondVar != NULL))
+ 	{
+ 		string url(&quot;<A HREF="file://">file://</A>&quot; + fileName);
++		char labelStr[64];
+ 
++		// This identifies the source
++		snprintf(labelStr, 64, &quot;SOURCE%u&quot;, m_sourceId);
++
+ 		m_pMutex-&gt;lock();
+-		if (m_signalFileFound(url) == true)
++		if (m_signalFileFound(url, labelStr) == true)
+ 		{
+ 			// Another file is needed right now
+ 			m_pMutex-&gt;unlock();
+@@ -1663,6 +1701,13 @@
+ 		return false;
+ 	}
+ 
++	// Skip . .. and dotfiles
++	Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + dirName);
++	if (urlObj.getFile()[0] == '.')
++	{
++		return false;
++	}
++
+ 	if (m_followSymLinks == false)
+ 	{
+ 		statSuccess = lstat(dirName.c_str(), &amp;fileStat);
+@@ -1678,6 +1723,8 @@
+ 		return false;
+ 	}
+ 
++	bool itemExists = history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, status, itemDate);
++
+ 	// Is it a file or a directory ?
+ 	if (S_ISLNK(fileStat.st_mode))
+ 	{
+@@ -1686,117 +1733,104 @@
+ 	}
+ 	else if (S_ISREG(fileStat.st_mode))
+ 	{
+-		// It's actually a file : skip dotfiles
+-		if (dirName[0] != '.')
++		bool reportFile = false;
++
++		// It's actually a file
++		// Was it crawled since it was last modified ?
++		if (itemExists == false)
+ 		{
+-			bool reportFile = false;
++			// Record it
++			history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++			reportFile = true;
++		}
++		else if (itemDate &lt; fileStat.st_mtime)
++		{
++			// Update the record
++			history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, fileStat.st_mtime);
++			reportFile = true;
++		}
+ 
+-			// ...and check whether the file was crawled since it was last modified
+-			if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, status, itemDate) == false)
+-			{
+-				// Record it
+-				history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
+-				reportFile = true;
+-			}
+-			else if (itemDate &lt; fileStat.st_mtime)
+-			{
+-				// Update the record
+-				history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, fileStat.st_mtime);
+-				reportFile = true;
+-			}
+-
+-			if (reportFile == true)
+-			{
+-				foundFile(dirName);
+-			}
++		if (reportFile == true)
++		{
++			foundFile(dirName);
+ 		}
+ 	}
+ 	else if (S_ISDIR(fileStat.st_mode))
+ 	{
+-		// A directory : scan it
+-		DIR *pDir = opendir(dirName.c_str());
+-		if (pDir == NULL)
++		// Can we scan this directory ?
++		if ((m_maxLevel == 0) ||
++			(m_currentLevel &lt; m_maxLevel))
+ 		{
+-			return false;
+-		}
++			++m_currentLevel;
++
++			// Open the directory
++			DIR *pDir = opendir(dirName.c_str());
++			if (pDir == NULL)
++			{
++				return false;
++			}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: entering &quot; &lt;&lt; dirName &lt;&lt; endl;
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: entering &quot;
++				&lt;&lt; dirName &lt;&lt; endl;
+ #endif
+ 
+-		// Iterate through this directory's entries
+-		struct dirent *pDirEntry = readdir(pDir);
+-		while ((m_done == false) &amp;&amp;
+-			(pDirEntry != NULL))
+-		{
+-			char *pEntryName = pDirEntry-&gt;d_name;
+-			if (pEntryName != NULL)
++			// Monitor first so that we don't miss events
++			m_pMonitor-&gt;addLocation(dirName, true);
++
++			// Iterate through this directory's entries
++			struct dirent *pDirEntry = readdir(pDir);
++			while ((m_done == false) &amp;&amp;
++				(pDirEntry != NULL))
+ 			{
+-				string entryName = dirName;
+-				if (dirName[dirName.length() - 1] != '/')
+-				{
+-					entryName += &quot;/&quot;;
+-				}
+-				entryName += pEntryName;
++				char *pEntryName = pDirEntry-&gt;d_name;
+ 
+ 				// Skip . .. and dotfiles
+-				Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+-				if ((urlObj.getFile()[0] == '.') ||
+-					(lstat(entryName.c_str(), &amp;fileStat) == -1))
++				if ((pEntryName != NULL) &amp;&amp;
++					(pEntryName[0] != '.'))
+ 				{
+-					// Next entry
+-					pDirEntry = readdir(pDir);
+-					continue;
+-				}
++					string entryName(dirName);
+ 
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: stat'ing &quot; &lt;&lt; entryName &lt;&lt; endl;
+-#endif
+-				// File or directory
+-				if (S_ISREG(fileStat.st_mode))
+-				{
+-					bool reportFile = false;
+-
+-					// Was it crawled since it was last modified ?
+-					if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, status, itemDate) == false)
++					if (dirName[dirName.length() - 1] != '/')
+ 					{
+-						// Record it
+-						history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
+-						reportFile = true;
++						entryName += &quot;/&quot;;
+ 					}
+-					else if (itemDate &lt; fileStat.st_mtime)
+-					{
+-						// Update the record
+-						history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, fileStat.st_mtime);
+-						reportFile = true;
+-					}
++					entryName += pEntryName;
+ 
+-					if (reportFile == true)
++					// Scan this entry
++					if (scanDirectory(entryName) == false)
+ 					{
+-						foundFile(entryName);
+-					}
+-				}
+-				else if (S_ISDIR(fileStat.st_mode))
+-				{
+-					// Can we scan this directory ?
+-					if ((m_maxLevel == 0) ||
+-						(m_currentLevel + 1 &lt; m_maxLevel))
+-					{
+-						++m_currentLevel;
+-						scanDirectory(entryName);
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: done at level &quot;
+-							&lt;&lt; m_currentLevel &lt;&lt; endl;
++						cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: failed to open &quot;
++							&lt;&lt; entryName &lt;&lt; endl;
+ #endif
+-						--m_currentLevel;
+ 					}
+ 				}
++
++				// Next entry
++				pDirEntry = readdir(pDir);
+ 			}
+ 
+-			// Next entry
+-			pDirEntry = readdir(pDir);
++			if (itemExists == false)
++			{
++				history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::DIRECTORY, m_sourceId, fileStat.st_mtime);
++			}
++			else
++			{
++				history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::DIRECTORY, fileStat.st_mtime);
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: done with &quot; &lt;&lt; dirName &lt;&lt; endl;
++#endif
++
++			// Close the directory
++			closedir(pDir);
++			--m_currentLevel;
+ 		}
+-		closedir(pDir);
+ 	}
++	else
++	{
++		return false;
++	}
+ 
+ 	return true;
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-08-19 11:29:25 UTC (rev 407)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-08-19 11:32:36 UTC (rev 408)
+@@ -32,6 +32,7 @@
+ #include &lt;glibmm/ustring.h&gt;
+ 
+ #include &quot;Document.h&quot;
++#include &quot;MonitorInterface.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+ #include &quot;QueryProperties.h&quot;
+@@ -373,7 +374,7 @@
+ class MonitorThread : public WorkerThread
+ {
+ 	public:
+-		MonitorThread(MonitorHandler *pHandler);
++		MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler);
+ 		virtual ~MonitorThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -383,6 +384,7 @@
+ 	protected:
+ 		int m_ctrlReadPipe;
+ 		int m_ctrlWritePipe;
++		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+ 
+ 		virtual void doWork(void);
+@@ -396,8 +398,8 @@
+ class DirectoryScannerThread : public WorkerThread
+ {
+ 	public:
+-		DirectoryScannerThread(const std::string &amp;dirName,
+-			unsigned int maxLevel, bool followSymLinks,
++		DirectoryScannerThread(MonitorInterface *pMonitor,
++			const std::string &amp;dirName, unsigned int maxLevel, bool followSymLinks,
+ 			Glib::Mutex *pMutex, Glib::Cond *pCondVar);
+ 		virtual ~DirectoryScannerThread();
+ 
+@@ -407,9 +409,10 @@
+ 
+ 		virtual bool stop(void);
+ 
+-		SigC::Signal1&lt;bool, const std::string&amp;&gt;&amp; getFileFoundSignal(void);
++		SigC::Signal2&lt;bool, const std::string&amp;, const std::string&amp;&gt;&amp; getFileFoundSignal(void);
+ 
+ 	protected:
++		MonitorInterface *m_pMonitor;
+ 		std::string m_dirName;
+ 		unsigned int m_maxLevel;
+ 		bool m_followSymLinks;
+@@ -417,7 +420,7 @@
+ 		Glib::Cond *m_pCondVar;
+ 		unsigned int m_currentLevel;
+ 		unsigned int m_sourceId;
+-		SigC::Signal1&lt;bool, const std::string&amp;&gt; m_signalFileFound;
++		SigC::Signal2&lt;bool, const std::string&amp;, const std::string&amp;&gt; m_signalFileFound;
+ 
+ 		void foundFile(const std::string &amp;fileName);
+ 		bool scanDirectory(const std::string &amp;dirName);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000400.html">[Pinot-svn] r407 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000402.html">[Pinot-svn] r409 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#401">[ date ]</a>
+              <a href="thread.html#401">[ thread ]</a>
+              <a href="subject.html#401">[ subject ]</a>
+              <a href="author.html#401">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

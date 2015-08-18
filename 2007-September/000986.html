@@ -1,0 +1,370 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r992 - in trunk: Index Search Search/Google
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r992%20-%20in%20trunk%3A%20Index%20Search%20Search/Google&In-Reply-To=%3C200709261358.l8QDwG18005326%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000985.html">
+   <LINK REL="Next"  HREF="000987.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r992 - in trunk: Index Search Search/Google</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r992%20-%20in%20trunk%3A%20Index%20Search%20Search/Google&In-Reply-To=%3C200709261358.l8QDwG18005326%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r992 - in trunk: Index Search Search/Google">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 26 15:58:16 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000985.html">[Pinot-svn] r991 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000987.html">[Pinot-svn] r993 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#986">[ date ]</a>
+              <a href="thread.html#986">[ thread ]</a>
+              <a href="subject.html#986">[ subject ]</a>
+              <a href="author.html#986">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-26 15:58:15 +0200 (Wed, 26 Sep 2007)
+New Revision: 992
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/Google/GoogleAPIEngine.h
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/SearchEngineFactory.cpp
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+Log:
+QueryProperties has a sort order (relevance or date). XapianIndex stores date
+and time in value 4 for that purpose.
+Removed setKey() from engines interface, it's only relevant to the Google API.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Index/XapianIndex.cpp	2007-09-26 13:58:15 UTC (rev 992)
+@@ -610,13 +610,15 @@
+ 	string yyyymmdd(TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday));
+ 	string hhmmss(TimeConverter::toHHMMSSString(tm-&gt;tm_hour, tm-&gt;tm_min, tm-&gt;tm_sec));
+ 
+-	// Add this value to allow sorting by date
++	// Date
+ 	doc.add_value(0, yyyymmdd);
+ 	// FIXME: checksum in value 1
+-	// Size goes in value 2
++	// Size
+ 	doc.add_value(2, Xapian::sortable_serialise((double )info.getSize()));
+-	// Time goes in value 3
++	// Time
+ 	doc.add_value(3, hhmmss);
++	// Date and time, for results sorting
++	doc.add_value(4, yyyymmdd + hhmmss);
+ 
+ 	DocumentInfo docCopy(info);
+ 	docCopy.setLanguage(language);
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2007-09-26 13:58:15 UTC (rev 992)
+@@ -29,8 +29,9 @@
+ using std::cerr;
+ using std::endl;
+ 
+-GoogleAPIEngine::GoogleAPIEngine() :
+-	WebEngine()
++GoogleAPIEngine::GoogleAPIEngine(const string &amp;key) :
++	WebEngine(),
++	m_key(key)
+ {
+ }
+ 
+@@ -44,7 +45,8 @@
+ 	GoogleSearchBinding soapProxy;
+ 	xsd__base64Binary base64Page;
+ 
+-	if (soapProxy.gapi1__doGetCachedPage(m_key, url, base64Page))
++	if ((m_key.empty() == true) ||
++		(soapProxy.gapi1__doGetCachedPage(m_key, url, base64Page)))
+ 	{
+ 		return NULL;
+ 	}
+@@ -69,7 +71,8 @@
+ 	GoogleSearchBinding soapProxy;
+ 	string spellOut;
+ 
+-	if (soapProxy.gapi1__doSpellingSuggestion(m_key, text, spellOut))
++	if ((m_key.empty() == true) ||
++		(soapProxy.gapi1__doSpellingSuggestion(m_key, text, spellOut)))
+ 	{
+ 		return &quot;&quot;;
+ 	}
+
+Modified: trunk/Search/Google/GoogleAPIEngine.h
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.h	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/Google/GoogleAPIEngine.h	2007-09-26 13:58:15 UTC (rev 992)
+@@ -30,7 +30,7 @@
+ class GoogleAPIEngine : public WebEngine
+ {
+ 	public:
+-		GoogleAPIEngine();
++		GoogleAPIEngine(const string &amp;key);
+ 		virtual ~GoogleAPIEngine();
+ 
+ 		/// Runs a query; true if success.
+@@ -43,6 +43,9 @@
+ 		/// Checks spelling.
+ 		string checkSpelling(const string &amp;text);
+ 
++	protected:
++		string m_key;
++
+ 	private:
+ 		GoogleAPIEngine(const GoogleAPIEngine &amp;other);
+ 		GoogleAPIEngine &amp;operator=(const GoogleAPIEngine &amp;other);
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/QueryProperties.cpp	2007-09-26 13:58:15 UTC (rev 992)
+@@ -27,6 +27,7 @@
+ 
+ QueryProperties::QueryProperties() :
+ 	m_type(XAPIAN_QP),
++	m_order(RELEVANCE),
+ 	m_resultsCount(10),
+ 	m_indexResults(false)
+ {
+@@ -36,6 +37,7 @@
+ 	QueryType type) :
+ 	m_name(name),
+ 	m_type(type),
++	m_order(RELEVANCE),
+ 	m_freeQuery(freeQuery),
+ 	m_resultsCount(10),
+ 	m_indexResults(false)
+@@ -46,6 +48,7 @@
+ QueryProperties::QueryProperties(const QueryProperties &amp;other) :
+ 	m_name(other.m_name),
+ 	m_type(other.m_type),
++	m_order(other.m_order),
+ 	m_freeQuery(other.m_freeQuery),
+ 	m_freeQueryWithoutFilters(other.m_freeQueryWithoutFilters),
+ 	m_resultsCount(other.m_resultsCount),
+@@ -64,6 +67,7 @@
+ 	{
+ 		m_name = other.m_name;
+ 		m_type = other.m_type;
++		m_order = other.m_order;
+ 		m_freeQuery = other.m_freeQuery;
+ 		m_freeQueryWithoutFilters = other.m_freeQueryWithoutFilters;
+ 		m_resultsCount = other.m_resultsCount;
+@@ -156,6 +160,18 @@
+ 	return m_type;
+ }
+ 
++/// Sets the sort order.
++void QueryProperties::setSortOrder(SortOrder order)
++{
++	m_order = order;
++}
++
++/// Gets the sort order.
++QueryProperties::SortOrder QueryProperties::getSortOrder(void) const
++{
++	return m_order;
++}
++
+ /// Sets the query string.
+ void QueryProperties::setFreeQuery(const string &amp;freeQuery)
+ {
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/QueryProperties.h	2007-09-26 13:58:15 UTC (rev 992)
+@@ -29,6 +29,7 @@
+ {
+ 	public:
+ 		typedef enum { XAPIAN_QP = 0, XESAM_QL, XESAM_UL } QueryType;
++		typedef enum { RELEVANCE = 0, DATE } SortOrder;
+ 
+ 		QueryProperties();
+ 		QueryProperties(const string &amp;name, const string &amp;freeQuery,
+@@ -50,6 +51,11 @@
+ 		/// Gets the type.
+ 		QueryType getType(void) const;
+ 
++		/// Sets the sort order.
++		void setSortOrder(SortOrder order);
++		/// Gets the sort order.
++		SortOrder getSortOrder(void) const;
++
+ 		/// Sets the query string.
+ 		void setFreeQuery(const string &amp;freeQuery);
+ 		/// Gets the query string.
+@@ -82,6 +88,7 @@
+ 	protected:
+ 		string m_name;
+ 		QueryType m_type;
++		SortOrder m_order;
+ 		string m_freeQuery;
+ 		string m_freeQueryWithoutFilters;
+ 		unsigned int m_resultsCount;
+
+Modified: trunk/Search/SearchEngineFactory.cpp
+===================================================================
+--- trunk/Search/SearchEngineFactory.cpp	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/SearchEngineFactory.cpp	2007-09-26 13:58:15 UTC (rev 992)
+@@ -48,8 +48,7 @@
+ #ifdef HAVE_GOOGLEAPI
+ 	else if (type == &quot;googleapi&quot;)
+ 	{
+-		myEngine = new GoogleAPIEngine();
+-		myEngine-&gt;setKey(option);
++		myEngine = new GoogleAPIEngine(option);
+ 	}
+ #endif
+ 
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/SearchEngineInterface.cpp	2007-09-26 13:58:15 UTC (rev 992)
+@@ -36,12 +36,6 @@
+ {
+ }
+ 
+-/// Sets the search engine's key, if applicable.
+-void SearchEngineInterface::setKey(const string &amp;key)
+-{
+-	m_key = key;
+-}
+-
+ /// Sets the set of documents to expand from.
+ bool SearchEngineInterface::setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet)
+ {
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/SearchEngineInterface.h	2007-09-26 13:58:15 UTC (rev 992)
+@@ -36,9 +36,6 @@
+ 	public:
+ 		virtual ~SearchEngineInterface();
+ 
+-		/// Sets the search engine's key, if applicable.
+-		virtual void setKey(const string &amp;key);
+-
+ 		/// Sets the set of documents to expand from.
+ 		virtual bool setExpandSet(const set&lt;unsigned int&gt; &amp;docsSet);
+ 
+@@ -70,7 +67,6 @@
+ 		virtual const set&lt;string&gt; &amp;getExpandTerms(void) const;
+ 
+ 	protected:
+-		string m_key;
+ 		DefaultOperator m_defaultOperator;
+ 		vector&lt;DocumentInfo&gt; m_resultsList;
+ 		unsigned int m_resultsCountEstimate;
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/XapianEngine.cpp	2007-09-26 13:58:15 UTC (rev 992)
+@@ -363,8 +363,9 @@
+ }
+ 
+ bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+-	unsigned int startDoc, unsigned int maxResultsCount)
++	unsigned int startDoc, const QueryProperties &amp;queryProps)
+ {
++	unsigned int maxResultsCount = queryProps.getMaximumResultsCount();
+ 	bool completedQuery = false;
+ 
+ 	if (pIndex == NULL)
+@@ -382,6 +383,17 @@
+ 
+ 		// Give the query object to the enquire session
+ 		enquire.set_query(query);
++		// How should results be sorted ?
++		if (queryProps.getSortOrder() == QueryProperties::RELEVANCE)
++		{
++			// By relevance, only
++			enquire.set_sort_by_relevance();
++		}
++		else if (queryProps.getSortOrder() == QueryProperties::DATE)
++		{
++			// By date, and then by relevance
++			enquire.set_sort_by_value_then_relevance(4);
++		}
+ 
+ 		// Get the top results of the query
+ 		Xapian::MSet matches = enquire.get_mset(startDoc, maxResultsCount, maxResultsCount + 1);
+@@ -552,8 +564,7 @@
+ 			cout &lt;&lt; &quot;XapianEngine::runQuery: &quot; &lt;&lt; fullQuery.get_description() &lt;&lt; endl;
+ #endif
+ 			// Query the database
+-			if (queryDatabase(pIndex, fullQuery, startDoc,
+-				queryProps.getMaximumResultsCount()) == false)
++			if (queryDatabase(pIndex, fullQuery, startDoc, queryProps) == false)
+ 			{
+ 				break;
+ 			}
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2007-09-25 13:40:00 UTC (rev 991)
++++ trunk/Search/XapianEngine.h	2007-09-26 13:58:15 UTC (rev 992)
+@@ -62,7 +62,7 @@
+ 		std::set&lt;Xapian::docid&gt; m_expandDocuments;
+ 
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+-			unsigned int startDoc, unsigned int maxResultsCount);
++			unsigned int startDoc, const QueryProperties &amp;queryProps);
+ 
+ 		static Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, DefaultOperator defaultOperator,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000985.html">[Pinot-svn] r991 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000987.html">[Pinot-svn] r993 - in trunk/UI/GTK2: . src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#986">[ date ]</a>
+              <a href="thread.html#986">[ thread ]</a>
+              <a href="subject.html#986">[ subject ]</a>
+              <a href="author.html#986">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

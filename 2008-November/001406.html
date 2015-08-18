@@ -1,0 +1,377 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1415 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1415%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811191356.mAJDu5ED013745%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001405.html">
+   <LINK REL="Next"  HREF="001407.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1415 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1415%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811191356.mAJDu5ED013745%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1415 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Nov 19 14:56:05 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001405.html">[Pinot-svn] r1414 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="001407.html">[Pinot-svn] r1416 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1406">[ date ]</a>
+              <a href="thread.html#1406">[ thread ]</a>
+              <a href="subject.html#1406">[ subject ]</a>
+              <a href="author.html#1406">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-19 14:55:52 +0100 (Wed, 19 Nov 2008)
+New Revision: 1415
+
+Modified:
+   trunk/UI/GTK2/src/Makefile.am
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Replaced prefsDialog with prefsWindow.
+Using the new option -p/--preferences, or starting the program as pinot-prefs,
+makes the UI open prefsWindow and exit.
+When the Session, Preferences menu is selected, pinot runs pinot-prefs.
+
+
+Modified: trunk/UI/GTK2/src/Makefile.am
+===================================================================
+--- trunk/UI/GTK2/src/Makefile.am	2008-11-19 13:24:34 UTC (rev 1414)
++++ trunk/UI/GTK2/src/Makefile.am	2008-11-19 13:55:52 UTC (rev 1415)
+@@ -9,8 +9,8 @@
+ 	launcherDialog_glade.hh \
+ 	mainWindow_glade.hh \
+ 	mainWindow.hh \
+-	prefsDialog_glade.hh \
+-	prefsDialog.hh \
++	prefsWindow_glade.hh \
++	prefsWindow.hh \
+ 	propertiesDialog_glade.hh \
+ 	propertiesDialog.hh \
+ 	queryDialog_glade.hh \
+@@ -40,8 +40,8 @@
+ 	launcherDialog_glade.cc \
+ 	mainWindow_glade.cc \
+ 	mainWindow.cc \
+-	prefsDialog_glade.cc \
+-	prefsDialog.cc \
++	prefsWindow_glade.cc \
++	prefsWindow.cc \
+ 	propertiesDialog_glade.cc \
+ 	propertiesDialog.cc \
+ 	queryDialog_glade.cc \
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-11-19 13:24:34 UTC (rev 1414)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-11-19 13:55:52 UTC (rev 1415)
+@@ -47,7 +47,6 @@
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+-#include &quot;DBusIndex.h&quot;
+ #include &quot;ModuleFactory.h&quot;
+ #include &quot;WebEngine.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -1971,27 +1970,6 @@
+ 	}
+ }
+ 
+-StartDaemonThread::StartDaemonThread() :
+-	WorkerThread()
+-{
+-}
+-
+-StartDaemonThread::~StartDaemonThread()
+-{
+-}
+-
+-string StartDaemonThread::getType(void) const
+-{
+-	return &quot;StartDaemonThread&quot;;
+-}
+-
+-void StartDaemonThread::doWork(void)
+-{
+-	// Ask the daemon to reload its configuration
+-	// Let D-Bus activate the service if necessary
+-	DBusIndex::reload();
+-}
+-
+ MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 	bool checkHistory) :
+ 	WorkerThread(),
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-11-19 13:24:34 UTC (rev 1414)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-11-19 13:55:52 UTC (rev 1415)
+@@ -473,24 +473,6 @@
+ 
+ };
+ 
+-class StartDaemonThread : public WorkerThread
+-{
+-	public:
+-		// Start the daemon
+-		StartDaemonThread();
+-		virtual ~StartDaemonThread();
+-
+-		virtual std::string getType(void) const;
+-
+-	protected:
+-		virtual void doWork(void);
+-
+-	private:
+-		StartDaemonThread(const StartDaemonThread &amp;other);
+-		StartDaemonThread &amp;operator=(const StartDaemonThread &amp;other);
+-
+-};
+-
+ class MonitorThread : public WorkerThread
+ {
+ 	public:
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-11-19 13:24:34 UTC (rev 1414)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-11-19 13:55:52 UTC (rev 1415)
+@@ -53,7 +53,6 @@
+ #include &quot;indexDialog.hh&quot;
+ #include &quot;launcherDialog.hh&quot;
+ #include &quot;propertiesDialog.hh&quot;
+-#include &quot;prefsDialog.hh&quot;
+ #include &quot;queryDialog.hh&quot;
+ #include &quot;statisticsDialog.hh&quot;
+ 
+@@ -1722,12 +1721,6 @@
+ 			}
+ 		}
+ 	}
+-	else if (type == &quot;StartDaemonThread&quot;)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_thread_end: started daemon&quot; &lt;&lt; endl;
+-#endif
+-	}
+ 
+ 	// Delete the thread
+ 	delete pThread;;
+@@ -1827,30 +1820,10 @@
+ //
+ void mainWindow::on_configure_activate()
+ {
+-	prefsDialog prefsBox;
+-	prefsBox.show();
+-	if (prefsBox.run() != RESPONSE_OK)
+-	{
+-		return;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::on_configure_activate: settings changed&quot; &lt;&lt; endl;
+-#endif
++	MIMEAction prefsAction(&quot;pinot-prefs&quot;, &quot;pinot-prefs&quot;);
++	vector&lt;string&gt; arguments;
+ 
+-	// Is starting the daemon necessary ?
+-	if (prefsBox.startDaemon() == true)
+-	{
+-		start_thread(new StartDaemonThread());
+-	}
+-
+-	// Any labels to add, delete or rename ?
+-	const set&lt;string&gt; &amp;labelsToAdd = prefsBox.getLabelsToAdd();
+-	const set&lt;string&gt; &amp;labelsToDelete = prefsBox.getLabelsToDelete();
+-	if ((labelsToAdd.empty() == false) ||
+-		(labelsToDelete.empty() == false))
+-	{
+-		start_thread(new LabelUpdateThread(labelsToAdd, labelsToDelete));
+-	}
++	CommandLine::runAsync(prefsAction, arguments);
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2008-11-19 13:24:34 UTC (rev 1414)
++++ trunk/UI/GTK2/src/mainWindow.hh	2008-11-19 13:55:52 UTC (rev 1415)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2008-11-19 13:24:34 UTC (rev 1414)
++++ trunk/UI/GTK2/src/pinot.cc	2008-11-19 13:55:52 UTC (rev 1415)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -52,6 +52,7 @@
+ #include &quot;DownloaderInterface.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;mainWindow.hh&quot;
++#include &quot;prefsWindow.hh&quot;
+ 
+ using namespace std;
+ 
+@@ -60,6 +61,7 @@
+ static streambuf *g_cerrBuf = NULL;
+ static struct option g_longOptions[] = {
+ 	{&quot;help&quot;, 0, 0, 'h'},
++	{&quot;preferences&quot;, 0, 0, 'p'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
+@@ -108,10 +110,10 @@
+ 	Glib::ustring errorMsg;
+ 	struct sigaction newAction;
+ 	int longOptionIndex = 0;
+-	bool warnAboutVersion = false;
++	bool warnAboutVersion = false, prefsMode = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;hv&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;hpv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -122,9 +124,13 @@
+ 					&lt;&lt; &quot;Usage: pinot [OPTIONS]\n\n&quot;
+ 					&lt;&lt; &quot;Options:\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
++					&lt;&lt; &quot;  -p, --preferences		show preferences and exit\n&quot;
+ 					&lt;&lt; &quot;  -v, --version		output version information and exit\n&quot;
+ 					&lt;&lt; &quot;\nReport bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+ 				return EXIT_SUCCESS;
++			case 'p':
++				prefsMode = true;
++				break;
+ 			case 'v':
+ 				cout &lt;&lt; &quot;pinot - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot; 
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+@@ -136,9 +142,16 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;hv&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;hpv&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
++	string programName(argv[0]);
++	if ((programName.length() &gt;= 11) &amp;&amp;
++		(programName.substr(programName.length() - 11) == &quot;pinot-prefs&quot;))
++	{
++		prefsMode = true;
++	}
++
+ #if defined(ENABLE_NLS)
+ 	bindtextdomain(GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
+ 	bind_textdomain_codeset(GETTEXT_PACKAGE, &quot;UTF-8&quot;);
+@@ -158,7 +171,14 @@
+ 	dbus_g_thread_init();
+ 
+ 	Gtk::Main m(&amp;argc, &amp;argv);
+-	Glib::set_application_name(&quot;Pinot GTK2 UI&quot;);
++	if (prefsMode == false)
++	{
++		Glib::set_application_name(&quot;Pinot GTK2 UI&quot;);
++	}
++	else
++	{
++		Glib::set_application_name(&quot;Pinot Preferences&quot;);
++	}
+ 
+ 	// This should make Xapian use Flint rather than Quartz
+ 	Glib::setenv(&quot;XAPIAN_PREFER_FLINT&quot;, &quot;1&quot;);
+@@ -265,9 +285,9 @@
+ 	sigaction(SIGQUIT, &amp;newAction, NULL);
+ 	sigaction(SIGTERM, &amp;newAction, NULL);
+ 
+-	// Open this index read-write
++	// Open this index read-write, unless we are in preferences mode
+ 	bool wasObsoleteFormat = false;
+-	if (ModuleFactory::openOrCreateIndex(settings.m_defaultBackend, settings.m_docsIndexLocation, wasObsoleteFormat, false) == false)
++	if (ModuleFactory::openOrCreateIndex(settings.m_defaultBackend, settings.m_docsIndexLocation, wasObsoleteFormat, prefsMode) == false)
+ 	{
+ 		errorMsg = _(&quot;Couldn't open index&quot;);
+ 		errorMsg += &quot; &quot;;
+@@ -343,13 +363,21 @@
+ 		// Set an icon for all windows
+ 		Gtk::Window::set_default_icon_from_file(prefixDir + &quot;/share/icons/hicolor/48x48/apps/pinot.png&quot;);
+ 
+-		// Create and open the main dialog box
+-		mainWindow mainBox;
+-		if (errorMsg.empty() == false)
++		// Create and open the window
++		if (prefsMode == false)
++		{ 
++			mainWindow mainBox;
++			if (errorMsg.empty() == false)
++			{
++				mainBox.set_status(errorMsg);
++			}
++			m.run(mainBox);
++		}
++		else
+ 		{
+-			mainBox.set_status(errorMsg);
++			prefsWindow prefsBox;
++			m.run(prefsBox);
+ 		}
+-		m.run(mainBox);
+ 	}
+ 	catch (const Glib::Exception &amp;e)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001405.html">[Pinot-svn] r1414 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="001407.html">[Pinot-svn] r1416 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1406">[ date ]</a>
+              <a href="thread.html#1406">[ thread ]</a>
+              <a href="subject.html#1406">[ subject ]</a>
+              <a href="author.html#1406">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

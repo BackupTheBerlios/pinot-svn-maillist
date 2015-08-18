@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1412 - in trunk/IndexSearch: . Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1412%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200811161410.mAGEAAtY004205%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001402.html">
+   <LINK REL="Next"  HREF="001404.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1412 - in trunk/IndexSearch: . Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1412%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200811161410.mAGEAAtY004205%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1412 - in trunk/IndexSearch: . Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov 16 15:10:10 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001402.html">[Pinot-svn] r1411 - trunk/scripts/python
+</A></li>
+        <LI>Next message: <A HREF="001404.html">[Pinot-svn] r1413 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1403">[ date ]</a>
+              <a href="thread.html#1403">[ thread ]</a>
+              <a href="subject.html#1403">[ subject ]</a>
+              <a href="author.html#1403">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-16 15:09:49 +0100 (Sun, 16 Nov 2008)
+New Revision: 1412
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/pinot-search.cpp
+Log:
+Added a -l/--locationnly parameter to pinot-search that makes it display only
+the results' location.
+In XapianEngine, XPATH: shouldn't be a boolean prefix.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-11-15 07:24:39 UTC (rev 1411)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-11-16 14:09:49 UTC (rev 1412)
+@@ -593,7 +593,7 @@
+ 	parser.add_prefix(&quot;title&quot;, &quot;S&quot;);
+ 	parser.add_boolean_prefix(&quot;url&quot;, &quot;U&quot;);
+ 	parser.add_boolean_prefix(&quot;dir&quot;, &quot;XDIR:&quot;);
+-	parser.add_boolean_prefix(&quot;path&quot;, &quot;XPATH:&quot;);
++	parser.add_prefix(&quot;path&quot;, &quot;XPATH:&quot;);
+ 	parser.add_boolean_prefix(&quot;lang&quot;, &quot;L&quot;);
+ 	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
+ 	parser.add_boolean_prefix(&quot;class&quot;, &quot;XCLASS:&quot;);
+
+Modified: trunk/IndexSearch/pinot-search.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-search.cpp	2008-11-15 07:24:39 UTC (rev 1411)
++++ trunk/IndexSearch/pinot-search.cpp	2008-11-16 14:09:49 UTC (rev 1412)
+@@ -37,6 +37,7 @@
+ static struct option g_longOptions[] = {
+ 	{&quot;datefirst&quot;, 0, 0, 'd'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
++	{&quot;locationonly&quot;, 0, 0, 'l'},
+ 	{&quot;max&quot;, 1, 0, 'm'},
+ 	{&quot;proxyaddress&quot;, 1, 0, 'a'},
+ 	{&quot;proxyport&quot;, 1, 0, 'p'},
+@@ -92,6 +93,7 @@
+ 		&lt;&lt; &quot;Options:\n&quot;
+ 		&lt;&lt; &quot;  -d, --datefirst           sort by date then by relevance\n&quot;
+ 		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
++		&lt;&lt; &quot;  -l, --locationonly        only show the location of each result\n&quot;
+ 		&lt;&lt; &quot;  -m, --max                 maximum number of results (default 10)\n&quot;
+ 		&lt;&lt; &quot;  -a, --proxyaddress        proxy address\n&quot;
+ 		&lt;&lt; &quot;  -p, --proxyport           proxy port\n&quot;
+@@ -127,9 +129,10 @@
+ 	int longOptionIndex = 0;
+ 	bool printResults = true;
+ 	bool sortByDate = false;
++	bool locationOnly = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:dhm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;a:c:de:hlm:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -140,6 +143,13 @@
+ 					proxyAddress = optarg;
+ 				}
+ 				break;
++			case 'c':
++				if (optarg != NULL)
++				{
++					csvExport = optarg;
++					printResults = false;
++				}
++				break;
+ 			case 'd':
+ 				sortByDate = true;
+ 				break;
+@@ -149,16 +159,12 @@
+ 					editableParameter = optarg;
+ 				}
+ 				break;
+-			case 'c':
+-				if (optarg != NULL)
+-				{
+-					csvExport = optarg;
+-					printResults = false;
+-				}
+-				break;
+ 			case 'h':
+ 				printHelp();
+ 				return EXIT_SUCCESS;
++			case 'l':
++				locationOnly = true;
++				break;
+ 			case 'm':
+ 				if (optarg != NULL)
+ 				{
+@@ -207,7 +213,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:dhm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;a:c:de:hlm:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -328,25 +334,30 @@
+ 			{
+ 				unsigned int count = 0;
+ 
+-				cout &lt;&lt; &quot;Matching documents are :&quot; &lt;&lt; endl;
+-
+ 				vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+ 				while (resultIter != resultsList.end())
+ 				{
+ 					string rawUrl(resultIter-&gt;getLocation());
+ 
+-					cout &lt;&lt; count &lt;&lt; &quot; Location : '&quot; &lt;&lt; rawUrl &lt;&lt; &quot;'&quot;&lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Title    : &quot; &lt;&lt; resultIter-&gt;getTitle() &lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Type     : &quot; &lt;&lt; resultIter-&gt;getType() &lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Language : &quot; &lt;&lt; resultIter-&gt;getLanguage() &lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Date     : &quot; &lt;&lt; resultIter-&gt;getTimestamp() &lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Size     : &quot; &lt;&lt; resultIter-&gt;getSize() &lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Extract  : &quot; &lt;&lt; resultIter-&gt;getExtract() &lt;&lt; endl;
+-					cout &lt;&lt; count &lt;&lt; &quot; Score    : &quot; &lt;&lt; resultIter-&gt;getScore() &lt;&lt; endl;
+-					count++;
++					if (locationOnly == false)
++					{
++						cout &lt;&lt; count &lt;&lt; &quot; Location : '&quot; &lt;&lt; rawUrl &lt;&lt; &quot;'&quot;&lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Title    : &quot; &lt;&lt; resultIter-&gt;getTitle() &lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Type     : &quot; &lt;&lt; resultIter-&gt;getType() &lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Language : &quot; &lt;&lt; resultIter-&gt;getLanguage() &lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Date     : &quot; &lt;&lt; resultIter-&gt;getTimestamp() &lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Size     : &quot; &lt;&lt; resultIter-&gt;getSize() &lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Extract  : &quot; &lt;&lt; resultIter-&gt;getExtract() &lt;&lt; endl;
++						cout &lt;&lt; count &lt;&lt; &quot; Score    : &quot; &lt;&lt; resultIter-&gt;getScore() &lt;&lt; endl;
++					}
++					else
++					{
++						cout &lt;&lt; rawUrl &lt;&lt; endl;
++					}
++					++count;
+ 
+ 					// Next
+-					resultIter++;
++					++resultIter;
+ 				}
+ 			}
+ 			else
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001402.html">[Pinot-svn] r1411 - trunk/scripts/python
+</A></li>
+	<LI>Next message: <A HREF="001404.html">[Pinot-svn] r1413 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1403">[ date ]</a>
+              <a href="thread.html#1403">[ thread ]</a>
+              <a href="subject.html#1403">[ subject ]</a>
+              <a href="author.html#1403">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

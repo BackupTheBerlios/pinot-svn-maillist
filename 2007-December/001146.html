@@ -1,0 +1,234 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1152 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1152%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200712302216.lBUMGbPO008622%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001145.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1152 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1152%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200712302216.lBUMGbPO008622%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1152 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Dec 30 23:16:37 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001145.html">[Pinot-svn] r1151 - trunk/UI/GTK2/src
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1146">[ date ]</a>
+              <a href="thread.html#1146">[ thread ]</a>
+              <a href="subject.html#1146">[ subject ]</a>
+              <a href="author.html#1146">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-30 23:16:37 +0100 (Sun, 30 Dec 2007)
+New Revision: 1152
+
+Modified:
+   trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+Log:
+Fixed query stemming. We should have used STEM_SOME at least since moving to
+Xapian 1.0.
+Ignore spelling suggestions if the query returned results.
+Ignore prefixed terms when seeding the abstracts generator. The latter doesn't
+mind if there are no seed terms.
+Ignore stems in query expansion.
+
+
+Modified: trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2007-12-22 17:23:20 UTC (rev 1151)
++++ trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2007-12-30 22:16:37 UTC (rev 1152)
+@@ -71,8 +71,7 @@
+ 	unsigned int seedTermsCount = 0, bestWeight = 0;
+ 	bool topTerm = true;
+ 
+-	if ((m_pIndex == NULL) ||
+-		(seedTerms.empty() == true))
++	if (m_pIndex == NULL)
+ 	{
+ 		return &quot;&quot;;
+ 	}
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2007-12-22 17:23:20 UTC (rev 1151)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2007-12-30 22:16:37 UTC (rev 1152)
+@@ -179,10 +179,19 @@
+ 	unsigned int minDay, minMonth, minYear = 0;
+ 	unsigned int maxDay, maxMonth, maxYear = 0;
+ 
++	if (pIndex != NULL)
++	{
++		// The database is required for wildcards and spelling
++		parser.set_database(*pIndex);
++	}
++
+ 	// Set things up
+ 	if ((minimal == false) &amp;&amp;
+ 		(stemLanguage.empty() == false))
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; stemLanguage &lt;&lt; &quot; stemming&quot; &lt;&lt; endl;
++#endif
+ 		try
+ 		{
+ 			stemmer = Xapian::Stem(StringManip::toLowerCase(stemLanguage));
+@@ -191,11 +200,14 @@
+ 		{
+ 			cerr &lt;&lt; &quot;Couldn't create stemmer: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 		}
+-		parser.set_stemming_strategy(Xapian::QueryParser::STEM_ALL);
+ 		parser.set_stemmer(stemmer);
++		parser.set_stemming_strategy(Xapian::QueryParser::STEM_SOME);
+ 	}
+ 	else
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: no stemming&quot; &lt;&lt; endl;
++#endif
+ 		parser.set_stemming_strategy(Xapian::QueryParser::STEM_NONE);
+ 	}
+ 	// What's the default operator ?
+@@ -207,11 +219,6 @@
+ 	{
+ 		parser.set_default_op(Xapian::Query::OP_OR);
+ 	}
+-	if (pIndex != NULL)
+-	{
+-		// The database is required for wildcards and spelling
+-		parser.set_database(*pIndex);
+-	}
+ 	// X prefixes should always include a colon
+ 	parser.add_boolean_prefix(&quot;site&quot;, &quot;H&quot;);
+ 	parser.add_boolean_prefix(&quot;file&quot;, &quot;P&quot;);
+@@ -364,6 +371,9 @@
+ 	{
+ 		return parsedQuery;
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;XapianEngine::parseQuery: &quot; &lt;&lt; parsedQuery.get_description() &lt;&lt; endl;
++#endif
+ 
+ #if ENABLE_XAPIAN_SPELLING_CORRECTION&gt;0
+ 	// Any correction ?
+@@ -401,9 +411,6 @@
+ 		vector&lt;string&gt; seedTerms;
+ 
+ 		// Give the query object to the enquire session
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;XapianEngine::queryDatabase: enquiring about &quot; &lt;&lt; query.get_description() &lt;&lt; endl;
+-#endif
+ 		enquire.set_query(query);
+ 		// How should results be sorted ?
+ 		if (queryProps.getSortOrder() == QueryProperties::RELEVANCE)
+@@ -446,7 +453,15 @@
+ 				for (Xapian::TermIterator termIter = enquire.get_matching_terms_begin(docId);
+ 					termIter != enquire.get_matching_terms_end(docId); ++termIter)
+ 				{
+-					seedTerms.push_back(*termIter);
++					char firstChar = (*termIter)[0];
++
++					if (isupper(((int)firstChar)) == 0)
++					{
++						seedTerms.push_back(*termIter);
++#ifdef DEBUG
++						cout &lt;&lt; &quot;XapianEngine::queryDatabase: matched term &quot; &lt;&lt; *termIter &lt;&lt; endl;
++#endif
++					}
+ 				}
+ 
+ 				DocumentInfo thisResult;
+@@ -511,7 +526,7 @@
+ #endif
+ 
+ 			// Get 10 non-prefixed terms
+-			string allowedPrefixes(&quot;RSZ&quot;);
++			string allowedPrefixes(&quot;RS&quot;);
+ 			PrefixDecider expandDecider(allowedPrefixes);
+ 			Xapian::ESet expandTerms = enquire.get_eset(20, expandDocs, &amp;expandDecider);
+ #ifdef DEBUG
+@@ -634,7 +649,7 @@
+ 	Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 	try
+ 	{
+-		string stemLanguage(queryProps.getFilter(&quot;lang&quot;));
++		string stemLanguage(Languages::toEnglish(queryProps.getStemmingLanguage()));
+ 		unsigned int searchStep = 1;
+ 
+ 		// Searches are run in this order :
+@@ -650,19 +665,26 @@
+ 				break;
+ 			}
+ 
+-			// The search did succeed but didn't return anything
+-			if ((m_resultsList.empty() == true) &amp;&amp;
+-				(searchStep == 1) &amp;&amp;
+-				(stemLanguage.empty() == false))
++			if (m_resultsList.empty() == true)
+ 			{
++				// The search did succeed but didn't return anything
++				if ((searchStep == 1) &amp;&amp;
++					(stemLanguage.empty() == false))
++				{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;XapianEngine::runQuery: trying again with stemming&quot; &lt;&lt; endl;
++					cout &lt;&lt; &quot;XapianEngine::runQuery: trying again with stemming&quot; &lt;&lt; endl;
+ #endif
+-				fullQuery = parseQuery(pIndex, queryProps, Languages::toEnglish(stemLanguage),
+-					m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
+-				++searchStep;
+-				continue;
++					fullQuery = parseQuery(pIndex, queryProps, stemLanguage,
++						m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
++					++searchStep;
++					continue;
++				}
+ 			}
++			else
++			{
++				// We have results, don't bother about correcting the query
++				m_correctedFreeQuery.clear();
++			}
+ 
+ 			pDatabase-&gt;unlock();
+ 			return true;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001145.html">[Pinot-svn] r1151 - trunk/UI/GTK2/src
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1146">[ date ]</a>
+              <a href="thread.html#1146">[ thread ]</a>
+              <a href="subject.html#1146">[ subject ]</a>
+              <a href="author.html#1146">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

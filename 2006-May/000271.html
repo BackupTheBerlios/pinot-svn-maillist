@@ -1,0 +1,328 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r277 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r277%20-%20trunk/Utils&In-Reply-To=%3C200605301240.k4UCeDdH030025%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000270.html">
+   <LINK REL="Next"  HREF="000272.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r277 - trunk/Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r277%20-%20trunk/Utils&In-Reply-To=%3C200605301240.k4UCeDdH030025%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r277 - trunk/Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue May 30 14:40:13 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000270.html">[Pinot-svn] r276 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000272.html">[Pinot-svn] r278 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#271">[ date ]</a>
+              <a href="thread.html#271">[ thread ]</a>
+              <a href="subject.html#271">[ subject ]</a>
+              <a href="author.html#271">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-05-30 14:39:56 +0200 (Tue, 30 May 2006)
+New Revision: 277
+
+Removed:
+   trunk/Utils/HtmlDocument.cpp
+   trunk/Utils/HtmlDocument.h
+Modified:
+   trunk/Utils/Makefile.am
+   trunk/Utils/StringManip.cpp
+Log:
+HtmlDocument is no longer necessary. Fixed StringManip::removeCharacters() !
+
+
+Deleted: trunk/Utils/HtmlDocument.cpp
+===================================================================
+--- trunk/Utils/HtmlDocument.cpp	2006-05-30 12:38:39 UTC (rev 276)
++++ trunk/Utils/HtmlDocument.cpp	2006-05-30 12:39:56 UTC (rev 277)
+@@ -1,162 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;stdlib.h&gt;
+-#include &lt;string.h&gt;
+-#include &lt;sys/types.h&gt;
+-#include &lt;regex.h&gt;
+-#include &lt;ctype.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;utility&gt;
+-
+-#include &quot;HtmlDocument.h&quot;
+-#include &quot;StringManip.h&quot;
+-
+-using std::cout;
+-using std::endl;
+-using std::string;
+-using std::min;
+-
+-HtmlDocument::HtmlDocument(const DocumentInfo &amp;info) :
+-	Document(info)
+-{
+-}
+-
+-HtmlDocument::HtmlDocument(const HtmlDocument &amp;other) :
+-	Document(other)
+-{
+-}
+-
+-HtmlDocument::~HtmlDocument()
+-{
+-}
+-
+-void HtmlDocument::parseHead(void)
+-{
+-	char *pBodyStart = strstr(m_pData, &quot;&lt;body&quot;);
+-	if (pBodyStart == NULL)
+-	{
+-		pBodyStart = strstr(m_pData, &quot;&lt;BODY&quot;);
+-	}
+-	if (pBodyStart != NULL)
+-	{
+-		string htmlHead(m_pData, pBodyStart - m_pData);
+-		regex_t titleRegex, httpEquivRegex;
+-		regmatch_t pTitleMatches[3];
+-		regmatch_t pHttpEquivMatches[3];
+-		int titleMatches = 3, httpEquivMatches = 3;
+-
+-		// Look for a title
+-		if (regcomp(&amp;titleRegex, &quot;&lt;title([^&gt;]*)&gt;([^&lt;&gt;]*)&lt;/title&quot;, REG_EXTENDED|REG_ICASE) == 0)
+-		{
+-			if ((regexec(&amp;titleRegex, htmlHead.c_str(), titleMatches,
+-					pTitleMatches, REG_NOTBOL|REG_NOTEOL) == 0) &amp;&amp;
+-				(pTitleMatches[titleMatches - 1].rm_so != -1))
+-			{
+-				string title = htmlHead.substr(pTitleMatches[2].rm_so,
+-					pTitleMatches[2].rm_eo - pTitleMatches[2].rm_so);
+-
+-				if (title.empty() == false)
+-				{
+-					// Override the title
+-					m_title = title;
+-				}
+-			}
+-		}
+-		// ...and a Content-Type
+-		if (regcomp(&amp;httpEquivRegex, &quot;&lt;meta http-equiv=([^&gt;]*) content=([^&gt;]*)&gt;&quot;, REG_EXTENDED|REG_ICASE) == 0)
+-		{
+-			if ((regexec(&amp;httpEquivRegex, htmlHead.c_str(), httpEquivMatches,
+-					pHttpEquivMatches, REG_NOTBOL|REG_NOTEOL) == 0) &amp;&amp;
+-				(pHttpEquivMatches[httpEquivMatches - 1].rm_so != -1))
+-			{
+-				string name = StringManip::removeQuotes(
+-					htmlHead.substr(pHttpEquivMatches[1].rm_so,
+-					pHttpEquivMatches[1].rm_eo - pHttpEquivMatches[1].rm_so));
+-				string content = StringManip::removeQuotes(
+-					htmlHead.substr(pHttpEquivMatches[2].rm_so,
+-					pHttpEquivMatches[2].rm_eo - pHttpEquivMatches[2].rm_so));
+-
+-				if ((content.empty() == false) &amp;&amp;
+-					(strncasecmp(name.c_str(), &quot;Content-Type&quot;,
+-						min((int)name.length(), 12)) == 0))
+-				{
+-					// Override the type
+-					m_type = content;
+-				}
+-			}
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;HtmlDocument::parseHead: extracted title &quot; &lt;&lt; m_title &lt;&lt;
+-			&quot;, type &quot; &lt;&lt; m_type &lt;&lt; endl;
+-#endif
+-
+-		regfree(&amp;titleRegex);
+-		regfree(&amp;httpEquivRegex);
+-	}
+-}
+-
+-/// Copies the given data in the document.
+-bool HtmlDocument::setData(const char *data, unsigned int length)
+-{
+-	if ((data == NULL) ||
+-		(length == 0))
+-	{
+-		return false;
+-	}
+-
+-	// Discard existing data
+-	freeData();
+-
+-	// FIXME: there must be a way of getting rid of this
+-	m_pData = (char *)calloc(length + 1, sizeof(char));
+-	if (m_pData != NULL)
+-	{
+-		// Removing non-printable characters, as found in pages from alltheweb sometimes
+-		// They prevent us from using strstr() and mess up the regexps
+-		for (unsigned int i = 0; i &lt; length; ++i)
+-		{
+-			if (isprint(data[i]) == 0)
+-			{
+-				m_pData[i] = ' ';
+-			}
+-			else
+-			{
+-				m_pData[i] = data[i];
+-			}
+-		}
+-		m_dataLength = length;
+-
+-		parseHead();
+-
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-/// Maps the given file.
+-bool HtmlDocument::setDataFromFile(const string &amp;fileName)
+-{
+-	if (Document::setDataFromFile(fileName) == true)
+-	{
+-		parseHead();
+-
+-		return true;
+-	}
+-
+-	return false;
+-}
+
+Deleted: trunk/Utils/HtmlDocument.h
+===================================================================
+--- trunk/Utils/HtmlDocument.h	2006-05-30 12:38:39 UTC (rev 276)
++++ trunk/Utils/HtmlDocument.h	2006-05-30 12:39:56 UTC (rev 277)
+@@ -1,42 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _HTML_DOCUMENT_H
+-#define _HTML_DOCUMENT_H
+-
+-#include &lt;string&gt;
+-
+-#include &quot;Document.h&quot;
+-
+-class HtmlDocument : public Document
+-{
+-	public:
+-		HtmlDocument(const DocumentInfo &amp;info);
+-		HtmlDocument(const HtmlDocument &amp;other);
+-		virtual ~HtmlDocument();
+-
+-		/// Copies the given data in the document.
+-		virtual bool setData(const char *data, unsigned int length);
+-
+-		/// Maps the given file.
+-		virtual bool setDataFromFile(const std::string &amp;fileName);
+-
+-	protected:
+-		void parseHead(void);
+-
+-};
+-	
+-#endif // _HTML_DOCUMENT_H
+
+Modified: trunk/Utils/Makefile.am
+===================================================================
+--- trunk/Utils/Makefile.am	2006-05-30 12:38:39 UTC (rev 276)
++++ trunk/Utils/Makefile.am	2006-05-30 12:39:56 UTC (rev 277)
+@@ -2,7 +2,6 @@
+ 
+ noinst_HEADERS = \
+ 	Document.h \
+-	HtmlDocument.h \
+ 	Languages.h \
+ 	MIMEScanner.h \
+ 	NLS.h \
+@@ -28,7 +27,6 @@
+ 
+ libUtils_la_SOURCES = \
+ 	Document.cpp \
+-	HtmlDocument.cpp \
+ 	Languages.cpp \
+ 	MIMEScanner.cpp \
+ 	StringManip.cpp \
+
+Modified: trunk/Utils/StringManip.cpp
+===================================================================
+--- trunk/Utils/StringManip.cpp	2006-05-30 12:38:39 UTC (rev 276)
++++ trunk/Utils/StringManip.cpp	2006-05-30 12:39:56 UTC (rev 277)
+@@ -187,7 +187,9 @@
+ 	while (charPos != string::npos)
+ 	{
+ 		str.erase(charPos, 1);
+-		charPos = str.find_first_of(characters.c_str(), charPos - 1);
++		++count;
++
++		charPos = str.find_first_of(characters.c_str(), charPos);
+ 	}
+ 
+ 	return count;	
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000270.html">[Pinot-svn] r276 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000272.html">[Pinot-svn] r278 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#271">[ date ]</a>
+              <a href="thread.html#271">[ thread ]</a>
+              <a href="subject.html#271">[ subject ]</a>
+              <a href="author.html#271">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

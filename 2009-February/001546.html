@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1556 - in trunk: Core Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1556%20-%20in%20trunk%3A%20Core%20Utils&In-Reply-To=%3C200902150222.n1F2MHGp016120%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001545.html">
+   <LINK REL="Next"  HREF="001547.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1556 - in trunk: Core Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1556%20-%20in%20trunk%3A%20Core%20Utils&In-Reply-To=%3C200902150222.n1F2MHGp016120%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1556 - in trunk: Core Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Feb 15 03:22:17 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001545.html">[Pinot-svn] r1555 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001547.html">[Pinot-svn] r1557 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1546">[ date ]</a>
+              <a href="thread.html#1546">[ thread ]</a>
+              <a href="subject.html#1546">[ subject ]</a>
+              <a href="author.html#1546">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-15 03:22:11 +0100 (Sun, 15 Feb 2009)
+New Revision: 1556
+
+Modified:
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/WorkerThreads.cpp
+   trunk/Utils/TimeConverter.cpp
+Log:
+Fixed some memory leaks :
+- when converting to a timestamp (struct tm)
+- when reapplying user-set metadata (Index)
+- when skipping the download of local files (Document)
+
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-02-14 02:39:19 UTC (rev 1555)
++++ trunk/Core/ServerThreads.cpp	2009-02-15 02:22:11 UTC (rev 1556)
+@@ -363,9 +363,13 @@
+ 		scanTimer.start();
+ 
+ 		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++		if (pIndex == NULL)
++		{
++			return;
++		}
++
+ 		// Restore user-set metadata, if any
+-		while ((pIndex != NULL) &amp;&amp;
+-			(pIndex-&gt;isGood() == true) &amp;&amp;
++		while ((pIndex-&gt;isGood() == true) &amp;&amp;
+ 			(metaData.getItems(string(&quot;<A HREF="file://">file://</A>&quot;) + m_dirName, urls,
+ 				currentOffset, currentOffset + 100) == true))
+ 		{
+@@ -395,6 +399,8 @@
+ 		}
+ 		cout &lt;&lt; &quot;Restored user-set metadata for &quot; &lt;&lt; currentOffset + urls.size()
+ 			&lt;&lt; &quot; documents in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++
++		delete pIndex;
+ 	}
+ }
+ 
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2009-02-14 02:39:19 UTC (rev 1555)
++++ trunk/Core/WorkerThreads.cpp	2009-02-15 02:22:11 UTC (rev 1556)
+@@ -1394,6 +1394,11 @@
+ 	}
+ 	else
+ 	{
++		if (m_pDoc != NULL)
++		{
++			delete m_pDoc;
++			m_pDoc = NULL;
++		}
+ 		m_pDoc = new Document(m_docInfo);
+ 
+ 		m_pDoc-&gt;setTimestamp(m_docInfo.getTimestamp());
+
+Modified: trunk/Utils/TimeConverter.cpp
+===================================================================
+--- trunk/Utils/TimeConverter.cpp	2009-02-14 02:39:19 UTC (rev 1555)
++++ trunk/Utils/TimeConverter.cpp	2009-02-15 02:22:11 UTC (rev 1556)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -146,6 +146,8 @@
+ 		if (strftime(timeStr, 64, &quot;%a, %d %b %Y %H:%M:%S %Z&quot;, pTimeTm) &gt; 0)
+ #endif
+ 		{
++			delete pTimeTm;
++
+ 			return timeStr;
+ 		}
+ 	}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001545.html">[Pinot-svn] r1555 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001547.html">[Pinot-svn] r1557 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1546">[ date ]</a>
+              <a href="thread.html#1546">[ thread ]</a>
+              <a href="subject.html#1546">[ subject ]</a>
+              <a href="author.html#1546">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

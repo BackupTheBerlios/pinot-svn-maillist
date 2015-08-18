@@ -1,0 +1,221 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1485 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1485%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901121458.n0CEwOaQ029043%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001474.html">
+   <LINK REL="Next"  HREF="001476.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1485 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1485%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200901121458.n0CEwOaQ029043%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1485 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 12 15:58:24 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001474.html">[Pinot-svn] r1484 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001476.html">[Pinot-svn] r1486 - trunk/IndexSearch/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1475">[ date ]</a>
+              <a href="thread.html#1475">[ thread ]</a>
+              <a href="subject.html#1475">[ subject ]</a>
+              <a href="author.html#1475">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-12 15:58:17 +0100 (Mon, 12 Jan 2009)
+New Revision: 1485
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+More conversion fixes.
+In ResultsTree::deleteResults(), make sure the &quot;No results&quot; row is deleted, if
+present.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2009-01-12 14:56:38 UTC (rev 1484)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2009-01-12 14:58:17 UTC (rev 1485)
+@@ -546,6 +546,7 @@
+ 	{
+ 		ustring title(to_utf8(resultIter-&gt;getTitle(), charset));
+ 		ustring location(to_utf8(resultIter-&gt;getLocation(), charset));
++		ustring timestamp(to_utf8(resultIter-&gt;getTimestamp()));
+ 		ustring extract(to_utf8(resultIter-&gt;getExtract(), charset));
+ 		string groupName;
+ 		TreeModel::iterator groupIter;
+@@ -615,7 +616,7 @@
+ 		// OK, add a row for this result within the group
+ 		TreeModel::iterator titleIter;
+ 		if (appendResult(title, location, (int)currentScore, rankDiff, isIndexed, wasViewed,
+-			docId, resultIter-&gt;getTimestamp(), resultIter-&gt;serialize(),
++			docId, timestamp, resultIter-&gt;serialize(),
+ 			engineId, indexId, titleIter, groupIter, true) == true)
+ 		{
+ #ifdef DEBUG
+@@ -1034,10 +1035,11 @@
+ 
+ 		if (docId == row[m_resultsColumns.m_docId])
+ 		{
++			// FIXME: title, location should be converted based on the result's charset !
+ 			updateRow(row, result.getTitle(), result.getLocation(),
+ 				row[m_resultsColumns.m_score], row[m_resultsColumns.m_engines],
+ 				row[m_resultsColumns.m_indexes], docId,
+-				result.getTimestamp(), result.serialize(),
++				to_utf8(result.getTimestamp()), result.serialize(),
+ 				ResultsModelColumns::ROW_RESULT,
+ 				row[m_resultsColumns.m_indexed], row[m_resultsColumns.m_viewed],
+ 				row[m_resultsColumns.m_rankDiff]);
+@@ -1151,9 +1153,10 @@
+ 			row = *iter;
+ 
+ 			type = row[m_resultsColumns.m_resultType];
+-			if ((type == ResultsModelColumns::ROW_RESULT) &amp;&amp;
++			if (((type == ResultsModelColumns::ROW_RESULT) &amp;&amp;
+ 				(row[m_resultsColumns.m_engines] == engineId) &amp;&amp;
+-				(row[m_resultsColumns.m_indexes] == indexId))
++				(row[m_resultsColumns.m_indexes] == indexId)) ||
++				(type == ResultsModelColumns::ROW_OTHER))
+ 			{
+ 				TreeModel::Children::iterator nextIter = iter;
+ 				++nextIter;
+@@ -1490,7 +1493,7 @@
+ 		TreeModel::Row groupRow = *groupIter;
+ 		updateRow(groupRow, groupName,
+ 			&quot;&quot;, 0, 0, 0, 0, &quot;&quot;, &quot;&quot;, groupType,
+-			false, false, false);
++			false, false, 0);
+ 
+ 		// Update the map
+ 		m_resultsGroups[groupName] = groupIter;
+@@ -1547,9 +1550,8 @@
+ 		TreeModel::iterator childIter = m_refStore-&gt;append(groupRow.children());
+ 		TreeModel::Row childRow = *childIter;
+ 
+-		updateRow(childRow, _(&quot;No results&quot;), &quot;&quot;, 0, 0, 0,
+-			0, TimeConverter::toTimestamp(time(NULL)), &quot;&quot;, ResultsModelColumns::ROW_OTHER,
+-			false, false, 0);
++		updateRow(childRow, _(&quot;No results&quot;), &quot;&quot;, 0, 0, 0, 0,
++			&quot;&quot;, &quot;&quot;, ResultsModelColumns::ROW_OTHER, false, false, 0);
+ 	}
+ 	groupRow[m_resultsColumns.m_score] = averageScore;
+ 
+@@ -1581,8 +1583,8 @@
+ 		row[m_resultsColumns.m_indexes] = indexId;
+ 		row[m_resultsColumns.m_docId] = docId;
+ 		row[m_resultsColumns.m_resultType] = resultType;
+-		row[m_resultsColumns.m_timestamp] = to_utf8(timestamp);
+-		row[m_resultsColumns.m_timestampTime] = TimeConverter::fromTimestamp(timestamp);
++		row[m_resultsColumns.m_timestamp] = timestamp;
++		row[m_resultsColumns.m_timestampTime] = TimeConverter::fromTimestamp(from_utf8(timestamp));
+ 		row[m_resultsColumns.m_serial] = serial;
+ 
+ 		row[m_resultsColumns.m_indexed] = indexed;
+@@ -1648,7 +1650,7 @@
+ 			if (extract.empty() == false)
+ 			{
+ 				// Stop here
+-				return extract;
++				return to_utf8(extract);
+ 			}
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2009-01-12 14:56:38 UTC (rev 1484)
++++ trunk/UI/GTK2/src/mainWindow.cc	2009-01-12 14:58:17 UTC (rev 1485)
+@@ -2393,7 +2393,7 @@
+ {
+ 	vector&lt;DocumentInfo&gt; documentsList;
+ 	set&lt;unsigned int&gt; docIds;
+-	string indexName, queryName;
++	string indexName;
+ 	int width, height;
+ 	bool docsIndex = false, daemonIndex = false;
+ 
+@@ -2404,8 +2404,7 @@
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+-		indexName = from_utf8(pIndexPage-&gt;getTitle());
+-		queryName = from_utf8(pIndexPage-&gt;getQueryName());
++		indexName = pIndexPage-&gt;getTitle();
+ 		pResultsTree = pIndexPage-&gt;getTree();
+ 	}
+ 
+@@ -3374,7 +3373,7 @@
+ 	// Spawn a new thread to browse the index
+ 	if (queryName.empty() == true)
+ 	{
+-		start_thread(new IndexBrowserThread(from_utf8(indexName), m_maxDocsCount, startDoc));
++		start_thread(new IndexBrowserThread(indexName, m_maxDocsCount, startDoc));
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2009-01-12 14:56:38 UTC (rev 1484)
++++ trunk/UI/GTK2/src/pinot.cc	2009-01-12 14:58:17 UTC (rev 1485)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -153,10 +153,7 @@
+ #endif //ENABLE_NLS
+ 
+ 	// Initialize threads support before doing anything else
+-	if (Glib::thread_supported() == false)
+-	{
+-		Glib::thread_init();
+-	}
++	Glib::thread_init();
+ 	// Initialize the GType and the D-Bus thread system
+ 	g_type_init();
+ #ifdef HAVE_DBUS
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001474.html">[Pinot-svn] r1484 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001476.html">[Pinot-svn] r1486 - trunk/IndexSearch/Plugins
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1475">[ date ]</a>
+              <a href="thread.html#1475">[ thread ]</a>
+              <a href="subject.html#1475">[ subject ]</a>
+              <a href="author.html#1475">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

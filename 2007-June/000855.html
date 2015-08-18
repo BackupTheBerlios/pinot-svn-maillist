@@ -1,0 +1,431 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r861 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r861%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200706211139.l5LBdM2Q023433%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000854.html">
+   <LINK REL="Next"  HREF="000856.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r861 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r861%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200706211139.l5LBdM2Q023433%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r861 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 21 13:39:22 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000854.html">[Pinot-svn] r860 - in trunk/Search: . Google
+</A></li>
+        <LI>Next message: <A HREF="000856.html">[Pinot-svn] r862 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#855">[ date ]</a>
+              <a href="thread.html#855">[ thread ]</a>
+              <a href="subject.html#855">[ subject ]</a>
+              <a href="author.html#855">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-06-21 13:39:20 +0200 (Thu, 21 Jun 2007)
+New Revision: 861
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Location of history database is obtained with a getter to allow the daemon to
+have its own.
+If it doesn't exist at startup, a copy of the client's is made. 
+The daemon has a --fullscan parameter that forces full scans.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-06-19 14:09:58 UTC (rev 860)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-06-21 11:39:20 UTC (rev 861)
+@@ -34,6 +34,7 @@
+ #include &lt;libxml++/nodes/textnode.h&gt;
+ 
+ #include &quot;config.h&quot;
++#include &quot;CommandLine.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;StringManip.h&quot;
+@@ -86,7 +87,7 @@
+ }
+ 
+ PinotSettings PinotSettings::m_instance;
+-bool PinotSettings::m_enableDBus = false;
++bool PinotSettings::m_clientMode = false;
+ 
+ PinotSettings::PinotSettings() :
+ 	m_xPos(0),
+@@ -105,9 +106,10 @@
+ 	m_proxyEnabled(false),
+ 	m_firstRun(false)
+ {
++	string directoryName(getConfigurationDirectory());
++	struct stat fileStat;
++
+ 	// Find out if there is a .pinot directory
+-	struct stat fileStat;
+-	string directoryName = getConfigurationDirectory();
+ 	if (stat(directoryName.c_str(), &amp;fileStat) != 0)
+ 	{
+ 		// No, create it then
+@@ -127,10 +129,6 @@
+ 	m_docsIndexLocation += &quot;/index&quot;;
+ 	m_daemonIndexLocation = directoryName;
+ 	m_daemonIndexLocation += &quot;/daemon&quot;;
+-
+-	// The location of the history database is not configurable
+-	m_historyDatabase = directoryName;
+-	m_historyDatabase += &quot;/history&quot;;
+ }
+ 
+ PinotSettings::~PinotSettings()
+@@ -142,11 +140,11 @@
+ 	return m_instance;
+ }
+ 
+-bool PinotSettings::enableDBus(bool enable)
++bool PinotSettings::enableClientMode(bool enable)
+ {
+-	bool isEnabled = m_enableDBus;
++	bool isEnabled = m_clientMode;
+ 
+-	m_enableDBus = enable;
++	m_clientMode = enable;
+ 
+ 	return isEnabled;
+ }
+@@ -199,6 +197,47 @@
+ 	return &quot;&quot;;
+ }
+ 
++void PinotSettings::checkHistoryDatabase(void)
++{
++	string uiHistoryDatabase(getConfigurationDirectory());
++	string daemonHistoryDatabase(getConfigurationDirectory());
++	struct stat fileStat;
++
++	// We only need to copy the UI's over to the daemon's history if it doesn't exist
++	uiHistoryDatabase += &quot;/history&quot;;
++	daemonHistoryDatabase += &quot;/history-daemon&quot;;
++	if ((stat(daemonHistoryDatabase.c_str(), &amp;fileStat) != 0) ||
++		(!S_ISREG(fileStat.st_mode)))
++	{
++		string output;
++
++		CommandLine::runSync(string(&quot;\\cp -f &quot;) + uiHistoryDatabase + &quot; &quot; + daemonHistoryDatabase, output);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;PinotSettings::checkHistoryDatabase: &quot; &lt;&lt; output &lt;&lt; endl;
++#endif
++	}
++}
++
++string PinotSettings::getHistoryDatabaseName(bool needToQueryDaemonHistory)
++{
++	string historyDatabase(getConfigurationDirectory());
++
++	if ((m_clientMode == false) ||
++		(needToQueryDaemonHistory == true))
++	{
++		historyDatabase += &quot;/history-daemon&quot;;
++	}
++	else
++	{
++		historyDatabase += &quot;/history&quot;;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;PinotSettings::getHistoryDatabaseName: &quot; &lt;&lt; historyDatabase &lt;&lt; endl;
++#endif
++
++	return historyDatabase;
++}
++
+ bool PinotSettings::isFirstRun(void) const
+ {
+ 	return m_firstRun;
+@@ -254,16 +293,21 @@
+ 		m_filePatternsBlackList.insert(&quot;*.avi&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.asf&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.gif&quot;);
++		m_filePatternsBlackList.insert(&quot;*.iso&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.jpeg&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.jpg&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.png&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.lha&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.mov&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.msf&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.mpeg&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.mpg&quot;);
++		m_filePatternsBlackList.insert(&quot;*.png&quot;);
++		m_filePatternsBlackList.insert(&quot;*.rar&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.sh&quot;);
++		m_filePatternsBlackList.insert(&quot;*.tiff&quot;);
+ 		m_filePatternsBlackList.insert(&quot;*.wmv&quot;);
++		m_filePatternsBlackList.insert(&quot;*.xbm&quot;);
++		m_filePatternsBlackList.insert(&quot;*.xpm&quot;);
+ 	}
+ 
+ 	// Some search engines are hardcoded
+@@ -1453,7 +1497,7 @@
+ 	{
+ 		return IndexFactory::getIndex(&quot;xapian&quot;, m_docsIndexLocation);
+ 	}
+-	else if ((m_enableDBus == true) &amp;&amp;
++	else if ((m_clientMode == true) &amp;&amp;
+ 		(location == m_daemonIndexLocation))
+ 	{
+ 		return IndexFactory::getIndex(&quot;dbus&quot;, m_daemonIndexLocation);
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2007-06-19 14:09:58 UTC (rev 860)
++++ trunk/UI/GTK2/src/PinotSettings.h	2007-06-21 11:39:20 UTC (rev 861)
+@@ -38,7 +38,7 @@
+ 
+ 		static PinotSettings &amp;getInstance(void);
+ 
+-		static bool enableDBus(bool enable);
++		static bool enableClientMode(bool enable);
+ 
+ 		static std::string getConfigurationDirectory(void);
+ 
+@@ -46,6 +46,10 @@
+ 
+ 		static std::string getCurrentUserName(void);
+ 
++		static void checkHistoryDatabase(void);
++
++		static std::string getHistoryDatabaseName(bool needToQueryDaemonHistory = false);
++
+ 		bool isFirstRun(void) const;
+ 
+ 		void clear(void);
+@@ -190,7 +194,6 @@
+ 		Glib::ustring m_googleAPIKey;
+ 		Glib::ustring m_docsIndexLocation;
+ 		Glib::ustring m_daemonIndexLocation;
+-		Glib::ustring m_historyDatabase;
+ 		int m_xPos;
+ 		int m_yPos;
+ 		int m_width;
+@@ -215,7 +218,7 @@
+ 
+ 	protected:
+ 		static PinotSettings m_instance;
+-		static bool m_enableDBus;
++		static bool m_clientMode;
+ 		bool m_firstRun;
+ 		std::map&lt;std::string, std::string&gt; m_indexNames;
+ 		std::map&lt;unsigned int, std::string&gt; m_indexIds;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-06-19 14:09:58 UTC (rev 860)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-06-21 11:39:20 UTC (rev 861)
+@@ -59,6 +59,7 @@
+ static streambuf *g_coutBuf = NULL;
+ static streambuf *g_cerrBuf = NULL;
+ static struct option g_longOptions[] = {
++	{&quot;fullscan&quot;, 1, 0, 'f'},
+ 	{&quot;help&quot;, 0, 0, 'h'},
+ 	{&quot;priority&quot;, 1, 0, 'p'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+@@ -173,18 +174,23 @@
+ 	int longOptionIndex = 0, priority = 15;
+ 	bool overwriteIndex = false;
+ 	bool upgradeIndex = false;
++	bool fullScan = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;hpv&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;fhp:v&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+ 		{
++			case 'f':
++				fullScan = true;
++				break;
+ 			case 'h':
+ 				// Help
+ 				cout &lt;&lt; &quot;pinot-dbus-daemon - D-Bus search and index daemon\n\n&quot;
+ 					&lt;&lt; &quot;Usage: pinot-dbus-daemon [OPTIONS]\n\n&quot;
+ 					&lt;&lt; &quot;Options:\n&quot;
++					&lt;&lt; &quot;  -f, --fullscan		force a full scan\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+ 					&lt;&lt; &quot;  -p, --priority	set the daemon's priority (default 15)\n&quot;
+ 					&lt;&lt; &quot;  -v, --version		output version information and exit\n&quot;
+@@ -212,7 +218,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;hpv&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;fhp:v&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ #if defined(ENABLE_NLS)
+@@ -267,8 +273,8 @@
+ 
+ 	// This will create the necessary directories on the first run
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+-	// This is the daemon so disable DBus client
+-	settings.enableDBus(false);
++	// This is the daemon so disable client-side code 
++	settings.enableClientMode(false);
+ 
+ 	string confDirectory = PinotSettings::getConfigurationDirectory();
+ 	if (chdir(confDirectory.c_str()) == 0)
+@@ -336,27 +342,28 @@
+ 	upgradeIndex = pDb-&gt;wasObsoleteFormat();
+ 
+ 	// Do the same for the history database
+-	if ((settings.m_historyDatabase.empty() == true) ||
+-		(ActionQueue::create(settings.m_historyDatabase) == false) ||
+-		(CrawlHistory::create(settings.m_historyDatabase) == false) ||
+-		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+-		(ViewHistory::create(settings.m_historyDatabase) == false))
++	PinotSettings::checkHistoryDatabase();
++	string historyDatabase(settings.getHistoryDatabaseName());
++	if ((historyDatabase.empty() == true) ||
++		(ActionQueue::create(historyDatabase) == false) ||
++		(CrawlHistory::create(historyDatabase) == false) ||
++		(QueryHistory::create(historyDatabase) == false) ||
++		(ViewHistory::create(historyDatabase) == false))
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't create history database &quot; &lt;&lt; settings.m_historyDatabase &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't create history database &quot; &lt;&lt; historyDatabase &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
+ 	else
+ 	{
+-		ActionQueue actionQueue(settings.m_historyDatabase, Glib::get_application_name());
+-		QueryHistory queryHistory(settings.m_historyDatabase);
+-		ViewHistory viewHistory(settings.m_historyDatabase);
++		ActionQueue actionQueue(historyDatabase, Glib::get_application_name());
++		QueryHistory queryHistory(historyDatabase);
++		ViewHistory viewHistory(historyDatabase);
+ 		time_t timeNow = time(NULL);
+ 
+ 		// Expire all actions left from last time
+ 		actionQueue.expireItems(timeNow);
+-		// Expire items older than a month
+-		queryHistory.expireItems(timeNow - 2592000);
+-		viewHistory.expireItems(timeNow - 2592000);
++		queryHistory.expireItems(timeNow);
++		viewHistory.expireItems(timeNow);
+ 	}
+ 
+ 	atexit(closeAll);
+@@ -366,6 +373,9 @@
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't set scheduling priority to &quot; &lt;&lt; priority &lt;&lt; endl;
+ 	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;Set priority to &quot; &lt;&lt; priority &lt;&lt; endl;
++#endif
+ 
+ 	// What version of the daemon is this ?
+ 	double daemonVersion = atof(VERSION);
+@@ -440,7 +450,7 @@
+ 
+ 			if (upgradeIndex == true)
+ 			{
+-				CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++				CrawlHistory history(historyDatabase);
+ 				map&lt;unsigned int, string&gt; sources;
+ 
+ 				// Reset the history
+@@ -453,7 +463,7 @@
+ 				}
+ 			}
+ 
+-			server.start();
++			server.start(fullScan);
+ 
+ 			// Run the main loop
+ 			g_refMainLoop-&gt;run();
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-06-19 14:09:58 UTC (rev 860)
++++ trunk/UI/GTK2/src/pinot.cc	2007-06-21 11:39:20 UTC (rev 861)
+@@ -208,7 +208,7 @@
+ 	// This will create the necessary directories on the first run
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+ 	// Talk to the daemon through DBus
+-	settings.enableDBus(true);
++	settings.enableClientMode(true);
+ 
+ 	string confDirectory = PinotSettings::getConfigurationDirectory();
+ 	if (chdir(confDirectory.c_str()) == 0)
+@@ -279,20 +279,21 @@
+ 	XapianDatabaseFactory::mergeDatabases(&quot;MERGED&quot;, pFirstDb, pSecondDb);
+ 
+ 	// Do the same for the history database
+-	if ((settings.m_historyDatabase.empty() == true) ||
+-		(ActionQueue::create(settings.m_historyDatabase) == false) ||
+-		(QueryHistory::create(settings.m_historyDatabase) == false) ||
+-		(ViewHistory::create(settings.m_historyDatabase) == false))
++	string historyDatabase(settings.getHistoryDatabaseName());
++	if ((historyDatabase.empty() == true) ||
++		(ActionQueue::create(historyDatabase) == false) ||
++		(QueryHistory::create(historyDatabase) == false) ||
++		(ViewHistory::create(historyDatabase) == false))
+ 	{
+ 		errorMsg = _(&quot;Couldn't create history database&quot;);
+ 		errorMsg += &quot; &quot;;
+-		errorMsg += settings.m_historyDatabase;
++		errorMsg += historyDatabase;
+ 	}
+ 	else
+ 	{
+-		ActionQueue actionQueue(settings.m_historyDatabase, Glib::get_prgname());
+-		QueryHistory queryHistory(settings.m_historyDatabase);
+-		ViewHistory viewHistory(settings.m_historyDatabase);
++		ActionQueue actionQueue(historyDatabase, Glib::get_prgname());
++		QueryHistory queryHistory(historyDatabase);
++		ViewHistory viewHistory(historyDatabase);
+ 		time_t timeNow = time(NULL);
+ 
+ 		// Expire all actions left from last time
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000854.html">[Pinot-svn] r860 - in trunk/Search: . Google
+</A></li>
+	<LI>Next message: <A HREF="000856.html">[Pinot-svn] r862 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#855">[ date ]</a>
+              <a href="thread.html#855">[ thread ]</a>
+              <a href="subject.html#855">[ subject ]</a>
+              <a href="author.html#855">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

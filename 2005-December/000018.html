@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r19 - in trunk: Collect UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r19%20-%20in%20trunk%3A%20Collect%20UI/GTK2/src&In-Reply-To=%3C200512171101.jBHB1iL6030005%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000017.html">
+   <LINK REL="Next"  HREF="000019.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r19 - in trunk: Collect UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r19%20-%20in%20trunk%3A%20Collect%20UI/GTK2/src&In-Reply-To=%3C200512171101.jBHB1iL6030005%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r19 - in trunk: Collect UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sat Dec 17 12:01:44 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000017.html">[Pinot-svn] r18 - trunk/UI/RenderHTML
+</A></li>
+        <LI>Next message: <A HREF="000019.html">[Pinot-svn] r20 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18">[ date ]</a>
+              <a href="thread.html#18">[ thread ]</a>
+              <a href="subject.html#18">[ subject ]</a>
+              <a href="author.html#18">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-17 12:01:43 +0100 (Sat, 17 Dec 2005)
+New Revision: 19
+
+Modified:
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Collect/NeonDownloader.h
+   trunk/UI/GTK2/src/pinot.cpp
+Log:
+NeonDownloader sets up the callbacks necessary for safe multi-threading with
+OpenSSL.
+
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2005-12-17 10:49:04 UTC (rev 18)
++++ trunk/Collect/NeonDownloader.cpp	2005-12-17 11:01:43 UTC (rev 19)
+@@ -20,6 +20,12 @@
+ #include &lt;pthread.h&gt;
+ #include &lt;iostream&gt;
+ 
++#include &lt;neon/ne_session.h&gt;
++// Does Neon have OpenSSL support ?
++#ifdef NE_SSL_H
++#include &lt;openssl/crypto.h&gt;
++#endif	// NE_SSL_H
++
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;HtmlDocument.h&quot;
+ #include &quot;Url.h&quot;
+@@ -60,6 +66,62 @@
+ 
+ bool NeonDownloader::m_initialized = false;
+ 
++#ifdef NE_SSL_H
++// OpenSSL multi-thread support, required by Neon
++static pthread_mutex_t locksTable[CRYPTO_NUM_LOCKS];
++
++// OpenSSL locking functiom
++static void lockingCallback(int mode, int n, const char *file, int line)
++{
++#ifdef DEBUG
++	cout &lt;&lt; &quot;lockingCallback: called for mutex &quot; &lt;&lt; n &lt;&lt; endl;
++#endif
++	if (mode &amp; CRYPTO_LOCK)
++	{
++		pthread_mutex_lock(&amp;(locksTable[n]));
++	}
++	else
++	{
++		pthread_mutex_unlock(&amp;(locksTable[n]));
++	}
++}
++
++unsigned long idCallback(void)
++{
++	return (unsigned long)pthread_self();
++}
++#endif // NE_SSL_H
++
++/// Initialize the downloader.
++void NeonDownloader::initialize(void)
++{
++#ifdef NE_SSL_H
++	// Initialize the OpenSSL mutexes
++	for (unsigned int lockNum = 0; lockNum &lt; CRYPTO_NUM_LOCKS; ++lockNum)
++	{
++		pthread_mutex_init(&amp;(locksTable[lockNum]), NULL);
++	}
++	// Set the callbacks
++	CRYPTO_set_locking_callback(lockingCallback);
++	CRYPTO_set_id_callback(idCallback);
++#endif	// NE_SSL_H
++}
++
++/// Shutdown the downloader.
++void NeonDownloader::shutdown(void)
++{
++#ifdef NE_SSL_H
++	// Reset the OpenSSL callbacks
++	CRYPTO_set_id_callback(NULL);
++	CRYPTO_set_locking_callback(NULL);
++	// Free the mutexes
++	for (unsigned int lockNum = 0; lockNum &lt; CRYPTO_NUM_LOCKS; ++lockNum)
++	{
++		pthread_mutex_destroy(&amp;(locksTable[lockNum]));
++	}
++#endif	// NE_SSL_H
++}
++
+ NeonDownloader::NeonDownloader() :
+ 	m_pSession(NULL), m_pRequest(NULL), DownloaderInterface()
+ {
+
+Modified: trunk/Collect/NeonDownloader.h
+===================================================================
+--- trunk/Collect/NeonDownloader.h	2005-12-17 10:49:04 UTC (rev 18)
++++ trunk/Collect/NeonDownloader.h	2005-12-17 11:01:43 UTC (rev 19)
+@@ -31,6 +31,12 @@
+ 		NeonDownloader();
+ 		virtual ~NeonDownloader();
+ 
++		/// Initialize the downloader.
++		static void initialize(void);
++
++		/// Shutdown the downloader.
++		static void shutdown(void);
++
+ 		/// Sets a (name, value) setting; true if success.
+ 		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+ 
+
+Modified: trunk/UI/GTK2/src/pinot.cpp
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cpp	2005-12-17 10:49:04 UTC (rev 18)
++++ trunk/UI/GTK2/src/pinot.cpp	2005-12-17 11:01:43 UTC (rev 19)
+@@ -27,11 +27,12 @@
+ 
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;Languages.h&quot;
++#include &quot;XapianDatabase.h&quot;
++#include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;ActionHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+-#include &quot;XapianDatabase.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
++#include &quot;NeonDownloader.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -39,9 +40,9 @@
+ 
+ using namespace std;
+ 
+-ofstream outputFile;
+-streambuf *coutbuf = NULL;
+-streambuf *cerrbuf = NULL;
++static ofstream outputFile;
++static streambuf *coutBuf = NULL;
++static streambuf *cerrBuf = NULL;
+ 
+ void closeAll(void)
+ {
+@@ -61,14 +62,17 @@
+ 	TokenizerFactory::unloadTokenizers();
+ 
+ 	// Restore the stream buffers
+-	if (coutbuf != NULL)
++	if (coutBuf != NULL)
+ 	{
+-		cout.rdbuf(coutbuf);
++		cout.rdbuf(coutBuf);
+ 	}
+-	if (cerrbuf != NULL)
++	if (cerrBuf != NULL)
+ 	{
+-		cerr.rdbuf(cerrbuf);
++		cerr.rdbuf(cerrBuf);
+ 	}
++	outputFile.close();
++
++	NeonDownloader::shutdown();
+ }
+ 
+ int main(int argc, char **argv)
+@@ -78,6 +82,7 @@
+ 	textdomain (GETTEXT_PACKAGE);
+ #endif //ENABLE_NLS
+ 
++	NeonDownloader::initialize();
+ 	Glib::thread_init();
+ 	Gtk::Main m(&amp;argc, &amp;argv);
+ 
+@@ -91,8 +96,8 @@
+ 	string logFileName = confDirectory;
+ 	logFileName += &quot;/pinot.log&quot;;
+ 	outputFile.open(logFileName.c_str());
+-	coutbuf = cout.rdbuf();
+-	cerrbuf = cerr.rdbuf();
++	coutBuf = cout.rdbuf();
++	cerrBuf = cerr.rdbuf();
+ 	cout.rdbuf(outputFile.rdbuf());
+ 	cerr.rdbuf(outputFile.rdbuf());
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000017.html">[Pinot-svn] r18 - trunk/UI/RenderHTML
+</A></li>
+	<LI>Next message: <A HREF="000019.html">[Pinot-svn] r20 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18">[ date ]</a>
+              <a href="thread.html#18">[ thread ]</a>
+              <a href="subject.html#18">[ subject ]</a>
+              <a href="author.html#18">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

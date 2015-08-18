@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r366 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r366%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201412.k6KECEvm020481%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000358.html">
+   <LINK REL="Next"  HREF="000360.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r366 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r366%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201412.k6KECEvm020481%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r366 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 20 16:12:14 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000358.html">[Pinot-svn] r365 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000360.html">[Pinot-svn] r367 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#359">[ date ]</a>
+              <a href="thread.html#359">[ thread ]</a>
+              <a href="subject.html#359">[ subject ]</a>
+              <a href="author.html#359">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-20 16:12:13 +0200 (Thu, 20 Jul 2006)
+New Revision: 366
+
+Modified:
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+A few cosmetic changes. Open the deamon's index in read-only mode.
+
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2006-07-20 14:11:15 UTC (rev 365)
++++ trunk/UI/GTK2/src/pinot.cc	2006-07-20 14:12:13 UTC (rev 366)
+@@ -42,9 +42,9 @@
+ 
+ using namespace std;
+ 
+-static ofstream outputFile;
+-static streambuf *coutBuf = NULL;
+-static streambuf *cerrBuf = NULL;
++static ofstream g_outputFile;
++static streambuf *g_coutBuf = NULL;
++static streambuf *g_cerrBuf = NULL;
+ static struct option g_longOptions[] = {
+ 	{&quot;help&quot;, 0, 0, 'h'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+@@ -69,15 +69,15 @@
+ 	TokenizerFactory::unloadTokenizers();
+ 
+ 	// Restore the stream buffers
+-	if (coutBuf != NULL)
++	if (g_coutBuf != NULL)
+ 	{
+-		cout.rdbuf(coutBuf);
++		cout.rdbuf(g_coutBuf);
+ 	}
+-	if (cerrBuf != NULL)
++	if (g_cerrBuf != NULL)
+ 	{
+-		cerr.rdbuf(cerrBuf);
++		cerr.rdbuf(g_cerrBuf);
+ 	}
+-	outputFile.close();
++	g_outputFile.close();
+ 
+ 	DownloaderInterface::shutdown();
+ 	MIMEScanner::shutdown();
+@@ -146,11 +146,11 @@
+ 	// Redirect cout and cerr to a file
+ 	string logFileName = confDirectory;
+ 	logFileName += &quot;/pinot.log&quot;;
+-	outputFile.open(logFileName.c_str());
+-	coutBuf = cout.rdbuf();
+-	cerrBuf = cerr.rdbuf();
+-	cout.rdbuf(outputFile.rdbuf());
+-	cerr.rdbuf(outputFile.rdbuf());
++	g_outputFile.open(logFileName.c_str());
++	g_coutBuf = cout.rdbuf();
++	g_cerrBuf = cerr.rdbuf();
++	cout.rdbuf(g_outputFile.rdbuf());
++	cerr.rdbuf(g_outputFile.rdbuf());
+ 
+ 	// Localize language names
+ 	Languages::setIntlName(0, _(&quot;Unknown&quot;));
+@@ -184,14 +184,14 @@
+ 	sigaction(SIGINT, &amp;newAction, NULL);
+ 	sigaction(SIGQUIT, &amp;newAction, NULL);
+ 
+-	// Ensure Xapian will be able to deal with internal indices
+-	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(settings.m_indexLocation, false);
++	// Open these indexes read-write
++	XapianDatabase *pDb = XapianDatabaseFactory::getDatabase(settings.m_docsIndexLocation, false);
+ 	if ((pDb == NULL) ||
+ 		(pDb-&gt;isOpen() == false))
+ 	{
+ 		errorMsg = _(&quot;Couldn't open index&quot;);
+ 		errorMsg += &quot; &quot;;
+-		errorMsg += settings.m_indexLocation;
++		errorMsg += settings.m_docsIndexLocation;
+ 	}
+ 	pDb = XapianDatabaseFactory::getDatabase(settings.m_mailIndexLocation, false);
+ 	if ((pDb == NULL) ||
+@@ -201,6 +201,15 @@
+ 		errorMsg += &quot; &quot;;
+ 		errorMsg += settings.m_mailIndexLocation;
+ 	}
++	// ...the daemon's index in read-only mode
++	pDb = XapianDatabaseFactory::getDatabase(settings.m_daemonIndexLocation);
++	if ((pDb == NULL) ||
++		(pDb-&gt;isOpen() == false))
++	{
++		errorMsg = _(&quot;Couldn't open index&quot;);
++		errorMsg += &quot; &quot;;
++		errorMsg += settings.m_daemonIndexLocation;
++	}
+ 
+ 	// Do the same for the history database
+ 	if ((settings.m_historyDatabase.empty() == true) ||
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000358.html">[Pinot-svn] r365 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000360.html">[Pinot-svn] r367 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#359">[ date ]</a>
+              <a href="thread.html#359">[ thread ]</a>
+              <a href="subject.html#359">[ subject ]</a>
+              <a href="author.html#359">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

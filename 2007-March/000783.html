@@ -1,0 +1,226 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r789 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r789%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703240704.l2O74B7r001803%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000782.html">
+   <LINK REL="Next"  HREF="000784.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r789 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r789%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703240704.l2O74B7r001803%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r789 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 24 08:04:11 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000782.html">[Pinot-svn] r788 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000784.html">[Pinot-svn] r790 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#783">[ date ]</a>
+              <a href="thread.html#783">[ thread ]</a>
+              <a href="subject.html#783">[ subject ]</a>
+              <a href="author.html#783">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-24 08:04:10 +0100 (Sat, 24 Mar 2007)
+New Revision: 789
+
+Modified:
+   trunk/UI/GTK2/src/IndexTree.cpp
+   trunk/UI/GTK2/src/PinotUtils.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/queryDialog.cc
+Log:
+Minor changes : check RefPtr's and complain if XML file cannot be found when
+Introspect is received.
+
+
+Modified: trunk/UI/GTK2/src/IndexTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.cpp	2007-03-24 04:18:00 UTC (rev 788)
++++ trunk/UI/GTK2/src/IndexTree.cpp	2007-03-24 07:04:10 UTC (rev 789)
+@@ -131,7 +131,7 @@
+ }
+ 
+ bool IndexTree::onSelectionSelect(const RefPtr&lt;TreeModel&gt;&amp; model,
+-		const TreeModel::Path&amp; path, bool path_currently_selected)
++	const TreeModel::Path&amp; path, bool path_currently_selected)
+ {
+ 	const TreeModel::iterator iter = model-&gt;get_iter(path);
+ 	const TreeModel::Row row = *iter;
+
+Modified: trunk/UI/GTK2/src/PinotUtils.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotUtils.cpp	2007-03-24 04:18:00 UTC (rev 788)
++++ trunk/UI/GTK2/src/PinotUtils.cpp	2007-03-24 07:04:10 UTC (rev 789)
+@@ -134,6 +134,11 @@
+ 	}
+ 
+ 	RefPtr&lt;Style&gt; refRCStyle = RC::get_style(*pTree);
++	if (!refRCStyle)
++	{
++		return 0;
++	}
++
+ 	int fontSize = refRCStyle-&gt;get_font().get_size();
+ 	int height = fontSize / Pango::SCALE;
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-03-24 04:18:00 UTC (rev 788)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-03-24 07:04:10 UTC (rev 789)
+@@ -69,6 +69,8 @@
+ 
+ static bool loadXMLDescription(void)
+ {
++	bool readFile = false;
++
+ 	if (g_xmlDescription.empty() == false)
+ 	{
+ 		return true;
+@@ -91,12 +93,13 @@
+ 		{
+ 			pXmlBuffer[length] = '\0';
+ 			g_xmlDescription = pXmlBuffer;
++			readFile = true;
+ 		}
+ 		delete[] pXmlBuffer;
+ 	}
+ 	xmlFile.close();
+ 
+-	return true;	
++	return readFile;
+ }
+ 
+ MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+@@ -1210,6 +1213,10 @@
+ 					DBUS_TYPE_INVALID);
+ 			}
+ 		}
++		else
++		{
++			cerr &lt;&lt; &quot;File pinot-dbus-daemon.xml couldn't be found&quot; &lt;&lt; endl;
++		}
+ 	}
+ 	else
+ 	{
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-03-24 04:18:00 UTC (rev 788)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-03-24 07:04:10 UTC (rev 789)
+@@ -1563,7 +1563,10 @@
+ 	}
+ 	
+ 	RefPtr&lt;Clipboard&gt; refClipboard = Clipboard::get();
+-	refClipboard-&gt;set_text(text);
++	if (refClipboard)
++	{
++		refClipboard-&gt;set_text(text);
++	}
+ }
+ 
+ //
+@@ -1572,6 +1575,12 @@
+ void mainWindow::on_paste_activate()
+ {
+ 	RefPtr&lt;Clipboard&gt; refClipboard = Clipboard::get();
++
++	if (!refClipboard)
++	{
++		return;
++	}
++
+ 	if (refClipboard-&gt;wait_is_text_available() == false)
+ 	{
+ 		return;
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2007-03-24 04:18:00 UTC (rev 788)
++++ trunk/UI/GTK2/src/queryDialog.cc	2007-03-24 07:04:10 UTC (rev 789)
+@@ -54,7 +54,10 @@
+ 	}
+ 	// Query text
+ 	RefPtr&lt;TextBuffer&gt; refBuffer = queryTextview-&gt;get_buffer();
+-	refBuffer-&gt;set_text(to_utf8(m_properties.getFreeQuery()));
++	if (refBuffer)
++	{
++		refBuffer-&gt;set_text(to_utf8(m_properties.getFreeQuery()));
++	}
+ 	// Maximum number of results
+ 	resultsCountSpinbutton-&gt;set_value((double)m_properties.getMaximumResultsCount());
+ 	// Date range
+@@ -154,7 +157,10 @@
+ 
+ 	// Query text
+ 	RefPtr&lt;TextBuffer&gt; refBuffer = queryTextview-&gt;get_buffer();
+-	m_properties.setFreeQuery(from_utf8(refBuffer-&gt;get_text()));
++	if (refBuffer)
++	{
++		m_properties.setFreeQuery(from_utf8(refBuffer-&gt;get_text()));
++	}
+ 	// Maximum number of results
+ 	m_properties.setMaximumResultsCount((unsigned int)resultsCountSpinbutton-&gt;get_value());
+ 	// Date range
+@@ -225,11 +231,14 @@
+ 	}
+ 
+ 	RefPtr&lt;TextBuffer&gt; refBuffer = queryTextview-&gt;get_buffer();
+-	ustring queryText = refBuffer-&gt;get_text();
+-	queryText += &quot; &quot;;
+-	queryText += filter;
+-	queryText += &quot;:xxx&quot;;
+-	refBuffer-&gt;set_text(queryText);
++	if (refBuffer)
++	{
++		ustring queryText = refBuffer-&gt;get_text();
++		queryText += &quot; &quot;;
++		queryText += filter;
++		queryText += &quot;:xxx&quot;;
++		refBuffer-&gt;set_text(queryText);
++	}
+ }
+ 
+ void queryDialog::on_fromButton_clicked()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000782.html">[Pinot-svn] r788 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000784.html">[Pinot-svn] r790 - in trunk: . po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#783">[ date ]</a>
+              <a href="thread.html#783">[ thread ]</a>
+              <a href="subject.html#783">[ subject ]</a>
+              <a href="author.html#783">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

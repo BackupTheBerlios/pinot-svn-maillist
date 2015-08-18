@@ -1,0 +1,2565 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1134 - in trunk/IndexSearch: . Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1134%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200712010936.lB19aQ8e027447%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001129.html">
+   <LINK REL="Next"  HREF="001127.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1134 - in trunk/IndexSearch: . Xapian</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1134%20-%20in%20trunk/IndexSearch%3A%20.%20Xapian&In-Reply-To=%3C200712010936.lB19aQ8e027447%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1134 - in trunk/IndexSearch: . Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Dec  1 10:36:26 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001129.html">[Pinot-svn] r1133 - in trunk: . Index IndexSearch	IndexSearch/Xapian Search
+</A></li>
+        <LI>Next message: <A HREF="001127.html">[Pinot-svn] r1135 - in trunk: . IndexSearch IndexSearch/Google	IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1130">[ date ]</a>
+              <a href="thread.html#1130">[ thread ]</a>
+              <a href="subject.html#1130">[ subject ]</a>
+              <a href="author.html#1130">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-01 10:36:25 +0100 (Sat, 01 Dec 2007)
+New Revision: 1134
+
+Added:
+   trunk/IndexSearch/DBusIndex.cpp
+   trunk/IndexSearch/DBusIndex.h
+Removed:
+   trunk/IndexSearch/DBusXapianIndex.cpp
+   trunk/IndexSearch/DBusXapianIndex.h
+Modified:
+   trunk/IndexSearch/IndexFactory.cpp
+   trunk/IndexSearch/IndexInterface.h
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+   trunk/IndexSearch/pinot-label.cpp
+Log:
+Added IndexInterface::reopen(). Replaced DBusXapianIndex with DBusIndex.
+Used IndexFactory whenever possible.
+
+
+Added: trunk/IndexSearch/DBusIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusIndex.cpp	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/DBusIndex.cpp	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -0,0 +1,1012 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;iostream&gt;
++
++#include &quot;Languages.h&quot;
++#include &quot;DBusIndex.h&quot;
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::string;
++using std::set;
++using std::map;
++using std::min;
++
++static const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, NULL };
++
++static DBusGConnection *getBusConnection(void)
++{
++	GError *pError = NULL;
++	DBusGConnection *pBus = NULL;
++
++	pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
++	if (pBus == NULL)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex: couldn't connect to session bus: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	return pBus;
++}
++
++static DBusGProxy *getBusProxy(DBusGConnection *pBus)
++{
++	if (pBus == NULL)
++	{
++		return NULL;
++	}
++
++	return dbus_g_proxy_new_for_name(pBus,
++		&quot;de.berlios.Pinot&quot;, &quot;/de/berlios/Pinot&quot;, &quot;de.berlios.Pinot&quot;);
++}
++
++DBusIndex::DBusIndex(IndexInterface *pROIndex) :
++	IndexInterface(),
++	m_pROIndex(pROIndex)
++{
++}
++
++DBusIndex::DBusIndex(const DBusIndex &amp;other) :
++	IndexInterface(other),
++	m_pROIndex(other.m_pROIndex)
++{
++}
++
++DBusIndex::~DBusIndex()
++{
++	// Noone else is going to delete this
++	delete m_pROIndex;
++}
++
++DBusIndex &amp;DBusIndex::operator=(const DBusIndex &amp;other)
++{
++	if (this != &amp;other)
++	{
++		IndexInterface::operator=(other);
++		m_pROIndex = other.m_pROIndex;
++	}
++
++	return *this;
++}
++
++/// Extracts docId and docInfo from a dbus message.
++bool DBusIndex::documentInfoFromDBus(DBusMessageIter *iter, unsigned int &amp;docId,
++	DocumentInfo &amp;docInfo)
++{
++	DBusMessageIter array_iter;
++	DBusMessageIter struct_iter;
++
++	if (iter == NULL)
++	{
++		return false;
++	}
++
++	int type = dbus_message_iter_get_arg_type(iter);
++	if (type != DBUS_TYPE_UINT32)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::documentInfoFromDBus: expected unsigned integer, got &quot; &lt;&lt; type &lt;&lt; endl;
++#endif
++		return false;
++	}
++	dbus_message_iter_get_basic(iter, &amp;docId);
++	dbus_message_iter_next(iter);
++	
++	type = dbus_message_iter_get_arg_type(iter);
++	if (type != DBUS_TYPE_ARRAY)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::documentInfoFromDBus: expected array, got &quot; &lt;&lt; type &lt;&lt; endl;
++#endif
++		return false;
++	}
++	dbus_message_iter_recurse(iter, &amp;array_iter);
++
++	do
++	{
++		const gchar *pName = NULL;
++		const gchar *pValue = NULL;
++
++		type = dbus_message_iter_get_arg_type(&amp;array_iter);
++		if (type != DBUS_TYPE_STRUCT)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusIndex::documentInfoFromDBus: expected struct, got &quot; &lt;&lt; type &lt;&lt; endl;
++#endif
++			return false;
++		}
++
++		dbus_message_iter_recurse(&amp;array_iter, &amp;struct_iter);
++		dbus_message_iter_get_basic(&amp;struct_iter, &amp;pName);
++		if (pName == NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusIndex::documentInfoFromDBus: invalid field name&quot; &lt;&lt; endl;
++#endif
++		}
++
++		dbus_message_iter_next(&amp;struct_iter);
++		dbus_message_iter_get_basic(&amp;struct_iter, &amp;pValue);
++		if (pValue == NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusIndex::documentInfoFromDBus: invalid field value&quot; &lt;&lt; endl;
++#endif
++			continue;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::documentInfoFromDBus: field &quot; &lt;&lt; pName &lt;&lt; &quot;=&quot; &lt;&lt; pValue &lt;&lt; endl;
++#endif
++
++		// Populate docInfo
++		string fieldName(pName);
++		if (fieldName == g_fieldNames[0])
++		{
++			docInfo.setTitle(pValue);
++		}
++		else if (fieldName == g_fieldNames[1])
++		{
++			docInfo.setLocation(pValue);
++		}
++		else if (fieldName == g_fieldNames[2])
++		{
++			docInfo.setType(pValue);
++		}
++		else if (fieldName == g_fieldNames[3])
++		{
++			docInfo.setLanguage(Languages::toLocale(pValue));
++		}
++		else if (fieldName == g_fieldNames[4])
++		{
++			docInfo.setTimestamp(pValue);
++		}
++		else if (fieldName == g_fieldNames[5])
++		{
++			docInfo.setSize((off_t )atoi(pValue));
++		}
++	}
++	while (dbus_message_iter_next(&amp;array_iter));
++
++	return true;
++}
++
++/// Converts docId and docInfo to a dbus message.
++bool DBusIndex::documentInfoToDBus(DBusMessageIter *iter, unsigned int docId,
++	const DocumentInfo &amp;docInfo)
++{
++        DBusMessageIter array_iter;
++	DBusMessageIter struct_iter;
++
++	if (iter == NULL)
++	{
++		return false;
++	}
++
++	// Append the document ID ?
++	if (docId != 0)
++	{
++		dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &amp;docId);
++	}
++	if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
++		DBUS_STRUCT_BEGIN_CHAR_AS_STRING \
++		DBUS_TYPE_STRING_AS_STRING \
++		DBUS_TYPE_STRING_AS_STRING \
++		DBUS_STRUCT_END_CHAR_AS_STRING, &amp;array_iter))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: couldn't open array container&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	for (unsigned int fieldNum = 0; g_fieldNames[fieldNum] != NULL; ++fieldNum)
++	{
++		const char *pValue = NULL;
++		char sizeStr[64];
++
++		if (!dbus_message_iter_open_container(&amp;array_iter,
++			DBUS_TYPE_STRUCT, NULL, &amp;struct_iter))
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: couldn't open struct container&quot; &lt;&lt; endl;
++#endif
++			return false;
++		}
++
++		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;g_fieldNames[fieldNum]);
++		switch (fieldNum)
++		{
++			case 0:
++				pValue = docInfo.getTitle().c_str();
++				break;
++			case 1:
++				pValue = docInfo.getLocation().c_str();
++				break;
++			case 2:
++				pValue = docInfo.getType().c_str();
++				break;
++			case 3:
++				pValue = Languages::toEnglish(docInfo.getLanguage()).c_str();
++				break;
++			case 4:
++				pValue = docInfo.getTimestamp().c_str();
++				break;
++			case 5:
++			default:
++				snprintf(sizeStr, 64, &quot;%u&quot;, docInfo.getSize());
++				pValue = sizeStr;
++				break;
++		}
++		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;pValue);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: field &quot; &lt;&lt; g_fieldNames[fieldNum] &lt;&lt; &quot;=&quot; &lt;&lt; pValue &lt;&lt; endl;
++#endif
++
++		if (!dbus_message_iter_close_container(&amp;array_iter, &amp;struct_iter))
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: couldn't close struct container&quot; &lt;&lt; endl;
++#endif
++			return false;
++		}
++	}
++
++	if (!dbus_message_iter_close_container(iter, &amp;array_iter))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::documentInfoToDBus: couldn't close array container&quot; &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	return true;
++}
++
++/// Asks the D-Bus service to reload its configuration.
++bool DBusIndex::reload(void)
++{
++	gboolean reloading = FALSE;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::reload: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	if (dbus_g_proxy_call(pBusProxy, &quot;Reload&quot;, &amp;pError,
++		G_TYPE_INVALID,
++		G_TYPE_BOOLEAN, &amp;reloading,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::reload: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	if (reloading == TRUE)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++
++//
++// Implementation of IndexInterface
++//
++
++/// Returns false if the index couldn't be opened.
++bool DBusIndex::isGood(void) const
++{
++	return m_pROIndex-&gt;isGood();
++}
++
++/// Gets the version number.
++string DBusIndex::getVersion(void) const
++{
++	return m_pROIndex-&gt;getVersion();
++}
++
++/// Sets the version number.
++bool DBusIndex::setVersion(const string &amp;version) const
++{
++	cerr &lt;&lt; &quot;DBusIndex::setVersion: not allowed&quot; &lt;&lt; endl;
++	return false;
++}
++
++/// Gets the index location.
++string DBusIndex::getLocation(void) const
++{
++	return m_pROIndex-&gt;getLocation();
++}
++
++/// Returns a document's properties.
++bool DBusIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getDocumentInfo(docId, docInfo);
++}
++
++/// Returns a document's terms count.
++unsigned int DBusIndex::getDocumentTermsCount(unsigned int docId) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getDocumentTermsCount(docId);
++}
++
++/// Returns a document's terms.
++bool DBusIndex::getDocumentTerms(unsigned int docId,
++	map&lt;unsigned int, string&gt; &amp;wordsBuffer) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getDocumentTerms(docId, wordsBuffer);
++}
++
++/// Sets the list of known labels.
++bool DBusIndex::setLabels(const set&lt;string&gt; &amp;labels)
++{
++	// Not allowed here
++	return false;
++}
++
++/// Gets the list of known labels.
++bool DBusIndex::getLabels(set&lt;string&gt; &amp;labels) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getLabels(labels);
++}
++
++/// Gets the list of known labels.
++bool DBusIndex::getLabels(set&lt;string&gt; &amp;labels, bool forceDBus) const
++{
++	bool gotLabels = false;
++
++	if (forceDBus == false)
++	{
++		// Call overload
++		return getLabels(labels);
++	}
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::getLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	char **pLabels;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;GetLabels&quot;, &amp;pError,
++		G_TYPE_INVALID,
++		G_TYPE_STRV, &amp;pLabels,
++		G_TYPE_INVALID) == TRUE)
++	{
++		for (char **pLabel = pLabels; (*pLabel) != NULL; ++pLabel)
++		{
++			labels.insert(*pLabel);
++		}
++
++		// Free the array
++		g_strfreev(pLabels);
++
++		gotLabels = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::getLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return gotLabels;
++}
++
++/// Adds a label.
++bool DBusIndex::addLabel(const string &amp;name)
++{
++	bool addedLabel = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::addLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	const char *pLabel = name.c_str();
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;AddLabel&quot;, &amp;pError,
++		G_TYPE_STRING, pLabel,
++		G_TYPE_INVALID,
++		G_TYPE_STRING, &amp;pLabel,
++		G_TYPE_INVALID) == TRUE)
++	{
++		addedLabel = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::addLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return addedLabel;
++}
++
++/// Renames a label.
++bool DBusIndex::renameLabel(const string &amp;name, const string &amp;newName)
++{
++	bool renamedLabel = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::renameLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	const char *pOldLabel = name.c_str();
++	const char *pNewLabel = newName.c_str();
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;RenameLabel&quot;, &amp;pError,
++		G_TYPE_STRING, pOldLabel,
++		G_TYPE_STRING, pNewLabel,
++		G_TYPE_INVALID,
++		G_TYPE_STRING, &amp;pNewLabel,
++		G_TYPE_INVALID) == TRUE)
++	{
++		renamedLabel = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::renameLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return renamedLabel;
++}
++
++/// Deletes all references to a label.
++bool DBusIndex::deleteLabel(const string &amp;name)
++{
++	bool deletedLabel = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::deleteLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	const char *pLabel = name.c_str();
++
++	if (dbus_g_proxy_call(pBusProxy, &quot;DeleteLabel&quot;, &amp;pError,
++		G_TYPE_STRING, pLabel,
++		G_TYPE_INVALID,
++		G_TYPE_STRING, &amp;pLabel,
++		G_TYPE_INVALID) == TRUE)
++	{
++		deletedLabel = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::deleteLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return deletedLabel;
++}
++
++/// Determines whether a document has a label.
++bool DBusIndex::hasLabel(unsigned int docId, const string &amp;name) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;hasLabel(docId, name);
++}
++
++/// Returns a document's labels.
++bool DBusIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getDocumentLabels(docId, labels);
++}
++
++/// Returns a document's labels.
++bool DBusIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels, bool forceDBus) const
++{
++	bool gotLabels = false;
++
++	if (forceDBus == false)
++	{
++		// Call overload
++		return getDocumentLabels(docId, labels);
++	}
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::getDocumentLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	char **pLabels;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;GetDocumentLabels&quot;, &amp;pError,
++		G_TYPE_UINT, docId,
++		G_TYPE_INVALID,
++		G_TYPE_STRV, &amp;pLabels,
++		G_TYPE_INVALID) == TRUE)
++	{
++		for (char **pLabel = pLabels; (*pLabel) != NULL; ++pLabel)
++		{
++			labels.insert(*pLabel);
++		}
++
++		// Free the array
++		g_strfreev(pLabels);
++
++		gotLabels = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::getDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return gotLabels;
++}
++
++/// Sets a document's labels.
++bool DBusIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
++	bool resetLabels)
++{
++	bool updatedLabels = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::setDocumentLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	dbus_uint32_t labelsCount = labels.size();
++	char **pLabels;
++	unsigned int labelIndex = 0;
++
++	pLabels = g_new(char *, labelsCount + 1);
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
++		++labelIndex;
++	}
++	pLabels[labelIndex] = NULL;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentLabels&quot;, &amp;pError,
++		G_TYPE_UINT, docId,
++		G_TYPE_STRV, pLabels,
++		G_TYPE_BOOLEAN, (resetLabels == true ? TRUE : FALSE),
++		G_TYPE_INVALID,
++		G_TYPE_UINT, &amp;docId,
++		G_TYPE_INVALID) == TRUE)
++	{
++		updatedLabels = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::setDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	// Free the array
++	g_strfreev(pLabels);
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return updatedLabels;
++}
++
++/// Sets documents' labels.
++bool DBusIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
++	const set&lt;string&gt; &amp;labels, bool resetLabels)
++{
++	gboolean updatedLabels = FALSE;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::setDocumentsLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	dbus_uint32_t idsCount = docIds.size();
++	dbus_uint32_t labelsCount = labels.size();
++	char **pDocIds;
++	char **pLabels;
++	unsigned int idIndex = 0, labelIndex = 0;
++
++	pDocIds = g_new(char *, idsCount + 1);
++	pLabels = g_new(char *, labelsCount + 1);
++	for (set&lt;unsigned int&gt;::const_iterator idIter = docIds.begin();
++		idIter != docIds.end(); ++idIter)
++	{
++		pDocIds[idIndex] = g_strdup_printf(&quot;%u&quot;, *idIter); 
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::setDocumentsLabels: document &quot; &lt;&lt; pDocIds[idIndex] &lt;&lt; endl;
++#endif
++		++idIndex;
++	}
++	pDocIds[idIndex] = NULL;
++	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
++		labelIter != labels.end(); ++labelIter)
++	{
++		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusIndex::setDocumentsLabels: label &quot; &lt;&lt; pLabels[labelIndex] &lt;&lt; endl;
++#endif
++		++labelIndex;
++	}
++	pLabels[labelIndex] = NULL;
++
++	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
++	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentsLabels&quot;, &amp;pError,
++		G_TYPE_STRV, pDocIds,
++		G_TYPE_STRV, pLabels,
++		G_TYPE_BOOLEAN, (resetLabels == true ? TRUE : FALSE),
++		G_TYPE_INVALID,
++		G_TYPE_BOOLEAN, &amp;updatedLabels,
++		G_TYPE_INVALID) == FALSE)
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::setDocumentsLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++		updatedLabels = FALSE;
++	}
++
++	// Free the arrays
++	g_strfreev(pDocIds);
++	g_strfreev(pLabels);
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	if (updatedLabels == TRUE)
++	{
++		return true;
++	}
++
++	return false;
++}
++
++/// Checks whether the given URL is in the index.
++unsigned int DBusIndex::hasDocument(const string &amp;url) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;hasDocument(url);
++}
++
++/// Gets terms with the same root.
++unsigned int DBusIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
++{
++	reopen();
++
++	return m_pROIndex-&gt;getCloseTerms(term, suggestions);
++}
++
++/// Returns the ID of the last document.
++unsigned int DBusIndex::getLastDocumentID(void) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getLastDocumentID();
++}
++
++/// Returns the number of documents.
++unsigned int DBusIndex::getDocumentsCount(const string &amp;labelName) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;getDocumentsCount(labelName);
++}
++
++/// Lists documents.
++unsigned int DBusIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;listDocuments(docIds, maxDocsCount, startDoc);
++}
++
++/// Lists documents.
++bool DBusIndex::listDocuments(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
++	NameType type, unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	reopen();
++
++	return m_pROIndex-&gt;listDocuments(name, docIds, type, maxDocsCount, startDoc);
++}
++
++/// Indexes the given data.
++bool DBusIndex::indexDocument(const Document &amp;doc, const set&lt;string&gt; &amp;labels,
++	unsigned int &amp;docId)
++{
++	cerr &lt;&lt; &quot;DBusIndex::indexDocument: not allowed&quot; &lt;&lt; endl;
++	return false;
++}
++
++/// Updates the given document; true if success.
++bool DBusIndex::updateDocument(unsigned int docId, const Document &amp;doc)
++{
++	bool updated = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	DBusGProxy *pBusProxy = getBusProxy(pBus);
++	if (pBusProxy == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::updateDocument: couldn't get bus proxy&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	GError *pError = NULL;
++	if (dbus_g_proxy_call(pBusProxy, &quot;UpdateDocument&quot;, &amp;pError,
++		G_TYPE_UINT, docId,
++		G_TYPE_INVALID,
++		G_TYPE_UINT, &amp;docId,
++		G_TYPE_INVALID) == TRUE)
++	{
++		updated = true;
++	}
++	else
++	{
++		if (pError != NULL)
++		{
++			cerr &lt;&lt; &quot;DBusIndex::updateDocument: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			g_error_free(pError);
++		}
++	}
++
++	g_object_unref(pBusProxy);
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return updated;
++}
++
++/// Updates a document's properties.
++bool DBusIndex::updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo)
++{
++	DBusMessageIter iter;
++	bool updated = false;
++
++	DBusGConnection *pBus = getBusConnection();
++	if (pBus == NULL)
++	{
++		return false;
++	}
++
++	// FIXME: AFAIK we can't use DBusGProxy with message iterators
++	DBusMessage *pMsg = dbus_message_new_method_call(&quot;de.berlios.Pinot&quot;,
++		&quot;/de/berlios/Pinot&quot;, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentInfo&quot;);
++	if (pMsg == NULL)
++	{
++		cerr &lt;&lt; &quot;DBusIndex::updateDocumentInfo: couldn't call method&quot; &lt;&lt; endl;
++		return false;
++	}
++
++	dbus_message_iter_init_append(pMsg, &amp;iter);
++	if (DBusIndex::documentInfoToDBus(&amp;iter, docId, docInfo) == false)
++	{
++		dbus_message_unref(pMsg);
++	}
++	else
++	{
++		DBusError err;
++
++		dbus_error_init(&amp;err);
++		DBusMessage *pReply = dbus_connection_send_with_reply_and_block(dbus_g_connection_get_connection(pBus),
++			pMsg, 1000 * 10, &amp;err);
++		dbus_message_unref(pMsg);
++
++		if (dbus_error_is_set(&amp;err))
++		{
++			cerr &lt;&lt; &quot;DBusIndex::updateDocumentInfo: &quot; &lt;&lt; err.message &lt;&lt; endl;
++			dbus_error_free(&amp;err);
++			return false;
++		}
++
++		if (pReply != NULL)
++		{
++			dbus_message_get_args(pReply, NULL,
++				DBUS_TYPE_UINT32, &amp;docId,
++				DBUS_TYPE_INVALID);
++			updated = true;
++
++			dbus_message_unref(pReply);
++		}
++	}
++
++	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
++
++	return updated;
++}
++
++/// Unindexes the given document; true if success.
++bool DBusIndex::unindexDocument(unsigned int docId)
++{
++	cerr &lt;&lt; &quot;DBusIndex::unindexDocument: not allowed&quot; &lt;&lt; endl;
++	return false;
++}
++
++/// Unindexes the given document.
++bool DBusIndex::unindexDocument(const string &amp;location)
++{
++	cerr &lt;&lt; &quot;DBusIndex::unindexDocument: not allowed&quot; &lt;&lt; endl;
++	return false;
++}
++
++/// Unindexes documents.
++bool DBusIndex::unindexDocuments(const string &amp;name, NameType type)
++{
++	cerr &lt;&lt; &quot;DBusIndex::unindexDocuments: not allowed&quot; &lt;&lt; endl;
++	return false;
++}
++
++/// Unindexes all documents.
++bool DBusIndex::unindexAllDocuments(void)
++{
++	cerr &lt;&lt; &quot;DBusIndex::unindexDocuments: not allowed&quot; &lt;&lt; endl;
++	return false;
++}
++
++/// Flushes recent changes to the disk.
++bool DBusIndex::flush(void)
++{
++	// The daemon knows best when to flush
++	return true;
++}
++
++/// Reopens the index.
++bool DBusIndex::reopen(void) const
++{
++	return m_pROIndex-&gt;reopen();
++}
++
++/// Resets the index.
++bool DBusIndex::reset(void)
++{
++	// This can't be done here
++	return false;
++}
++
+
+Added: trunk/IndexSearch/DBusIndex.h
+===================================================================
+--- trunk/IndexSearch/DBusIndex.h	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/DBusIndex.h	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -0,0 +1,173 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _DBUS_INDEX_H
++#define _DBUS_INDEX_H
++
++#include &lt;string&gt;
++#include &lt;set&gt;
++#include &lt;map&gt;
++#include &quot;config.h&quot;
++extern &quot;C&quot;
++{
++#if DBUS_VERSION &lt; 1000000
++#define DBUS_API_SUBJECT_TO_CHANGE
++#endif
++#include &lt;dbus/dbus.h&gt;
++#include &lt;dbus/dbus-glib.h&gt;
++#include &lt;dbus/dbus-glib-lowlevel.h&gt;
++}
++
++#include &quot;IndexInterface.h&quot;
++
++/// Allows to write to the daemon index via D-Bus. 
++class DBusIndex : public IndexInterface
++{
++	public:
++		DBusIndex(IndexInterface *pROIndex);
++		DBusIndex(const DBusIndex &amp;other);
++		virtual ~DBusIndex();
++
++		DBusIndex &amp;operator=(const DBusIndex &amp;other);
++
++		/// Extracts docId and docInfo from a dbus message.
++		static bool documentInfoFromDBus(DBusMessageIter *iter, unsigned int &amp;docId,
++			DocumentInfo &amp;docInfo);
++
++		/// Converts docId and docInfo to a dbus message.
++		static bool documentInfoToDBus(DBusMessageIter *iter, unsigned int docId,
++			const DocumentInfo &amp;docInfo);
++
++		/// Asks the D-Bus service to reload its configuration.
++		static bool reload(void);
++
++		/// Returns false if the index couldn't be opened.
++		virtual bool isGood(void) const;
++
++		/// Gets the version number.
++		virtual std::string getVersion(void) const;
++
++		/// Sets the version number.
++		virtual bool setVersion(const std::string &amp;version) const;
++
++		/// Gets the index location.
++		virtual std::string getLocation(void) const;
++
++		/// Returns a document's properties.
++		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
++
++		/// Returns a document's terms count.
++		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
++
++		/// Returns a document's terms.
++		virtual bool getDocumentTerms(unsigned int docId,
++			std::map&lt;unsigned int, std::string&gt; &amp;wordsBuffer) const;
++
++		/// Sets the list of known labels.
++		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels);
++
++		/// Gets the list of known labels.
++		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
++
++		/// Gets the list of known labels.
++		bool getLabels(std::set&lt;std::string&gt; &amp;labels, bool forceDBus) const;
++
++		/// Adds a label.
++		virtual bool addLabel(const std::string &amp;name);
++
++		/// Renames a label.
++		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
++
++		/// Deletes all references to a label.
++		virtual bool deleteLabel(const std::string &amp;name);
++
++		/// Determines whether a document has a label.
++		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
++
++		/// Returns a document's labels.
++		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
++
++		/// Returns a document's labels.
++		bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels,
++			bool forceDBus) const;
++
++		/// Sets a document's labels.
++		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
++			bool resetLabels = true);
++
++		/// Sets documents' labels.
++		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
++			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
++
++		/// Checks whether the given URL is in the index.
++		virtual unsigned int hasDocument(const std::string &amp;url) const;
++
++		/// Gets terms with the same root.
++		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions);
++
++		/// Returns the ID of the last document.
++		virtual unsigned int getLastDocumentID(void) const;
++
++		/// Returns the number of documents.
++		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
++
++		/// Lists documents.
++		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++
++		/// Lists documents.
++		virtual bool listDocuments(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			NameType type, unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++
++		/// Indexes the given data.
++		virtual bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
++			unsigned int &amp;docId);
++
++		/// Updates the given document.
++		virtual bool updateDocument(unsigned int docId, const Document &amp;doc);
++
++		/// Updates a document's properties.
++		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
++
++		/// Unindexes the given document.
++		virtual bool unindexDocument(unsigned int docId);
++
++		/// Unindexes the given document.
++		virtual bool unindexDocument(const std::string &amp;location);
++
++		/// Unindexes documents.
++		virtual bool unindexDocuments(const std::string &amp;name, NameType type);
++
++		/// Unindexes all documents.
++		virtual bool unindexAllDocuments(void);
++
++		/// Flushes recent changes to the disk.
++		virtual bool flush(void);
++
++		/// Reopens the index.
++		virtual bool reopen(void) const;
++
++		/// Resets the index.
++		virtual bool reset(void);
++
++	protected:
++		IndexInterface *m_pROIndex;
++
++};
++
++#endif // _DBUS_INDEX_H
+
+Deleted: trunk/IndexSearch/DBusXapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/DBusXapianIndex.cpp	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/DBusXapianIndex.cpp	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -1,990 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;iostream&gt;
+-
+-#include &quot;Languages.h&quot;
+-#include &quot;XapianDatabaseFactory.h&quot;
+-#include &quot;DBusXapianIndex.h&quot;
+-
+-using std::cout;
+-using std::cerr;
+-using std::endl;
+-using std::string;
+-using std::set;
+-using std::map;
+-using std::min;
+-
+-const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, NULL };
+-
+-static DBusGConnection *getBusConnection(void)
+-{
+-	GError *pError = NULL;
+-	DBusGConnection *pBus = NULL;
+-
+-	pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+-	if (pBus == NULL)
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex: couldn't connect to session bus: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	return pBus;
+-}
+-
+-static DBusGProxy *getBusProxy(DBusGConnection *pBus)
+-{
+-	if (pBus == NULL)
+-	{
+-		return NULL;
+-	}
+-
+-	return dbus_g_proxy_new_for_name(pBus,
+-		&quot;de.berlios.Pinot&quot;, &quot;/de/berlios/Pinot&quot;, &quot;de.berlios.Pinot&quot;);
+-}
+-
+-DBusXapianIndex::DBusXapianIndex(const string &amp;indexName) :
+-	XapianIndex(indexName)
+-{
+-}
+-
+-DBusXapianIndex::DBusXapianIndex(const DBusXapianIndex &amp;other) :
+-	XapianIndex(other)
+-{
+-}
+-
+-DBusXapianIndex::~DBusXapianIndex()
+-{
+-}
+-
+-DBusXapianIndex &amp;DBusXapianIndex::operator=(const DBusXapianIndex &amp;other)
+-{
+-	if (this != &amp;other)
+-	{
+-		XapianIndex::operator=(other);
+-	}
+-
+-	return *this;
+-}
+-
+-void DBusXapianIndex::reopen(void) const
+-{
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
+-	if (pDatabase != NULL)
+-	{
+-		// Re-open the database to the latest available version
+-		pDatabase-&gt;reopen();
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::reopen: done&quot; &lt;&lt; endl;
+-#endif
+-	}
+-}
+-
+-/// Extracts docId and docInfo from a dbus message.
+-bool DBusXapianIndex::documentInfoFromDBus(DBusMessageIter *iter, unsigned int &amp;docId,
+-	DocumentInfo &amp;docInfo)
+-{
+-	DBusMessageIter array_iter;
+-	DBusMessageIter struct_iter;
+-
+-	if (iter == NULL)
+-	{
+-		return false;
+-	}
+-
+-	int type = dbus_message_iter_get_arg_type(iter);
+-	if (type != DBUS_TYPE_UINT32)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::documentInfoFromDBus: expected unsigned integer, got &quot; &lt;&lt; type &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-	dbus_message_iter_get_basic(iter, &amp;docId);
+-	dbus_message_iter_next(iter);
+-	
+-	type = dbus_message_iter_get_arg_type(iter);
+-	if (type != DBUS_TYPE_ARRAY)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::documentInfoFromDBus: expected array, got &quot; &lt;&lt; type &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-	dbus_message_iter_recurse(iter, &amp;array_iter);
+-
+-	do
+-	{
+-		const gchar *pName = NULL;
+-		const gchar *pValue = NULL;
+-
+-		type = dbus_message_iter_get_arg_type(&amp;array_iter);
+-		if (type != DBUS_TYPE_STRUCT)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusXapianIndex::documentInfoFromDBus: expected struct, got &quot; &lt;&lt; type &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-
+-		dbus_message_iter_recurse(&amp;array_iter, &amp;struct_iter);
+-		dbus_message_iter_get_basic(&amp;struct_iter, &amp;pName);
+-		if (pName == NULL)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusXapianIndex::documentInfoFromDBus: invalid field name&quot; &lt;&lt; endl;
+-#endif
+-		}
+-
+-		dbus_message_iter_next(&amp;struct_iter);
+-		dbus_message_iter_get_basic(&amp;struct_iter, &amp;pValue);
+-		if (pValue == NULL)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusXapianIndex::documentInfoFromDBus: invalid field value&quot; &lt;&lt; endl;
+-#endif
+-			continue;
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::documentInfoFromDBus: field &quot; &lt;&lt; pName &lt;&lt; &quot;=&quot; &lt;&lt; pValue &lt;&lt; endl;
+-#endif
+-
+-		// Populate docInfo
+-		string fieldName(pName);
+-		if (fieldName == g_fieldNames[0])
+-		{
+-			docInfo.setTitle(pValue);
+-		}
+-		else if (fieldName == g_fieldNames[1])
+-		{
+-			docInfo.setLocation(pValue);
+-		}
+-		else if (fieldName == g_fieldNames[2])
+-		{
+-			docInfo.setType(pValue);
+-		}
+-		else if (fieldName == g_fieldNames[3])
+-		{
+-			docInfo.setLanguage(Languages::toLocale(pValue));
+-		}
+-		else if (fieldName == g_fieldNames[4])
+-		{
+-			docInfo.setTimestamp(pValue);
+-		}
+-		else if (fieldName == g_fieldNames[5])
+-		{
+-			docInfo.setSize((off_t )atoi(pValue));
+-		}
+-	}
+-	while (dbus_message_iter_next(&amp;array_iter));
+-
+-	return true;
+-}
+-
+-/// Converts docId and docInfo to a dbus message.
+-bool DBusXapianIndex::documentInfoToDBus(DBusMessageIter *iter, unsigned int docId,
+-	const DocumentInfo &amp;docInfo)
+-{
+-        DBusMessageIter array_iter;
+-	DBusMessageIter struct_iter;
+-
+-	if (iter == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// Append the document ID ?
+-	if (docId != 0)
+-	{
+-		dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &amp;docId);
+-	}
+-	if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+-		DBUS_STRUCT_BEGIN_CHAR_AS_STRING \
+-		DBUS_TYPE_STRING_AS_STRING \
+-		DBUS_TYPE_STRING_AS_STRING \
+-		DBUS_STRUCT_END_CHAR_AS_STRING, &amp;array_iter))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::documentInfoToDBus: couldn't open array container&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	for (unsigned int fieldNum = 0; g_fieldNames[fieldNum] != NULL; ++fieldNum)
+-	{
+-		const char *pValue = NULL;
+-		char sizeStr[64];
+-
+-		if (!dbus_message_iter_open_container(&amp;array_iter,
+-			DBUS_TYPE_STRUCT, NULL, &amp;struct_iter))
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusXapianIndex::documentInfoToDBus: couldn't open struct container&quot; &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-
+-		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;g_fieldNames[fieldNum]);
+-		switch (fieldNum)
+-		{
+-			case 0:
+-				pValue = docInfo.getTitle().c_str();
+-				break;
+-			case 1:
+-				pValue = docInfo.getLocation().c_str();
+-				break;
+-			case 2:
+-				pValue = docInfo.getType().c_str();
+-				break;
+-			case 3:
+-				pValue = Languages::toEnglish(docInfo.getLanguage()).c_str();
+-				break;
+-			case 4:
+-				pValue = docInfo.getTimestamp().c_str();
+-				break;
+-			case 5:
+-			default:
+-				snprintf(sizeStr, 64, &quot;%u&quot;, docInfo.getSize());
+-				pValue = sizeStr;
+-				break;
+-		}
+-		dbus_message_iter_append_basic(&amp;struct_iter, DBUS_TYPE_STRING, &amp;pValue);
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::documentInfoToDBus: field &quot; &lt;&lt; g_fieldNames[fieldNum] &lt;&lt; &quot;=&quot; &lt;&lt; pValue &lt;&lt; endl;
+-#endif
+-
+-		if (!dbus_message_iter_close_container(&amp;array_iter, &amp;struct_iter))
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;DBusXapianIndex::documentInfoToDBus: couldn't close struct container&quot; &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-	}
+-
+-	if (!dbus_message_iter_close_container(iter, &amp;array_iter))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::documentInfoToDBus: couldn't close array container&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	return true;
+-}
+-
+-/// Asks the D-Bus service to reload its configuration.
+-bool DBusXapianIndex::reload(void)
+-{
+-	gboolean reloading = FALSE;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::reload: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	if (dbus_g_proxy_call(pBusProxy, &quot;Reload&quot;, &amp;pError,
+-		G_TYPE_INVALID,
+-		G_TYPE_BOOLEAN, &amp;reloading,
+-		G_TYPE_INVALID) == FALSE)
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::reload: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	if (reloading == TRUE)
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-
+-//
+-// Implementation of IndexInterface
+-//
+-
+-/// Sets the version number.
+-bool DBusXapianIndex::setVersion(const string &amp;version) const
+-{
+-	cerr &lt;&lt; &quot;DBusXapianIndex::setVersion: not allowed&quot; &lt;&lt; endl;
+-	return false;
+-}
+-
+-/// Returns a document's properties.
+-bool DBusXapianIndex::getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getDocumentInfo(docId, docInfo);
+-}
+-
+-/// Returns a document's terms count.
+-unsigned int DBusXapianIndex::getDocumentTermsCount(unsigned int docId) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getDocumentTermsCount(docId);
+-}
+-
+-/// Returns a document's terms.
+-bool DBusXapianIndex::getDocumentTerms(unsigned int docId,
+-	map&lt;unsigned int, string&gt; &amp;wordsBuffer) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getDocumentTerms(docId, wordsBuffer);
+-}
+-
+-/// Sets the list of known labels.
+-bool DBusXapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
+-{
+-	// Not allowed here
+-	return false;
+-}
+-
+-/// Gets the list of known labels.
+-bool DBusXapianIndex::getLabels(set&lt;string&gt; &amp;labels) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getLabels(labels);
+-}
+-
+-/// Gets the list of known labels.
+-bool DBusXapianIndex::getLabels(set&lt;string&gt; &amp;labels, bool forceDBus) const
+-{
+-	bool gotLabels = false;
+-
+-	if (forceDBus == false)
+-	{
+-		// Call overload
+-		return getLabels(labels);
+-	}
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::getLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	char **pLabels;
+-
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;GetLabels&quot;, &amp;pError,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRV, &amp;pLabels,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		for (char **pLabel = pLabels; (*pLabel) != NULL; ++pLabel)
+-		{
+-			labels.insert(*pLabel);
+-		}
+-
+-		// Free the array
+-		g_strfreev(pLabels);
+-
+-		gotLabels = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::getLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return gotLabels;
+-}
+-
+-/// Adds a label.
+-bool DBusXapianIndex::addLabel(const string &amp;name)
+-{
+-	bool addedLabel = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::addLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	const char *pLabel = name.c_str();
+-
+-	if (dbus_g_proxy_call(pBusProxy, &quot;AddLabel&quot;, &amp;pError,
+-		G_TYPE_STRING, pLabel,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRING, &amp;pLabel,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		addedLabel = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::addLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return addedLabel;
+-}
+-
+-/// Renames a label.
+-bool DBusXapianIndex::renameLabel(const string &amp;name, const string &amp;newName)
+-{
+-	bool renamedLabel = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::renameLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	const char *pOldLabel = name.c_str();
+-	const char *pNewLabel = newName.c_str();
+-
+-	if (dbus_g_proxy_call(pBusProxy, &quot;RenameLabel&quot;, &amp;pError,
+-		G_TYPE_STRING, pOldLabel,
+-		G_TYPE_STRING, pNewLabel,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRING, &amp;pNewLabel,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		renamedLabel = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::renameLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return renamedLabel;
+-}
+-
+-/// Deletes all references to a label.
+-bool DBusXapianIndex::deleteLabel(const string &amp;name)
+-{
+-	bool deletedLabel = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::deleteLabel: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	const char *pLabel = name.c_str();
+-
+-	if (dbus_g_proxy_call(pBusProxy, &quot;DeleteLabel&quot;, &amp;pError,
+-		G_TYPE_STRING, pLabel,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRING, &amp;pLabel,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		deletedLabel = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::deleteLabel: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return deletedLabel;
+-}
+-
+-/// Determines whether a document has a label.
+-bool DBusXapianIndex::hasLabel(unsigned int docId, const string &amp;name) const
+-{
+-	reopen();
+-
+-	return XapianIndex::hasLabel(docId, name);
+-}
+-
+-/// Returns a document's labels.
+-bool DBusXapianIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getDocumentLabels(docId, labels);
+-}
+-
+-/// Returns a document's labels.
+-bool DBusXapianIndex::getDocumentLabels(unsigned int docId, set&lt;string&gt; &amp;labels, bool forceDBus) const
+-{
+-	bool gotLabels = false;
+-
+-	if (forceDBus == false)
+-	{
+-		// Call overload
+-		return getDocumentLabels(docId, labels);
+-	}
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::getDocumentLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	char **pLabels;
+-
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;GetDocumentLabels&quot;, &amp;pError,
+-		G_TYPE_UINT, docId,
+-		G_TYPE_INVALID,
+-		G_TYPE_STRV, &amp;pLabels,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		for (char **pLabel = pLabels; (*pLabel) != NULL; ++pLabel)
+-		{
+-			labels.insert(*pLabel);
+-		}
+-
+-		// Free the array
+-		g_strfreev(pLabels);
+-
+-		gotLabels = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::getDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return gotLabels;
+-}
+-
+-/// Sets a document's labels.
+-bool DBusXapianIndex::setDocumentLabels(unsigned int docId, const set&lt;string&gt; &amp;labels,
+-	bool resetLabels)
+-{
+-	bool updatedLabels = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	dbus_uint32_t labelsCount = labels.size();
+-	char **pLabels;
+-	unsigned int labelIndex = 0;
+-
+-	pLabels = g_new(char *, labelsCount + 1);
+-	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-		labelIter != labels.end(); ++labelIter)
+-	{
+-		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
+-		++labelIndex;
+-	}
+-	pLabels[labelIndex] = NULL;
+-
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentLabels&quot;, &amp;pError,
+-		G_TYPE_UINT, docId,
+-		G_TYPE_STRV, pLabels,
+-		G_TYPE_BOOLEAN, (resetLabels == true ? TRUE : FALSE),
+-		G_TYPE_INVALID,
+-		G_TYPE_UINT, &amp;docId,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		updatedLabels = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	// Free the array
+-	g_strfreev(pLabels);
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return updatedLabels;
+-}
+-
+-/// Sets documents' labels.
+-bool DBusXapianIndex::setDocumentsLabels(const set&lt;unsigned int&gt; &amp;docIds,
+-	const set&lt;string&gt; &amp;labels, bool resetLabels)
+-{
+-	gboolean updatedLabels = FALSE;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	dbus_uint32_t idsCount = docIds.size();
+-	dbus_uint32_t labelsCount = labels.size();
+-	char **pDocIds;
+-	char **pLabels;
+-	unsigned int idIndex = 0, labelIndex = 0;
+-
+-	pDocIds = g_new(char *, idsCount + 1);
+-	pLabels = g_new(char *, labelsCount + 1);
+-	for (set&lt;unsigned int&gt;::const_iterator idIter = docIds.begin();
+-		idIter != docIds.end(); ++idIter)
+-	{
+-		pDocIds[idIndex] = g_strdup_printf(&quot;%u&quot;, *idIter); 
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: document &quot; &lt;&lt; pDocIds[idIndex] &lt;&lt; endl;
+-#endif
+-		++idIndex;
+-	}
+-	pDocIds[idIndex] = NULL;
+-	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-		labelIter != labels.end(); ++labelIter)
+-	{
+-		pLabels[labelIndex] = g_strdup(labelIter-&gt;c_str());
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: label &quot; &lt;&lt; pLabels[labelIndex] &lt;&lt; endl;
+-#endif
+-		++labelIndex;
+-	}
+-	pLabels[labelIndex] = NULL;
+-
+-	// G_TYPE_STRV is the GLib equivalent of DBUS_TYPE_ARRAY, DBUS_TYPE_STRING
+-	if (dbus_g_proxy_call(pBusProxy, &quot;SetDocumentsLabels&quot;, &amp;pError,
+-		G_TYPE_STRV, pDocIds,
+-		G_TYPE_STRV, pLabels,
+-		G_TYPE_BOOLEAN, (resetLabels == true ? TRUE : FALSE),
+-		G_TYPE_INVALID,
+-		G_TYPE_BOOLEAN, &amp;updatedLabels,
+-		G_TYPE_INVALID) == FALSE)
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::setDocumentsLabels: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-		updatedLabels = FALSE;
+-	}
+-
+-	// Free the arrays
+-	g_strfreev(pDocIds);
+-	g_strfreev(pLabels);
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	if (updatedLabels == TRUE)
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-/// Checks whether the given URL is in the index.
+-unsigned int DBusXapianIndex::hasDocument(const string &amp;url) const
+-{
+-	reopen();
+-
+-	return XapianIndex::hasDocument(url);
+-}
+-
+-/// Gets terms with the same root.
+-unsigned int DBusXapianIndex::getCloseTerms(const string &amp;term, set&lt;string&gt; &amp;suggestions)
+-{
+-	reopen();
+-
+-	return XapianIndex::getCloseTerms(term, suggestions);
+-}
+-
+-/// Returns the ID of the last document.
+-unsigned int DBusXapianIndex::getLastDocumentID(void) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getLastDocumentID();
+-}
+-
+-/// Returns the number of documents.
+-unsigned int DBusXapianIndex::getDocumentsCount(const string &amp;labelName) const
+-{
+-	reopen();
+-
+-	return XapianIndex::getDocumentsCount(labelName);
+-}
+-
+-/// Lists documents.
+-unsigned int DBusXapianIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
+-	unsigned int maxDocsCount, unsigned int startDoc) const
+-{
+-	reopen();
+-
+-	return XapianIndex::listDocuments(docIds, maxDocsCount, startDoc);
+-}
+-
+-/// Lists documents.
+-bool DBusXapianIndex::listDocuments(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
+-	NameType type, unsigned int maxDocsCount, unsigned int startDoc) const
+-{
+-	reopen();
+-
+-	return XapianIndex::listDocuments(name, docIds, type, maxDocsCount, startDoc);
+-}
+-
+-/// Indexes the given data.
+-bool DBusXapianIndex::indexDocument(const Document &amp;doc, const set&lt;string&gt; &amp;labels,
+-	unsigned int &amp;docId)
+-{
+-	cerr &lt;&lt; &quot;DBusXapianIndex::indexDocument: not allowed&quot; &lt;&lt; endl;
+-	return false;
+-}
+-
+-/// Updates the given document; true if success.
+-bool DBusXapianIndex::updateDocument(unsigned int docId, const Document &amp;doc)
+-{
+-	bool updated = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	DBusGProxy *pBusProxy = getBusProxy(pBus);
+-	if (pBusProxy == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::updateDocument: couldn't get bus proxy&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	GError *pError = NULL;
+-	if (dbus_g_proxy_call(pBusProxy, &quot;UpdateDocument&quot;, &amp;pError,
+-		G_TYPE_UINT, docId,
+-		G_TYPE_INVALID,
+-		G_TYPE_UINT, &amp;docId,
+-		G_TYPE_INVALID) == TRUE)
+-	{
+-		updated = true;
+-	}
+-	else
+-	{
+-		if (pError != NULL)
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::updateDocument: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+-			g_error_free(pError);
+-		}
+-	}
+-
+-	g_object_unref(pBusProxy);
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return updated;
+-}
+-
+-/// Updates a document's properties.
+-bool DBusXapianIndex::updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo)
+-{
+-	DBusMessageIter iter;
+-	bool updated = false;
+-
+-	DBusGConnection *pBus = getBusConnection();
+-	if (pBus == NULL)
+-	{
+-		return false;
+-	}
+-
+-	// FIXME: AFAIK we can't use DBusGProxy with message iterators
+-	DBusMessage *pMsg = dbus_message_new_method_call(&quot;de.berlios.Pinot&quot;,
+-		&quot;/de/berlios/Pinot&quot;, &quot;de.berlios.Pinot&quot;, &quot;SetDocumentInfo&quot;);
+-	if (pMsg == NULL)
+-	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::updateDocumentInfo: couldn't call method&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	dbus_message_iter_init_append(pMsg, &amp;iter);
+-	if (DBusXapianIndex::documentInfoToDBus(&amp;iter, docId, docInfo) == false)
+-	{
+-		dbus_message_unref(pMsg);
+-	}
+-	else
+-	{
+-		DBusError err;
+-
+-		dbus_error_init(&amp;err);
+-		DBusMessage *pReply = dbus_connection_send_with_reply_and_block(dbus_g_connection_get_connection(pBus),
+-			pMsg, 1000 * 10, &amp;err);
+-		dbus_message_unref(pMsg);
+-
+-		if (dbus_error_is_set(&amp;err))
+-		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::updateDocumentInfo: &quot; &lt;&lt; err.message &lt;&lt; endl;
+-			dbus_error_free(&amp;err);
+-			return false;
+-		}
+-
+-		if (pReply != NULL)
+-		{
+-			dbus_message_get_args(pReply, NULL,
+-				DBUS_TYPE_UINT32, &amp;docId,
+-				DBUS_TYPE_INVALID);
+-			updated = true;
+-
+-			dbus_message_unref(pReply);
+-		}
+-	}
+-
+-	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+-
+-	return updated;
+-}
+-
+-/// Unindexes the given document; true if success.
+-bool DBusXapianIndex::unindexDocument(unsigned int docId)
+-{
+-	cerr &lt;&lt; &quot;DBusXapianIndex::unindexDocument: not allowed&quot; &lt;&lt; endl;
+-	return false;
+-}
+-
+-/// Unindexes documents.
+-bool DBusXapianIndex::unindexDocuments(const string &amp;name, NameType type)
+-{
+-	cerr &lt;&lt; &quot;DBusXapianIndex::unindexDocuments: not allowed&quot; &lt;&lt; endl;
+-	return false;
+-}
+-
+-/// Unindexes all documents.
+-bool DBusXapianIndex::unindexAllDocuments(void)
+-{
+-	cerr &lt;&lt; &quot;DBusXapianIndex::unindexDocuments: not allowed&quot; &lt;&lt; endl;
+-	return false;
+-}
+-
+-/// Flushes recent changes to the disk.
+-bool DBusXapianIndex::flush(void)
+-{
+-	// The daemon knows best when to flush
+-	return true;
+-}
+-
+-/// Resets the index.
+-bool DBusXapianIndex::reset(void)
+-{
+-	// This can't be done here
+-	return false;
+-}
+-
+
+Deleted: trunk/IndexSearch/DBusXapianIndex.h
+===================================================================
+--- trunk/IndexSearch/DBusXapianIndex.h	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/DBusXapianIndex.h	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -1,158 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _DBUS_XAPIAN_INDEX_H
+-#define _DBUS_XAPIAN_INDEX_H
+-
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-#include &lt;map&gt;
+-#include &quot;config.h&quot;
+-extern &quot;C&quot;
+-{
+-#if DBUS_VERSION &lt; 1000000
+-#define DBUS_API_SUBJECT_TO_CHANGE
+-#endif
+-#include &lt;dbus/dbus.h&gt;
+-#include &lt;dbus/dbus-glib.h&gt;
+-#include &lt;dbus/dbus-glib-lowlevel.h&gt;
+-}
+-
+-#include &quot;XapianIndex.h&quot;
+-
+-/// Allows to write to the daemon index via D-Bus. 
+-class DBusXapianIndex : public XapianIndex
+-{
+-	public:
+-		DBusXapianIndex(const std::string &amp;indexName);
+-		DBusXapianIndex(const DBusXapianIndex &amp;other);
+-		virtual ~DBusXapianIndex();
+-
+-		DBusXapianIndex &amp;operator=(const DBusXapianIndex &amp;other);
+-
+-		/// Extracts docId and docInfo from a dbus message.
+-		static bool documentInfoFromDBus(DBusMessageIter *iter, unsigned int &amp;docId,
+-			DocumentInfo &amp;docInfo);
+-
+-		/// Converts docId and docInfo to a dbus message.
+-		static bool documentInfoToDBus(DBusMessageIter *iter, unsigned int docId,
+-			const DocumentInfo &amp;docInfo);
+-
+-		/// Asks the D-Bus service to reload its configuration.
+-		static bool reload(void);
+-
+-		/// Sets the version number.
+-		virtual bool setVersion(const std::string &amp;version) const;
+-
+-		/// Returns a document's properties.
+-		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+-
+-		/// Returns a document's terms count.
+-		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
+-
+-		/// Returns a document's terms.
+-		virtual bool getDocumentTerms(unsigned int docId,
+-			std::map&lt;unsigned int, std::string&gt; &amp;wordsBuffer) const;
+-
+-		/// Sets the list of known labels.
+-		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels);
+-
+-		/// Gets the list of known labels.
+-		virtual bool getLabels(std::set&lt;std::string&gt; &amp;labels) const;
+-
+-		/// Gets the list of known labels.
+-		bool getLabels(std::set&lt;std::string&gt; &amp;labels, bool forceDBus) const;
+-
+-		/// Adds a label.
+-		virtual bool addLabel(const std::string &amp;name);
+-
+-		/// Renames a label.
+-		virtual bool renameLabel(const std::string &amp;name, const std::string &amp;newName);
+-
+-		/// Deletes all references to a label.
+-		virtual bool deleteLabel(const std::string &amp;name);
+-
+-		/// Determines whether a document has a label.
+-		virtual bool hasLabel(unsigned int docId, const std::string &amp;name) const;
+-
+-		/// Returns a document's labels.
+-		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+-
+-		/// Returns a document's labels.
+-		bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels,
+-			bool forceDBus) const;
+-
+-		/// Sets a document's labels.
+-		virtual bool setDocumentLabels(unsigned int docId, const std::set&lt;std::string&gt; &amp;labels,
+-			bool resetLabels = true);
+-
+-		/// Sets documents' labels.
+-		virtual bool setDocumentsLabels(const std::set&lt;unsigned int&gt; &amp;docIds,
+-			const std::set&lt;std::string&gt; &amp;labels, bool resetLabels = true);
+-
+-		/// Checks whether the given URL is in the index.
+-		virtual unsigned int hasDocument(const std::string &amp;url) const;
+-
+-		/// Gets terms with the same root.
+-		virtual unsigned int getCloseTerms(const std::string &amp;term, std::set&lt;std::string&gt; &amp;suggestions);
+-
+-		/// Returns the ID of the last document.
+-		virtual unsigned int getLastDocumentID(void) const;
+-
+-		/// Returns the number of documents.
+-		virtual unsigned int getDocumentsCount(const std::string &amp;labelName = &quot;&quot;) const;
+-
+-		/// Lists documents.
+-		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+-			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+-
+-		/// Lists documents.
+-		virtual bool listDocuments(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
+-			NameType type, unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+-
+-		/// Indexes the given data.
+-		virtual bool indexDocument(const Document &amp;doc, const std::set&lt;std::string&gt; &amp;labels,
+-			unsigned int &amp;docId);
+-
+-		/// Updates the given document.
+-		virtual bool updateDocument(unsigned int docId, const Document &amp;doc);
+-
+-		/// Updates a document's properties.
+-		virtual bool updateDocumentInfo(unsigned int docId, const DocumentInfo &amp;docInfo);
+-
+-		/// Unindexes the given document.
+-		virtual bool unindexDocument(unsigned int docId);
+-
+-		/// Unindexes documents.
+-		virtual bool unindexDocuments(const std::string &amp;name, NameType type);
+-
+-		/// Unindexes all documents.
+-		virtual bool unindexAllDocuments(void);
+-
+-		/// Flushes recent changes to the disk.
+-		virtual bool flush(void);
+-
+-		/// Resets the index.
+-		virtual bool reset(void);
+-
+-	protected:
+-		void reopen(void) const;
+-
+-};
+-
+-#endif // _DBUS_XAPIAN_INDEX_H
+
+Modified: trunk/IndexSearch/IndexFactory.cpp
+===================================================================
+--- trunk/IndexSearch/IndexFactory.cpp	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/IndexFactory.cpp	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -17,7 +17,7 @@
+  */
+ 
+ #include &quot;XapianIndex.h&quot;
+-#include &quot;DBusXapianIndex.h&quot;
++#include &quot;DBusIndex.h&quot;
+ #include &quot;IndexFactory.h&quot;
+ 
+ using std::string;
+@@ -36,11 +36,12 @@
+ 	IndexInterface *pIndex = NULL;
+ 
+ 	// Choice by type
+-	if (type == &quot;dbus&quot;)
++	if (type == &quot;dbus-xapiam&quot;)
+ 	{
+-		pIndex = new DBusXapianIndex(option);
++		pIndex = new DBusIndex(new XapianIndex(option));
+ 	}
+-	else if (type == &quot;xapian&quot;)
++	else if ((type == &quot;xapian&quot;) ||
++		(type.empty() == true))
+ 	{
+ 		pIndex = new XapianIndex(option);
+ 	}
+
+Modified: trunk/IndexSearch/IndexInterface.h
+===================================================================
+--- trunk/IndexSearch/IndexInterface.h	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/IndexInterface.h	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -130,6 +130,9 @@
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void) = 0;
+ 
++		/// Reopens the index.
++		virtual bool reopen(void) const = 0;
++
+ 		/// Resets the index.
+ 		virtual bool reset(void) = 0;
+ 
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -25,6 +25,7 @@
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
+ 
++#include &quot;config.h&quot;
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -1941,6 +1941,20 @@
+ 	return flushed;
+ }
+ 
++/// Reopens the index.
++bool XapianIndex::reopen(void) const
++{
++	// Reopen
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	return true;
++}
++
+ /// Resets the index.
+ bool XapianIndex::reset(void)
+ {
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -142,6 +142,9 @@
+ 		/// Flushes recent changes to the disk.
+ 		virtual bool flush(void);
+ 
++		/// Reopens the index.
++		virtual bool reopen(void) const;
++
+ 		/// Resets the index.
+ 		virtual bool reset(void);
+ 
+
+Modified: trunk/IndexSearch/pinot-label.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-label.cpp	2007-12-01 09:25:54 UTC (rev 1133)
++++ trunk/IndexSearch/pinot-label.cpp	2007-12-01 09:36:25 UTC (rev 1134)
+@@ -36,7 +36,8 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;DBusXapianIndex.h&quot;
++#include &quot;DBusIndex.h&quot;
++#include &quot;IndexFactory.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ 
+ using namespace std;
+@@ -183,8 +184,9 @@
+ 
+ 	MIMEScanner::initialize(&quot;&quot;, &quot;&quot;);
+ 
++	// We need a DBusIndex object
+ 	string indexLocation(getHomeDirectory() + &quot;/.pinot/daemon&quot;);
+-	DBusXapianIndex index(indexLocation);
++	DBusIndex index(IndexFactory::getIndex(&quot;xapian&quot;, indexLocation));
+ 	if (index.isGood() == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain index for &quot; &lt;&lt; indexLocation &lt;&lt; endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001129.html">[Pinot-svn] r1133 - in trunk: . Index IndexSearch	IndexSearch/Xapian Search
+</A></li>
+	<LI>Next message: <A HREF="001127.html">[Pinot-svn] r1135 - in trunk: . IndexSearch IndexSearch/Google	IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1130">[ date ]</a>
+              <a href="thread.html#1130">[ thread ]</a>
+              <a href="subject.html#1130">[ subject ]</a>
+              <a href="author.html#1130">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

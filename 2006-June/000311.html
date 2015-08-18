@@ -1,0 +1,453 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r317 - in trunk/UI/GTK2: . src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r317%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200606151527.k5FFREhH001552%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000310.html">
+   <LINK REL="Next"  HREF="000312.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r317 - in trunk/UI/GTK2: . src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r317%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200606151527.k5FFREhH001552%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r317 - in trunk/UI/GTK2: . src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Jun 15 17:27:14 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000310.html">[Pinot-svn] r316 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000312.html">[Pinot-svn] r318 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#311">[ date ]</a>
+              <a href="thread.html#311">[ thread ]</a>
+              <a href="subject.html#311">[ subject ]</a>
+              <a href="author.html#311">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-15 17:27:13 +0200 (Thu, 15 Jun 2006)
+New Revision: 317
+
+Modified:
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/mainWindow_glade.cc
+   trunk/UI/GTK2/src/mainWindow_glade.hh
+Log:
+View Cache is now a menu that lists all cache providers. It is disabled when
+none of the selected results belong to a supported protocol.
+After editing a query, reselect the query in the list. Some minor fixes.
+
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2006-06-15 15:17:50 UTC (rev 316)
++++ trunk/UI/GTK2/metase-gtk2.glade	2006-06-15 15:27:13 UTC (rev 317)
+@@ -231,7 +231,6 @@
+ 		      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+ 		      &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;View Cache&lt;/property&gt;
+ 		      &lt;property name=&quot;use_underline&quot;&gt;True&lt;/property&gt;
+-		      &lt;signal name=&quot;activate&quot; handler=&quot;on_viewcache_activate&quot; last_modification_time=&quot;Fri, 18 Mar 2005 19:14:33 GMT&quot;/&gt;
+ 		    &lt;/widget&gt;
+ 		  &lt;/child&gt;
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-06-15 15:17:50 UTC (rev 316)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-06-15 15:27:13 UTC (rev 317)
+@@ -122,7 +122,7 @@
+ 	m_pEnginesTree(NULL),
+ 	m_pNotebook(NULL),
+ 	m_pIndexMenu(NULL),
+-	m_pLabelsMenu(NULL),
++	m_pCacheMenu(NULL),
+ 	m_state(this)
+ {
+ 	// Reposition and resize the window
+@@ -179,10 +179,10 @@
+ 	queryTreeview-&gt;get_selection()-&gt;signal_changed().connect(
+ 		SigC::slot(*this, &amp;mainWindow::on_queryTreeviewSelection_changed));
+ 	// Populate
+-	populate_queryTreeview();
++	populate_queryTreeview(&quot;&quot;);
+ 
+-	// Populate the index menu
+-	populate_indexMenu();
++	// Populate the menus
++	populate_menus();
+ 
+ 	// Create a notebook, without any page initially
+ 	m_pNotebook = manage(new Notebook());
+@@ -245,7 +245,7 @@
+ //
+ // Load user-defined queries
+ //
+-void mainWindow::populate_queryTreeview()
++void mainWindow::populate_queryTreeview(const string &amp;selectedQueryName)
+ {
+ 	QueryHistory history(m_settings.m_historyDatabase);
+ 	const std::map&lt;string, QueryProperties&gt; &amp;queries = m_settings.getQueries();
+@@ -279,6 +279,14 @@
+ 			row[m_queryColumns.m_summary] = _(&quot;&lt;undefined&gt;&quot;);
+ 		}
+ 		row[m_queryColumns.m_properties] = queryIter-&gt;second;
++
++		if ((selectedQueryName.empty() == false) &amp;&amp;
++			(queryName == selectedQueryName))
++		{
++			// Select this query
++			TreeModel::Path path = m_refQueryTree-&gt;get_path(iter);
++			queryTreeview-&gt;get_selection()-&gt;select(path);
++		}
+ 	}
+ }
+ 
+@@ -311,13 +319,13 @@
+ }
+ 
+ //
+-// Populate the index menu
++// Populate menus
+ //
+-void mainWindow::populate_indexMenu()
++void mainWindow::populate_menus()
+ {
+ 	if (m_pIndexMenu == NULL)
+ 	{
+-		m_pIndexMenu = new Menu();
++		m_pIndexMenu = manage(new Menu());
+ 		list1-&gt;set_submenu(*m_pIndexMenu);
+ 	}
+ 	else
+@@ -340,6 +348,39 @@
+ 	// Bind the callback's parameter to the index name
+ 	SigC::Slot0&lt;void&gt; emailActivateSlot = sigc::bind(indexSlot, _(&quot;My Email&quot;));
+ 	pMenuItem-&gt;signal_activate().connect(emailActivateSlot);
++
++	if (m_pCacheMenu == NULL)
++	{
++		m_pCacheMenu = manage(new Menu());
++		viewcache1-&gt;set_submenu(*m_pCacheMenu);
++	}
++	else
++	{
++		// Clear the submenu
++		m_pCacheMenu-&gt;items().clear();
++	}
++
++	SigC::Slot1&lt;void, PinotSettings::CacheProvider&gt; cacheSlot = SigC::slot(*this, &amp;mainWindow::on_cache_changed);
++
++	if (m_settings.m_cacheProviders.empty() == true)
++	{
++		// Hide the submenu
++		viewcache1-&gt;hide();
++	}
++	else
++	{
++		// Populate the submenu
++		for (vector&lt;PinotSettings::CacheProvider&gt;::iterator cacheIter = m_settings.m_cacheProviders.begin();
++			cacheIter != m_settings.m_cacheProviders.end(); ++cacheIter)
++		{
++			m_pCacheMenu-&gt;items().push_back(Menu_Helpers::MenuElem(cacheIter-&gt;m_name));
++			MenuItem *pMenuItem = &amp;m_pCacheMenu-&gt;items().back();
++
++			// Bind the callback's parameter to the cache provider
++			SigC::Slot0&lt;void&gt; documentsActivateSlot = sigc::bind(cacheSlot, (*cacheIter));
++			pMenuItem-&gt;signal_activate().connect(documentsActivateSlot);
++		}
++	}
+ }
+ 
+ //
+@@ -468,10 +509,9 @@
+ 				isViewable = isIndexable = isCached = false;
+ 				break;
+ 			}
+-			else if ((protocol == &quot;http&quot;) ||
+-				(protocol == &quot;https&quot;))
++			else if (m_settings.m_cacheProtocols.find(protocol) != m_settings.m_cacheProtocols.end())
+ 			{
+-				// One document on http is good enough
++				// One document with a supported protocol is good enough
+ 				isCached = true;
+ 			}
+ 		}
+@@ -541,7 +581,7 @@
+ }
+ 
+ //
+-// Index &gt; List menu selected
++// Index &gt; List Contents Of menu selected
+ //
+ void mainWindow::on_index_changed(ustring indexName)
+ {
+@@ -614,8 +654,87 @@
+ }
+ 
+ //
+-// Index &gt; labels combo selection changed
++// Results &gt; View Cache menu selected
+ //
++void mainWindow::on_cache_changed(PinotSettings::CacheProvider cacheProvider)
++{
++	if (cacheProvider.m_name.empty() == true)
++	{
++		return;
++	}
++
++	NotebookPageBox *pNotebookPage = get_current_page();
++	if (pNotebookPage != NULL)
++	{
++		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
++		if (pResultsPage != NULL)
++		{
++			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
++			if (pResultsTree != NULL)
++			{
++				vector&lt;DocumentInfo&gt; resultsList;
++
++				if (pResultsTree-&gt;getSelection(resultsList) == true)
++				{
++					for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
++						resultIter != resultsList.end(); ++resultIter)
++					{
++						string url(resultIter-&gt;getLocation());
++						Url urlObj(url);
++						string protocol(urlObj.getProtocol());
++
++						// Is this protocol supported ?
++						if (cacheProvider.m_protocols.find(protocol) == cacheProvider.m_protocols.end())
++						{
++							// No, it isn't... This document will be open in place
++							continue;
++						}
++
++						// Rewrite the URL
++						ustring location(cacheProvider.m_location);
++						ustring::size_type argPos = location.find(&quot;%url0&quot;);
++						if (argPos != ustring::npos)
++						{
++							string::size_type pos = url.find(&quot;://&quot;);
++							if ((pos != string::npos) &amp;&amp;
++								(pos + 3 &lt; url.length()))
++							{
++								// URL without protocol
++								location.replace(argPos, 5, url.substr(pos + 3));
++							}
++						}
++						else
++						{
++							argPos = location.find(&quot;%url&quot;);
++							if (argPos != ustring::npos)
++							{
++								// Full protocol
++								location.replace(argPos, 4, url);
++							}
++						}
++
++						resultIter-&gt;setLocation(location);
++#ifdef DEBUG
++						cout &lt;&lt; &quot;mainWindow::on_cache_changed: rewritten &quot;
++							&lt;&lt; url &lt;&lt; &quot; to &quot; &lt;&lt; location &lt;&lt; endl;
++#endif
++					}
++
++				}
++
++				view_documents(resultsList);
++
++				// Update the rows right now
++				pResultsTree-&gt;setSelectionViewedState(true);
++			}
++		}
++	}
++}
++
++
++//
++// Index labels combo selection changed
++//
+ void mainWindow::on_label_changed(ustring indexName, ustring labelName)
+ {
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+@@ -1528,65 +1647,6 @@
+ }
+ 
+ //
+-// Results &gt; View Cache menu selected
+-//
+-void mainWindow::on_viewcache_activate()
+-{
+-	string googleCache(&quot;<A HREF="http://www.google.com/search?q=cache:">http://www.google.com/search?q=cache:</A>&quot;);
+-
+-	NotebookPageBox *pNotebookPage = get_current_page();
+-	if (pNotebookPage != NULL)
+-	{
+-		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-		if (pResultsPage != NULL)
+-		{
+-			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-			if (pResultsTree != NULL)
+-			{
+-				vector&lt;DocumentInfo&gt; resultsList;
+-
+-				if (pResultsTree-&gt;getSelection(resultsList) == true)
+-				{
+-					for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
+-						resultIter != resultsList.end(); ++resultIter)
+-					{
+-						string url(resultIter-&gt;getLocation());
+-						Url urlObj(url);
+-						string protocol(urlObj.getProtocol());
+-
+-#ifdef DEBUG
+-						cout &lt;&lt; &quot;mainWindow::on_viewcache_activate: &quot; &lt;&lt; url &lt;&lt; endl;
+-#endif
+-						if ((protocol == &quot;http&quot;) ||
+-							(protocol == &quot;https&quot;))
+-						{
+-							// Rewrite the URL
+-							string::size_type pos = url.find(&quot;://&quot;);
+-							if ((pos != string::npos) &amp;&amp;
+-								(pos + 3 &lt; url.length()))
+-							{
+-								resultIter-&gt;setLocation(googleCache + url.substr(pos + 3));
+-#ifdef DEBUG
+-								cout &lt;&lt; &quot;mainWindow::on_viewcache_activate: rewritten &quot;
+-									&lt;&lt; url &lt;&lt; &quot; to &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
+-#endif
+-							}
+-						}
+-
+-						// Other document will be open in place
+-					}
+-				}
+-
+-				view_documents(resultsList);
+-
+-				// Update the rows right now
+-				pResultsTree-&gt;setSelectionViewedState(true);
+-			}
+-		}
+-	}
+-}
+-
+-//
+ // Results &gt; Index menu selected
+ //
+ void mainWindow::on_indexresults_activate()
+@@ -2552,7 +2612,7 @@
+ 		set_status(_(&quot;Added new query&quot;));
+ 	}
+ 
+-	populate_queryTreeview();
++	populate_queryTreeview(queryProps.getName());
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-06-15 15:17:50 UTC (rev 316)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-06-15 15:27:13 UTC (rev 317)
+@@ -56,9 +56,9 @@
+ 
+ protected:
+ 	// Utility methods
+-	void populate_queryTreeview();
++	void populate_queryTreeview(const std::string &amp;selectedQueryName);
+ 	void save_queryTreeview();
+-	void populate_indexMenu();
++	void populate_menus();
+ 
+ 	// Handlers
+ 	bool on_queryCompletion_match(const Glib::ustring &amp;key, const Gtk::TreeModel::const_iterator &amp;iter);
+@@ -67,6 +67,7 @@
+ 	void on_resultsTreeviewSelection_changed(Glib::ustring queryName);
+ 	void on_indexTreeviewSelection_changed(Glib::ustring indexName);
+ 	void on_index_changed(Glib::ustring indexName);
++	void on_cache_changed(PinotSettings::CacheProvider cacheProvider);
+ 	void on_label_changed(Glib::ustring indexName, Glib::ustring labelName);
+ 	void on_switch_page(GtkNotebookPage *p0, guint p1);
+ 	void on_close_page(Glib::ustring title, NotebookPageBox::PageType type);
+@@ -88,7 +89,6 @@
+ 	virtual void on_showextract_activate();
+ 	virtual void on_groupresults_activate();
+ 	virtual void on_viewresults_activate();
+-	virtual void on_viewcache_activate();
+ 	virtual void on_indexresults_activate();
+ 
+ 	virtual void on_import_activate();
+@@ -156,7 +156,7 @@
+ 	Gtk::Notebook *m_pNotebook;
+ 	// Index
+ 	Gtk::Menu *m_pIndexMenu;
+-	Gtk::Menu *m_pLabelsMenu;
++	Gtk::Menu *m_pCacheMenu;
+ 	ComboModelColumns m_indexNameColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refIndexNameTree;
+ 	// Tooltips
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.cc	2006-06-15 15:17:50 UTC (rev 316)
++++ trunk/UI/GTK2/src/mainWindow_glade.cc	2006-06-15 15:27:13 UTC (rev 317)
+@@ -445,7 +445,6 @@
+    searchenginegroup1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_groupresults_activate), false);
+    clearresults1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_clearresults_activate), false);
+    viewresults1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_viewresults_activate), false);
+-   viewcache1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_viewcache_activate), false);
+    indexresults1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_indexresults_activate), false);
+    import1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_import_activate), false);
+    viewfromindex1-&gt;signal_activate().connect(SigC::slot(*this, &amp;mainWindow_glade::on_viewfromindex_activate), false);
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.hh	2006-06-15 15:17:50 UTC (rev 316)
++++ trunk/UI/GTK2/src/mainWindow_glade.hh	2006-06-15 15:27:13 UTC (rev 317)
+@@ -117,7 +117,6 @@
+         virtual void on_groupresults_activate() = 0;
+         virtual void on_clearresults_activate() = 0;
+         virtual void on_viewresults_activate() = 0;
+-        virtual void on_viewcache_activate() = 0;
+         virtual void on_indexresults_activate() = 0;
+         virtual void on_import_activate() = 0;
+         virtual void on_viewfromindex_activate() = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000310.html">[Pinot-svn] r316 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000312.html">[Pinot-svn] r318 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#311">[ date ]</a>
+              <a href="thread.html#311">[ thread ]</a>
+              <a href="subject.html#311">[ subject ]</a>
+              <a href="author.html#311">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

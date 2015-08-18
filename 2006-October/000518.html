@@ -1,0 +1,527 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r525 - trunk/Utils/xdgmime
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r525%20-%20trunk/Utils/xdgmime&In-Reply-To=%3C200610171337.k9HDb6fB010704%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000517.html">
+   <LINK REL="Next"  HREF="000519.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r525 - trunk/Utils/xdgmime</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r525%20-%20trunk/Utils/xdgmime&In-Reply-To=%3C200610171337.k9HDb6fB010704%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r525 - trunk/Utils/xdgmime">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 17 15:37:06 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000517.html">[Pinot-svn] r524 - in trunk: Index Search UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000519.html">[Pinot-svn] r526 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#518">[ date ]</a>
+              <a href="thread.html#518">[ thread ]</a>
+              <a href="subject.html#518">[ subject ]</a>
+              <a href="author.html#518">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-10-17 15:37:06 +0200 (Tue, 17 Oct 2006)
+New Revision: 525
+
+Modified:
+   trunk/Utils/xdgmime/xdgmime.c
+   trunk/Utils/xdgmime/xdgmime.h
+   trunk/Utils/xdgmime/xdgmimealias.c
+   trunk/Utils/xdgmime/xdgmimecache.c
+   trunk/Utils/xdgmime/xdgmimeglob.c
+   trunk/Utils/xdgmime/xdgmimemagic.c
+Log:
+Imported GTK+'s version of xdgmime.
+
+
+Modified: trunk/Utils/xdgmime/xdgmime.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmime.c	2006-10-17 13:34:03 UTC (rev 524)
++++ trunk/Utils/xdgmime/xdgmime.c	2006-10-17 13:37:06 UTC (rev 525)
+@@ -60,7 +60,7 @@
+ XdgMimeCache **_caches = NULL;
+ static int n_caches = 0;
+ 
+-const char *xdg_mime_type_unknown = &quot;application/octet-stream&quot;;
++const char xdg_mime_type_unknown[] = &quot;application/octet-stream&quot;;
+ 
+ 
+ enum
+@@ -281,7 +281,8 @@
+  * FIXME: This doesn't protect against permission changes.
+  */
+ static int
+-xdg_check_file (const char *file_path)
++xdg_check_file (const char *file_path,
++                int        *exists)
+ {
+   struct stat st;
+ 
+@@ -290,6 +291,9 @@
+     {
+       XdgDirTimeList *list;
+ 
++      if (exists)
++        *exists = TRUE;
++
+       for (list = dir_time_list; list; list = list-&gt;next)
+ 	{
+ 	  if (! strcmp (list-&gt;directory_name, file_path) &amp;&amp;
+@@ -306,6 +310,9 @@
+       return TRUE;
+     }
+ 
++  if (exists)
++    *exists = FALSE;
++
+   return FALSE;
+ }
+ 
+@@ -313,26 +320,30 @@
+ xdg_check_dir (const char *directory,
+ 	       int        *invalid_dir_list)
+ {
+-  int invalid;
++  int invalid, exists;
+   char *file_name;
+ 
+   assert (directory != NULL);
+ 
+-  /* Check the globs file */
+-  file_name = malloc (strlen (directory) + strlen (&quot;/mime/globs&quot;) + 1);
+-  strcpy (file_name, directory); strcat (file_name, &quot;/mime/globs&quot;);
+-  invalid = xdg_check_file (file_name);
++  /* Check the mime.cache file */
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/mime.cache&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/mime.cache&quot;);
++  invalid = xdg_check_file (file_name, &amp;exists);
+   free (file_name);
+   if (invalid)
+     {
+       *invalid_dir_list = TRUE;
+       return TRUE;
+     }
++  else if (exists)
++    {
++      return FALSE;
++    }
+ 
+-  /* Check the magic file */
+-  file_name = malloc (strlen (directory) + strlen (&quot;/mime/magic&quot;) + 1);
+-  strcpy (file_name, directory); strcat (file_name, &quot;/mime/magic&quot;);
+-  invalid = xdg_check_file (file_name);
++  /* Check the globs file */
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/globs&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/globs&quot;);
++  invalid = xdg_check_file (file_name, NULL);
+   free (file_name);
+   if (invalid)
+     {
+@@ -340,10 +351,10 @@
+       return TRUE;
+     }
+ 
+-  /* Check the mime.cache file */
+-  file_name = malloc (strlen (directory) + strlen (&quot;/mime/mime.cache&quot;) + 1);
+-  strcpy (file_name, directory); strcat (file_name, &quot;/mime/mime.cache&quot;);
+-  invalid = xdg_check_file (file_name);
++  /* Check the magic file */
++  file_name = malloc (strlen (directory) + strlen (&quot;/mime/magic&quot;) + 1);
++  strcpy (file_name, directory); strcat (file_name, &quot;/mime/magic&quot;);
++  invalid = xdg_check_file (file_name, NULL);
+   free (file_name);
+   if (invalid)
+     {
+@@ -528,15 +539,15 @@
+ const char *
+ xdg_mime_get_mime_type_from_file_name (const char *file_name)
+ {
+-  const char *mime_types[2];
++  const char *mime_type;
+ 
+   xdg_mime_init ();
+ 
+   if (_caches)
+     return _xdg_mime_cache_get_mime_type_from_file_name (file_name);
+ 
+-  if (_xdg_glob_hash_lookup_file_name (global_hash, file_name, mime_types, 2) == 1)
+-    return mime_types[0];
++  if (_xdg_glob_hash_lookup_file_name (global_hash, file_name, &amp;mime_type, 1))
++    return mime_type;
+   else
+     return XDG_MIME_TYPE_UNKNOWN;
+ }
+@@ -584,6 +595,17 @@
+       parent_list = NULL;
+     }
+   
++  if (_caches)
++    {
++      int i;
++
++      for (i = 0; i &lt; n_caches; i++)
++        _xdg_mime_cache_unref (_caches[i]);
++      free (_caches);
++      _caches = NULL;
++      n_caches = 0;
++    }
++
+   for (list = callback_list; list; list = list-&gt;next)
+     (list-&gt;callback) (list-&gt;data);
+ 
+@@ -602,12 +624,10 @@
+ }
+ 
+ const char *
+-xdg_mime_unalias_mime_type (const char *mime_type)
++_xdg_mime_unalias_mime_type (const char *mime_type)
+ {
+   const char *lookup;
+ 
+-  xdg_mime_init ();
+-
+   if (_caches)
+     return _xdg_mime_cache_unalias_mime_type (mime_type);
+ 
+@@ -617,17 +637,23 @@
+   return mime_type;
+ }
+ 
++const char *
++xdg_mime_unalias_mime_type (const char *mime_type)
++{
++  xdg_mime_init ();
++
++  return _xdg_mime_unalias_mime_type (mime_type);
++}
++
+ int
+-xdg_mime_mime_type_equal (const char *mime_a,
+-			  const char *mime_b)
++_xdg_mime_mime_type_equal (const char *mime_a,
++			   const char *mime_b)
+ {
+   const char *unalias_a, *unalias_b;
+ 
+-  xdg_mime_init ();
++  unalias_a = _xdg_mime_unalias_mime_type (mime_a);
++  unalias_b = _xdg_mime_unalias_mime_type (mime_b);
+ 
+-  unalias_a = xdg_mime_unalias_mime_type (mime_a);
+-  unalias_b = xdg_mime_unalias_mime_type (mime_b);
+-
+   if (strcmp (unalias_a, unalias_b) == 0)
+     return 1;
+ 
+@@ -635,6 +661,15 @@
+ }
+ 
+ int
++xdg_mime_mime_type_equal (const char *mime_a,
++			  const char *mime_b)
++{
++  xdg_mime_init ();
++
++  return _xdg_mime_mime_type_equal (mime_a, mime_b);
++}
++
++int
+ xdg_mime_media_type_equal (const char *mime_a,
+ 			   const char *mime_b)
+ {
+@@ -650,7 +685,7 @@
+   return 0;
+ }
+ 
+-#if 0
++#if 1
+ static int
+ xdg_mime_is_super_type (const char *mime)
+ {
+@@ -668,24 +703,22 @@
+ #endif
+ 
+ int
+-xdg_mime_mime_type_subclass (const char *mime,
+-			     const char *base)
++_xdg_mime_mime_type_subclass (const char *mime,
++			      const char *base)
+ {
+   const char *umime, *ubase;
+   const char **parents;
+ 
+-  xdg_mime_init ();
+-
+   if (_caches)
+     return _xdg_mime_cache_mime_type_subclass (mime, base);
+ 
+-  umime = xdg_mime_unalias_mime_type (mime);
+-  ubase = xdg_mime_unalias_mime_type (base);
++  umime = _xdg_mime_unalias_mime_type (mime);
++  ubase = _xdg_mime_unalias_mime_type (base);
+ 
+   if (strcmp (umime, ubase) == 0)
+     return 1;
+ 
+-#if 0  
++#if 1  
+   /* Handle supertypes */
+   if (xdg_mime_is_super_type (ubase) &amp;&amp;
+       xdg_mime_media_type_equal (umime, ubase))
+@@ -703,13 +736,22 @@
+   parents = _xdg_mime_parent_list_lookup (parent_list, umime);
+   for (; parents &amp;&amp; *parents; parents++)
+     {
+-      if (xdg_mime_mime_type_subclass (*parents, ubase))
++      if (_xdg_mime_mime_type_subclass (*parents, ubase))
+ 	return 1;
+     }
+ 
+   return 0;
+ }
+ 
++int
++xdg_mime_mime_type_subclass (const char *mime,
++			     const char *base)
++{
++  xdg_mime_init ();
++
++  return _xdg_mime_mime_type_subclass (mime, base);
++}
++
+ char **
+ xdg_mime_list_mime_parents (const char *mime)
+ {
+@@ -741,7 +783,7 @@
+ 
+   xdg_mime_init ();
+ 
+-  umime = xdg_mime_unalias_mime_type (mime);
++  umime = _xdg_mime_unalias_mime_type (mime);
+ 
+   return _xdg_mime_parent_list_lookup (parent_list, umime);
+ }
+
+Modified: trunk/Utils/xdgmime/xdgmime.h
+===================================================================
+--- trunk/Utils/xdgmime/xdgmime.h	2006-10-17 13:34:03 UTC (rev 524)
++++ trunk/Utils/xdgmime/xdgmime.h	2006-10-17 13:37:06 UTC (rev 525)
+@@ -59,12 +59,13 @@
+ #define xdg_mime_unalias_mime_type            XDG_ENTRY(unalias_mime_type)
+ #define xdg_mime_get_max_buffer_extents       XDG_ENTRY(get_max_buffer_extents)
+ #define xdg_mime_shutdown                     XDG_ENTRY(shutdown)
++#define xdg_mime_dump                         XDG_ENTRY(dump)
+ #define xdg_mime_register_reload_callback     XDG_ENTRY(register_reload_callback)
+ #define xdg_mime_remove_callback              XDG_ENTRY(remove_callback)
+ #define xdg_mime_type_unknown                 XDG_ENTRY(type_unknown)
+ #endif
+ 
+-extern const char *xdg_mime_type_unknown;
++extern const char xdg_mime_type_unknown[];
+ #define XDG_MIME_TYPE_UNKNOWN xdg_mime_type_unknown
+ 
+ const char  *xdg_mime_get_mime_type_for_data       (const void *data,
+@@ -95,8 +96,16 @@
+ 						    XdgMimeDestroy   destroy);
+ void         xdg_mime_remove_callback              (int              callback_id);
+ 
++   /* Private versions of functions that don't call xdg_mime_init () */
++int          _xdg_mime_mime_type_equal             (const char *mime_a,
++						    const char *mime_b);
++int          _xdg_mime_media_type_equal            (const char *mime_a,
++						    const char *mime_b);
++int          _xdg_mime_mime_type_subclass          (const char *mime,
++						    const char *base);
++
++
+ #ifdef __cplusplus
+ }
+ #endif /* __cplusplus */
+-
+ #endif /* __XDG_MIME_H__ */
+
+Modified: trunk/Utils/xdgmime/xdgmimealias.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimealias.c	2006-10-17 13:34:03 UTC (rev 524)
++++ trunk/Utils/xdgmime/xdgmimealias.c	2006-10-17 13:37:06 UTC (rev 525)
+@@ -105,7 +105,7 @@
+   if (list-&gt;n_aliases &gt; 0)
+     {
+       key.alias = (char *)alias;
+-      key.mime_type = 0;
++      key.mime_type = NULL;
+ 
+       entry = bsearch (&amp;key, list-&gt;aliases, list-&gt;n_aliases,
+ 		       sizeof (XdgAlias), alias_entry_cmp);
+
+Modified: trunk/Utils/xdgmime/xdgmimecache.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimecache.c	2006-10-17 13:34:03 UTC (rev 524)
++++ trunk/Utils/xdgmime/xdgmimecache.c	2006-10-17 13:37:06 UTC (rev 525)
+@@ -737,10 +737,10 @@
+ const char *
+ _xdg_mime_cache_get_mime_type_from_file_name (const char *file_name)
+ {
+-  const char *mime_types[2];
++  const char *mime_type;
+ 
+-  if (cache_glob_lookup_file_name (file_name, mime_types, 2) == 1)
+-    return mime_types[0];
++  if (cache_glob_lookup_file_name (file_name, &amp;mime_type, 1))
++    return mime_type;
+   else
+     return XDG_MIME_TYPE_UNKNOWN;
+ }
+
+Modified: trunk/Utils/xdgmime/xdgmimeglob.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimeglob.c	2006-10-17 13:34:03 UTC (rev 524)
++++ trunk/Utils/xdgmime/xdgmimeglob.c	2006-10-17 13:37:06 UTC (rev 525)
+@@ -263,7 +263,7 @@
+ 		{
+ 		  child = _xdg_glob_hash_node_new ();
+ 		  child-&gt;character = '\000';
+-		  child-&gt;mime_type = strdup (mime_type);
++		  child-&gt;mime_type = mime_type;
+ 		  child-&gt;child = NULL;
+ 		  child-&gt;next = node-&gt;child;
+ 		  node-&gt;child = child;
+@@ -272,7 +272,7 @@
+ 	}
+       else
+ 	{
+-	  node-&gt;mime_type = strdup (mime_type);
++	  node-&gt;mime_type = mime_type;
+ 	}
+     }
+   else
+@@ -308,11 +308,13 @@
+ 	  if (*file_name == '\000')
+ 	    {
+ 	      n = 0;
+-	      mime_types[n++] = node-&gt;mime_type;
++              if (node-&gt;mime_type)
++	        mime_types[n++] = node-&gt;mime_type;
+ 	      node = node-&gt;child;
+ 	      while (n &lt; n_mime_types &amp;&amp; node &amp;&amp; node-&gt;character == 0)
+ 		{
+-		  mime_types[n++] = node-&gt;mime_type;
++                  if (node-&gt;mime_type)
++		    mime_types[n++] = node-&gt;mime_type;
+ 		  node = node-&gt;next;
+ 		}
+ 	    }
+@@ -475,7 +477,7 @@
+       glob_hash-&gt;literal_list = _xdg_glob_list_append (glob_hash-&gt;literal_list, strdup (glob), strdup (mime_type));
+       break;
+     case XDG_GLOB_SIMPLE:
+-      glob_hash-&gt;simple_node = _xdg_glob_hash_insert_text (glob_hash-&gt;simple_node, glob + 1, mime_type);
++      glob_hash-&gt;simple_node = _xdg_glob_hash_insert_text (glob_hash-&gt;simple_node, glob + 1, strdup (mime_type));
+       break;
+     case XDG_GLOB_FULL:
+       glob_hash-&gt;full_list = _xdg_glob_list_append (glob_hash-&gt;full_list, strdup (glob), strdup (mime_type));
+
+Modified: trunk/Utils/xdgmime/xdgmimemagic.c
+===================================================================
+--- trunk/Utils/xdgmime/xdgmimemagic.c	2006-10-17 13:34:03 UTC (rev 524)
++++ trunk/Utils/xdgmime/xdgmimemagic.c	2006-10-17 13:37:06 UTC (rev 525)
+@@ -47,8 +47,6 @@
+ #define	TRUE	(!FALSE)
+ #endif
+ 
+-extern int errno;
+-
+ typedef struct XdgMimeMagicMatch XdgMimeMagicMatch;
+ typedef struct XdgMimeMagicMatchlet XdgMimeMagicMatchlet;
+ 
+@@ -474,9 +472,7 @@
+       /* We clean up the matchlet, byte swapping if needed */
+       if (matchlet-&gt;word_size &gt; 1)
+ 	{
+-#if LITTLE_ENDIAN
+ 	  int i;
+-#endif
+ 	  if (matchlet-&gt;value_length % matchlet-&gt;word_size != 0)
+ 	    {
+ 	      _xdg_mime_magic_matchlet_free (matchlet);
+@@ -662,35 +658,22 @@
+   XdgMimeMagicMatch *match;
+   const char *mime_type;
+   int n;
+-  int priority;
+-  int had_match;
+ 
+   mime_type = NULL;
+-  priority = 0;
+-  had_match = 0;
+   for (match = mime_magic-&gt;match_list; match; match = match-&gt;next)
+     {
+       if (_xdg_mime_magic_match_compare_to_data (match, data, len))
+ 	{
+-	  if (!had_match || match-&gt;priority &gt; priority ||
+-	      (mime_type != NULL &amp;&amp; xdg_mime_mime_type_subclass (match-&gt;mime_type, mime_type)))
+-	    {
+-	      mime_type = match-&gt;mime_type;
+-	      priority = match-&gt;priority;
+-	    }
+-	  else if (had_match &amp;&amp; match-&gt;priority == priority)
+-	    /* multiple unrelated patterns with the same priority matched,
+-	     * so we can't tell what type this is. */
+-	    mime_type = NULL;
+-
+-	  had_match = 1;
++	  if ((mime_type == NULL) || (_xdg_mime_mime_type_subclass (match-&gt;mime_type, mime_type))) {
++	    mime_type = match-&gt;mime_type;
++	  }
+ 	}
+       else 
+ 	{
+ 	  for (n = 0; n &lt; n_mime_types; n++)
+ 	    {
+ 	      if (mime_types[n] &amp;&amp; 
+-		  xdg_mime_mime_type_equal (mime_types[n], match-&gt;mime_type))
++		  _xdg_mime_mime_type_equal (mime_types[n], match-&gt;mime_type))
+ 		mime_types[n] = NULL;
+ 	    }
+ 	}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000517.html">[Pinot-svn] r524 - in trunk: Index Search UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000519.html">[Pinot-svn] r526 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#518">[ date ]</a>
+              <a href="thread.html#518">[ thread ]</a>
+              <a href="subject.html#518">[ subject ]</a>
+              <a href="author.html#518">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

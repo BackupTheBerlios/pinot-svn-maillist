@@ -1,0 +1,809 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r807 - trunk/Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r807%20-%20trunk/Search&In-Reply-To=%3C200704241430.l3OEUdtV011873%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000800.html">
+   <LINK REL="Next"  HREF="000802.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r807 - trunk/Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r807%20-%20trunk/Search&In-Reply-To=%3C200704241430.l3OEUdtV011873%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r807 - trunk/Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 24 16:30:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000800.html">[Pinot-svn] r806 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000802.html">[Pinot-svn] r808 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#801">[ date ]</a>
+              <a href="thread.html#801">[ thread ]</a>
+              <a href="subject.html#801">[ subject ]</a>
+              <a href="author.html#801">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-04-24 16:30:38 +0200 (Tue, 24 Apr 2007)
+New Revision: 807
+
+Added:
+   trunk/Search/ResultsExporter.cpp
+   trunk/Search/ResultsExporter.h
+Modified:
+   trunk/Search/Makefile.am
+   trunk/Search/SearchEngineFactory.cpp
+   trunk/Search/SearchEngineFactory.h
+   trunk/Search/pinot-search.cpp
+Log:
+Implemented results export, to either CSV (semi-colon) or OpenSearch response
+XML/RSS. pinot-search cai either save the results to file or output them.
+SearchEngineFactory has a new utility method that returns a plugin's engine
+name.
+
+
+Modified: trunk/Search/Makefile.am
+===================================================================
+--- trunk/Search/Makefile.am	2007-04-16 13:28:52 UTC (rev 806)
++++ trunk/Search/Makefile.am	2007-04-24 14:30:38 UTC (rev 807)
+@@ -3,18 +3,19 @@
+ noinst_HEADERS = \
+ 	AbstractGenerator.h \
+ 	OpenSearchParser.h \
++	PluginParsers.h \
++	PluginWebEngine.h \
+ 	QueryProperties.h \
+-	SearchPluginProperties.h \
+-	WebEngine.h \
++	ResultsExporter.h \
+ 	SearchEngineFactory.h \
+-	XapianEngine.h \
+-	PluginParsers.h \
+-	PluginWebEngine.h \
+ 	SearchEngineInterface.h \
++	SearchPluginProperties.h \
+ 	SherlockParser.h \
+ 	SOAPEnv.h \
+ 	SOAPEnvH.h \
+-	SOAPEnvStub.h
++	SOAPEnvStub.h \
++	WebEngine.h \
++	XapianEngine.h
+ 
+ EXTRA_LTLIBRARIES = libSearch.la libSearchSOAP.la
+ 
+@@ -25,13 +26,14 @@
+ libSearch_la_SOURCES = \
+ 	AbstractGenerator.cpp \
+ 	OpenSearchParser.cpp \
++	PluginWebEngine.cpp \
+ 	QueryProperties.cpp \
++	ResultsExporter.cpp \
++	SearchEngineFactory.cpp \
++	SearchEngineInterface.cpp \
+ 	SearchPluginProperties.cpp \
+ 	WebEngine.cpp \
+-	SearchEngineFactory.cpp \
+-	XapianEngine.cpp \
+-	PluginWebEngine.cpp \
+-	SearchEngineInterface.cpp
++	XapianEngine.cpp
+ if HAVE_BOOST_SPIRIT
+ libSearch_la_SOURCES += SherlockParser.cpp
+ endif
+
+Added: trunk/Search/ResultsExporter.cpp
+===================================================================
+--- trunk/Search/ResultsExporter.cpp	2007-04-16 13:28:52 UTC (rev 806)
++++ trunk/Search/ResultsExporter.cpp	2007-04-24 14:30:38 UTC (rev 807)
+@@ -0,0 +1,275 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;iostream&gt;
++#include &lt;fstream&gt;
++#include &lt;libxml++/parsers/domparser.h&gt;
++#include &lt;libxml++/nodes/node.h&gt;
++#include &lt;libxml++/nodes/textnode.h&gt;
++
++#include &quot;StringManip.h&quot;
++#include &quot;FilterUtils.h&quot;
++#include &quot;ResultsExporter.h&quot;
++
++using std::string;
++using std::vector;
++using std::ofstream;
++using std::endl;
++using xmlpp::Element;
++
++static Element *addChildElement(Element *pElem, const string &amp;nodeName, const string &amp;nodeContent)
++{
++	if (pElem == NULL)
++	{
++		return NULL;
++	}
++
++	Element *pSubElem = pElem-&gt;add_child(nodeName);
++	if (pSubElem != NULL)
++	{
++#ifdef HAS_LIBXMLPP026
++		pSubElem-&gt;set_child_content(nodeContent);
++#else
++		pSubElem-&gt;set_child_text(nodeContent);
++#endif
++	}
++
++	return pSubElem;
++}
++
++ResultsExporter::ResultsExporter(const string &amp;fileName,
++	const QueryProperties &amp;queryProps) :
++	m_fileName(fileName),
++	m_queryName(queryProps.getName()),
++	m_queryDetails(queryProps.getFreeQuery())
++{
++}
++
++ResultsExporter::~ResultsExporter()
++{
++}
++
++CSVExporter::CSVExporter(const string &amp;fileName,
++	const QueryProperties &amp;queryProps) :
++	ResultsExporter(fileName, queryProps)
++{
++}
++
++CSVExporter::~CSVExporter()
++{
++}
++
++bool CSVExporter::exportResults(const string &amp;engineName, unsigned int maxResultsCount,
++	const vector&lt;DocumentInfo&gt; &amp;resultsList)
++{
++	if ((resultsList.empty() == true) ||
++		(exportStart(engineName, maxResultsCount) == false))
++	{
++		return false;
++	}
++
++	for (vector&lt;DocumentInfo&gt;::const_iterator iter = resultsList.begin();
++		iter != resultsList.end(); ++iter)
++	{
++		exportResult(engineName, *iter);
++	}
++	exportEnd();
++
++	return true;
++}
++
++bool CSVExporter::exportStart(const string &amp;engineName, unsigned int maxResultsCount)
++{
++	if (m_fileName.empty() == true)
++	{
++		return false;
++	}
++
++	m_outputFile.open(m_fileName.c_str());
++	if (m_outputFile.good() == false)
++	{
++		m_outputFile.close();
++
++		return false;
++	}
++
++	m_outputFile &lt;&lt; &quot;\&quot;query\&quot;;\&quot;engine\&quot;;\&quot;caption\&quot;;\&quot;url\&quot;;\&quot;type\&quot;;\&quot;language\&quot;;\&quot;modtime\&quot;;\&quot;size\&quot;;\&quot;abstract\&quot;&quot; &lt;&lt; endl;
++
++	return true;
++}
++
++bool CSVExporter::exportResult(const string &amp;engineName, const DocumentInfo &amp;docInfo)
++{
++	string title(FilterUtils::stripMarkup(docInfo.getTitle()));
++	string extract(FilterUtils::stripMarkup(docInfo.getExtract()));
++
++	if (m_outputFile.good() == false)
++	{
++		return false;
++	}
++
++	// Double double-quotes
++	m_outputFile &lt;&lt; &quot;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(m_queryName, &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(engineName, &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(title, &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(docInfo.getLocation(), &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(docInfo.getType(), &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(docInfo.getLanguage(), &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(docInfo.getTimestamp(), &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; docInfo.getSize()
++		&lt;&lt; &quot;\&quot;;\&quot;&quot; &lt;&lt; StringManip::replaceSubString(extract, &quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;)
++		&lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl;
++
++	return true;
++}
++
++void CSVExporter::exportEnd(void)
++{
++	m_outputFile.close();
++}
++
++OpenSearchExporter::OpenSearchExporter(const string &amp;fileName,
++	const QueryProperties &amp;queryProps) :
++	ResultsExporter(fileName, queryProps),
++	m_pDoc(NULL),
++	m_pChannelElem(NULL)
++{
++}
++
++OpenSearchExporter::~OpenSearchExporter()
++{
++}
++
++bool OpenSearchExporter::exportResults(const string &amp;engineName, unsigned int maxResultsCount,
++	const vector&lt;DocumentInfo&gt; &amp;resultsList)
++{
++	if ((resultsList.empty() == true) ||
++		(exportStart(engineName, maxResultsCount) == false))
++	{
++		return false;
++	}
++
++	for (vector&lt;DocumentInfo&gt;::const_iterator iter = resultsList.begin();
++		iter != resultsList.end(); ++iter)
++	{
++		exportResult(engineName, *iter);
++	}
++	exportEnd();
++
++	return true;
++}
++
++bool OpenSearchExporter::exportStart(const string &amp;engineName, unsigned int maxResultsCount)
++{
++	if (m_fileName.empty() == true)
++	{
++		return false;
++	}
++
++	if (m_pDoc != NULL)
++	{
++		delete m_pDoc;
++		m_pDoc = NULL;
++		m_pChannelElem = NULL;
++	}
++
++	Element *pRootElem = NULL;
++	string description(&quot;Search&quot;);
++	char numStr[64];
++
++	m_pDoc = new xmlpp::Document(&quot;1.0&quot;);
++
++	// Create a new node
++	pRootElem = m_pDoc-&gt;create_root_node(&quot;rss&quot;);
++	if (pRootElem == NULL)
++	{
++		return false;
++	}
++	pRootElem-&gt;set_attribute(&quot;version&quot;, &quot;2.0&quot;);
++	pRootElem-&gt;set_attribute(&quot;xmlns:opensearch&quot;, &quot;<A HREF="http://a9.com/-/spec/opensearch/1.1/">http://a9.com/-/spec/opensearch/1.1/</A>&quot;);
++	pRootElem-&gt;set_attribute(&quot;xmlns:atom&quot;, &quot;<A HREF="http://www.w3.org/2005/Atom">http://www.w3.org/2005/Atom</A>&quot;);
++
++	// User interface position and size
++	m_pChannelElem = pRootElem-&gt;add_child(&quot;channel&quot;);
++	if (m_pChannelElem == NULL)
++	{
++		return false;
++	}
++	if (m_queryName.empty() == false)
++	{
++		addChildElement(m_pChannelElem, &quot;title&quot;, m_queryName);
++	}
++	if (m_queryName.empty() == false)
++	{
++		description += &quot; for \&quot;&quot;;
++		description += m_queryName;
++		description += &quot;\&quot;&quot;;
++	}
++	if (engineName.empty() == false)
++	{
++		description += &quot; on &quot;;
++		description += engineName;
++	}
++	addChildElement(m_pChannelElem, &quot;description&quot;, description);
++	sprintf(numStr, &quot;%d&quot;, maxResultsCount);
++	addChildElement(m_pChannelElem, &quot;opensearch:totalResults&quot;, numStr);
++	addChildElement(m_pChannelElem, &quot;opensearch:itemsPerPage&quot;, numStr);
++	if (m_queryDetails.empty() == false)
++	{
++		Element *pQueryElem = addChildElement(m_pChannelElem, &quot;opensearch:Query&quot;, &quot;&quot;);
++		if (pQueryElem != NULL)
++		{
++			pQueryElem-&gt;set_attribute(&quot;role&quot;, &quot;request&quot;);
++			pQueryElem-&gt;set_attribute(&quot;searchTerms&quot;, m_queryDetails);
++			pQueryElem-&gt;set_attribute(&quot;startPage&quot;, &quot;1&quot;);
++		}
++	}
++
++	return true;
++}
++
++bool OpenSearchExporter::exportResult(const string &amp;engineName, const DocumentInfo &amp;docInfo)
++{
++	if (m_pChannelElem == NULL)
++	{
++		return false;
++	}
++
++	Element *pElem = m_pChannelElem-&gt;add_child(&quot;item&quot;);
++	addChildElement(pElem, &quot;title&quot;, docInfo.getTitle());
++	addChildElement(pElem, &quot;link&quot;, docInfo.getLocation());
++	addChildElement(pElem, &quot;description&quot;, FilterUtils::stripMarkup(docInfo.getExtract()));
++
++	return true;
++}
++
++void OpenSearchExporter::exportEnd(void)
++{
++	if (m_pDoc == NULL)
++	{
++		return;
++	}
++
++	// Save to file
++	m_pDoc-&gt;write_to_file_formatted(m_fileName);
++
++	m_pChannelElem = NULL;
++	delete m_pDoc;
++	m_pDoc = NULL;
++}
++
+
+Added: trunk/Search/ResultsExporter.h
+===================================================================
+--- trunk/Search/ResultsExporter.h	2007-04-16 13:28:52 UTC (rev 806)
++++ trunk/Search/ResultsExporter.h	2007-04-24 14:30:38 UTC (rev 807)
+@@ -0,0 +1,133 @@
++/*
++ *  Copyright 2007 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _RESULTS_EXPORTER_H
++#define _RESULTS_EXPORTER_H
++
++#include &lt;string&gt;
++#include &lt;vector&gt;
++#include &lt;fstream&gt;
++#include &lt;libxml++/document.h&gt;
++#include &lt;libxml++/nodes/element.h&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;QueryProperties.h&quot;
++
++/// Exports results to a given format.
++class ResultsExporter
++{
++	public:
++		ResultsExporter(const std::string &amp;fileName,
++			const QueryProperties &amp;queryProps);
++		virtual ~ResultsExporter();
++
++		/// Exports a list of results.
++		virtual bool exportResults(const std::string &amp;engineName,
++			unsigned int maxResultsCount,
++			const std::vector&lt;DocumentInfo&gt; &amp;resultsList) = 0;
++
++		/// Starts export.
++		virtual bool exportStart(const std::string &amp;engineName,
++			unsigned int maxResultsCount) = 0;
++
++		/// Exports the given result.
++		virtual bool exportResult(const std::string &amp;engineName,
++			const DocumentInfo &amp;docInfo) = 0;
++
++		/// Ends export.
++		virtual void exportEnd(void) = 0;
++
++	protected:
++		std::string m_fileName;
++		std::string m_queryName;
++		std::string m_queryDetails;
++
++	private:
++		ResultsExporter(const ResultsExporter &amp;other);
++		ResultsExporter&amp; operator=(const ResultsExporter&amp; other);
++
++};
++
++/// Exports results to CSV.
++class CSVExporter : public ResultsExporter
++{
++	public:
++		CSVExporter(const std::string &amp;fileName,
++			const QueryProperties &amp;queryProps);
++		virtual ~CSVExporter();
++
++		/// Exports the results; false if an error occured.
++		virtual bool exportResults(const std::string &amp;engineName,
++			unsigned int maxResultsCount,
++			const std::vector&lt;DocumentInfo&gt; &amp;resultsList);
++
++		/// Starts export.
++		virtual bool exportStart(const std::string &amp;engineName,
++			unsigned int maxResultsCount);
++
++		/// Exports the given result.
++		virtual bool exportResult(const std::string &amp;engineName,
++			const DocumentInfo &amp;docInfo);
++
++		/// Ends export.
++		virtual void exportEnd(void);
++
++	protected:
++		std::ofstream m_outputFile;
++
++	private:
++		CSVExporter(const CSVExporter &amp;other);
++		CSVExporter&amp; operator=(const CSVExporter&amp; other);
++
++};
++
++/// Exports results to OpenSearch response. 
++class OpenSearchExporter : public ResultsExporter
++{
++	public:
++		OpenSearchExporter(const std::string &amp;fileName,
++			const QueryProperties &amp;queryProps);
++		virtual ~OpenSearchExporter();
++
++		/// Exports the results; false if an error occured.
++		virtual bool exportResults(const std::string &amp;engineName,
++			unsigned int maxResultsCount,
++			const std::vector&lt;DocumentInfo&gt; &amp;resultsList);
++
++		/// Starts export.
++		virtual bool exportStart(const std::string &amp;engineName,
++			unsigned int maxResultsCount);
++
++		/// Exports the given result.
++		virtual bool exportResult(const std::string &amp;engineName,
++			const DocumentInfo &amp;docInfo);
++
++		/// Ends export.
++		virtual void exportEnd(void);
++
++	protected:
++		xmlpp::Document *m_pDoc;
++		xmlpp::Element *m_pChannelElem;
++
++	private:
++		OpenSearchExporter(const OpenSearchExporter &amp;other);
++		OpenSearchExporter&amp; operator=(const OpenSearchExporter&amp; other);
++
++};
++
++#endif // _RESULTS_EXPORTER_H
+
+Modified: trunk/Search/SearchEngineFactory.cpp
+===================================================================
+--- trunk/Search/SearchEngineFactory.cpp	2007-04-16 13:28:52 UTC (rev 806)
++++ trunk/Search/SearchEngineFactory.cpp	2007-04-24 14:30:38 UTC (rev 807)
+@@ -31,7 +31,6 @@
+ {
+ }
+ 
+-/// Returns a SearchEngine of the specified type; NULL if unavailable.
+ SearchEngineInterface *SearchEngineFactory::getSearchEngine(const string &amp;type, const string &amp;option)
+ {
+ 	SearchEngineInterface *myEngine = NULL;
+@@ -57,6 +56,28 @@
+ 	return myEngine;
+ }
+ 
++string SearchEngineFactory::getSearchEngineName(const string &amp;type, const string &amp;option)
++{
++	if ((type == &quot;sherlock&quot;) ||
++		(type == &quot;opensearch&quot;))
++	{
++		string name, channel;
++
++		if (PluginWebEngine::getDetails(option, name, channel) == true)
++		{
++			return name;
++		}
++
++		return &quot;&quot;;
++	}
++	else if (type == &quot;xapian&quot;)
++	{
++		return option;
++	}
++
++	return type;
++}
++
+ void SearchEngineFactory::getSupportedEngines(set&lt;string&gt; &amp;engines)
+ {
+ 	engines.clear();
+@@ -70,7 +91,6 @@
+ #endif
+ }
+ 
+-/// Indicates whether a search engine is supported or not.
+ bool SearchEngineFactory::isSupported(const string &amp;type)
+ {
+ 	if (
+
+Modified: trunk/Search/SearchEngineFactory.h
+===================================================================
+--- trunk/Search/SearchEngineFactory.h	2007-04-16 13:28:52 UTC (rev 806)
++++ trunk/Search/SearchEngineFactory.h	2007-04-24 14:30:38 UTC (rev 807)
+@@ -38,6 +38,9 @@
+ 		/// Returns a SearchEngine of the specified type; NULL if unavailable.
+ 		static SearchEngineInterface *getSearchEngine(const string &amp;type, const string &amp;option);
+ 
++		/// Returns the name of the given engine.
++		static string getSearchEngineName(const string &amp;type, const string &amp;option);
++
+ 		/// Returns all supported engines.
+ 		static void getSupportedEngines(set&lt;string&gt; &amp;engines);
+ 
+
+Modified: trunk/Search/pinot-search.cpp
+===================================================================
+--- trunk/Search/pinot-search.cpp	2007-04-16 13:28:52 UTC (rev 806)
++++ trunk/Search/pinot-search.cpp	2007-04-24 14:30:38 UTC (rev 807)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005,2006,2007 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -28,6 +28,7 @@
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;FilterUtils.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
++#include &quot;ResultsExporter.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;config.h&quot;
+ 
+@@ -39,6 +40,8 @@
+ 	{&quot;proxyaddress&quot;, 1, 0, 'a'},
+ 	{&quot;proxyport&quot;, 1, 0, 'p'},
+ 	{&quot;proxytype&quot;, 1, 0, 't'},
++	{&quot;tocsv&quot;, 1, 0, 'c'},
++	{&quot;toxml&quot;, 1, 0, 'x'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
+ 	{0, 0, 0, 0}
+ };
+@@ -57,6 +60,8 @@
+ 		&lt;&lt; &quot;  -a, --proxyaddress        proxy address\n&quot;
+ 		&lt;&lt; &quot;  -p, --proxyport           proxy port\n&quot;
+ 		&lt;&lt; &quot;  -t, --proxytype           proxy type (default HTTP, SOCKS4, SOCKS5)\n&quot;
++		&lt;&lt; &quot;  -c, --tocsv               file to export results in CSV format to\n&quot;
++		&lt;&lt; &quot;  -x, --toxml               file to export results in XML format to\n&quot;
+ 		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;
+ 		&lt;&lt; &quot;Supported search engine types are&quot;;
+ 	for (set&lt;string&gt;::iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+@@ -76,12 +81,13 @@
+ 
+ int main(int argc, char **argv)
+ {
+-	string type, option, proxyAddress, proxyPort, proxyType;
+-	unsigned int count = 10; 
++	string type, option, csvExport, xmlExport, proxyAddress, proxyPort, proxyType;
++	unsigned int maxResultsCount = 10; 
+ 	int longOptionIndex = 0;
++	bool printResults = true;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;hm:a:p:t:v&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:t:vx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -92,13 +98,20 @@
+ 					proxyAddress = optarg;
+ 				}
+ 				break;
++			case 'c':
++				if (optarg != NULL)
++				{
++					csvExport = optarg;
++					printResults = false;
++				}
++				break;
+ 			case 'h':
+ 				printHelp();
+ 				return EXIT_SUCCESS;
+ 			case 'm':
+ 				if (optarg != NULL)
+ 				{
+-					count = (unsigned int )atoi(optarg);
++					maxResultsCount = (unsigned int )atoi(optarg);
+ 				}
+ 				break;
+ 			case 'p':
+@@ -119,12 +132,19 @@
+ 					&lt;&lt; &quot;the GNU General Public License &lt;<A HREF="http://www.gnu.org/licenses/gpl.html">http://www.gnu.org/licenses/gpl.html</A>&gt;.\n&quot;
+ 					&lt;&lt; &quot;There is NO WARRANTY, to the extent permitted by law.&quot; &lt;&lt; endl;
+ 				return EXIT_SUCCESS;
++			case 'x':
++				if (optarg != NULL)
++				{
++					xmlExport = optarg;
++					printResults = false;
++				}
++				break;
+ 			default:
+ 				return EXIT_FAILURE;
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;hm:a:p:t:v&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:t:vx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -143,9 +163,11 @@
+ 	MIMEScanner::initialize();
+ 	DownloaderInterface::initialize();
+ 
+-	// Which SearchEngine ?
+ 	type = argv[optind];
+ 	option = argv[optind + 1];
++	char *pQuery = argv[optind + 2];
++
++	// Which SearchEngine ?
+ 	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(type, option);
+ 	if (pEngine == NULL)
+ 	{
+@@ -158,7 +180,7 @@
+ 	}
+ 
+ 	// How many results ?
+-	pEngine-&gt;setMaxResultsCount(count);
++	pEngine-&gt;setMaxResultsCount(maxResultsCount);
+ 
+ 	// Set up the proxy
+ 	DownloaderInterface *pDownloader = pEngine-&gt;getDownloader();
+@@ -171,7 +193,7 @@
+ 		pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
+ 	}
+ 
+-	QueryProperties queryProps(&quot;senginetest&quot;, argv[optind + 2]);
++	QueryProperties queryProps(&quot;senginetest&quot;, pQuery);
+ 	if (pEngine-&gt;runQuery(queryProps) == true)
+ 	{
+ 		string resultsPage;
+@@ -180,27 +202,48 @@
+ 		const vector&lt;DocumentInfo&gt; resultsList = pEngine-&gt;getResults();
+ 		if (resultsList.empty() == false)
+ 		{
+-			unsigned int count = 0;
++			if (printResults == true)
++			{
++				unsigned int count = 0;
+ 
+-			cout &lt;&lt; &quot;Matching documents are :&quot; &lt;&lt; endl;
++				cout &lt;&lt; &quot;Matching documents are :&quot; &lt;&lt; endl;
+ 
+-			vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
+-			while (resultIter != resultsList.end())
++				vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
++				while (resultIter != resultsList.end())
++				{
++					string rawUrl(resultIter-&gt;getLocation());
++					Url thisUrl(rawUrl);
++
++					cout &lt;&lt; count &lt;&lt; &quot; Raw URL  : '&quot; &lt;&lt; rawUrl &lt;&lt; &quot;'&quot;&lt;&lt; endl;
++					cout &lt;&lt; count &lt;&lt; &quot; Protocol : &quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; endl;
++					cout &lt;&lt; count &lt;&lt; &quot; Host     : &quot; &lt;&lt; thisUrl.getHost() &lt;&lt; endl;
++					cout &lt;&lt; count &lt;&lt; &quot; Location : &quot; &lt;&lt; thisUrl.getLocation() &lt;&lt; &quot;/&quot; &lt;&lt; thisUrl.getFile() &lt;&lt; endl;
++					cout &lt;&lt; count &lt;&lt; &quot; Title    : &quot; &lt;&lt; resultIter-&gt;getTitle() &lt;&lt; endl;
++					cout &lt;&lt; count &lt;&lt; &quot; Extract  : &quot; &lt;&lt; FilterUtils::stripMarkup(resultIter-&gt;getExtract()) &lt;&lt; endl;
++					cout &lt;&lt; count &lt;&lt; &quot; Score    : &quot; &lt;&lt; resultIter-&gt;getScore() &lt;&lt; endl;
++					count++;
++
++					// Next
++					resultIter++;
++				}
++			}
++			else
+ 			{
+-				string rawUrl(resultIter-&gt;getLocation());
+-				Url thisUrl(rawUrl);
++				string engineName(SearchEngineFactory::getSearchEngineName(type, option));
+ 
+-				cout &lt;&lt; count &lt;&lt; &quot; Raw URL  : '&quot; &lt;&lt; rawUrl &lt;&lt; &quot;'&quot;&lt;&lt; endl;
+-				cout &lt;&lt; count &lt;&lt; &quot; Protocol : &quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; endl;
+-				cout &lt;&lt; count &lt;&lt; &quot; Host     : &quot; &lt;&lt; thisUrl.getHost() &lt;&lt; endl;
+-				cout &lt;&lt; count &lt;&lt; &quot; Location : &quot; &lt;&lt; thisUrl.getLocation() &lt;&lt; &quot;/&quot; &lt;&lt; thisUrl.getFile() &lt;&lt; endl;
+-				cout &lt;&lt; count &lt;&lt; &quot; Title    : &quot; &lt;&lt; resultIter-&gt;getTitle() &lt;&lt; endl;
+-				cout &lt;&lt; count &lt;&lt; &quot; Extract  : &quot; &lt;&lt; FilterUtils::stripMarkup(resultIter-&gt;getExtract()) &lt;&lt; endl;
+-				cout &lt;&lt; count &lt;&lt; &quot; Score    : &quot; &lt;&lt; resultIter-&gt;getScore() &lt;&lt; endl;
+-				count++;
++				if (csvExport.empty() == false)
++				{
++					CSVExporter exporter(csvExport, queryProps);
+ 
+-				// Next
+-				resultIter++;
++					exporter.exportResults(engineName, maxResultsCount, resultsList);
++				}
++
++				if (xmlExport.empty() == false)
++				{
++					OpenSearchExporter exporter(xmlExport, queryProps);
++
++					exporter.exportResults(engineName, maxResultsCount, resultsList);
++				}
+ 			}
+ 		}
+ 		else
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000800.html">[Pinot-svn] r806 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000802.html">[Pinot-svn] r808 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#801">[ date ]</a>
+              <a href="thread.html#801">[ thread ]</a>
+              <a href="subject.html#801">[ subject ]</a>
+              <a href="author.html#801">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

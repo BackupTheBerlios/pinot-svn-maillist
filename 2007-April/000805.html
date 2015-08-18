@@ -1,0 +1,544 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r811 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r811%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200704261120.l3QBKATu018475%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000804.html">
+   <LINK REL="Next"  HREF="000806.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r811 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r811%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200704261120.l3QBKATu018475%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r811 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr 26 13:20:10 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000804.html">[Pinot-svn] r810 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000806.html">[Pinot-svn] r812 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#805">[ date ]</a>
+              <a href="thread.html#805">[ thread ]</a>
+              <a href="subject.html#805">[ subject ]</a>
+              <a href="author.html#805">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-04-26 13:20:09 +0200 (Thu, 26 Apr 2007)
+New Revision: 811
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+Log:
+Several small changes to allow using this class as a replacement for IndexTree.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-04-26 11:16:33 UTC (rev 810)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-04-26 11:20:09 UTC (rev 811)
+@@ -31,6 +31,7 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
++#include &quot;ResultsExporter.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -47,7 +48,7 @@
+ ResultsTree::ResultsTree(const ustring &amp;queryName, Menu *pPopupMenu,
+ 	GroupByMode groupMode, PinotSettings &amp;settings) :
+ 	TreeView(),
+-	m_queryName(queryName),
++	m_treeName(queryName),
+ 	m_pPopupMenu(pPopupMenu),
+ 	m_pResultsScrolledwindow(NULL),
+ 	m_settings(settings),
+@@ -56,6 +57,8 @@
+ 	m_showExtract(true),
+ 	m_groupMode(groupMode)
+ {
++	TreeViewColumn *pColumn = NULL;
++
+ 	m_pResultsScrolledwindow = manage(new ScrolledWindow());
+ 	m_pExtractScrolledwindow = manage(new ScrolledWindow());
+ 	m_extractTreeView = manage(new TreeView());
+@@ -96,32 +99,35 @@
+ 	m_refStore = TreeStore::create(m_resultsColumns);
+ 	set_model(m_refStore);
+ 
+-	// The first column is for the status icons
+-	TreeViewColumn *pColumn = new TreeViewColumn(&quot;&quot;);
+-	// Pack an icon renderer for the viewed status
+-	CellRendererPixbuf *pIconRenderer = new CellRendererPixbuf();
+-	pColumn-&gt;pack_start(*manage(pIconRenderer), false);
+-	pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderViewStatus));
+-	// Pack a second icon renderer for the indexed status
+-	pIconRenderer = new CellRendererPixbuf();
+-	pColumn-&gt;pack_start(*manage(pIconRenderer), false);
+-	pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderIndexStatus));
+-	// And a third one for the ranking
+-	pIconRenderer = new CellRendererPixbuf();
+-	pColumn-&gt;pack_start(*manage(pIconRenderer), false);
+-	pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderRanking));
+-	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+-	append_column(*manage(pColumn));
++	if (m_groupMode != FLAT)
++	{
++		// The first column is for the status icons
++		pColumn = new TreeViewColumn(&quot;&quot;);
++		// Pack an icon renderer for the viewed status
++		CellRendererPixbuf *pIconRenderer = new CellRendererPixbuf();
++		pColumn-&gt;pack_start(*manage(pIconRenderer), false);
++		pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderViewStatus));
++		// Pack a second icon renderer for the indexed status
++		pIconRenderer = new CellRendererPixbuf();
++		pColumn-&gt;pack_start(*manage(pIconRenderer), false);
++		pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderIndexStatus));
++		// And a third one for the ranking
++		pIconRenderer = new CellRendererPixbuf();
++		pColumn-&gt;pack_start(*manage(pIconRenderer), false);
++		pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderRanking));
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
++		append_column(*manage(pColumn));
+ 
+-	// This is the score column
+-	pColumn = new TreeViewColumn(_(&quot;Score&quot;));
+-	CellRendererProgress *pProgressRenderer = new CellRendererProgress();
+-	pColumn-&gt;pack_start(*manage(pProgressRenderer));
+-	pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_text(), m_resultsColumns.m_scoreText);
+-	pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_value(), m_resultsColumns.m_score);
+-	pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
+-	pColumn-&gt;set_sort_column(m_resultsColumns.m_score);
+-	append_column(*manage(pColumn));
++		// This is the score column
++		pColumn = new TreeViewColumn(_(&quot;Score&quot;));
++		CellRendererProgress *pProgressRenderer = new CellRendererProgress();
++		pColumn-&gt;pack_start(*manage(pProgressRenderer));
++		pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_text(), m_resultsColumns.m_scoreText);
++		pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_value(), m_resultsColumns.m_score);
++		pColumn-&gt;set_sizing(TREE_VIEW_COLUMN_AUTOSIZE);
++		pColumn-&gt;set_sort_column(m_resultsColumns.m_score);
++		append_column(*manage(pColumn));
++	}
+ 
+ 	// This is the title column
+ 	pColumn = new TreeViewColumn(_(&quot;Title&quot;));
+@@ -352,13 +358,13 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;ResultsTree::onButtonPressEvent: double click on button &quot; &lt;&lt; ev-&gt;button &lt;&lt; endl;
+ #endif
+-		m_signalViewResults();
++		m_signalDoubleClick();
+ 	}
+ }
+ 
+ void ResultsTree::onSelectionChanged(void)
+ {
+-	m_signalSelectionChanged(m_queryName);
++	m_signalSelectionChanged(m_treeName);
+ }
+ 
+ bool ResultsTree::onSelectionSelect(const RefPtr&lt;TreeModel&gt;&amp; model,
+@@ -496,7 +502,7 @@
+ 
+ 	QueryHistory history(m_settings.m_historyDatabase);
+ 	bool isNewQuery = false;
+-	if (history.getLastRun(m_queryName, engineName).empty() == true)
++	if (history.getLastRun(m_treeName, engineName).empty() == true)
+ 	{
+ 		isNewQuery = true;
+ 	}
+@@ -516,9 +522,9 @@
+ 		float currentScore = resultIter-&gt;getScore();
+ 		int rankDiff = 0;
+ 
+-		// What group should the result go to ?
+ 		if (m_groupMode != FLAT)
+ 		{
++			// What group should the result go to ?
+ 			if (rootType == ResultsModelColumns::ROW_HOST)
+ 			{
+ 				Url urlObj(location);
+@@ -528,36 +534,32 @@
+ 			{
+ 				groupName = engineName;
+ 			}
+-
+ 			// Add the group or get its position if it's already in
+ 			appendGroup(groupName, rootType, groupIter);
+-		}
+ 
+-		// OK, add a row for this result within the group
+-		TreeModel::iterator titleIter;
+-
+-		// Has the result's ranking changed ?
+-		float oldestScore = 0;
+-		float previousScore = history.hasItem(m_queryName, engineName,
+-			location, oldestScore);
+-		if (previousScore &gt; 0)
+-		{
+-			// Update this result whatever the current and previous rankings were
+-			history.updateItem(m_queryName, engineName, location,
+-				title, extract, charset, currentScore);
+-			rankDiff = (int)(currentScore - previousScore);
+-		}
+-		else
+-		{
+-			// No, this is a new result
+-			history.insertItem(m_queryName, engineName, location,
+-				resultIter-&gt;getTitle(), extract, charset, currentScore);
+-			// New results are displayed as such only if the query has already been run on the engine
+-			if (isNewQuery == false)
++			// Has the result's ranking changed ?
++			float oldestScore = 0;
++			float previousScore = history.hasItem(m_treeName, engineName,
++				location, oldestScore);
++			if (previousScore &gt; 0)
+ 			{
+-				// This is a magic value :-)
+-				rankDiff = 666;
++				// Update this result whatever the current and previous rankings were
++				history.updateItem(m_treeName, engineName, location,
++					title, extract, charset, currentScore);
++				rankDiff = (int)(currentScore - previousScore);
+ 			}
++			else
++			{
++				// No, this is a new result
++				history.insertItem(m_treeName, engineName, location,
++					resultIter-&gt;getTitle(), extract, charset, currentScore);
++				// New results are displayed as such only if the query has already been run on the engine
++				if (isNewQuery == false)
++				{
++					// This is a magic value :-)
++					rankDiff = 666;
++				}
++			}
+ 		}
+ 
+ 		++count;
+@@ -570,6 +572,8 @@
+ 			isIndexed = true;
+ 		}
+ 
++		// OK, add a row for this result within the group
++		TreeModel::iterator titleIter;
+ 		if (appendResult(title, location, resultIter-&gt;getType(), (int)currentScore, rankDiff, isIndexed,
+ 			docId, resultIter-&gt;getTimestamp(), engineId, indexId, titleIter, groupIter, true) == true)
+ 		{
+@@ -622,6 +626,12 @@
+ {
+ 	ResultsModelColumns::RowType currentType, newType;
+ 
++	if (m_groupMode == FLAT)
++	{
++		// No change possible
++		return;
++	}
++
+ 	if (m_groupMode == groupMode)
+ 	{
+ 		// No change
+@@ -825,6 +835,23 @@
+ }
+ 
+ //
++// Gets the first selected item's URL.
++//
++ustring ResultsTree::getFirstSelectionURL(void)
++{
++	list&lt;TreeModel::Path&gt; selectedItems = get_selection()-&gt;get_selected_rows();
++	if (selectedItems.empty() == true)
++	{
++		return &quot;&quot;;
++	}
++
++	list&lt;TreeModel::Path&gt;::iterator itemPath = selectedItems.begin();
++	TreeModel::iterator iter = m_refStore-&gt;get_iter(*itemPath);
++	TreeModel::Row row = *iter;
++	return row[m_resultsColumns.m_url];
++}
++
++//
+ // Gets a list of selected items.
+ //
+ bool ResultsTree::getSelection(vector&lt;DocumentInfo&gt; &amp;resultsList, bool skipIndexed)
+@@ -847,13 +874,13 @@
+ 			continue;
+ 		}
+ 
++		bool isIndexed = row[m_resultsColumns.m_indexed];
+ 		if ((skipIndexed == false) ||
+-			(row[m_resultsColumns.m_indexed] == false))
++			(isIndexed == false))
+ 		{
+-			bool isIndexed = row[m_resultsColumns.m_indexed];
+-
+ 			DocumentInfo current(from_utf8(row[m_resultsColumns.m_text]),
+-				from_utf8(row[m_resultsColumns.m_url]), &quot;&quot;, &quot;&quot;);
++				from_utf8(row[m_resultsColumns.m_url]),
++				from_utf8(row[m_resultsColumns.m_type]), &quot;&quot;);
+ 
+ 			if (isIndexed == true)
+ 			{
+@@ -874,7 +901,6 @@
+ 					}
+ 				}
+ 			}
+-			current.setType(from_utf8(row[m_resultsColumns.m_type]));
+ 
+ 			resultsList.push_back(current);
+ 		}
+@@ -1079,6 +1105,14 @@
+ }
+ 
+ //
++// Returns the number of rows.
++//
++unsigned int ResultsTree::getRowsCount(void)
++{
++	return m_refStore-&gt;children().size();
++}
++
++//
+ // Refreshes the tree.
+ //
+ void ResultsTree::refresh(void)
+@@ -1141,6 +1175,113 @@
+ }
+ 
+ //
++// Exports results to a file.
++//
++void ResultsTree::exportResults(const string &amp;fileName, bool csvFormat)
++{
++	QueryHistory history(m_settings.m_historyDatabase);
++	QueryProperties queryProps(m_treeName, &quot;&quot;);
++	ResultsExporter *pExporter = NULL;
++	unsigned int maxResultsCount = 0;
++
++	if (fileName.empty() == true)
++	{
++		return;
++	}
++
++	if (csvFormat == true)
++	{
++		pExporter = new CSVExporter(fileName,
++			queryProps);
++	}
++	else
++	{
++		pExporter = new OpenSearchExporter(fileName,
++			queryProps);
++	}
++
++	// How many results are there altogether ?
++	TreeModel::Children children = m_refStore-&gt;children();
++	for (TreeModel::Children::iterator iter = children.begin();
++		iter != children.end(); ++iter)
++	{
++		TreeModel::Row row = *iter;
++		ResultsModelColumns::RowType type = row[m_resultsColumns.m_resultType];
++
++		if ((type != ResultsModelColumns::ROW_ENGINE) &amp;&amp;
++			(type != ResultsModelColumns::ROW_HOST))
++		{
++			continue;
++		}
++
++		TreeModel::Children groupChildren = iter-&gt;children();
++		maxResultsCount += groupChildren.size();
++	}
++
++	// Start
++	pExporter-&gt;exportStart(&quot;&quot;, maxResultsCount);
++
++	for (TreeModel::Children::iterator iter = children.begin();
++		iter != children.end(); ++iter)
++	{
++		TreeModel::Row row = *iter;
++		ResultsModelColumns::RowType type = row[m_resultsColumns.m_resultType];
++
++		if ((type != ResultsModelColumns::ROW_ENGINE) &amp;&amp;
++			(type != ResultsModelColumns::ROW_HOST))
++		{
++			continue;
++		}
++
++		TreeModel::Children groupChildren = iter-&gt;children();
++		for (TreeModel::Children::iterator childIter = groupChildren.begin();
++			childIter != groupChildren.end(); ++childIter)
++		{
++			set&lt;string&gt; engineNames, indexNames;
++			TreeModel::Row row = *childIter;
++			DocumentInfo result(from_utf8(row[m_resultsColumns.m_text]),
++				from_utf8(row[m_resultsColumns.m_url]),
++				from_utf8(row[m_resultsColumns.m_type]), &quot;&quot;);
++			string engineName, charset;
++			unsigned int engineIds = row[m_resultsColumns.m_engines];
++			unsigned int indexIds = row[m_resultsColumns.m_indexes];
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;ResultsTree::exportResults: engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
++#endif
++			m_settings.getEngineNames(engineIds, engineNames);
++			if (engineNames.empty() == false)
++			{
++				// Get the first engine this result was obtained from
++				engineName = *engineNames.begin();
++				if (engineName == &quot;Xapian&quot;)
++				{
++					m_settings.getIndexNames(indexIds, indexNames);
++					if (indexNames.empty() == false)
++					{
++						// Use the name of the first index as engine name
++						engineName = (*indexNames.begin());
++					}
++				}
++			}
++			if (m_groupMode != FLAT)
++			{
++				result.setExtract(history.getItemExtract(from_utf8(m_treeName),
++					engineName, result.getLocation(), charset));
++			}
++
++			// Export this
++			pExporter-&gt;exportResult(engineName, result);
++		}
++	}
++
++	// End
++	pExporter-&gt;exportEnd();
++
++	delete pExporter;
++}
++
++//
+ // Returns the changed selection signal.
+ //
+ Signal1&lt;void, ustring&gt;&amp; ResultsTree::getSelectionChangedSignal(void)
+@@ -1149,11 +1290,11 @@
+ }
+ 
+ //
+-// Returns the view results signal.
++// Returns the double-click signal.
+ //
+-Signal0&lt;void&gt;&amp; ResultsTree::getViewResultsSignal(void)
++Signal0&lt;void&gt;&amp; ResultsTree::getDoubleClickSignal(void)
+ {
+-	return m_signalViewResults;
++	return m_signalDoubleClick;
+ }
+ 
+ //
+@@ -1376,7 +1517,7 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;ResultsTree::findResultsExtract: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
+ #endif
+-		extract = history.getItemExtract(from_utf8(m_queryName), engineName, url, charset);
++		extract = history.getItemExtract(from_utf8(m_treeName), engineName, url, charset);
+ 	}
+ 
+ 	return to_utf8(extract, charset);
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2007-04-26 11:16:33 UTC (rev 810)
++++ trunk/UI/GTK2/src/ResultsTree.h	2007-04-26 11:20:09 UTC (rev 811)
+@@ -43,7 +43,7 @@
+ 	public:
+ 		typedef enum { BY_ENGINE = 0, BY_HOST, FLAT } GroupByMode;
+ 
+-		ResultsTree(const Glib::ustring &amp;queryName, Gtk::Menu *pPopupMenu,
++		ResultsTree(const Glib::ustring &amp;name, Gtk::Menu *pPopupMenu,
+ 			GroupByMode groupMode, PinotSettings &amp;settings);
+ 		virtual ~ResultsTree();
+ 
+@@ -69,6 +69,9 @@
+ 		/// Sets how results are grouped.
+ 		void setGroupMode(GroupByMode groupMode);
+ 
++		/// Gets the first selected item's URL.
++		Glib::ustring getFirstSelectionURL(void);
++
+ 		/// Gets a list of selected items.
+ 		bool getSelection(std::vector&lt;DocumentInfo&gt; &amp;resultsList, bool skipIndexed = false);
+ 
+@@ -87,6 +90,9 @@
+ 		/// Deletes results.
+ 		bool deleteResults(const std::string &amp;engineName);
+ 
++		/// Returns the number of rows.
++		unsigned int getRowsCount(void);
++
+ 		/// Refreshes the tree.
+ 		void refresh(void);
+ 
+@@ -96,19 +102,22 @@
+ 		/// Shows or hides the extract field.
+ 		void showExtract(bool show = true);
+ 
++		/// Exports results to a file.
++		void exportResults(const std::string &amp;fileName, bool csvFormat);
++
+ 		/// Returns the changed selection signal.
+ 		SigC::Signal1&lt;void, Glib::ustring&gt;&amp; getSelectionChangedSignal(void);
+ 
+-		/// Returns the view results signal.
+-		SigC::Signal0&lt;void&gt;&amp; getViewResultsSignal(void);
++		/// Returns the double-click signal.
++		SigC::Signal0&lt;void&gt;&amp; getDoubleClickSignal(void);
+ 
+ 	protected:
+-		Glib::ustring m_queryName;
++		Glib::ustring m_treeName;
+ 		Gtk::Menu *m_pPopupMenu;
+ 		Gtk::ScrolledWindow *m_pResultsScrolledwindow;
+ 		Glib::RefPtr&lt;Gtk::TreeStore&gt; m_refStore;
+ 		SigC::Signal1&lt;void, Glib::ustring&gt; m_signalSelectionChanged;
+-		SigC::Signal0&lt;void&gt; m_signalViewResults;
++		SigC::Signal0&lt;void&gt; m_signalDoubleClick;
+ 		PinotSettings &amp;m_settings;
+ 		Glib::RefPtr&lt;Gdk::Pixbuf&gt; m_indexedIconPixbuf;
+ 		Glib::RefPtr&lt;Gdk::Pixbuf&gt; m_viewededIconPixbuf;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000804.html">[Pinot-svn] r810 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000806.html">[Pinot-svn] r812 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#805">[ date ]</a>
+              <a href="thread.html#805">[ thread ]</a>
+              <a href="subject.html#805">[ subject ]</a>
+              <a href="author.html#805">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

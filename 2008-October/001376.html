@@ -1,0 +1,460 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1385 - trunk/Collect
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1385%20-%20trunk/Collect&In-Reply-To=%3C200810111024.m9BAOjkR017994%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001375.html">
+   <LINK REL="Next"  HREF="001377.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1385 - trunk/Collect</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1385%20-%20trunk/Collect&In-Reply-To=%3C200810111024.m9BAOjkR017994%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1385 - trunk/Collect">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 11 12:24:45 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001375.html">[Pinot-svn] r1384 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001377.html">[Pinot-svn] r1386 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1376">[ date ]</a>
+              <a href="thread.html#1376">[ thread ]</a>
+              <a href="subject.html#1376">[ subject ]</a>
+              <a href="author.html#1376">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-10-11 12:24:34 +0200 (Sat, 11 Oct 2008)
+New Revision: 1385
+
+Modified:
+   trunk/Collect/CurlDownloader.cpp
+   trunk/Collect/CurlDownloader.h
+   trunk/Collect/DownloaderInterface.cpp
+   trunk/Collect/DownloaderInterface.h
+   trunk/Collect/NeonDownloader.cpp
+   trunk/Collect/NeonDownloader.h
+Log:
+Reduced code duplication between the Neon and Curl downloaders.
+Added ability to do a POST.
+
+
+Modified: trunk/Collect/CurlDownloader.cpp
+===================================================================
+--- trunk/Collect/CurlDownloader.cpp	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/CurlDownloader.cpp	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -124,8 +124,7 @@
+ unsigned int CurlDownloader::m_initialized = 0;
+ 
+ CurlDownloader::CurlDownloader() :
+-	DownloaderInterface(),
+-	m_proxyPort(0)
++	DownloaderInterface()
+ {
+ 	if (m_initialized == 0)
+ 	{
+@@ -134,9 +133,6 @@
+ 
+ 		++m_initialized;
+ 	}
+-
+-        // Pretend to be Mozilla
+-	m_userAgent = &quot;Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020&quot;;
+ }
+ 
+ CurlDownloader::~CurlDownloader()
+@@ -153,42 +149,6 @@
+ // Implementation of DownloaderInterface
+ //
+ 
+-/**
+-  * Sets a (name, value) setting. Setting names include :
+-  * proxyaddress - the address of the proxy to use
+-  * proxyport - the port of the proxy to use (positive integer)
+-  * proxytype - the type of the proxy to use
+-  * Returns true if success.
+-  */
+-bool CurlDownloader::setSetting(const string &amp;name, const string &amp;value)
+-{
+-        bool goodSetting = true;
+-
+-        if (name == &quot;useragent&quot;)
+-        {
+-                m_userAgent = value;
+-        }
+-	else if (name == &quot;proxyaddress&quot;)
+-	{
+-		m_proxyAddress = value;
+-	}
+-	else if ((name == &quot;proxyport&quot;) &amp;&amp;
+-		(value.empty() == false))
+-	{
+-		m_proxyPort = (unsigned int )atoi(value.c_str());
+-	}
+-	else if (name == &quot;proxytype&quot;)
+-	{
+-		m_proxyType = value;
+-	}
+-        else
+-        {
+-                goodSetting = false;
+-        }
+-
+-        return goodSetting;
+-}
+-
+ /// Retrieves the specified document; NULL if error.
+ Document *CurlDownloader::retrieveUrl(const DocumentInfo &amp;docInfo)
+ {
+@@ -258,6 +218,15 @@
+ 		{
+ 			curl_easy_setopt(pCurlHandler, CURLOPT_URL, url.c_str());
+ 
++			if (m_method == &quot;POST&quot;)
++			{
++				curl_easy_setopt(pCurlHandler, CURLOPT_POST, 1);
++				if (m_postFields.empty() == false)
++				{
++					curl_easy_setopt(pCurlHandler, CURLOPT_POSTFIELDS, m_postFields.c_str());
++				}
++			}
++
+ 			CURLcode res = curl_easy_perform(pCurlHandler);
+ 			if ((res == CURLE_OK) &amp;&amp;
+ 				(pContentInfo-&gt;m_pContent != NULL) &amp;&amp;
+
+Modified: trunk/Collect/CurlDownloader.h
+===================================================================
+--- trunk/Collect/CurlDownloader.h	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/CurlDownloader.h	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,24 +30,11 @@
+ 		CurlDownloader();
+ 		virtual ~CurlDownloader();
+ 
+-		/**
+-		  * Sets a (name, value) setting. Setting names include :
+-		  * proxyaddress - the address of the proxy to use
+-		  * proxyport - the port of the proxy to use (positive integer)
+-		  * proxytype - the type of the proxy to use
+-		  * Returns true if success.
+-		  */
+-		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+-
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &amp;docInfo);
+ 
+ 	protected:
+ 		static unsigned int m_initialized;
+-		std::string m_userAgent;
+-		std::string m_proxyAddress;
+-		unsigned int m_proxyPort;
+-		std::string m_proxyType;
+ 
+ 	private:
+ 		CurlDownloader(const CurlDownloader &amp;other);
+
+Modified: trunk/Collect/DownloaderInterface.cpp
+===================================================================
+--- trunk/Collect/DownloaderInterface.cpp	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/DownloaderInterface.cpp	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,6 +16,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;stdlib.h&gt;
+ #include &lt;pthread.h&gt;
+ #include &lt;iostream&gt;
+ 
+@@ -103,7 +104,10 @@
+ }
+ 
+ DownloaderInterface::DownloaderInterface() :
+-	m_timeout(60)
++	m_userAgent(&quot;Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020&quot;),
++	m_proxyPort(0),
++	m_timeout(60),
++	m_method(&quot;GET&quot;)
+ {
+ }
+ 
+@@ -114,11 +118,46 @@
+ /// Sets a (name, value) setting; true if success.
+ bool DownloaderInterface::setSetting(const string &amp;name, const string &amp;value)
+ {
+-	return false;
++	bool goodSetting = true;
++
++	if (name == &quot;useragent&quot;)
++	{
++		m_userAgent = value;
++	}
++	else if (name == &quot;proxyaddress&quot;)
++	{
++		m_proxyAddress = value;
++	}
++	else if ((name == &quot;proxyport&quot;) &amp;&amp;
++		(value.empty() == false))
++	{
++		m_proxyPort = (unsigned int )atoi(value.c_str());
++	}
++	else if (name == &quot;proxytype&quot;)
++	{
++		m_proxyType = value;
++	}
++	else if (name == &quot;timeout&quot;)
++	{
++		m_timeout = (unsigned int)atoi(value.c_str());
++	}
++	else if (name == &quot;method&quot;)
++	{
++		if ((value == &quot;GET&quot;) ||
++			(value == &quot;POST&quot;))
++		{
++			m_method = value;
++		}
++	}
++	else if (name == &quot;postfields&quot;)
++	{
++		m_postFields = value;
++	}
++	else
++	{
++		goodSetting = false;
++	}
++
++	return goodSetting;
+ }
+ 
+-/// Sets timeout.
+-void DownloaderInterface::setTimeout(unsigned int seconds)
+-{
+-	m_timeout = seconds;
+-}
+
+Modified: trunk/Collect/DownloaderInterface.h
+===================================================================
+--- trunk/Collect/DownloaderInterface.h	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/DownloaderInterface.h	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -40,18 +40,24 @@
+ 		  * proxyaddress - the address of the proxy to use
+ 		  * proxyport - the port of the proxy to use (positive integer)
+ 		  * proxytype - the type of the proxy to use
++		  * timeout - timeout in seconds 
++		  * method - GET or POST
++		  * postfields - data to post
+ 		  * Returns true if success.
+ 		  */
+ 		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+ 
+-		/// Sets timeout.
+-		virtual void setTimeout(unsigned int seconds);
+-
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &amp;docInfo) = 0;
+ 
+ 	protected:
++		std::string m_userAgent;
++		std::string m_proxyAddress;
++		unsigned int m_proxyPort;
++		std::string m_proxyType;
+ 		unsigned int m_timeout;
++		std::string m_method;
++		std::string m_postFields;
+ 
+ 		DownloaderInterface();
+ 
+
+Modified: trunk/Collect/NeonDownloader.cpp
+===================================================================
+--- trunk/Collect/NeonDownloader.cpp	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/NeonDownloader.cpp	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -16,7 +16,8 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include &lt;cstdio&gt;
++#include &lt;stdio.h&gt;
++#include &lt;string.h&gt;
+ #include &lt;strings.h&gt;
+ #include &lt;stdarg.h&gt;
+ #include &lt;pthread.h&gt;
+@@ -36,8 +37,7 @@
+ unsigned int NeonDownloader::m_initialized = 0;
+ 
+ NeonDownloader::NeonDownloader() :
+-	DownloaderInterface(),
+-	m_proxyPort(0)
++	DownloaderInterface()
+ {
+ 	if (m_initialized == 0)
+ 	{
+@@ -46,9 +46,6 @@
+ 
+ 		++m_initialized;
+ 	}
+-
+-	// Pretend to be Mozilla
+-	m_userAgent = &quot;Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.7.3) Gecko/20041020&quot;;
+ }
+ 
+ NeonDownloader::~NeonDownloader()
+@@ -104,42 +101,6 @@
+ // Implementation of DownloaderInterface
+ //
+ 
+-/**
+-  * Sets a (name, value) setting. Setting names include :
+-  * proxyaddress - the address of the proxy to use
+-  * proxyport - the port of the proxy to use (positive integer)
+-  * proxytype - the type of the proxy to use
+-  * Returns true if success.
+-  */
+-bool NeonDownloader::setSetting(const string &amp;name, const string &amp;value)
+-{
+-	bool goodSetting = true;
+-
+-	if (name == &quot;useragent&quot;)
+-	{
+-		m_userAgent = value;
+-	}
+-	else if (name == &quot;proxyaddress&quot;)
+-	{
+-		m_proxyAddress = value;
+-	}
+-	else if ((name == &quot;proxyport&quot;) &amp;&amp;
+-		(value.empty() == false))
+-	{
+-		m_proxyPort = (unsigned int )atoi(value.c_str());
+-	}
+-	else if (name == &quot;proxytype&quot;)
+-	{
+-		m_proxyType = value;
+-	}
+-	else
+-	{
+-		goodSetting = false;
+-	}
+-
+-	return goodSetting;
+-}
+-
+ /// Retrieves the specified document; NULL if error.
+ Document *NeonDownloader::retrieveUrl(const DocumentInfo &amp;docInfo)
+ {
+@@ -206,7 +167,20 @@
+ 	}
+ 
+ 	// Create a request for this URL
+-	ne_request *pRequest = ne_request_create(pSession, &quot;GET&quot;, fullLocation.c_str());
++	ne_request *pRequest = NULL;
++	if (m_method == &quot;POST&quot;)
++	{
++		pRequest = ne_request_create(pSession, &quot;POST&quot;, fullLocation.c_str());
++		if ((pRequest != NULL) &amp;&amp;
++			(m_postFields.empty() == false))
++		{
++			ne_set_request_body_buffer(pRequest, m_postFields.c_str(), m_postFields.length());
++		}
++	}
++	else
++	{
++		pRequest = ne_request_create(pSession, &quot;GET&quot;, fullLocation.c_str());
++	}
+ 	if (pRequest == NULL)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/Collect/NeonDownloader.h
+===================================================================
+--- trunk/Collect/NeonDownloader.h	2008-10-11 09:06:15 UTC (rev 1384)
++++ trunk/Collect/NeonDownloader.h	2008-10-11 10:24:34 UTC (rev 1385)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,24 +30,11 @@
+ 		NeonDownloader();
+ 		virtual ~NeonDownloader();
+ 
+-		/**
+-		  * Sets a (name, value) setting. Setting names include :
+-		  * proxyaddress - the address of the proxy to use
+-		  * proxyport - the port of the proxy to use (positive integer)
+-		  * proxytype - the type of the proxy to use
+-		  * Returns true if success.
+-		  */
+-		virtual bool setSetting(const std::string &amp;name, const std::string &amp;value);
+-
+ 		/// Retrieves the specified document; NULL if error. Caller deletes.
+ 		virtual Document *retrieveUrl(const DocumentInfo &amp;docInfo);
+ 
+ 	protected:
+ 		static unsigned int m_initialized;
+-		std::string m_userAgent;
+-		std::string m_proxyAddress;
+-		unsigned int m_proxyPort;
+-		std::string m_proxyType;
+ 
+ 		std::string handleRedirection(const char *pBody, unsigned int length);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001375.html">[Pinot-svn] r1384 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001377.html">[Pinot-svn] r1386 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1376">[ date ]</a>
+              <a href="thread.html#1376">[ thread ]</a>
+              <a href="subject.html#1376">[ subject ]</a>
+              <a href="author.html#1376">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

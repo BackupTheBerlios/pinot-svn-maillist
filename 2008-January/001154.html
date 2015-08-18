@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1160 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1160%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200801111452.m0BEqKiN005328%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001153.html">
+   <LINK REL="Next"  HREF="001155.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1160 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1160%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200801111452.m0BEqKiN005328%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1160 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan 11 15:52:20 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001153.html">[Pinot-svn] r1159 - trunk/IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001155.html">[Pinot-svn] r1161 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1154">[ date ]</a>
+              <a href="thread.html#1154">[ thread ]</a>
+              <a href="subject.html#1154">[ subject ]</a>
+              <a href="author.html#1154">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-01-11 15:52:20 +0100 (Fri, 11 Jan 2008)
+New Revision: 1160
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+When looking for a finished thread after being signaled, stop those that have
+been running for more than 5 minutes.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-01-11 14:48:24 UTC (rev 1159)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-01-11 14:52:20 UTC (rev 1160)
+@@ -134,6 +134,7 @@
+ }
+ 
+ WorkerThread::WorkerThread() :
++	m_startTime(time(NULL)),
+ 	m_id(0),
+ 	m_background(false),
+ 	m_stopped(false),
+@@ -146,12 +147,17 @@
+ {
+ }
+ 
++time_t WorkerThread::getStartTime(void) const
++{
++	return m_startTime;
++}
++
+ void WorkerThread::setId(unsigned int id)
+ {
+ 	m_id = id;
+ }
+ 
+-unsigned int WorkerThread::getId(void)
++unsigned int WorkerThread::getId(void) const
+ {
+ 	return m_id;
+ }
+@@ -161,7 +167,7 @@
+ 	m_background = true;
+ }
+ 
+-bool WorkerThread::isBackground(void)
++bool WorkerThread::isBackground(void) const
+ {
+ 	return m_background;
+ }
+@@ -336,6 +342,7 @@
+ 
+ WorkerThread *ThreadsManager::get_thread(void)
+ {
++	time_t timeNow = time(NULL);
+ 	WorkerThread *pWorkerThread = NULL;
+ 
+ 	// Get the first thread that's finished
+@@ -344,18 +351,37 @@
+ 		for (map&lt;WorkerThread *, Thread *&gt;::iterator threadIter = m_threads.begin();
+ 			threadIter != m_threads.end(); ++threadIter)
+ 		{
+-			if (threadIter-&gt;first-&gt;isDone() == true)
++			unsigned int threadId = threadIter-&gt;first-&gt;getId();
++
++			if (threadIter-&gt;first-&gt;isDone() == false)
+ 			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;ThreadsManager::get_thread: thread &quot;
++					&lt;&lt; threadId &lt;&lt; &quot; is not done&quot; &lt;&lt; endl;
++#endif
++
++				// Foreground threads ought not to run very long
++				if ((threadIter-&gt;first-&gt;isBackground() == false) &amp;&amp;
++					(threadIter-&gt;first-&gt;getStartTime() + 300 &lt; timeNow))
++				{
++					// This thread has been running for more than 5 minutes already !
++					threadIter-&gt;first-&gt;stop();
++
++					cerr &lt;&lt; &quot;Stopped long-running thread &quot; &lt;&lt; threadId &lt;&lt; endl;
++				}
++			}
++			else
++			{
+ 				// This one will do...
+ 				pWorkerThread = threadIter-&gt;first;
+ 				// Remove it
+ 				m_threads.erase(threadIter);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;ThreadsManager::get_thread: thread &quot; &lt;&lt; threadId
++					&lt;&lt; &quot; is done, &quot; &lt;&lt; m_threads.size() &lt;&lt; &quot; left&quot; &lt;&lt; endl;
++#endif
+ 				break;
+ 			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;ThreadsManager::get_thread: thread &quot;
+-				&lt;&lt; threadIter-&gt;first-&gt;getId() &lt;&lt; &quot; is not done&quot; &lt;&lt; endl;
+-#endif
+ 		}
+ 
+ 		unlock_threads();
+@@ -473,6 +499,10 @@
+ 		pWorkerThread-&gt;inBackground();
+ 		++m_backgroundThreadsCount;
+ 	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;ThreadsManager::start_thread: thread &quot; &lt;&lt; pWorkerThread-&gt;getId()
++			&lt;&lt; &quot; will run in the foreground&quot; &lt;&lt; endl;
++#endif
+ 
+ 	// Start the thread
+ 	Thread *pThread = pWorkerThread-&gt;start();
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-01-11 14:48:24 UTC (rev 1159)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-01-11 14:52:20 UTC (rev 1160)
+@@ -54,13 +54,15 @@
+ 
+ 		static void immediateFlush(bool doFlush);
+ 
++		time_t getStartTime(void) const;
++
+ 		void setId(unsigned int id);
+ 
+-		unsigned int getId(void);
++		unsigned int getId(void) const;
+ 
+ 		void inBackground(void);
+ 
+-		bool isBackground(void);
++		bool isBackground(void) const;
+ 
+ 		bool operator&lt;(const WorkerThread &amp;other) const;
+ 
+@@ -83,6 +85,7 @@
+ 		static Glib::Dispatcher m_dispatcher;
+ 		static pthread_mutex_t m_dispatcherMutex;
+ 		static bool m_immediateFlush;
++		time_t m_startTime;
+ 		unsigned int m_id;
+ 		bool m_background;
+ 		bool m_stopped;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001153.html">[Pinot-svn] r1159 - trunk/IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001155.html">[Pinot-svn] r1161 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1154">[ date ]</a>
+              <a href="thread.html#1154">[ thread ]</a>
+              <a href="subject.html#1154">[ subject ]</a>
+              <a href="author.html#1154">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

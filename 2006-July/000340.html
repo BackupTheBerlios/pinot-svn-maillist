@@ -1,0 +1,343 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r347 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r347%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607141208.k6EC8vpk008083%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000339.html">
+   <LINK REL="Next"  HREF="000341.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r347 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r347%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607141208.k6EC8vpk008083%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r347 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 14 14:08:57 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000339.html">[Pinot-svn] r346 - in trunk: . UI/GTK2/src po
+</A></li>
+        <LI>Next message: <A HREF="000341.html">[Pinot-svn] r348 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#340">[ date ]</a>
+              <a href="thread.html#340">[ thread ]</a>
+              <a href="subject.html#340">[ subject ]</a>
+              <a href="author.html#340">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-14 14:08:55 +0200 (Fri, 14 Jul 2006)
+New Revision: 347
+
+Modified:
+   trunk/UI/GTK2/src/ModelColumns.cpp
+   trunk/UI/GTK2/src/ModelColumns.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+Log:
+Score column gives some visual cue as to the relevance of results.
+
+
+Modified: trunk/UI/GTK2/src/ModelColumns.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.cpp	2006-07-12 12:15:12 UTC (rev 346)
++++ trunk/UI/GTK2/src/ModelColumns.cpp	2006-07-14 12:08:55 UTC (rev 347)
+@@ -59,6 +59,7 @@
+ 	add(m_viewed);
+ 	add(m_rankDiff);
+ 	add(m_score);
++	add(m_scoreText);
+ 	add(m_engines);
+ 	add(m_indexes);
+ 	add(m_type);
+
+Modified: trunk/UI/GTK2/src/ModelColumns.h
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.h	2006-07-12 12:15:12 UTC (rev 346)
++++ trunk/UI/GTK2/src/ModelColumns.h	2006-07-14 12:08:55 UTC (rev 347)
+@@ -80,7 +80,8 @@
+ 	Gtk::TreeModelColumn&lt;bool&gt; m_indexed;
+ 	Gtk::TreeModelColumn&lt;bool&gt; m_viewed;
+ 	Gtk::TreeModelColumn&lt;int&gt; m_rankDiff;
+-	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_score;
++	Gtk::TreeModelColumn&lt;int&gt; m_score;
++	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_scoreText;
+ 	Gtk::TreeModelColumn&lt;unsigned int&gt; m_engines;
+ 	Gtk::TreeModelColumn&lt;unsigned int&gt; m_indexes;
+ 	typedef enum { RESULT_ROOT = 0, RESULT_TITLE, RESULT_HOST, RESULT_OTHER } ResultType;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-07-12 12:15:12 UTC (rev 346)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-07-14 12:08:55 UTC (rev 347)
+@@ -23,6 +23,7 @@
+ #include &lt;gtkmm/label.h&gt;
+ #include &lt;gtkmm/stock.h&gt;
+ #include &lt;gtkmm/textbuffer.h&gt;
++#include &lt;gtkmm/cellrendererprogress.h&gt;
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+@@ -99,7 +100,7 @@
+ 	m_refStore = TreeStore::create(m_resultsColumns);
+ 	set_model(m_refStore);
+ 
+-	// The first column is for the score and status icons
++	// The first column is for the status icons
+ 	TreeViewColumn *pColumn = new TreeViewColumn(&quot;&quot;);
+ 	// Pack an icon renderer for the viewed status
+ 	CellRendererPixbuf *pIconRenderer = new CellRendererPixbuf();
+@@ -114,15 +115,24 @@
+ 	pColumn-&gt;pack_start(*manage(pIconRenderer), false);
+ 	pColumn-&gt;set_cell_data_func(*pIconRenderer, SigC::slot(*this, &amp;ResultsTree::renderRanking));
+ 	pColumn-&gt;set_resizable(true);
++	append_column(*manage(pColumn));
++
++	// This is the score column
++	pColumn = new TreeViewColumn(_(&quot;Score&quot;));
++	CellRendererProgress *pProgressRenderer = new CellRendererProgress();
++	pColumn-&gt;pack_start(*manage(pProgressRenderer));
++	pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_text(), m_resultsColumns.m_scoreText);
++	pColumn-&gt;add_attribute(pProgressRenderer-&gt;property_value(), m_resultsColumns.m_score);
++	pColumn-&gt;set_resizable(true);
+ 	pColumn-&gt;set_sort_column(m_resultsColumns.m_score);
+ 	append_column(*manage(pColumn));
+ 
+ 	// This is the title column
+ 	pColumn = new TreeViewColumn(_(&quot;Title&quot;));
+-	CellRendererText *textCellRenderer = new CellRendererText();
+-	pColumn-&gt;pack_start(*manage(textCellRenderer));
+-	pColumn-&gt;set_cell_data_func(*textCellRenderer, SigC::slot(*this, &amp;ResultsTree::renderBackgroundColour));
+-	pColumn-&gt;add_attribute(textCellRenderer-&gt;property_text(), m_resultsColumns.m_text);
++	CellRendererText *pTextRenderer = new CellRendererText();
++	pColumn-&gt;pack_start(*manage(pTextRenderer));
++	pColumn-&gt;set_cell_data_func(*pTextRenderer, SigC::slot(*this, &amp;ResultsTree::renderBackgroundColour));
++	pColumn-&gt;add_attribute(pTextRenderer-&gt;property_text(), m_resultsColumns.m_text);
+ 	pColumn-&gt;set_resizable(true);
+ 	pColumn-&gt;set_sort_column(m_resultsColumns.m_text);
+ 	append_column(*manage(pColumn));
+@@ -429,12 +439,12 @@
+ // Returns true if something was added to the tree.
+ //
+ bool ResultsTree::addResults(QueryProperties &amp;queryProps, const string &amp;engineName,
+-	const vector&lt;Result&gt; &amp;resultsList, const string &amp;charset, bool groupBySearchEngine)
++	const vector&lt;Result&gt; &amp;resultsList, const string &amp;charset,
++	bool groupBySearchEngine)
+ {
+ 	std::map&lt;string, TreeModel::iterator&gt; updatedGroups;
+-	string queryName(queryProps.getName());
++	ResultsModelColumns::ResultType rootType;
+ 	unsigned int count = 0;
+-	ResultsModelColumns::ResultType rootType;
+ 
+ 	// Get this query's terms
+ 	queryProps.getTerms(m_queryTerms);
+@@ -477,14 +487,14 @@
+ 
+ 	QueryHistory history(m_settings.m_historyDatabase);
+ 	bool isNewQuery = false;
+-	if (history.getLastRun(queryName, engineName).empty() == true)
++	if (history.getLastRun(m_queryName, engineName).empty() == true)
+ 	{
+ 		isNewQuery = true;
+ 	}
+ 
+ 	// Look at the results list
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; resultsList.size() &lt;&lt; &quot; results to display&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;ResultsTree::addResults: &quot; &lt;&lt; resultsList.size() &lt;&lt; &quot; results&quot; &lt;&lt; endl;
+ #endif
+ 	for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 		resultIter != resultsList.end(); ++resultIter)
+@@ -493,7 +503,6 @@
+ 		ustring location(to_utf8(resultIter-&gt;getLocation(), charset));
+ 		ustring extract(to_utf8(resultIter-&gt;getExtract(), charset));
+ 		float currentScore = resultIter-&gt;getScore();
+-		string score;
+ 		int rankDiff = 0;
+ 
+ 		// What group should the result go to ?
+@@ -517,7 +526,7 @@
+ 
+ 			// Has the result's ranking changed ?
+ 			float oldestScore = 0;
+-			float previousScore = history.hasItem(queryName, engineName,
++			float previousScore = history.hasItem(m_queryName, engineName,
+ 				location, oldestScore);
+ 			if (previousScore &gt; 0)
+ 			{
+@@ -540,11 +549,11 @@
+ 			}
+ 
+ 			++count;
+-			if (appendResult(title, location, currentScore, rankDiff,
++			if (appendResult(title, location, (int)currentScore, rankDiff,
+ 				engineId, indexId, titleIter, &amp;(*groupIter), true) == true)
+ 			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count &lt;&lt; endl;
++				cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count &lt;&lt; &quot;, &quot; &lt;&lt; currentScore &lt;&lt; endl;
+ #endif
+ 
+ 				// Update this map, so that we know which groups need updating
+@@ -670,7 +679,7 @@
+ 						// Add result
+ 						success = appendResult(childRow[m_resultsColumns.m_text],
+ 							childRow[m_resultsColumns.m_url],
+-							(float)atof(from_utf8(childRow[m_resultsColumns.m_score]).c_str()),
++							childRow[m_resultsColumns.m_score],
+ 							childRow[m_resultsColumns.m_rankDiff],
+ 							engineIds, indexIds, newIter, &amp;(*groupIter), true);
+ 					}
+@@ -728,7 +737,7 @@
+ 								// Add result
+ 								appendResult(childRow[m_resultsColumns.m_text],
+ 									childRow[m_resultsColumns.m_url],
+-									(float)atof(from_utf8(childRow[m_resultsColumns.m_score]).c_str()),
++									childRow[m_resultsColumns.m_score],
+ 									childRow[m_resultsColumns.m_rankDiff],
+ 									engineId, indexId,
+ 									newIter, &amp;(*groupIter), true);
+@@ -1076,7 +1085,7 @@
+ // Adds a new row in the results tree.
+ //
+ bool ResultsTree::appendResult(const ustring &amp;text, const ustring &amp;url,
+-	float score, int rankDiff, unsigned int engineId, unsigned int indexId,
++	int score, int rankDiff, unsigned int engineId, unsigned int indexId,
+ 	TreeModel::iterator &amp;newRowIter, const TreeModel::Row *parentRow, bool noDuplicates)
+ {
+ 	if (parentRow == NULL)
+@@ -1136,12 +1145,8 @@
+ 	// Has it been already viewed ?
+ 	bool wasViewed = viewHistory.hasItem(url);
+ 
+-	char scoreStr[128];
+-	snprintf(scoreStr, 128, &quot;%.f&quot;, score);
+-
+ 	TreeModel::Row childRow = *newRowIter;
+-	updateRow(childRow, text, url, scoreStr,
+-		engineId, indexId,
++	updateRow(childRow, text, url, score, engineId, indexId,
+ 		ResultsModelColumns::RESULT_TITLE, isIndexed,
+ 		wasViewed, rankDiff);
+ 
+@@ -1164,7 +1169,7 @@
+ 		groupIter = m_refStore-&gt;append();
+ 		TreeModel::Row groupRow = *groupIter;
+ 		updateRow(groupRow, to_utf8(groupName),
+-			&quot;&quot;, &quot;&quot;, 0, 0, groupType,
++			&quot;&quot;, 0, 0, 0, groupType,
+ 			false, false, false);
+ 
+ 		// Update the map
+@@ -1193,6 +1198,7 @@
+ void ResultsTree::updateGroup(TreeModel::iterator &amp;groupIter)
+ {
+ 	TreeModel::Row groupRow = (*groupIter);
++	int averageScore = 0;
+ 
+ 	// Check the iterator doesn't point to a result
+ 	if (groupRow[m_resultsColumns.m_type] == ResultsModelColumns::RESULT_TITLE)
+@@ -1202,11 +1208,23 @@
+ 
+ 	// Modify the &quot;score&quot; column to indicate the number of results in that group
+ 	TreeModel::Children groupChildren = groupIter-&gt;children();
+-	char scoreStr[64];
+-	snprintf(scoreStr, 64, &quot;%u&quot;, groupChildren.size());
+-	groupRow[m_resultsColumns.m_score] = scoreStr;
++	if (groupChildren.empty() == false)
++	{
++		for (TreeModel::Children::iterator childIter = groupChildren.begin();
++			childIter != groupChildren.end(); ++childIter)
++		{
++			TreeModel::Row row = *childIter;
++
++			averageScore += row[m_resultsColumns.m_score];
++		}
++
++		averageScore = (int)(averageScore / groupChildren.size());
++	}
++	groupRow[m_resultsColumns.m_score] = averageScore;
++
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;ResultsTree::updateGroup: group &quot; &lt;&lt; groupRow[m_resultsColumns.m_text] &lt;&lt; &quot; has &quot; &lt;&lt; groupChildren.size() &lt;&lt; &quot; children&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;ResultsTree::updateGroup: group &quot; &lt;&lt; groupRow[m_resultsColumns.m_text]
++		&lt;&lt; &quot; has score &quot; &lt;&lt; averageScore &lt;&lt; endl;
+ #endif
+ 
+ 	// Expand this group
+@@ -1218,13 +1236,13 @@
+ // Updates a row.
+ //
+ void ResultsTree::updateRow(TreeModel::Row &amp;row, const ustring &amp;text,
+-	const ustring &amp;url, const ustring &amp;score,
+-	unsigned int engineId,  unsigned int indexId,
++	const ustring &amp;url, int score, unsigned int engineId,  unsigned int indexId,
+ 	ResultsModelColumns::ResultType type, bool indexed, bool viewed, int rankDiff)
+ {
+ 	row[m_resultsColumns.m_text] = text;
+ 	row[m_resultsColumns.m_url] = url;
+ 	row[m_resultsColumns.m_score] = score;
++	row[m_resultsColumns.m_scoreText] = &quot;&quot;;
+ 	row[m_resultsColumns.m_engines] = engineId;
+ 	row[m_resultsColumns.m_indexes] = indexId;
+ 	row[m_resultsColumns.m_type] = type;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2006-07-12 12:15:12 UTC (rev 346)
++++ trunk/UI/GTK2/src/ResultsTree.h	2006-07-14 12:08:55 UTC (rev 347)
+@@ -140,7 +140,7 @@
+ 
+ 		/// Adds a new row in the results tree.
+ 		bool appendResult(const Glib::ustring &amp;text, const Glib::ustring &amp;url,
+-			float score, int rankDiff, unsigned int engineId, unsigned int indexId,
++			int score, int rankDiff, unsigned int engineId, unsigned int indexId,
+ 			Gtk::TreeModel::iterator &amp;newRowIter,
+ 			const Gtk::TreeModel::Row *parentRow = NULL, bool noDuplicates = false);
+ 
+@@ -149,8 +149,7 @@
+ 
+ 		/// Updates a row.
+ 		void updateRow(Gtk::TreeModel::Row &amp;row, const Glib::ustring &amp;text,
+-			const Glib::ustring &amp;url, const Glib::ustring &amp;score,
+-			unsigned int engineId, unsigned int indexId,
++			const Glib::ustring &amp;url, int score, unsigned int engineId, unsigned int indexId,
+ 			ResultsModelColumns::ResultType type, bool indexed, bool viewed, int rankDiff);
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000339.html">[Pinot-svn] r346 - in trunk: . UI/GTK2/src po
+</A></li>
+	<LI>Next message: <A HREF="000341.html">[Pinot-svn] r348 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#340">[ date ]</a>
+              <a href="thread.html#340">[ thread ]</a>
+              <a href="subject.html#340">[ subject ]</a>
+              <a href="author.html#340">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

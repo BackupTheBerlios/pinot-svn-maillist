@@ -1,0 +1,246 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1299 - in trunk/IndexSearch: . Plugins
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1299%20-%20in%20trunk/IndexSearch%3A%20.%20Plugins&In-Reply-To=%3C200807181328.m6IDSfC2010592%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001292.html">
+   <LINK REL="Next"  HREF="001294.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1299 - in trunk/IndexSearch: . Plugins</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1299%20-%20in%20trunk/IndexSearch%3A%20.%20Plugins&In-Reply-To=%3C200807181328.m6IDSfC2010592%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1299 - in trunk/IndexSearch: . Plugins">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 18 15:28:41 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001292.html">[Pinot-svn] r1298 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="001294.html">[Pinot-svn] r1300 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1293">[ date ]</a>
+              <a href="thread.html#1293">[ thread ]</a>
+              <a href="subject.html#1293">[ subject ]</a>
+              <a href="author.html#1293">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-07-18 15:28:33 +0200 (Fri, 18 Jul 2008)
+New Revision: 1299
+
+Modified:
+   trunk/IndexSearch/PluginWebEngine.cpp
+   trunk/IndexSearch/Plugins/AmazonAPI.src
+   trunk/IndexSearch/SherlockParser.cpp
+   trunk/IndexSearch/pinot-search.cpp
+Log:
+pinot-search can set a plugin editable parameter with -e/--seteditable.
+PluginWebEngine will output an error message if an editable parameter has no
+value.
+The Sherlock parser lower-cased input parameters for no specific reason.
+Moved the Amazon API plugin to the Shopping channel.
+
+
+Modified: trunk/IndexSearch/PluginWebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.cpp	2008-07-13 13:51:08 UTC (rev 1298)
++++ trunk/IndexSearch/PluginWebEngine.cpp	2008-07-18 13:28:33 UTC (rev 1299)
+@@ -283,11 +283,9 @@
+ 		map&lt;string, string&gt;::const_iterator valueIter = m_editableValues.find(editableIter-&gt;second);
+ 		if (valueIter == m_editableValues.end())
+ 		{
++			cerr &lt;&lt; &quot;PluginWebEngine::runQuery: no value provided for plugin's editable parameter &quot; &lt;&lt; editableIter-&gt;second &lt;&lt; endl;
+ 			continue;
+ 		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;PluginWebEngine::runQuery: editable &quot; &lt;&lt; valueIter-&gt;first &lt;&lt; &quot; set to &quot; &lt;&lt; valueIter-&gt;second &lt;&lt; endl;
+-#endif
+ 
+ 		formattedQuery += &quot;&amp;&quot;;
+ 		formattedQuery += editableIter-&gt;first;
+
+Modified: trunk/IndexSearch/Plugins/AmazonAPI.src
+===================================================================
+--- trunk/IndexSearch/Plugins/AmazonAPI.src	2008-07-13 13:51:08 UTC (rev 1298)
++++ trunk/IndexSearch/Plugins/AmazonAPI.src	2008-07-18 13:28:33 UTC (rev 1299)
+@@ -6,7 +6,7 @@
+ 	description=&quot;Amazon.com REST API&quot;
+ 	method=&quot;GET&quot;
+ 	action=&quot;<A HREF="http://webservices.amazon.com/onca/xml">http://webservices.amazon.com/onca/xml</A>&quot;
+-	routeType=&quot;The Web&quot;
++	routeType=&quot;Shopping&quot;
+ &gt;
+ 
+ &lt;INPUT NAME=&quot;Service&quot; VALUE=&quot;AWSECommerceService&quot;&gt;
+
+Modified: trunk/IndexSearch/SherlockParser.cpp
+===================================================================
+--- trunk/IndexSearch/SherlockParser.cpp	2008-07-13 13:51:08 UTC (rev 1298)
++++ trunk/IndexSearch/SherlockParser.cpp	2008-07-18 13:28:33 UTC (rev 1299)
+@@ -506,7 +506,7 @@
+ 
+ 	if (parsedPlugin == true)
+ 	{
+-		map&lt;string, string&gt; lowSearchParams, lowInterpretParams, lowInputItems;
++		map&lt;string, string&gt; lowSearchParams, lowInterpretParams;
+ 
+ 		pResponseParser = new SherlockResponseParser();
+ 
+@@ -514,8 +514,6 @@
+ 		for_each(searchParams.begin(), searchParams.end(), lowCopy1);
+ 		LowerAndCopy lowCopy2(lowInterpretParams);
+ 		for_each(interpretParams.begin(), interpretParams.end(), lowCopy2);
+-		LowerAndCopy lowCopy3(lowInputItems);
+-		for_each(inputItems.begin(), inputItems.end(), lowCopy3);
+ 
+ 		// Response
+ 		properties.m_response = SearchPluginProperties::HTML_RESPONSE;
+@@ -545,22 +543,20 @@
+ 
+ 		if (userInput.empty() == false)
+ 		{
+-			string lowUserInput(StringManip::toLowerCase(userInput));
+-
+ 			// Remove the user input tag from the input tags map
+-			mapIter = lowInputItems.find(lowUserInput);
+-			if (mapIter != lowInputItems.end())
++			mapIter = inputItems.find(userInput);
++			if (mapIter != inputItems.end())
+ 			{
+-				lowInputItems.erase(mapIter);
++				inputItems.erase(mapIter);
+ 			}
+ #ifdef DEBUG
+ 			else cout &lt;&lt; &quot;SherlockParser::parse: couldn't remove user input item&quot; &lt;&lt; endl;
+ #endif
+ 
+-			properties.m_variableParameters[SearchPluginProperties::SEARCH_TERMS_PARAM] = lowUserInput;
++			properties.m_variableParameters[SearchPluginProperties::SEARCH_TERMS_PARAM] = userInput;
+ 		}
+-		for (map&lt;string, string&gt;::iterator iter = lowInputItems.begin();
+-			iter != lowInputItems.end(); ++iter)
++		for (map&lt;string, string&gt;::iterator iter = inputItems.begin();
++			iter != inputItems.end(); ++iter)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;SherlockParser::parse: &quot; &lt;&lt; iter-&gt;first &lt;&lt; &quot;=&quot; &lt;&lt; iter-&gt;second &lt;&lt; endl;
+
+Modified: trunk/IndexSearch/pinot-search.cpp
+===================================================================
+--- trunk/IndexSearch/pinot-search.cpp	2008-07-13 13:51:08 UTC (rev 1298)
++++ trunk/IndexSearch/pinot-search.cpp	2008-07-18 13:28:33 UTC (rev 1299)
+@@ -40,6 +40,7 @@
+ 	{&quot;proxyaddress&quot;, 1, 0, 'a'},
+ 	{&quot;proxyport&quot;, 1, 0, 'p'},
+ 	{&quot;proxytype&quot;, 1, 0, 't'},
++	{&quot;seteditable&quot;, 1, 0, 'e'},
+ 	{&quot;stemming&quot;, 1, 0, 's'},
+ 	{&quot;tocsv&quot;, 1, 0, 'c'},
+ 	{&quot;toxml&quot;, 1, 0, 'x'},
+@@ -94,6 +95,7 @@
+ 		&lt;&lt; &quot;  -p, --proxyport           proxy port\n&quot;
+ 		&lt;&lt; &quot;  -t, --proxytype           proxy type (default HTTP, SOCKS4, SOCKS5)\n&quot;
+ 		&lt;&lt; &quot;  -s, --stemming            stemming language (in English)\n&quot;
++		&lt;&lt; &quot;  -e, --seteditable         plugin editable parameter, name:value pair\n&quot;
+ 		&lt;&lt; &quot;  -c, --tocsv               file to export results in CSV format to\n&quot;
+ 		&lt;&lt; &quot;  -x, --toxml               file to export results in XML format to\n&quot;
+ 		&lt;&lt; &quot;  -v, --version             output version information and exit\n&quot;
+@@ -109,7 +111,7 @@
+ 		&lt;&lt; &quot;pinot-search googleapi mygoogleapikey \&quot;clowns\&quot;\n\n&quot;
+ #endif
+ 		&lt;&lt; &quot;pinot-search opensearch &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/KrustyDescription.xml \&quot;clowns\&quot;\n\n&quot;
+-		&lt;&lt; &quot;pinot-search --max 20 sherlock &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/Bozo.src \&quot;clowns\&quot;\n\n&quot;
++		&lt;&lt; &quot;pinot-search --max 20 sherlock --seteditable \&quot;Bozo App ID:1234567890\&quot; &quot; &lt;&lt; PREFIX &lt;&lt; &quot;/share/pinot/engines/Bozo.src \&quot;clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;pinot-search xapian ~/.pinot/index \&quot;label:Clowns\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;pinot-search --stemming english xapian somehostname:12345 \&quot;clowning\&quot;\n\n&quot;
+ 		&lt;&lt; &quot;Report bugs to &quot; &lt;&lt; PACKAGE_BUGREPORT &lt;&lt; endl;
+@@ -118,13 +120,13 @@
+ int main(int argc, char **argv)
+ {
+ 	QueryProperties::QueryType queryType = QueryProperties::XAPIAN_QP;
+-	string engineType, option, csvExport, xmlExport, proxyAddress, proxyPort, proxyType, stemLanguage;
++	string engineType, option, csvExport, xmlExport, proxyAddress, proxyPort, proxyType, editableParameter, stemLanguage;
+ 	unsigned int maxResultsCount = 10; 
+ 	int longOptionIndex = 0;
+ 	bool printResults = true;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;c:hm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -135,6 +137,12 @@
+ 					proxyAddress = optarg;
+ 				}
+ 				break;
++			case 'e':
++				if (optarg != NULL)
++				{
++					editableParameter = optarg;
++				}
++				break;
+ 			case 'c':
+ 				if (optarg != NULL)
+ 				{
+@@ -193,7 +201,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;c:hm:a:e:p:qs:t:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -260,6 +268,15 @@
+ 			pDownloader-&gt;setSetting(&quot;proxyport&quot;, proxyPort);
+ 			pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
+ 		}
++
++		string::size_type colonPos = editableParameter.find(':');
++		if (colonPos != string::npos)
++		{
++			map&lt;string, string&gt; editableValues;
++
++			editableValues[editableParameter.substr(0, colonPos)] = editableParameter.substr(colonPos + 1);
++			pWebEngine-&gt;setEditableValues(editableValues);
++		}
+ 	}
+ 
+ 	// Set the query
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001292.html">[Pinot-svn] r1298 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="001294.html">[Pinot-svn] r1300 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1293">[ date ]</a>
+              <a href="thread.html#1293">[ thread ]</a>
+              <a href="subject.html#1293">[ subject ]</a>
+              <a href="author.html#1293">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

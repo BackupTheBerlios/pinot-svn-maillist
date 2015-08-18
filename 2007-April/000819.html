@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r825 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r825%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200704271552.l3RFqg4J005574%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000818.html">
+   <LINK REL="Next"  HREF="000820.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r825 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r825%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200704271552.l3RFqg4J005574%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r825 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Apr 27 17:52:42 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000818.html">[Pinot-svn] r824 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000820.html">[Pinot-svn] r826 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#819">[ date ]</a>
+              <a href="thread.html#819">[ thread ]</a>
+              <a href="subject.html#819">[ subject ]</a>
+              <a href="author.html#819">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-04-27 17:52:41 +0200 (Fri, 27 Apr 2007)
+New Revision: 825
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Sometimes when the daemon is started via D-Bus activation and spends too long
+upgrading the index, it receives a SIGKILL... I have moved the upgrade to
+DaemonState::start() so that it happens after D-Bus is initialized and before
+the main loop is run. This seems to help.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-04-27 15:48:25 UTC (rev 824)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-04-27 15:52:41 UTC (rev 825)
+@@ -95,11 +95,32 @@
+ 	return false;
+ }
+ 
+-void DaemonState::start(void)
++void DaemonState::start(bool doUpgrade)
+ {
+ 	// Disable implicit flushing after a change
+ 	WorkerThread::immediateFlush(false);
+ 
++	// Reset the index ?
++	if (doUpgrade == true)
++	{
++		XapianIndex daemonIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++
++		if (daemonIndex.unindexAllDocuments() == true)
++		{
++			CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++			map&lt;unsigned int, string&gt; sources;
++
++			// ...and the history
++			history.getSources(sources);
++			for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
++				sourceIter != sources.end(); ++sourceIter)
++			{
++				history.deleteItems(sourceIter-&gt;first);
++				history.deleteSource(sourceIter-&gt;first);
++			}
++		}
++	}
++
+ 	// Fire up the mail monitor thread now
+ 	m_pMailHandler = new MboxHandler();
+ 	MonitorThread *pMailMonitorThread = new MonitorThread(m_pMailMonitor, m_pMailHandler);
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2007-04-27 15:48:25 UTC (rev 824)
++++ trunk/UI/GTK2/src/DaemonState.h	2007-04-27 15:52:41 UTC (rev 825)
+@@ -33,7 +33,7 @@
+ 		DaemonState();
+ 		virtual ~DaemonState();
+ 
+-		void start(void);
++		void start(bool doUpgrade);
+ 
+ 		void signal_scanner(void);
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-04-27 15:48:25 UTC (rev 824)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-04-27 15:52:41 UTC (rev 825)
+@@ -171,6 +171,7 @@
+ 	string prefixDir(PREFIX);
+ 	struct sigaction newAction;
+ 	int longOptionIndex = 0, priority = 15;
++	bool doUpgrade = false;
+ 
+ 	// Look at the options
+ 	int optionChar = getopt_long(argc, argv, &quot;hpv&quot;, g_longOptions, &amp;longOptionIndex);
+@@ -317,6 +318,7 @@
+ 	newAction.sa_flags = 0;
+ 	newAction.sa_handler = quitAll;
+ 	sigaction(SIGINT, &amp;newAction, NULL);
++	sigaction(SIGKILL, &amp;newAction, NULL);
+ 	sigaction(SIGQUIT, &amp;newAction, NULL);
+ 
+ 	// Open the daemon index in read-write mode 
+@@ -362,32 +364,22 @@
+ 
+ 	// What version of the daemon is this ?
+ 	double daemonVersion = atof(VERSION);
+-	// What version is the index at ?
+-	XapianIndex daemonIndex(settings.m_daemonIndexLocation);
+-	double indexVersion = daemonIndex.getVersion();
+-	// Is an upgrade necessary ?
+-	if (indexVersion &lt; 0.72)
++	if (daemonVersion &gt; 0.0)
+ 	{
+-		cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; daemonVersion &lt;&lt; endl;
++		// What version is the index at ?
++		XapianIndex daemonIndex(settings.m_daemonIndexLocation);
++		double indexVersion = daemonIndex.getVersion();
+ 
+-		// Yes, it is
+-		// Reset the index
+-		if (daemonIndex.unindexAllDocuments() == true)
++		// Is an upgrade necessary ?
++		if (indexVersion &lt; 0.72)
+ 		{
+-			CrawlHistory history(settings.m_historyDatabase);
+-			map&lt;unsigned int, string&gt; sources;
++			cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; daemonVersion &lt;&lt; endl;
+ 
+-			// ...and the history
+-			history.getSources(sources);
+-			for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+-				sourceIter != sources.end(); ++sourceIter)
+-			{
+-				history.deleteItems(sourceIter-&gt;first);
+-				history.deleteSource(sourceIter-&gt;first);
+-			}
++			// Yes, it is
++			doUpgrade = true;
+ 		}
++		daemonIndex.setVersion(daemonVersion);
+ 	}
+-	daemonIndex.setVersion(daemonVersion);
+ 
+ 	GError *pError = NULL;
+ 	DBusGConnection *pBus = dbus_g_bus_get(DBUS_BUS_SESSION, &amp;pError);
+@@ -433,7 +425,7 @@
+ 			// Connect to threads' finished signal
+ 			server.connect();
+ 
+-			server.start();
++			server.start(doUpgrade);
+ 
+ 			// Run the main loop
+ 			g_refMainLoop-&gt;run();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000818.html">[Pinot-svn] r824 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000820.html">[Pinot-svn] r826 - trunk/po
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#819">[ date ]</a>
+              <a href="thread.html#819">[ thread ]</a>
+              <a href="subject.html#819">[ subject ]</a>
+              <a href="author.html#819">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

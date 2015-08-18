@@ -1,0 +1,287 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r472 - in trunk: . Index Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r472%20-%20in%20trunk%3A%20.%20Index%20Utils&In-Reply-To=%3C200609081233.k88CXsvq015643%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000464.html">
+   <LINK REL="Next"  HREF="000466.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r472 - in trunk: . Index Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r472%20-%20in%20trunk%3A%20.%20Index%20Utils&In-Reply-To=%3C200609081233.k88CXsvq015643%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r472 - in trunk: . Index Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Sep  8 14:33:54 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000464.html">[Pinot-svn] r471 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000466.html">[Pinot-svn] r473 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#465">[ date ]</a>
+              <a href="thread.html#465">[ thread ]</a>
+              <a href="subject.html#465">[ subject ]</a>
+              <a href="author.html#465">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-08 14:33:52 +0200 (Fri, 08 Sep 2006)
+New Revision: 472
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Utils/StringManip.cpp
+   trunk/Utils/StringManip.h
+   trunk/configure.in
+Log:
+Borrowed code from Xapian so that the timestamp of documents is stored in the
+format used by Omega, as modtime in the document data, and as a value that
+allows sorting by date.
+In configure.in, added necessary checks and backtracked on recent change to
+AC_OUTPUT() : Search/Google/Makefile should be generated conditionally.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-09-08 11:43:31 UTC (rev 471)
++++ trunk/Index/XapianIndex.cpp	2006-09-08 12:33:52 UTC (rev 472)
+@@ -19,6 +19,7 @@
+ #include &lt;fcntl.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;stdio.h&gt;
++#include &lt;stdlib.h&gt;
+ #include &lt;stdarg.h&gt;
+ #include &lt;strings.h&gt;
+ #include &lt;time.h&gt;
+@@ -397,11 +398,23 @@
+ 	}
+ 
+ 	string language(StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;));
++	string timestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
++
+ 	docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
+ 		StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
+ 		StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
+ 		Languages::toLocale(language));
+-	docInfo.setTimestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
++	// We used to use timestamp prior to 0.60
++	if (timestamp.empty() == true)
++	{
++		string modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
++		if (modTime.empty() == false)
++		{
++			time_t timeT = (time_t )atol(modTime.c_str());
++			timestamp = TimeConverter::toTimestamp(timeT);
++		}
++	}
++	docInfo.setTimestamp(timestamp);
+ 	Url urlObj(docInfo.getLocation());
+ 
+ 	// FIXME: remove terms extracted from the title if they don't have more than one posting
+@@ -505,6 +518,7 @@
+ 	string title(info.getTitle());
+ 	string timestamp(info.getTimestamp());
+ 	char timeStr[64];
++	time_t timeT = TimeConverter::fromTimestamp(timestamp);
+ 
+ 	// Set the document data omindex-style
+ 	string record = &quot;url=&quot;;
+@@ -528,9 +542,10 @@
+ 	record += title;
+ 	record += &quot;\ntype=&quot;;
+ 	record += info.getType();
+-	// Append a timestamp
+-	record += &quot;\ntimestamp=&quot;;
+-	record += timestamp;
++	// Append a timestamp, in a format compatible with Omega
++	record += &quot;\nmodtime=&quot;;
++	snprintf(timeStr, 64, &quot;%ld&quot;, timeT);
++	record += timeStr;
+ 	// ...and the language
+ 	record += &quot;\nlanguage=&quot;;
+ 	record += StringManip::toLowerCase(language);
+@@ -540,8 +555,7 @@
+ 	doc.set_data(record);
+ 
+ 	// Add this value to allow sorting by date
+-	snprintf(timeStr, 64, &quot;%d&quot;, TimeConverter::fromTimestamp(timestamp));
+-	doc.add_value(0, timeStr);
++	doc.add_value(0, StringManip::integerToBinaryString((uint32_t)timeT));
+ }
+ 
+ //
+@@ -588,17 +602,25 @@
+ 			string record = doc.get_data();
+ 			if (record.empty() == false)
+ 			{
+-				string language = Languages::toLocale(StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;));
++				string language(Languages::toLocale(StringManip::extractField(record, &quot;language=&quot;, &quot;&quot;)));
++				// We used to use timestamp prior to 0.60
++				string timestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
+ 
+ 				docInfo = DocumentInfo(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;),
+ 					StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;),
+ 					StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;),
+ 					language);
+-				docInfo.setTimestamp(StringManip::extractField(record, &quot;timestamp=&quot;, &quot;\n&quot;));
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;XapianIndex::getDocumentInfo: language is &quot;
+-					&lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
+-#endif
++				if (timestamp.empty() == true)
++				{
++					// This is the format used by Omega
++					string modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
++					if (modTime.empty() == false)
++					{
++						time_t timeT = (time_t )atol(modTime.c_str());
++						timestamp = TimeConverter::toTimestamp(timeT);
++					}
++				}
++				docInfo.setTimestamp(timestamp);
+ 				foundDocument = true;
+ 			}
+ 		}
+@@ -1133,10 +1155,6 @@
+ 			Xapian::Document doc = pIndex-&gt;get_document(docId);
+ 			Xapian::termcount termPos = 0;
+ 
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianIndex::updateDocumentInfo: language is &quot; &lt;&lt; docInfo.getLanguage() &lt;&lt; endl;
+-#endif
+-
+ 			// Update the document data with the current language
+ 			removeCommonTerms(doc);
+ 			m_stemLanguage = Languages::toEnglish(docInfo.getLanguage());
+
+Modified: trunk/Utils/StringManip.cpp
+===================================================================
+--- trunk/Utils/StringManip.cpp	2006-09-08 11:43:31 UTC (rev 471)
++++ trunk/Utils/StringManip.cpp	2006-09-08 12:33:52 UTC (rev 472)
+@@ -14,9 +14,16 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &quot;config.h&quot;
+ #define _XOPEN_SOURCE
+ #include &lt;unistd.h&gt;
+ #undef _XOPEN_SOURCE
++#ifdef HAVE_ARPA_INET_H
++# include &lt;arpa/inet.h&gt;
++#endif
++#ifdef HAVE_NETINET_IN_H
++# include &lt;netinet/in.h&gt;
++#endif
+ #include &lt;ctype.h&gt;
+ #include &lt;algorithm&gt;
+ 
+@@ -312,3 +319,29 @@
+ 
+ 	return result;
+ }
++
++/// Converts a binary string to an integer.
++uint32_t StringManip::binaryStringToInteger(const string &amp;str)
++{
++	uint32_t value;
++
++	// This is from from Xapian's xapian-applications/omega/values.h
++	if (str.size() != 4)
++	{
++		return (uint32_t)-1;
++	}
++
++	memcpy(&amp;value, str.data(), 4);
++
++	return ntohl(value);
++}
++
++/// Converts an integer to a binary string.
++string StringManip::integerToBinaryString(uint32_t value)
++{
++	// This is from from Xapian's xapian-applications/omega/values.h
++	value = htonl(value);
++
++	return string(reinterpret_cast&lt;const char*&gt;(&amp;value), 4);
++}
++
+
+Modified: trunk/Utils/StringManip.h
+===================================================================
+--- trunk/Utils/StringManip.h	2006-09-08 11:43:31 UTC (rev 471)
++++ trunk/Utils/StringManip.h	2006-09-08 12:33:52 UTC (rev 472)
+@@ -55,6 +55,12 @@
+ 		/// Hashes a string so that it is no longer than maxLength.
+ 		static std::string hashString(const std::string &amp;str, unsigned int maxLength);
+ 
++		/// Converts a binary string to an integer.
++		static uint32_t binaryStringToInteger(const std::string &amp;str);
++
++		/// Converts an integer to a binary string.
++		static std::string integerToBinaryString(uint32_t value);
++
+ 	protected:
+ 		StringManip();
+ 
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-09-08 11:43:31 UTC (rev 471)
++++ trunk/configure.in	2006-09-08 12:33:52 UTC (rev 472)
+@@ -156,7 +156,7 @@
+ dnl Other libraries
+ MISC_LIBS=&quot;-lcrypt&quot;
+ AC_SUBST(MISC_LIBS)
+-AC_CHECK_HEADERS(textcat.h)
++AC_CHECK_HEADERS([textcat.h netinet/in.h arpa/inet.h])
+ PKG_CHECK_MODULES(MIMEINFO, shared-mime-info )
+ PKG_CHECK_MODULES(TAGLIB, taglib &gt;= 1.4 )
+ AC_SUBST(TAGLIB_CFLAGS)
+@@ -200,6 +200,9 @@
+ 
+ AC_OUTPUT( pinot.spec UI/GTK2/src/de.berlios.Pinot.service Makefile \
+ 	Utils/Makefile Tokenize/Makefile SQL/Makefile po/Makefile.in \
+-	Collect/Makefile Search/Google/Makefile Search/Makefile \
+-	Index/Makefile Monitor/Makefile UI/GTK2/src/Makefile )
++	Collect/Makefile )
++if test &quot;$SOAP_SUBDIRS&quot; != &quot;&quot; ; then
++AC_OUTPUT( Search/Google/Makefile )
++fi
++AC_OUTPUT( Search/Makefile Index/Makefile Monitor/Makefile UI/GTK2/src/Makefile )
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000464.html">[Pinot-svn] r471 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000466.html">[Pinot-svn] r473 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#465">[ date ]</a>
+              <a href="thread.html#465">[ thread ]</a>
+              <a href="subject.html#465">[ subject ]</a>
+              <a href="author.html#465">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

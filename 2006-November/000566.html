@@ -1,0 +1,710 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r573 - in trunk: Search Search/Google Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r573%20-%20in%20trunk%3A%20Search%20Search/Google%20Utils&In-Reply-To=%3C200611120905.kAC955sI004641%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000565.html">
+   <LINK REL="Next"  HREF="000567.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r573 - in trunk: Search Search/Google Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r573%20-%20in%20trunk%3A%20Search%20Search/Google%20Utils&In-Reply-To=%3C200611120905.kAC955sI004641%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r573 - in trunk: Search Search/Google Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov 12 10:05:05 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000565.html">[Pinot-svn] r572 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000567.html">[Pinot-svn] r574 - in trunk/Search: . Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#566">[ date ]</a>
+              <a href="thread.html#566">[ thread ]</a>
+              <a href="subject.html#566">[ subject ]</a>
+              <a href="author.html#566">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-12 10:05:04 +0100 (Sun, 12 Nov 2006)
+New Revision: 573
+
+Modified:
+   trunk/Search/AbstractGenerator.cpp
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/Google/GoogleAPIEngine.h
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/WebEngine.cpp
+   trunk/Search/WebEngine.h
+   trunk/Search/XapianEngine.cpp
+   trunk/Utils/Result.cpp
+   trunk/Utils/Result.h
+Log:
+WebEngine now handles filtering results and highlighting abstracts, similarly
+to AbstractGenerator.
+Escape strings in markup. Minor cleanup.
+
+
+Modified: trunk/Search/AbstractGenerator.cpp
+===================================================================
+--- trunk/Search/AbstractGenerator.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/AbstractGenerator.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -19,6 +19,7 @@
+ #include &lt;string.h&gt;
+ #include &lt;ctype.h&gt;
+ #include &lt;sys/time.h&gt;
++#include &lt;glib.h&gt;
+ #include &lt;map&gt;
+ #include &lt;algorithm&gt;
+ #include &lt;iostream&gt;
+@@ -215,18 +216,27 @@
+ 	for (map&lt;Xapian::termpos, string&gt;::iterator wordIter = wordsBuffer.begin();
+ 		wordIter != wordsBuffer.end(); ++wordIter)
+ 	{
++		char *pEscWord = g_markup_escape_text(wordIter-&gt;second.c_str(), -1);
++
++		if (pEscWord == NULL)
++		{
++			continue;
++		}
++
+ 		// Is this a seed term ?
+ 		if (find(seedTerms.begin(), seedTerms.end(), wordIter-&gt;second) != seedTerms.end())
+ 		{
+ 			summary += &quot;&lt;b&gt;&quot;;
+-			summary += wordIter-&gt;second;
++			summary += pEscWord;
+ 			summary += &quot;&lt;/b&gt;&quot;;
+ 		}
+ 		else
+ 		{
+-			summary += wordIter-&gt;second;
++			summary += pEscWord;
+ 		}
+ 		summary += &quot; &quot;;
++
++		g_free(pEscWord);
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: summarized document &quot;
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -30,10 +30,8 @@
+ using std::endl;
+ 
+ GoogleAPIEngine::GoogleAPIEngine() :
+-	SearchEngineInterface()
++	WebEngine()
+ {
+-	// SearchEngineInterface members
+-	m_maxResultsCount = 10;
+ }
+ 
+ GoogleAPIEngine::~GoogleAPIEngine()
+@@ -88,8 +86,10 @@
+ bool GoogleAPIEngine::runQuery(QueryProperties&amp; queryProps)
+ {
+ 	string queryString(queryProps.getFreeQuery(true));
++
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
++	setQuery(queryString);
+ 
+ 	if (m_key.empty() == true)
+ 	{
+@@ -130,11 +130,11 @@
+ 		for (int i = 0; i &lt; searchResult-&gt;resultElements-&gt;__size; ++i)
+ 		{
+ 			struct gapi1__ResultElement *resultElement = searchResult-&gt;resultElements-&gt;__ptr[i];
++			Result result(resultElement-&gt;URL, resultElement-&gt;title, resultElement-&gt;snippet, &quot;&quot;, pseudoScore);
+ 
+-			string resultUrl(resultElement-&gt;URL);
+-			if (processResult(&quot;<A HREF="http://www.google.com/">http://www.google.com/</A>&quot;, resultUrl) == true)
++			if (processResult(&quot;<A HREF="http://www.google.com/">http://www.google.com/</A>&quot;, result) == true)
+ 			{
+-				m_resultsList.push_back(Result(resultUrl, resultElement-&gt;title, resultElement-&gt;snippet, &quot;&quot;, pseudoScore));
++				m_resultsList.push_back(result);
+ 				--pseudoScore;
+ 			}
+ 		}
+
+Modified: trunk/Search/Google/GoogleAPIEngine.h
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.h	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/Google/GoogleAPIEngine.h	2006-11-12 09:05:04 UTC (rev 573)
+@@ -22,11 +22,11 @@
+ #include &lt;string&gt;
+ 
+ #include &quot;Document.h&quot;
+-#include &quot;SearchEngineInterface.h&quot;
++#include &quot;WebEngine.h&quot;
+ 
+ using namespace std;
+ 
+-class GoogleAPIEngine : public SearchEngineInterface
++class GoogleAPIEngine : public WebEngine
+ {
+ 	public:
+ 		GoogleAPIEngine();
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/PluginWebEngine.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -105,9 +105,7 @@
+ 	vector&lt;Result&gt;::iterator resultIter = m_resultsList.begin();
+ 	while (resultIter != m_resultsList.end())
+ 	{
+-		string url(resultIter-&gt;getLocation());
+-
+-		if (processResult(formattedQuery, url) == false)
++		if (processResult(formattedQuery, *resultIter) == false)
+ 		{
+ 			// Remove this result
+ 			if (resultIter == m_resultsList.begin())
+@@ -124,8 +122,6 @@
+ 		}
+ 		else
+ 		{
+-			resultIter-&gt;setLocation(url);
+-
+ 			// Next
+ 			++resultIter;
+ 		}
+@@ -253,6 +249,7 @@
+ 
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
++	setQuery(queryString);
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;PluginWebEngine::runQuery: querying &quot;
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/SearchEngineInterface.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -18,6 +18,7 @@
+ 
+ #include &lt;iostream&gt;
+ 
++#include &quot;Document.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;SearchEngineInterface.h&quot;
+@@ -79,108 +80,3 @@
+ {
+ 	return m_expandTerms;
+ }
+-
+-void SearchEngineInterface::setHostNameFilter(const string &amp;filter)
+-{
+-	m_hostFilter = filter;
+-}
+-
+-void SearchEngineInterface::setFileNameFilter(const string &amp;filter)
+-{
+-	m_fileFilter = filter;
+-}
+-
+-bool SearchEngineInterface::processResult(const string &amp;queryUrl, string &amp;resultUrl)
+-{
+-	Url queryUrlObj(queryUrl);
+-	string queryHost(Url::reduceHost(queryUrlObj.getHost(), 2));
+-
+-	if (resultUrl.empty() == true)
+-	{
+-		return false;
+-	}
+-
+-	if ((resultUrl[0] == '/') ||
+-		((resultUrl.length() &gt; 1) &amp;&amp;
+-		(resultUrl[0] == '.') &amp;&amp;
+-		(resultUrl[1] == '/')))
+-	{
+-		string fullResultUrl(queryUrlObj.getProtocol());
+-
+-		fullResultUrl += &quot;://&quot;;
+-		fullResultUrl += queryUrlObj.getHost();
+-		if (resultUrl[0] == '.')
+-		{
+-			fullResultUrl += resultUrl.substr(1);
+-		}
+-		else
+-		{
+-			fullResultUrl += resultUrl;
+-		}
+-
+-		resultUrl = fullResultUrl;
+-	}
+-
+-	Url resultUrlObj(resultUrl);
+-
+-	if ((m_hostFilter.empty() == false) &amp;&amp;
+-		(resultUrlObj.getHost() != m_hostFilter))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;SearchEngineInterface::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	if ((m_fileFilter.empty() == false) &amp;&amp;
+-		(resultUrlObj.getFile() != m_fileFilter))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;SearchEngineInterface::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	// Is the result's host name the same as the search engine's ?
+-	// FIXME: not all TLDs have leafs at level 2
+-	if (queryHost == Url::reduceHost(resultUrlObj.getHost(), 2))
+-	{
+-		string protocol(resultUrlObj.getProtocol());
+-
+-		if (protocol.empty() == false)
+-		{
+-			string embeddedUrl;
+-
+-			string::size_type startPos = resultUrl.find(protocol, protocol.length());
+-			if (startPos != string::npos)
+-			{
+-				string::size_type endPos = resultUrl.find(&quot;&amp;&quot;, startPos);
+-				if (endPos != string::npos)
+-				{
+-					embeddedUrl = resultUrl.substr(startPos, endPos - startPos);
+-				}
+-				else
+-				{
+-					embeddedUrl = resultUrl.substr(startPos);
+-				}
+-
+-				resultUrl = Url::unescapeUrl(embeddedUrl);
+-			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;SearchEngineInterface::processResult: no embedded URL&quot; &lt;&lt; endl;
+-#endif
+-		}
+-#ifdef DEBUG
+-		else cout &lt;&lt; &quot;SearchEngineInterface::processResult: no protocol&quot; &lt;&lt; endl;
+-#endif
+-	}
+-
+-	// Trim spaces
+-	string trimmedUrl(resultUrl);
+-	StringManip::trimSpaces(trimmedUrl);
+-
+-	// Return a canonical form
+-	resultUrl = Url::canonicalizeUrl(trimmedUrl);
+-
+-	return true;
+-}
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/SearchEngineInterface.h	2006-11-12 09:05:04 UTC (rev 573)
+@@ -67,20 +67,12 @@
+ 		time_t m_startTime;
+ 		unsigned int m_maxResultsCount;
+ 		bool m_expandQueries;
+-		string m_hostFilter;
+-		string m_fileFilter;
+ 		vector&lt;Result&gt; m_resultsList;
+ 		string m_charset;
+ 		set&lt;string&gt; m_expandTerms;
+ 
+ 		SearchEngineInterface();
+ 
+-		void setHostNameFilter(const string &amp;filter);
+-
+-		void setFileNameFilter(const string &amp;filter);
+-
+-		virtual bool processResult(const string &amp;queryUrl, string &amp;resultUrl);
+-
+ };
+ 
+ #endif // _SEARCH_ENGINE_INTERFACE_H
+
+Modified: trunk/Search/WebEngine.cpp
+===================================================================
+--- trunk/Search/WebEngine.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/WebEngine.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -18,8 +18,10 @@
+ 
+ #include &lt;string.h&gt;
+ #include &lt;sys/types.h&gt;
+-#include &lt;regex.h&gt;
++#include &lt;glib.h&gt;
+ #include &lt;string&gt;
++#include &lt;vector&gt;
++#include &lt;iostream&gt;
+ 
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+@@ -27,7 +29,12 @@
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;WebEngine.h&quot;
+ 
++using std::cout;
++using std::cerr;
++using std::endl;
+ using std::string;
++using std::set;
++using std::vector;
+ 
+ static string getCharset(const string &amp;contentType)
+ {
+@@ -90,3 +97,176 @@
+ 
+ 	return pDoc;
+ }
++
++void WebEngine::setHostNameFilter(const string &amp;filter)
++{
++	m_hostFilter = filter;
++}
++
++void WebEngine::setFileNameFilter(const string &amp;filter)
++{
++	m_fileFilter = filter;
++}
++
++void WebEngine::setQuery(const string &amp;queryString)
++{
++	if (queryString.empty() == true)
++	{
++		return;
++	}
++
++	Document doc;
++	doc.setData(queryString.c_str(), queryString.length());
++	Tokenizer tokens(&amp;doc);
++
++	m_queryTerms.clear();
++
++	string token;
++	while (tokens.nextToken(token) == true)
++	{
++		// Lower case the word
++		m_queryTerms.insert(StringManip::toLowerCase(token));
++	}
++}
++
++bool WebEngine::processResult(const string &amp;queryUrl, Result &amp;result)
++{
++	Url queryUrlObj(queryUrl);
++	string resultUrl(result.getLocation());
++	string queryHost(Url::reduceHost(queryUrlObj.getHost(), 2));
++
++	if (resultUrl.empty() == true)
++	{
++		return false;
++	}
++
++	if ((resultUrl[0] == '/') ||
++		((resultUrl.length() &gt; 1) &amp;&amp;
++		(resultUrl[0] == '.') &amp;&amp;
++		(resultUrl[1] == '/')))
++	{
++		string fullResultUrl(queryUrlObj.getProtocol());
++
++		fullResultUrl += &quot;://&quot;;
++		fullResultUrl += queryUrlObj.getHost();
++		if (resultUrl[0] == '.')
++		{
++			fullResultUrl += resultUrl.substr(1);
++		}
++		else
++		{
++			fullResultUrl += resultUrl;
++		}
++
++		resultUrl = fullResultUrl;
++	}
++
++	Url resultUrlObj(resultUrl);
++
++	if ((m_hostFilter.empty() == false) &amp;&amp;
++		(resultUrlObj.getHost() != m_hostFilter))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;WebEngine::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	if ((m_fileFilter.empty() == false) &amp;&amp;
++		(resultUrlObj.getFile() != m_fileFilter))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;WebEngine::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
++#endif
++		return false;
++	}
++
++	// Is the result's host name the same as the search engine's ?
++	// FIXME: not all TLDs have leafs at level 2
++	if (queryHost == Url::reduceHost(resultUrlObj.getHost(), 2))
++	{
++		string protocol(resultUrlObj.getProtocol());
++
++		if (protocol.empty() == false)
++		{
++			string embeddedUrl;
++
++			string::size_type startPos = resultUrl.find(protocol, protocol.length());
++			if (startPos != string::npos)
++			{
++				string::size_type endPos = resultUrl.find(&quot;&amp;&quot;, startPos);
++				if (endPos != string::npos)
++				{
++					embeddedUrl = resultUrl.substr(startPos, endPos - startPos);
++				}
++				else
++				{
++					embeddedUrl = resultUrl.substr(startPos);
++				}
++
++				resultUrl = Url::unescapeUrl(embeddedUrl);
++			}
++#ifdef DEBUG
++			else cout &lt;&lt; &quot;WebEngine::processResult: no embedded URL&quot; &lt;&lt; endl;
++#endif
++		}
++#ifdef DEBUG
++		else cout &lt;&lt; &quot;WebEngine::processResult: no protocol&quot; &lt;&lt; endl;
++#endif
++	}
++
++	// Trim spaces
++	string trimmedUrl(resultUrl);
++	StringManip::trimSpaces(trimmedUrl);
++
++	// Make the URL canonical
++	result.setLocation(Url::canonicalizeUrl(trimmedUrl));
++
++	// Scan the extract for query terms
++	string extract(result.getExtract());
++	if (extract.empty() == true)
++	{
++		return true;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;WebEngine::processResult: &quot; &lt;&lt; extract &lt;&lt; endl;
++#endif
++
++	Document doc;
++	doc.setData(extract.c_str(), extract.length());
++	Tokenizer tokens(&amp;doc);
++
++	extract.clear();
++
++	string token;
++	while (tokens.nextToken(token) == true)
++	{
++		char *pEscToken = g_markup_escape_text(token.c_str(), -1);
++		if (pEscToken == NULL)
++		{
++			continue;
++		}
++
++		// Is this a query term ?
++		if (m_queryTerms.find(StringManip::toLowerCase(token)) == m_queryTerms.end())
++		{
++			extract += pEscToken;
++		}
++		else
++		{
++			extract += &quot;&lt;b&gt;&quot;;
++			extract += pEscToken;
++			extract += &quot;&lt;/b&gt;&quot;;
++		}
++		extract += &quot; &quot;;
++
++		g_free(pEscToken);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;WebEngine::processResult: &quot; &lt;&lt; extract &lt;&lt; endl;
++#endif
++
++		result.setExtract(extract);
++	}
++
++	return true;
++}
+
+Modified: trunk/Search/WebEngine.h
+===================================================================
+--- trunk/Search/WebEngine.h	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/WebEngine.h	2006-11-12 09:05:04 UTC (rev 573)
+@@ -20,6 +20,7 @@
+ #define _WEB_ENGINE_H
+ 
+ #include &lt;string&gt;
++#include &lt;set&gt;
+ 
+ #include &quot;SearchEngineInterface.h&quot;
+ #include &quot;Document.h&quot;
+@@ -33,9 +34,18 @@
+ 	protected:
+ 		std::string m_hostFilter;
+ 		std::string m_fileFilter;
++		std::set&lt;std::string&gt; m_queryTerms;
+ 
+ 		Document *downloadPage(const DocumentInfo &amp;docInfo);
+ 
++		void setHostNameFilter(const string &amp;filter);
++
++		void setFileNameFilter(const string &amp;filter);
++
++		void setQuery(const std::string &amp;queryString);
++
++		virtual bool processResult(const string &amp;queryUrl, Result &amp;result);
++
+ 	private:
+ 		WebEngine(const WebEngine &amp;other);
+ 		WebEngine &amp;operator=(const WebEngine &amp;other);
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Search/XapianEngine.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -26,7 +26,6 @@
+ 
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
+-#include &quot;Tokenizer.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
+@@ -40,51 +39,6 @@
+ using std::endl;
+ using std::inserter;
+ 
+-static bool extractWords(const string &amp;text, const string &amp;stemLanguage, vector&lt;string&gt; &amp;wordsList)
+-{
+-	Xapian::Stem *pStemmer = NULL;
+-
+-	if (text.empty() == true)
+-	{
+-		return false;
+-	}
+-
+-	if (stemLanguage.empty() == false)
+-	{
+-		pStemmer = new Xapian::Stem(StringManip::toLowerCase(stemLanguage));
+-	}
+-
+-	Document doc;
+-	doc.setData(text.c_str(), text.length());
+-	Tokenizer tokens(&amp;doc);
+-
+-	string token;
+-	while (tokens.nextToken(token) == true)
+-	{
+-		string term = token;
+-
+-		// Lower case the term
+-		term = StringManip::toLowerCase(term);
+-		// Stem it ?
+-		if (pStemmer != NULL)
+-		{
+-			string stemmedTerm = pStemmer-&gt;stem_word(term);
+-			wordsList.push_back(stemmedTerm);
+-		}
+-		else
+-		{
+-			wordsList.push_back(term);
+-		}
+-	}
+-
+-	if (pStemmer != NULL)
+-	{
+-		delete pStemmer;
+-	}
+-
+-	return true;
+-}
+-
+ XapianEngine::XapianEngine(const string &amp;database) :
+ 	SearchEngineInterface()
+ {
+
+Modified: trunk/Utils/Result.cpp
+===================================================================
+--- trunk/Utils/Result.cpp	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Utils/Result.cpp	2006-11-12 09:05:04 UTC (rev 573)
+@@ -66,7 +66,13 @@
+ 	return true;
+ }
+ 
+-/// Returns the result extract.
++/// Sets the result extract.
++void Result::setExtract(const string &amp;extract)
++{
++	m_extract = extract;
++}
++
++/// Gets the result extract.
+ string Result::getExtract(void) const
+ {
+ 	return m_extract;
+
+Modified: trunk/Utils/Result.h
+===================================================================
+--- trunk/Utils/Result.h	2006-11-12 05:11:06 UTC (rev 572)
++++ trunk/Utils/Result.h	2006-11-12 09:05:04 UTC (rev 573)
+@@ -36,7 +36,10 @@
+ 
+ 		bool operator&lt;(const Result&amp; other) const;
+ 
+-		/// Returns the result extract.
++		/// Sets the result extract.
++		void setExtract(const std::string &amp;extract);
++
++		/// Gets the result extract.
+ 		std::string getExtract(void) const;
+ 
+ 		/// Returns the result score.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000565.html">[Pinot-svn] r572 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000567.html">[Pinot-svn] r574 - in trunk/Search: . Google
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#566">[ date ]</a>
+              <a href="thread.html#566">[ thread ]</a>
+              <a href="subject.html#566">[ subject ]</a>
+              <a href="author.html#566">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

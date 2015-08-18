@@ -1,0 +1,410 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r297 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r297%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606071400.k57E0j6k004253%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000290.html">
+   <LINK REL="Next"  HREF="000292.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r297 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r297%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200606071400.k57E0j6k004253%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r297 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed Jun  7 16:00:45 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000290.html">[Pinot-svn] r296 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000292.html">[Pinot-svn] r298 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#291">[ date ]</a>
+              <a href="thread.html#291">[ thread ]</a>
+              <a href="subject.html#291">[ subject ]</a>
+              <a href="author.html#291">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-06-07 16:00:12 +0200 (Wed, 07 Jun 2006)
+New Revision: 297
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Removed code relative to the external browser setting.
+HTML documents are viewed with the internal viewer; for others, use
+MIMEScanner::getDefaultAction() and CommandLine::runAsync() to launch
+the type's default application.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-06-07 13:57:03 UTC (rev 296)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-06-07 14:00:12 UTC (rev 297)
+@@ -32,9 +32,11 @@
+ #include &lt;gtkmm/clipboard.h&gt;
+ #include &lt;gtkmm/main.h&gt;
+ 
++#include &quot;CommandLine.h&quot;
+ #include &quot;HtmlTokenizer.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;TimeConverter.h&quot;
++#include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+@@ -195,16 +197,12 @@
+ 
+ 	// Create an HTML renderer
+ 	m_pHtmlView = new HtmlView(NULL);
+-	if (m_settings.m_browseResults == false)
+-	{
+-		string startPage(&quot;<A HREF="file://">file://</A>&quot;);
+-		startPage += PREFIX;
+-		startPage += &quot;/share/pinot/index.html&quot;;
+-		DocumentInfo docInfo(&quot;&quot;, startPage, &quot;&quot;, &quot;&quot;);
++	string startPage(&quot;<A HREF="file://">file://</A>&quot;);
++	startPage += PREFIX;
++	startPage += &quot;/share/pinot/index.html&quot;;
++	DocumentInfo docInfo(&quot;&quot;, startPage, &quot;&quot;, &quot;&quot;);
++	view_document(docInfo, true);
+ 
+-		view_document(docInfo, true);
+-	}
+-
+ 	// Gray out menu items
+ 	editQueryButton-&gt;set_sensitive(false);
+ 	removeQueryButton-&gt;set_sensitive(false);
+@@ -475,13 +473,10 @@
+ 
+ 		// Enable these menu items
+ 		viewresults1-&gt;set_sensitive(isViewable);
+-		if (m_settings.m_browseResults == false)
++		if ((protocol == &quot;http&quot;) ||
++			(protocol == &quot;https&quot;))
+ 		{
+-			if ((protocol == &quot;http&quot;) ||
+-				(protocol == &quot;https&quot;))
+-			{
+-				isCached = true;
+-			}
++			isCached = true;
+ 		}
+ 		viewcache1-&gt;set_sensitive(isCached);
+ 		indexresults1-&gt;set_sensitive(isIndexable);
+@@ -522,19 +517,13 @@
+ 		(pIndexTree-&gt;getSelection(documentsList) == true))
+ 	{
+ 		bool isDocumentsIndex = true;
+-		bool canViewDocument = true;
+ 
+ 		// Enable these menu items, unless the index is not the documents index
+ 		if (indexName != _(&quot;My Documents&quot;))
+ 		{
+ 			isDocumentsIndex = false;
+ 		}
+-		if ((indexName == _(&quot;My Email&quot;)) &amp;&amp;
+-			(m_settings.m_browseResults == true))
+-		{
+-			canViewDocument = false;
+-		}
+-		viewfromindex1-&gt;set_sensitive(canViewDocument);
++		viewfromindex1-&gt;set_sensitive(true);
+ 		refreshindex1-&gt;set_sensitive(isDocumentsIndex);
+ 		unindex1-&gt;set_sensitive(isDocumentsIndex);
+ 		showfromindex1-&gt;set_sensitive(true);
+@@ -951,31 +940,27 @@
+ 			if ((pData != NULL) &amp;&amp;
+ 				(dataLength &gt; 0))
+ 			{
+-				// Make sure settings haven't changed in the meantime
+-				if (m_settings.m_browseResults == false)
++				ustring viewName = _(&quot;View&quot;);
++
++				// Is there still a view page ?
++				ViewPage *pViewPage = dynamic_cast&lt;ViewPage*&gt;(get_page(viewName, NotebookPageBox::VIEW_PAGE));
++				if (pViewPage != NULL)
+ 				{
+-					ustring viewName = _(&quot;View&quot;);
++					// The page may be hidden
++					pViewPage-&gt;show();
++				}
+ 
+-					// Is there still a view page ?
+-					ViewPage *pViewPage = dynamic_cast&lt;ViewPage*&gt;(get_page(viewName, NotebookPageBox::VIEW_PAGE));
+-					if (pViewPage != NULL)
++				int pageNum = get_page_number(viewName, NotebookPageBox::VIEW_PAGE);
++				if (pageNum &gt;= 0)
++				{
++					// Display the URL in the View tab
++					if (m_pHtmlView-&gt;renderData(pData, dataLength, url) == true)
+ 					{
+-						// The page may be hidden
+-						pViewPage-&gt;show();
++						//viewstop1-&gt;set_sensitive(true);
++						set_status(to_utf8(url));
+ 					}
+ 
+-					int pageNum = get_page_number(viewName, NotebookPageBox::VIEW_PAGE);
+-					if (pageNum &gt;= 0)
+-					{
+-						// Display the URL in the View tab
+-						if (m_pHtmlView-&gt;renderData(pData, dataLength, url) == true)
+-						{
+-							//viewstop1-&gt;set_sensitive(true);
+-							set_status(to_utf8(url));
+-						}
+-
+-						m_pNotebook-&gt;set_current_page(pageNum);
+-					}
++					m_pNotebook-&gt;set_current_page(pageNum);
+ 				}
+ 			}
+ 		}
+@@ -1240,8 +1225,6 @@
+ //
+ void mainWindow::on_configure_activate()
+ {
+-	bool useExternalBrowser = m_settings.m_browseResults;
+-
+ 	prefsDialog prefsBox;
+ 	prefsBox.show();
+ 	if (prefsBox.run() != RESPONSE_OK)
+@@ -1285,26 +1268,6 @@
+ 		viewcache1-&gt;show();
+ 	}
+ 
+-	// Do the changes affect the View tab ?
+-	if (useExternalBrowser != m_settings.m_browseResults)
+-	{
+-		if (m_settings.m_browseResults == true)
+-		{
+-			// Close the existing view page
+-			on_close_page(_(&quot;View&quot;), NotebookPageBox::VIEW_PAGE);
+-		}
+-		else
+-		{
+-			string startPage(&quot;<A HREF="file://">file://</A>&quot;);
+-			startPage += PREFIX;
+-			startPage += &quot;/share/pinot/index.html&quot;;
+-			DocumentInfo docInfo(&quot;&quot;, startPage, &quot;&quot;, &quot;&quot;);
+-
+-			// Reopen the start page
+-			view_document(docInfo, true);
+-		}
+-	}
+-
+ 	// Any labels to delete or rename ?
+ 	const set&lt;string&gt; &amp;labelsToDelete = prefsBox.getLabelsToDelete();
+ 	const std::map&lt;string, string&gt; &amp;labelsToRename = prefsBox.getLabelsToRename();
+@@ -2862,6 +2825,7 @@
+ bool mainWindow::view_document(const DocumentInfo &amp;docInfo, bool internalViewerOnly)
+ {
+ 	string url(docInfo.getLocation());
++	string mimeType(docInfo.getType());
+ 
+ 	if (url.empty() == true)
+ 	{
+@@ -2869,92 +2833,99 @@
+ 		return false;
+ 	}
+ 
+-	// Is browsing enabled ?
+-	if ((internalViewerOnly == false) &amp;&amp;
+-		(m_settings.m_browseResults == true))
++	if (mimeType.empty() == true)
+ 	{
+-		// Point user-defined browser to that URL
+-		if (m_settings.m_browserCommand.empty() == true)
+-		{
+-			set_status(_(&quot;No browser configured to view results&quot;));
+-			return false;
+-		}
++		Url docUrl(url);
+ 
+-		string shellCommand = from_utf8(m_settings.m_browserCommand);
+-		// FIXME: do substitutions
+-		shellCommand += &quot; \&quot;&quot;;
+-		shellCommand += url;
+-		shellCommand += &quot;\&quot; &amp;&quot;;
+-		if ((url.empty() == true) ||
+-			(system(shellCommand.c_str()) == -1))
+-		{
+-			ustring status = _(&quot;Couldn't browse URL:&quot;);
+-			status += &quot; &quot;;
+-			status += Glib::strerror(errno);
+-			set_status(status);
+-		}
++		// Scan for the MIME type
++		mimeType = MIMEScanner::scanUrl(docUrl);
+ 	}
+-	else
++
++	Url urlObj(url);
++
++	// FIXME: there should be a way to know which protocols can be viewed/indexed
++	if (urlObj.getProtocol() == &quot;mailbox&quot;)
+ 	{
+-		Url urlObj(url);
++		// Get that message
++		start_thread(new DownloadingThread(docInfo, false));
++	}
++	else if ((internalViewerOnly == true) ||
++		(mimeType.find(&quot;/html&quot;) != string::npos))
++	{
++		ViewPage *pViewPage = NULL;
++		ustring viewName = _(&quot;View&quot;);
++		int pageNum = -1;
+ 
+-		// FIXME: there should be a way to know which protocols can be viewed/indexed
+-		if (urlObj.getProtocol() == &quot;mailbox&quot;)
++		// Is there already a view page ?
++		pViewPage = dynamic_cast&lt;ViewPage*&gt;(get_page(viewName, NotebookPageBox::VIEW_PAGE));
++		if (pViewPage != NULL)
+ 		{
+-			// Get that message
+-			start_thread(new DownloadingThread(docInfo, false));
++			pageNum = get_page_number(viewName, NotebookPageBox::VIEW_PAGE);
++			// The page may be hidden
++			pViewPage-&gt;show();
++			// FIXME: reorder pages
+ 		}
+ 		else
+ 		{
+-			ViewPage *pViewPage = NULL;
+-			ustring viewName = _(&quot;View&quot;);
+-			int pageNum = -1;
++			NotebookTabBox *pTab = manage(new NotebookTabBox(viewName,
++				NotebookPageBox::VIEW_PAGE));
++			pTab-&gt;getCloseSignal().connect(
++				SigC::slot(*this, &amp;mainWindow::on_close_page));
+ 
+-			// Is there already a view page ?
+-			pViewPage = dynamic_cast&lt;ViewPage*&gt;(get_page(viewName, NotebookPageBox::VIEW_PAGE));
+-			if (pViewPage != NULL)
++			// Position everything
++			pViewPage = manage(new ViewPage(viewName, m_pHtmlView, m_settings));
++
++			// Append the page
++			if (m_state.write_lock_lists(11) == true)
+ 			{
+-				pageNum = get_page_number(viewName, NotebookPageBox::VIEW_PAGE);
+-				// The page may be hidden
+-				pViewPage-&gt;show();
+-				// FIXME: reorder pages
+-			}
+-			else
+-			{
+-				NotebookTabBox *pTab = manage(new NotebookTabBox(viewName,
+-					NotebookPageBox::VIEW_PAGE));
+-				pTab-&gt;getCloseSignal().connect(
+-					SigC::slot(*this, &amp;mainWindow::on_close_page));
++				pageNum = m_pNotebook-&gt;append_page(*pViewPage, *pTab);
++				m_pNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+ 
+-				// Position everything
+-				pViewPage = manage(new ViewPage(viewName, m_pHtmlView, m_settings));
+-
+-				// Append the page
+-				if (m_state.write_lock_lists(11) == true)
+-				{
+-					pageNum = m_pNotebook-&gt;append_page(*pViewPage, *pTab);
+-					m_pNotebook-&gt;pages().back().set_tab_label_packing(false, true, Gtk::PACK_START);
+-
+-					m_state.unlock_lists();
+-				}
++				m_state.unlock_lists();
+ 			}
++		}
+ 
+-			if (pageNum &gt;= 0)
++		if (pageNum &gt;= 0)
++		{
++			// Display the URL
++			m_pNotebook-&gt;set_current_page(pageNum);
++			if (m_pHtmlView-&gt;renderUrl(url) == true)
+ 			{
+-				// Display the URL
+-				m_pNotebook-&gt;set_current_page(pageNum);
+-				if (m_pHtmlView-&gt;renderUrl(url) == true)
+-				{
+-					//viewstop1-&gt;set_sensitive(true);
+-				}
+-				ustring status = _(&quot;Viewing&quot;);
+-				status += &quot; &quot;;
+-				status += to_utf8(m_pHtmlView-&gt;getLocation());
+-				set_status(status);
++				//viewstop1-&gt;set_sensitive(true);
+ 			}
++			ustring status = _(&quot;Viewing&quot;);
++			status += &quot; &quot;;
++			status += to_utf8(m_pHtmlView-&gt;getLocation());
++			set_status(status);
+ 		}
+ 	}
++	else
++	{
++		vector&lt;string&gt; arguments;
++		MIMEAction action;
+ 
++		if (MIMEScanner::getDefaultAction(mimeType, action) == false)
++		{
++			ustring status = _(&quot;No application defined for type &quot;);
++			status += &quot; &quot;;
++			status += mimeType;
++			set_status(status);
++			return false;
++		}
++
++		arguments.push_back(url);
++
++		// Run the default program for this type
++		if (CommandLine::runAsync(action, arguments) == false)
++		{
++			ustring status = _(&quot;Couldn't view &quot;);
++			status += &quot; &quot;;
++			status += url;
++			set_status(status);
++			return false;
++		}
++	}
++
+ 	// Record this into the history
+ 	ViewHistory viewHistory(m_settings.m_historyDatabase);
+ 	if (viewHistory.hasItem(url) == false)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000290.html">[Pinot-svn] r296 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000292.html">[Pinot-svn] r298 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#291">[ date ]</a>
+              <a href="thread.html#291">[ thread ]</a>
+              <a href="subject.html#291">[ subject ]</a>
+              <a href="author.html#291">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

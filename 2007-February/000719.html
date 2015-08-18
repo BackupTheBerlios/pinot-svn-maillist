@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r725 - in trunk: Search UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r725%20-%20in%20trunk%3A%20Search%20UI/GTK2/src&In-Reply-To=%3C200702191521.l1JFLbmR016425%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000718.html">
+   <LINK REL="Next"  HREF="000720.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r725 - in trunk: Search UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r725%20-%20in%20trunk%3A%20Search%20UI/GTK2/src&In-Reply-To=%3C200702191521.l1JFLbmR016425%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r725 - in trunk: Search UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb 19 16:21:37 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000718.html">[Pinot-svn] r724 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000720.html">[Pinot-svn] r726 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#719">[ date ]</a>
+              <a href="thread.html#719">[ thread ]</a>
+              <a href="subject.html#719">[ subject ]</a>
+              <a href="author.html#719">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-02-19 16:21:36 +0100 (Mon, 19 Feb 2007)
+New Revision: 725
+
+Modified:
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+Log:
+XapianEngine sets the results' timestamp as well as document IDs, so that
+QueryingThread can skip calling hasDocument() on internal indexes.
+
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-02-19 14:15:18 UTC (rev 724)
++++ trunk/Search/XapianEngine.cpp	2007-02-19 15:21:36 UTC (rev 725)
+@@ -238,10 +238,14 @@
+ 	string yyyymmddMax(TimeConverter::toYYYYMMDDString(maxDay, maxMonth, maxYear));
+ 	time_t startTime = TimeConverter::fromYYYYMMDDString(yyyymmddMin);
+ 	time_t endTime = TimeConverter::fromYYYYMMDDString(yyyymmddMax);
+-  
++ 
+ 	double diffTime = difftime(endTime, startTime);
+ 	if (diffTime &gt; 0)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;XapianEngine::parseQuery: applied date range (&quot;
++			&lt;&lt; yyyymmddMax &lt;&lt; &quot; &lt;= &quot; &lt;&lt; yyyymmddMin &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
+ 		return Xapian::Query(Xapian::Query::OP_FILTER, parsedQuery,
+ 			dateFilter(minDay, minMonth, minYear, maxDay, maxMonth, maxYear));
+ 	}
+@@ -334,7 +338,8 @@
+ 
+ 			// Get the results
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.get_matches_estimated() &lt;&lt; &quot;/&quot; &lt;&lt; m_maxResultsCount &lt;&lt; &quot; results found&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; matches.get_matches_estimated()
++				&lt;&lt; &quot;/&quot; &lt;&lt; m_maxResultsCount &lt;&lt; &quot; results found&quot; &lt;&lt; endl;
+ #endif
+ 			for (Xapian::MSetIterator mIter = matches.begin(); mIter != matches.end(); ++mIter)
+ 			{
+@@ -347,9 +352,9 @@
+ 				cout &lt;&lt; &quot;XapianEngine::queryDatabase: found document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+ 				// Get the title
+-				string title = StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;);
++				string title(StringManip::extractField(record, &quot;caption=&quot;, &quot;\n&quot;));
+ 				// Get the URL
+-				string url = StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;);
++				string url(StringManip::extractField(record, &quot;url=&quot;, &quot;\n&quot;));
+ 				if (url.empty() == true)
+ 				{
+ 					// Hmmm this shouldn't be empty...
+@@ -362,15 +367,26 @@
+ 				}
+ 
+ 				// Get the type
+-				string type = StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;);
+-				// ...and the language, if available
+-				string language = StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;);
++				string type(StringManip::extractField(record, &quot;type=&quot;, &quot;\n&quot;));
++				// ... the language, if available
++				string language(StringManip::extractField(record, &quot;language=&quot;, &quot;\n&quot;));
++				// ... and the timestamp
++				string timestamp, modTime(StringManip::extractField(record, &quot;modtime=&quot;, &quot;\n&quot;));
++				if (modTime.empty() == false)
++				{
++					time_t timeT = (time_t )atol(modTime.c_str());
++					timestamp = TimeConverter::toTimestamp(timeT);
++				}
+ 
+ 				// Generate an abstract based on the query's terms
+-				string summary = abstractGen.generateAbstract(docId, seedTerms);
++				string summary(abstractGen.generateAbstract(docId, seedTerms));
+ 
++				Result thisResult(url, title, summary, language, (float)mIter.get_percent());
++				thisResult.setTimestamp(timestamp);
++				// We don't know the index ID, just the document ID
++				thisResult.setIsIndexed(0, docId);
++
+ 				// Add this result
+-				Result thisResult(url, title, summary, language, (float)mIter.get_percent());
+ 				m_resultsList.push_back(thisResult);
+ 			}
+ 		}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-19 14:15:18 UTC (rev 724)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-02-19 15:21:36 UTC (rev 725)
+@@ -800,44 +800,56 @@
+ 	}
+ 	else
+ 	{
++		IndexInterface *pDocsIndex = NULL;
++		IndexInterface *pDaemonIndex = NULL;
++		PinotSettings &amp;settings = PinotSettings::getInstance();
+ 		const vector&lt;Result&gt; &amp;resultsList = pEngine-&gt;getResults();
+-		PinotSettings &amp;settings = PinotSettings::getInstance();
++		unsigned int indexId = 0;
++		bool isIndexQuery = false;
+ 
+ 		m_resultsList.clear();
+ 		m_resultsList.reserve(resultsList.size());
+ 		m_resultsCharset = pEngine-&gt;getResultsCharset();
+ 
+-		IndexInterface *pDocsIndex = settings.getIndex(settings.m_docsIndexLocation);
+-		if ((pDocsIndex != NULL) &amp;&amp;
+-			(pDocsIndex-&gt;isGood() == false))
++		// Are we querying an index ?
++		if (m_engineName == &quot;xapian&quot;)
+ 		{
+-			delete pDocsIndex;
+-			pDocsIndex = NULL;
++			// Internal index ?
++			if (m_engineOption == settings.m_docsIndexLocation)
++			{
++				indexId = settings.getIndexId(_(&quot;My Web Pages&quot;));
++				isIndexQuery = true;
++			}
++			else if (m_engineOption == settings.m_daemonIndexLocation)
++			{
++				indexId = settings.getIndexId(_(&quot;My Documents&quot;));
++				isIndexQuery = true;
++			}
+ 		}
+ 
+-		IndexInterface *pDaemonIndex = settings.getIndex(settings.m_daemonIndexLocation);
+-		if ((pDaemonIndex != NULL) &amp;&amp;
+-			(pDaemonIndex-&gt;isGood() == false))
++		// Will we have to query internal indices ?
++		if (isIndexQuery == false)
+ 		{
+-			delete pDaemonIndex;
+-			pDaemonIndex = NULL;
++			pDocsIndex = settings.getIndex(settings.m_docsIndexLocation);
++			pDaemonIndex = settings.getIndex(settings.m_daemonIndexLocation);
+ 		}
+ 
+-
+ 		// Copy the results list
+ 		for (vector&lt;Result&gt;::const_iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
++			Result current(*resultIter);
+ 			string title(_(&quot;No title&quot;));
+-			string location(resultIter-&gt;getLocation());
+-			string language(resultIter-&gt;getLanguage());
+-			unsigned int indexId = 0, docId = 0;
++			string location(current.getLocation());
++			string language(current.getLanguage());
++			unsigned int docId = 0;
+ 
+ 			// The title may contain formatting
+-			if (resultIter-&gt;getTitle().empty() == false)
++			if (current.getTitle().empty() == false)
+ 			{
+-				title = FilterUtils::stripMarkup(resultIter-&gt;getTitle());
++				title = FilterUtils::stripMarkup(current.getTitle());
+ 			}
++			current.setTitle(title);
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;QueryingThread::doWork: title is &quot; &lt;&lt; title &lt;&lt; endl;
+ #endif
+@@ -847,12 +859,19 @@
+ 			{
+ 				language = m_queryProps.getLanguage();
+ 			}
++			current.setLanguage(language);
+ 
+-			Result current(location, title, resultIter-&gt;getExtract(),
+-				language, resultIter-&gt;getScore());
++			if (isIndexQuery == true)
++			{
++				unsigned int tmpId = 0;
+ 
++				// The index engine should have set this
++				docId = current.getIsIndexed(tmpId);
++			}
++
+ 			// Is this in one of the indexes ?
+-			if (pDocsIndex != NULL)
++			if ((pDocsIndex != NULL) &amp;&amp;
++				(pDocsIndex-&gt;isGood() == true))
+ 			{
+ 				docId = pDocsIndex-&gt;hasDocument(location);
+ 				if (docId &gt; 0)
+@@ -861,6 +880,7 @@
+ 				}
+ 			}
+ 			if ((pDaemonIndex != NULL) &amp;&amp;
++				(pDaemonIndex-&gt;isGood() == true) &amp;&amp;
+ 				(docId == 0))
+ 			{
+ 				docId = pDaemonIndex-&gt;hasDocument(location);
+@@ -869,6 +889,7 @@
+ 					indexId = settings.getIndexId(_(&quot;My Documents&quot;));
+ 				}
+ 			}
++
+ 			if (docId &gt; 0)
+ 			{
+ 				current.setIsIndexed(indexId, docId);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000718.html">[Pinot-svn] r724 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000720.html">[Pinot-svn] r726 - in trunk: Index Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#719">[ date ]</a>
+              <a href="thread.html#719">[ thread ]</a>
+              <a href="subject.html#719">[ subject ]</a>
+              <a href="author.html#719">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

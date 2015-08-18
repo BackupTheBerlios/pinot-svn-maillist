@@ -1,0 +1,240 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1256 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1256%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200805161522.m4GFMlIQ032034%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001249.html">
+   <LINK REL="Next"  HREF="001251.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1256 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1256%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200805161522.m4GFMlIQ032034%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1256 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri May 16 17:22:47 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001249.html">[Pinot-svn] r1255 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001251.html">[Pinot-svn] r1257 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1250">[ date ]</a>
+              <a href="thread.html#1250">[ thread ]</a>
+              <a href="subject.html#1250">[ subject ]</a>
+              <a href="author.html#1250">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-16 17:22:46 +0200 (Fri, 16 May 2008)
+New Revision: 1256
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Refresh index lists with browse_index() when LabelUpdateThread returns, if
+necessary. When the query combox is updated, the change of selection will lead
+to a call to browse_index().
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-05-16 15:08:07 UTC (rev 1255)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-05-16 15:22:46 UTC (rev 1256)
+@@ -1274,6 +1274,16 @@
+ 	return &quot;LabelUpdateThread&quot;;
+ }
+ 
++bool LabelUpdateThread::modifiedDocsIndex(void) const
++{
++	return !m_docsIds.empty();
++}
++
++bool LabelUpdateThread::modifiedDaemonIndex(void) const
++{
++	return !m_daemonIds.empty();
++}
++
+ void LabelUpdateThread::doWork(void)
+ {
+ 	bool actOnDocuments = false;
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-05-16 15:08:07 UTC (rev 1255)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-05-16 15:22:46 UTC (rev 1256)
+@@ -334,6 +334,10 @@
+ 
+ 		virtual std::string getType(void) const;
+ 
++		bool modifiedDocsIndex(void) const;
++
++		bool modifiedDaemonIndex(void) const;
++
+ 	protected:
+ 		std::set&lt;std::string&gt; m_labelsToAdd;
+ 		std::set&lt;std::string&gt; m_labelsToDelete;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-05-16 15:08:07 UTC (rev 1255)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-05-16 15:22:46 UTC (rev 1256)
+@@ -832,7 +832,7 @@
+ 		// Connect to the edit document signal
+ 		pResultsTree-&gt;getDoubleClickSignal().connect(
+ 			sigc::mem_fun(*this, &amp;mainWindow::on_showfromindex_activate));
+-		// Connect to the label changed signal
++		// Connect to the query changed signal
+ 		pIndexPage-&gt;getQueryChangedSignal().connect(
+ 			sigc::mem_fun(*this, &amp;mainWindow::on_query_changed));
+ 		// ...and to the buttons clicked signals
+@@ -1006,9 +1006,6 @@
+ 		return;
+ 	}
+ 
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::on_query_changed: called on &quot; &lt;&lt; queryName &lt;&lt; endl;
+-#endif
+ 	browse_index(indexName, queryName, 0);
+ }
+ 
+@@ -1427,6 +1424,30 @@
+ 			return;
+ 		}
+ 
++		// Refresh index lists if necessary, as they may be filtered by labels
++		if (pLabelUpdateThread-&gt;modifiedDocsIndex() == true)
++		{
++			IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(_(&quot;My Web Pages&quot;), NotebookPageBox::INDEX_PAGE));
++			if (pIndexPage != NULL)
++			{
++				browse_index(_(&quot;My Web Pages&quot;), pIndexPage-&gt;getQueryName(), 0, false);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;mainWindow::on_thread_end: refreshed My Web Pages&quot; &lt;&lt; endl;
++#endif
++			}
++		}
++		if (pLabelUpdateThread-&gt;modifiedDaemonIndex() == true)
++		{
++			IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(_(&quot;My Documents&quot;), NotebookPageBox::INDEX_PAGE));
++			if (pIndexPage != NULL)
++			{
++				browse_index(_(&quot;My Documents&quot;), pIndexPage-&gt;getQueryName(), 0, false);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;mainWindow::on_thread_end: refreshed My Documents&quot; &lt;&lt; endl;
++#endif
++			}
++		}
++
+ 		status = _(&quot;Updated label(s)&quot;);
+ 		set_status(status);
+ 	}
+@@ -2317,7 +2338,7 @@
+ 		return;
+ 	}
+ 
+-	// Update all documents
++	// Update documents properties
+ 	for (vector&lt;DocumentInfo&gt;::iterator docIter = documentsList.begin();
+ 		docIter != documentsList.end(); ++docIter)
+ 	{
+@@ -2333,7 +2354,7 @@
+ 		docIds.insert(docId);
+ 	}
+ 
+-	// Now apply these labels to all the documents
++	// Apply labels
+ 	if (propertiesBox.changedLabels() == true)
+ 	{
+ 		LabelUpdateThread *pThread = NULL;
+@@ -2353,13 +2374,6 @@
+ 		{
+ 			start_thread(pThread);
+ 		}
+-
+-		// Is the index list filtered with a query ?
+-		if (queryName.empty() == false)
+-		{
+-			// The query may filter on a label, so refresh the list
+-			browse_index(indexName, queryName, 0, 0);
+-		}
+ 	}
+ }
+ 
+@@ -2718,13 +2732,8 @@
+ 					if (pIndexPage != NULL)
+ 					{
+ 						// Synchronize the queries list with the new list 
++						// This will trigger a list refresh
+ 						pIndexPage-&gt;populateQueryCombobox(&quot;&quot;);
+-
+-						// The current query was removed, refresh the list
+-						if (queryName == pIndexPage-&gt;getQueryName())
+-						{
+-							browse_index(pIndexPage-&gt;getTitle(), &quot;&quot;, 0, false);
+-						}
+ 					}
+ 				}
+ 			}
+@@ -3123,13 +3132,8 @@
+ 				if (pIndexPage != NULL)
+ 				{
+ 					// Synchronize the queries list with the new list
++					// This will trigger a list refresh
+ 					pIndexPage-&gt;populateQueryCombobox(pIndexPage-&gt;getQueryName());
+-
+-					// The current query may have changed, refresh the list
+-					if (queryName == pIndexPage-&gt;getQueryName())
+-					{
+-						browse_index(pIndexPage-&gt;getTitle(), queryName, 0, false);
+-					}
+ 				}
+ 			}
+ 		}
+@@ -3273,6 +3277,9 @@
+ void mainWindow::browse_index(const ustring &amp;indexName, const ustring &amp;queryName,
+ 	unsigned int startDoc, bool changePage)
+ {
++#ifdef DEBUG
++	cout &lt;&lt; &quot;mainWindow::browse_index: called on &quot; &lt;&lt; indexName &lt;&lt; &quot;, &quot; &lt;&lt; queryName &lt;&lt; endl;
++#endif
+ 	// Rudimentary lock
+ 	if (m_state.m_browsingIndex == true)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001249.html">[Pinot-svn] r1255 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001251.html">[Pinot-svn] r1257 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1250">[ date ]</a>
+              <a href="thread.html#1250">[ thread ]</a>
+              <a href="subject.html#1250">[ subject ]</a>
+              <a href="author.html#1250">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

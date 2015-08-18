@@ -1,0 +1,275 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1426 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1426%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200812011316.mB1DGjog012046%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001416.html">
+   <LINK REL="Next"  HREF="001418.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1426 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1426%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200812011316.mB1DGjog012046%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1426 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec  1 14:16:45 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001416.html">[Pinot-svn] r1425 - in trunk: IndexSearch IndexSearch/Xapian	Tokenize Utils Utils/unac
+</A></li>
+        <LI>Next message: <A HREF="001418.html">[Pinot-svn] r1427 - in trunk: Collect Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1417">[ date ]</a>
+              <a href="thread.html#1417">[ thread ]</a>
+              <a href="subject.html#1417">[ subject ]</a>
+              <a href="author.html#1417">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-01 14:16:35 +0100 (Mon, 01 Dec 2008)
+New Revision: 1426
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Identify threads spawned by DBusServlet by their ID.
+In mainWindow, use mktemp() if mkstemp() isn't available.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-12-01 13:01:09 UTC (rev 1425)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-12-01 13:16:35 UTC (rev 1426)
+@@ -131,7 +131,6 @@
+ 	m_pRequest(pRequest),
+ 	m_pReply(NULL),
+ 	m_pArray(NULL),
+-	m_queryName(&quot;&quot;),
+ 	m_simpleQuery(true),
+ 	m_pThread(NULL),
+ 	m_replied(false)
+@@ -680,9 +679,6 @@
+ 			{
+ 				m_servletsInfo.insert(pInfo);
+ 
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;DaemonState::on_thread_end: running query &quot; &lt;&lt; pInfo-&gt;m_queryName &lt;&lt; endl;
+-#endif
+ 				start_thread(pInfo-&gt;m_pThread);
+ 			}
+ 			else
+@@ -724,10 +720,10 @@
+ 			DBusServletInfo *pInfo = const_cast&lt;DBusServletInfo *&gt;(*servIter);
+ 
+ 			if ((pInfo != NULL) &amp;&amp;
+-				(pInfo-&gt;m_queryName == queryProps.getName()))
++				(pInfo-&gt;m_pThread-&gt;getId() == pThread-&gt;getId()))
+ 			{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;DaemonState::on_thread_end: ran query &quot; &lt;&lt; pInfo-&gt;m_queryName &lt;&lt; endl;
++				cout &lt;&lt; &quot;DaemonState::on_thread_end: ran query &quot; &lt;&lt; queryProps.getName() &lt;&lt; endl;
+ #endif
+ 				// Prepare and send the reply
+ 				pInfo-&gt;newQueryReply(resultsList, pQueryThread-&gt;getDocumentsCount());
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2008-12-01 13:01:09 UTC (rev 1425)
++++ trunk/UI/GTK2/src/DaemonState.h	2008-12-01 13:16:35 UTC (rev 1426)
+@@ -60,7 +60,6 @@
+ 		DBusMessage *m_pRequest;
+ 		DBusMessage *m_pReply;
+ 		GPtrArray *m_pArray;
+-		std::string m_queryName;
+ 		bool m_simpleQuery;
+ 		WorkerThread *m_pThread;
+ 
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2008-12-01 13:01:09 UTC (rev 1425)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2008-12-01 13:16:35 UTC (rev 1426)
+@@ -1167,10 +1167,9 @@
+ 
+ 				// Give the query a unique name
+ 				queryNameStr &lt;&lt; &quot;DBUS&quot; &lt;&lt; m_id;
+-				m_pServletInfo-&gt;m_queryName = queryNameStr.str();
+ 				m_pServletInfo-&gt;m_simpleQuery = false;
+ 
+-				QueryProperties queryProps(m_pServletInfo-&gt;m_queryName, pSearchText);
++				QueryProperties queryProps(queryNameStr.str(), pSearchText);
+ 				queryProps.setMaximumResultsCount(maxHits);
+ 
+ 				string engineType, engineOption;
+@@ -1221,10 +1220,9 @@
+ 
+ 				// Give the query a unique name
+ 				queryNameStr &lt;&lt; &quot;DBUS&quot; &lt;&lt; m_id;
+-				m_pServletInfo-&gt;m_queryName = queryNameStr.str();
+ 				m_pServletInfo-&gt;m_simpleQuery = true;
+ 
+-				QueryProperties queryProps(m_pServletInfo-&gt;m_queryName, pSearchText);
++				QueryProperties queryProps(queryNameStr.str(), pSearchText);
+ 				queryProps.setMaximumResultsCount(maxHits);
+ 
+ 				m_pServletInfo-&gt;m_pThread = new EngineQueryThread(settings.m_defaultBackend,
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-12-01 13:01:09 UTC (rev 1425)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-12-01 13:16:35 UTC (rev 1426)
+@@ -137,7 +137,7 @@
+ 
+ WorkerThread::WorkerThread() :
+ 	m_startTime(time(NULL)),
+-	m_id(0),
++	m_id(ThreadsManager::get_next_id()),
+ 	m_background(false),
+ 	m_stopped(false),
+ 	m_done(false),
+@@ -267,11 +267,12 @@
+ 	}
+ }
+ 
++unsigned int ThreadsManager::m_nextThreadId = 1;
++
+ ThreadsManager::ThreadsManager(const string &amp;defaultIndexLocation,
+ 	unsigned int maxIndexThreads, unsigned int maxThreadsTime) :
+ 	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+-	m_nextThreadId(1),
+ 	m_backgroundThreadsCount(0),
+ 	m_foregroundThreadsMaxTime(maxThreadsTime),
+ 	m_numCPUs(1),
+@@ -483,6 +484,13 @@
+ 	}
+ }
+ 
++unsigned int ThreadsManager::get_next_id(void)
++{
++	unsigned int nextThreadId = ++m_nextThreadId;
++
++	return nextThreadId;
++}
++
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+ {
+ 	bool createdThread = false;
+@@ -492,7 +500,6 @@
+ 		return false;
+ 	}
+ 
+-	pWorkerThread-&gt;setId(m_nextThreadId);
+ 	if (inBackground == true)
+ 	{
+ #ifdef DEBUG
+@@ -542,8 +549,6 @@
+ 		}
+ 	}
+ 
+-	++m_nextThreadId;
+-
+ 	return createdThread;
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-12-01 13:01:09 UTC (rev 1425)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-12-01 13:16:35 UTC (rev 1426)
+@@ -113,6 +113,8 @@
+ 			unsigned int maxThreadsTime = 300);
+ 		virtual ~ThreadsManager();
+ 
++		static unsigned int get_next_id(void);
++
+ 		bool start_thread(WorkerThread *pWorkerThread, bool inBackground = false);
+ 
+ 		unsigned int get_threads_count(void);
+@@ -136,13 +138,13 @@
+ 		bool pop_queue(const std::string &amp;urlWasIndexed = &quot;&quot;);
+ 
+ 	protected:
++		static unsigned int m_nextThreadId;
+ 		sigc::connection m_threadsEndConnection;
+ 		pthread_rwlock_t m_threadsLock;
+ 		pthread_rwlock_t m_listsLock;
+ 		std::map&lt;unsigned int, WorkerThread *&gt; m_threads;
+ 		std::string m_defaultIndexLocation;
+ 		unsigned int m_maxIndexThreads;
+-		unsigned int m_nextThreadId;
+ 		unsigned int m_backgroundThreadsCount;
+ 		unsigned int m_foregroundThreadsMaxTime;
+ 		long m_numCPUs;
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-12-01 13:01:09 UTC (rev 1425)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-12-01 13:16:35 UTC (rev 1426)
+@@ -16,6 +16,9 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;sys/types.h&gt;
++#include &lt;sys/stat.h&gt;
++#include &lt;fcntl.h&gt;
+ #include &lt;stdlib.h&gt;
+ #include &lt;errno.h&gt;
+ #include &lt;time.h&gt;
+@@ -1567,7 +1570,16 @@
+ 				(dataLength &gt; 0))
+ 			{
+ 				char inTemplate[21] = &quot;/tmp/pinottempXXXXXX&quot;;
++#ifdef HAVE_MKSTEMP
+ 				int inFd = mkstemp(inTemplate);
++#else
++				int inFd = -1;
++				char *pInFile = mktemp(inTemplate);
++				if (pInFile != NULL)
++				{
++					inFd = open(pInFile, O_RDONLY);
++				}
++#endif
+ 				bool viewDoc = false;
+ 
+ 				if (inFd != -1)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001416.html">[Pinot-svn] r1425 - in trunk: IndexSearch IndexSearch/Xapian	Tokenize Utils Utils/unac
+</A></li>
+	<LI>Next message: <A HREF="001418.html">[Pinot-svn] r1427 - in trunk: Collect Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1417">[ date ]</a>
+              <a href="thread.html#1417">[ thread ]</a>
+              <a href="subject.html#1417">[ subject ]</a>
+              <a href="author.html#1417">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,508 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r10 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2005-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r10%20-%20trunk/SQL&In-Reply-To=%3C200512151456.jBFEukdj001113%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000008.html">
+   <LINK REL="Next"  HREF="000010.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r10 - trunk/SQL</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r10%20-%20trunk/SQL&In-Reply-To=%3C200512151456.jBFEukdj001113%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r10 - trunk/SQL">fabricecolin at berlios.de
+       </A><BR>
+    <I>Thu Dec 15 15:56:46 CET 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000008.html">[Pinot-svn] r9 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000010.html">[Pinot-svn] r11 - in trunk: Index SQL Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9">[ date ]</a>
+              <a href="thread.html#9">[ thread ]</a>
+              <a href="subject.html#9">[ subject ]</a>
+              <a href="author.html#9">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2005-12-15 15:56:45 +0100 (Thu, 15 Dec 2005)
+New Revision: 10
+
+Removed:
+   trunk/SQL/LabelManager.cpp
+   trunk/SQL/LabelManager.h
+Log:
+Obsolete.
+
+
+Deleted: trunk/SQL/LabelManager.cpp
+===================================================================
+--- trunk/SQL/LabelManager.cpp	2005-12-15 14:46:50 UTC (rev 9)
++++ trunk/SQL/LabelManager.cpp	2005-12-15 14:56:45 UTC (rev 10)
+@@ -1,350 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;unistd.h&gt;
+-#include &lt;iostream&gt;
+-
+-#include &quot;Url.h&quot;
+-#include &quot;TimeConverter.h&quot;
+-#include &quot;LabelManager.h&quot;
+-
+-LabelManager::LabelManager(const string &amp;database) :
+-	SQLiteBase(database)
+-{
+-}
+-
+-LabelManager::~LabelManager()
+-{
+-}
+-
+-unsigned int LabelManager::getLabelId(const string &amp;labelName) const
+-{
+-	unsigned int labelId = 0;
+-
+-	// Get the label ID
+-	SQLiteResults *results = executeStatement(&quot;SELECT LabelId 	FROM IndexLabels WHERE Name='%q';&quot;,
+-		labelName.c_str());
+-	if (results != NULL)
+-	{
+-		SQLiteRow *row =results-&gt;nextRow();
+-		if (row != NULL)
+-		{
+-			labelId = (unsigned int)atoi(row-&gt;getColumn(0).c_str());
+-
+-			delete row;
+-		}
+-
+-		delete results;
+-	}
+-
+-	return labelId;
+-}
+-
+-unsigned int LabelManager::getNewLabelId(void) const
+-{
+-	unsigned int labelId = 1;
+-
+-	// Get the label ID
+-	SQLiteResults *results = executeStatement(&quot;SELECT ROWID FROM IndexLabels \
+-		ORDER BY ROWID DESC LIMIT 1;&quot;);
+-	if (results != NULL)
+-	{
+-		SQLiteRow *row =results-&gt;nextRow();
+-		if (row != NULL)
+-		{
+-			labelId = (unsigned int)atoi(row-&gt;getColumn(0).c_str());
+-			++labelId;
+-
+-			delete row;
+-		}
+-
+-		delete results;
+-	}
+-
+-	return labelId;
+-}
+-
+-/// Creates the necessary tables in the database.
+-bool LabelManager::create(const string &amp;database)
+-{
+-	bool success = true;
+-
+-	// The specified path must be a file
+-	if (SQLiteBase::check(database) == false)
+-	{
+-		return false;
+-	}
+-
+-	SQLiteBase db(database);
+-
+-	// Does IndexLabels exist ?
+-	if (db.executeSimpleStatement(&quot;SELECT * FROM IndexLabels LIMIT 1;&quot;) == false)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;LabelManager::create: IndexLabels doesn't exist&quot; &lt;&lt; endl;
+-#endif
+-		// Create the table
+-		if (db.executeSimpleStatement(&quot;CREATE TABLE IndexLabels \
+-			(LabelId BIGINT UNSIGNED NOT NULL PRIMARY KEY, Name VARCHAR(255));&quot;) == false)
+-		{
+-			success = false;
+-		}
+-	}
+-	// Does DocumentLabels exist ?
+-	if (db.executeSimpleStatement(&quot;SELECT * FROM DocumentLabels LIMIT 1;&quot;) == false)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;LabelManager::create: DocumentLabels doesn't exist&quot; &lt;&lt; endl;
+-#endif
+-		// Create the table
+-		if (db.executeSimpleStatement(&quot;CREATE TABLE DocumentLabels \
+-			(LabelId BIGINT UNSIGNED NOT NULL, DocId BIGINT UNSIGNED NOT NULL, \
+-			Source VARCHAR(255), PRIMARY KEY(LabelId, DocId, Source));&quot;) == false)
+-		{
+-			success = false;
+-		}
+-	}
+-
+-	return success;
+-}
+-
+-/// Gets a list of items with the given label.
+-bool LabelManager::getDocumentsWithLabel(const string &amp;labelName, const string &amp;sourceName,
+-	set&lt;unsigned int&gt; &amp;items) const
+-{
+-	bool success = false;
+-
+-	unsigned int labelId = getLabelId(labelName);
+-	if (labelId == 0)
+-	{
+-		// Label was not found
+-		return false;
+-	}
+-
+-	SQLiteResults *results = executeStatement(&quot;SELECT DocId FROM DocumentLabels \
+-		WHERE LabelId=%u AND Source='%q';&quot;,
+-		labelId, sourceName.c_str());
+-	if (results != NULL)
+-	{
+-		while (results-&gt;hasMoreRows() == true)
+-		{
+-			SQLiteRow *row =results-&gt;nextRow();
+-			if (row == NULL)
+-			{
+-				break;
+-			}
+-
+-			unsigned int docId = (unsigned int)atoi(row-&gt;getColumn(0).c_str());
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;LabelManager::getDocumentsWithLabel: item &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			items.insert(docId);
+-			success = true;
+-
+-			delete row;
+-		}
+-
+-		delete results;
+-	}
+-
+-	return success;
+-}
+-
+-/// Checks if a document has a label.
+-bool LabelManager::hasLabel(unsigned int docId, const string &amp;sourceName,
+-	const string &amp;labelName) const
+-{
+-	bool success = false;
+-
+-	unsigned int labelId = getLabelId(labelName);
+-	if (labelId == 0)
+-	{
+-		// Label was not found
+-		return false;
+-	}
+-
+-	SQLiteResults *results = executeStatement(&quot;SELECT DocId FROM DocumentLabels \
+-		WHERE LabelId=%u AND DocId=%u AND Source='%q';&quot;,
+-		labelId, docId, sourceName.c_str());
+-	if (results != NULL)
+-	{
+-		SQLiteRow *row =results-&gt;nextRow();
+-		if (row != NULL)
+-		{
+-			// Yes, this document has the given label
+-			success = true;
+-
+-			delete row;
+-		}
+-
+-		delete results;
+-	}
+-
+-	return success;
+-}
+-
+-/// Sets a document's labels.
+-bool LabelManager::setLabels(unsigned int docId, const string &amp;sourceName,
+-	const set&lt;string&gt; &amp;labels)
+-{
+-	bool success = false;
+-
+-	// First off, delete all labels for this document
+-	SQLiteResults *results = executeStatement(&quot;DELETE FROM DocumentLabels \
+-		WHERE DocId=%u AND Source='%q';&quot;,
+-		docId, sourceName.c_str());
+-	if (results == NULL)
+-	{
+-		return false;
+-	}
+-	delete results;
+-
+-	for (set&lt;string&gt;::const_iterator iter = labels.begin(); iter != labels.end(); ++iter)
+-	{
+-		string labelName = (*iter);
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;LabelManager::setLabels: label &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
+-		// Does this label exist ?
+-		unsigned int labelId = getLabelId(labelName);
+-		if (labelId == 0)
+-		{
+-			// No, it doesn't : create it then
+-			labelId = getNewLabelId();
+-			results = executeStatement(&quot;INSERT INTO IndexLabels VALUES(%u, '%q');&quot;,
+-				labelId, labelName.c_str());
+-			if (results == NULL)
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;LabelManager::setLabels: couldn't create label &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
+-				continue;
+-			}
+-			delete results;
+-		}
+-
+-		// Insert this label
+-		SQLiteResults *results = executeStatement(&quot;INSERT INTO DocumentLabels VALUES(%u, %u, '%q');&quot;,
+-			labelId, docId, sourceName.c_str());
+-		if (results != NULL)
+-		{
+-			delete results;
+-		}
+-	}
+-
+-	return true;
+-}
+-
+-/// Gets the labels for the given document.
+-bool LabelManager::getLabels(unsigned int docId, const string &amp;sourceName,
+-	set&lt;string&gt; &amp;labels) const
+-{
+-	bool success = false;
+-
+-	SQLiteResults *results = executeStatement(&quot;SELECT i.Name FROM IndexLabels i, \
+-		DocumentLabels d WHERE d.LabelId=i.LabelId AND d.DocId=%u AND d.Source='%q';&quot;,
+-		docId, sourceName.c_str());
+-	if (results != NULL)
+-	{
+-		while (results-&gt;hasMoreRows() == true)
+-		{
+-			SQLiteRow *row = results-&gt;nextRow();
+-			if (row == NULL)
+-			{
+-				break;
+-			}
+-
+-			string labelName = row-&gt;getColumn(0);
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;LabelManager::getLabels: label &quot; &lt;&lt; labelName &lt;&lt; endl;
+-#endif
+-			labels.insert(labelName);
+-			success = true;
+-
+-			delete row;
+-		}
+-
+-		delete results;
+-	}
+-
+-	return success;
+-}
+-
+-/// Renames a label.
+-bool LabelManager::renameLabel(const string &amp;name, const string &amp;newName)
+-{
+-	bool success = false;
+-
+-	SQLiteResults *results = executeStatement(&quot;UPDATE IndexLabels SET Name='%q' \
+-		WHERE Name='%q';&quot;,
+-		newName.c_str(), name.c_str());
+-	if (results != NULL)
+-	{
+-		success = true;
+-		delete results;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;LabelManager::renameLabel: renamed &quot; &lt;&lt; name &lt;&lt; &quot; to &quot; &lt;&lt; newName &lt;&lt; endl;
+-#endif
+-
+-	return success;
+-}
+-
+-/// Deletes all references to a label.
+-bool LabelManager::deleteLabel(const string &amp;name)
+-{
+-	bool success = false;
+-
+-	unsigned int labelId = getLabelId(name);
+-	if (labelId == 0)
+-	{
+-		// Nothing to delete
+-		return true;
+-	}
+-
+-	// Delete from both IndexLabels and DocumentLabels
+-	SQLiteResults *results = executeStatement(&quot;DELETE FROM DocumentLabels \
+-		WHERE LabelId=%u; DELETE FROM IndexLabels WHERE LabelId=%u;&quot;,
+-		labelId, labelId);
+-	if (results != NULL)
+-	{
+-		success = true;
+-		delete results;
+-	}
+-
+-	return success;
+-}
+-
+-/// Deletes an item.
+-bool LabelManager::deleteItem(unsigned int docId, const string &amp;sourceName)
+-{
+-	bool success = false;
+-
+-	// Delete from both IndexHistory and DocumentLabels
+-	SQLiteResults *results = executeStatement(&quot;DELETE FROM DocumentLabels WHERE DocId=%u \
+-		AND Source='%q';&quot;,
+-		docId, sourceName.c_str());
+-	if (results != NULL)
+-	{
+-		success = true;
+-		delete results;
+-	}
+-
+-	return success;
+-}
+
+Deleted: trunk/SQL/LabelManager.h
+===================================================================
+--- trunk/SQL/LabelManager.h	2005-12-15 14:46:50 UTC (rev 9)
++++ trunk/SQL/LabelManager.h	2005-12-15 14:56:45 UTC (rev 10)
+@@ -1,74 +0,0 @@
+-/*
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#ifndef _LABEL_MANAGER_H
+-#define _LABEL_MANAGER_H
+-
+-#include &lt;string&gt;
+-#include &lt;map&gt;
+-#include &lt;set&gt;
+-
+-#include &quot;DocumentInfo.h&quot;
+-#include &quot;SQLiteBase.h&quot;
+-
+-using namespace std;
+-
+-class LabelManager : public SQLiteBase
+-{
+-	public:
+-		LabelManager(const string &amp;database);
+-		virtual ~LabelManager();
+-
+-		/// Creates the necessary tables in the database.
+-		static bool create(const string &amp;database);
+-
+-		/// Gets a list of items with the given label.
+-		bool getDocumentsWithLabel(const string &amp;labelName, const string &amp;sourceName,
+-			set&lt;unsigned int&gt; &amp;items) const;
+-
+-		/// Checks if a document has a label.
+-		bool hasLabel(unsigned int docId, const string &amp;sourceName,
+-			const string &amp;labelName) const;
+-
+-		/// Sets a document's labels.
+-		bool setLabels(unsigned int docId, const string &amp;sourceName,
+-			const set&lt;string&gt; &amp;labels);
+-
+-		/// Gets the labels for the given document.
+-		bool getLabels(unsigned int docId, const string &amp;sourceName,
+-			set&lt;string&gt; &amp;labels) const;
+-
+-		/// Renames a label.
+-		bool renameLabel(const string &amp;name, const string &amp;newName);
+-
+-		/// Deletes all references to a label.
+-		bool deleteLabel(const string &amp;name);
+-
+-		/// Deletes an item.
+-		bool deleteItem(unsigned int docId, const string &amp;sourceName);
+-
+-	protected:
+-		unsigned int getLabelId(const string &amp;labelName) const;
+-
+-		unsigned int getNewLabelId(void) const;
+-
+-	private:
+-		LabelManager(const LabelManager &amp;other);
+-		LabelManager &amp;operator=(const LabelManager &amp;other);
+-
+-};
+-
+-#endif // _LABEL_MANAGER_H
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000008.html">[Pinot-svn] r9 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000010.html">[Pinot-svn] r11 - in trunk: Index SQL Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9">[ date ]</a>
+              <a href="thread.html#9">[ thread ]</a>
+              <a href="subject.html#9">[ subject ]</a>
+              <a href="author.html#9">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

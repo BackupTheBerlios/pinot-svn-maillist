@@ -1,0 +1,534 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r815 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r815%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200704261133.l3QBX9Px021714%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000808.html">
+   <LINK REL="Next"  HREF="000810.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r815 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r815%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200704261133.l3QBX9Px021714%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r815 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr 26 13:33:09 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000808.html">[Pinot-svn] r814 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000810.html">[Pinot-svn] r816 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#809">[ date ]</a>
+              <a href="thread.html#809">[ thread ]</a>
+              <a href="subject.html#809">[ subject ]</a>
+              <a href="author.html#809">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-04-26 13:33:08 +0200 (Thu, 26 Apr 2007)
+New Revision: 815
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+Synced with changes made to ResultsTree/IndexTree.
+Implemented results export in on_exportresults_activate().
+In view_documents(), open HTTP/HTTPS documents with the default browser. This
+fixes a problem where documents identified as &quot;application/x-php&quot; were open
+with a text editor.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-04-26 11:28:12 UTC (rev 814)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-04-26 11:33:08 UTC (rev 815)
+@@ -120,7 +120,7 @@
+ 	m_pEnginesTree-&gt;get_selection()-&gt;signal_changed().connect(
+ 		SigC::slot(*this, &amp;mainWindow::on_enginesTreeviewSelection_changed));
+ 	// Connect to the edit index signal
+-	m_pEnginesTree-&gt;getEditIndexSignal().connect(
++	m_pEnginesTree-&gt;getDoubleClickSignal().connect(
+ 		SigC::slot(*this, &amp;mainWindow::on_editindex));
+ 
+ 	// Enable completion on the live query field
+@@ -527,10 +527,10 @@
+ 		return;
+ 	}
+ 
+-	IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-	if (pIndexTree != NULL)
++	ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++	if (pResultsTree != NULL)
+ 	{
+-		string url(pIndexTree-&gt;getFirstSelectionURL());
++		string url(pResultsTree-&gt;getFirstSelectionURL());
+ 
+ 		if (url.empty() == false)
+ 		{
+@@ -549,7 +549,7 @@
+ 			// Show the URL in the status bar
+ 			ustring statusText = _(&quot;Document location is&quot;);
+ 			statusText += &quot; &quot;;
+-			statusText += pIndexTree-&gt;getFirstSelectionURL();
++			statusText += pResultsTree-&gt;getFirstSelectionURL();
+ 			set_status(statusText, true);
+ 		}
+ 	}
+@@ -568,7 +568,7 @@
+ //
+ void mainWindow::on_index_changed(ustring indexName)
+ {
+-	IndexTree *pIndexTree = NULL;
++	ResultsTree *pResultsTree = NULL;
+ 	IndexPage *pIndexPage = NULL;
+ 	ustring labelName;
+ 	bool foundPage = false;
+@@ -582,10 +582,10 @@
+ 	if (pIndexPage != NULL)
+ 	{
+ 		// Force a refresh
+-		pIndexTree = pIndexPage-&gt;getTree();
+-		if (pIndexTree != NULL)
++		pResultsTree = pIndexPage-&gt;getTree();
++		if (pResultsTree != NULL)
+ 		{
+-			pIndexTree-&gt;clear();
++			pResultsTree-&gt;clear();
+ 		}
+ 		labelName = pIndexPage-&gt;getLabelName();
+ 		foundPage = true;
+@@ -599,13 +599,14 @@
+ 			SigC::slot(*this, &amp;mainWindow::on_close_page));
+ 
+ 		// Position the index tree
+-		pIndexTree = manage(new IndexTree(indexName, indexMenuitem-&gt;get_submenu(), m_settings));
+-		pIndexPage = manage(new IndexPage(indexName, pIndexTree, m_settings));
++		pResultsTree = manage(new ResultsTree(indexName, indexMenuitem-&gt;get_submenu(),
++			ResultsTree::FLAT, m_settings));
++		pIndexPage = manage(new IndexPage(indexName, pResultsTree, m_settings));
+ 		// Connect to the &quot;changed&quot; signal
+-		pIndexTree-&gt;getSelectionChangedSignal().connect(
++		pResultsTree-&gt;getSelectionChangedSignal().connect(
+ 			SigC::slot(*this, &amp;mainWindow::on_indexTreeviewSelection_changed));
+ 		// Connect to the edit document signal
+-		pIndexTree-&gt;getEditDocumentSignal().connect(
++		pResultsTree-&gt;getDoubleClickSignal().connect(
+ 			SigC::slot(*this, &amp;mainWindow::on_showfromindex_activate));
+ 		// Connect to the label changed signal
+ 		pIndexPage-&gt;getLabelChangedSignal().connect(
+@@ -724,8 +725,8 @@
+ 	{
+ 		return;
+ 	}
+-	IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-	if (pIndexTree == NULL)
++	ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++	if (pResultsTree == NULL)
+ 	{
+ 		return;
+ 	}
+@@ -860,7 +861,7 @@
+ 		}
+ 
+ 		IndexPage *pIndexPage = NULL;
+-		IndexTree *pIndexTree = NULL;
++		ResultsTree *pResultsTree = NULL;
+ 		ustring indexName = to_utf8(pBrowseThread-&gt;getIndexName());
+ 		ustring labelName = to_utf8(pBrowseThread-&gt;getLabelName());
+ 
+@@ -869,20 +870,20 @@
+ 		pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+-			pIndexTree = pIndexPage-&gt;getTree();
+-			if (pIndexTree != NULL)
++			pResultsTree = pIndexPage-&gt;getTree();
++			if (pResultsTree != NULL)
+ 			{
+ 				const vector&lt;DocumentInfo&gt; &amp;docsList = pBrowseThread-&gt;getDocuments();
+ 
+ 				// Add the documents to the tree
+-				pIndexTree-&gt;addDocuments(docsList);
++				pResultsTree-&gt;addResults(&quot;&quot;, docsList, &quot;&quot;);
+ 
+ 				pIndexPage-&gt;setDocumentsCount(pBrowseThread-&gt;getDocumentsCount());
+ 				pIndexPage-&gt;updateButtonsState(m_maxDocsCount);
+ 
+ 				status = _(&quot;Showing&quot;);
+ 				status += &quot; &quot;;
+-				snprintf(docsCountStr, 64, &quot;%u&quot;, pIndexTree-&gt;getRowsCount());
++				snprintf(docsCountStr, 64, &quot;%u&quot;, pResultsTree-&gt;getRowsCount());
+ 				status += docsCountStr;
+ 				status += &quot; &quot;;
+ 				status += _(&quot;of&quot;);
+@@ -899,7 +900,7 @@
+ 				if (pIndexPage-&gt;getDocumentsCount() &gt; 0)
+ 				{
+ 					// Refresh the tree
+-					pIndexTree-&gt;refresh();
++					pResultsTree-&gt;refresh();
+ 				}
+ 				m_state.m_browsingIndex = false;
+ 			}
+@@ -965,7 +966,7 @@
+ 			pResultsTree-&gt;getSelectionChangedSignal().connect(
+ 				SigC::slot(*this, &amp;mainWindow::on_resultsTreeviewSelection_changed));
+ 			// Connect to the view results signal
+-			pResultsTree-&gt;getViewResultsSignal().connect(
++			pResultsTree-&gt;getDoubleClickSignal().connect(
+ 				SigC::slot(*this, &amp;mainWindow::on_viewresults_activate));
+ 
+ 			// Append the page
+@@ -1193,11 +1194,11 @@
+ 		DocumentInfo docInfo = pIndexThread-&gt;getDocumentInfo();
+ 
+ 		// Is the index still being shown ?
+-		IndexTree *pIndexTree = NULL;
++		ResultsTree *pResultsTree = NULL;
+ 		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(_(&quot;My Web Pages&quot;), NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+-			pIndexTree = pIndexPage-&gt;getTree();
++			pResultsTree = pIndexPage-&gt;getTree();
+ 		}
+ 
+ 		// Did the thread perform an update ?
+@@ -1209,10 +1210,10 @@
+ 			snprintf(docIdStr, 64, &quot;%u&quot;, docId);
+ 			status += docIdStr;
+ 
+-			if (pIndexTree != NULL)
++			if (pResultsTree != NULL)
+ 			{
+ 				// Update the index tree
+-				pIndexTree-&gt;updateDocumentInfo(docId, docInfo);
++				pResultsTree-&gt;updateResult(docInfo);
+ 			}
+ 		}
+ 		else
+@@ -1221,9 +1222,9 @@
+ 			status += &quot; &quot;;
+ 			status += to_utf8(indexedUrl);
+ 
+-			if (pIndexTree != NULL)
++			if (pResultsTree != NULL)
+ 			{
+-				unsigned int rowsCount = pIndexTree-&gt;getRowsCount();
++				unsigned int rowsCount = pResultsTree-&gt;getRowsCount();
+ 
+ 				// Ensure the last page is being displayed and is not full
+ 				if ((pIndexPage-&gt;getFirstDocument() + rowsCount == pIndexPage-&gt;getDocumentsCount()) &amp;&amp;
+@@ -1292,11 +1293,10 @@
+ 		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(_(&quot;My Web Pages&quot;), NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+-			IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-			if (pIndexTree != NULL)
++			ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++			if (pResultsTree != NULL)
+ 			{
+-				pIndexTree-&gt;updateDocumentInfo(pUpdateThread-&gt;getDocumentID(),
+-					pUpdateThread-&gt;getDocumentInfo());
++				pResultsTree-&gt;updateResult(pUpdateThread-&gt;getDocumentInfo());
+ 			}
+ 		}
+ 
+@@ -1533,11 +1533,11 @@
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;mainWindow::on_copy_activate: index tree&quot; &lt;&lt; endl;
+ #endif
+-				IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-				if (pIndexTree != NULL)
++				ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++				if (pResultsTree != NULL)
+ 				{
+ 					// Get the current documents selection
+-					pIndexTree-&gt;getSelection(documentsList);
++					pResultsTree-&gt;getSelection(documentsList);
+ 				}
+ 			}
+ 
+@@ -1722,6 +1722,55 @@
+ }
+ 
+ //
++// Results &gt; Export menu selected
++//
++void mainWindow::on_exportresults_activate()
++{
++	NotebookPageBox *pNotebookPage = get_current_page();
++	if (pNotebookPage != NULL)
++	{
++		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
++		if (pResultsPage != NULL)
++		{
++			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
++			if (pResultsTree != NULL)
++			{
++				FileChooserDialog fileChooser(_(&quot;Export Results&quot;));
++				FileFilter csvFilter, xmlFilter;
++				ustring location;
++				bool exportToCSV = true;
++
++				prepare_file_chooser(fileChooser, location, false);
++
++				// Add filters
++				csvFilter.add_mime_type(&quot;application/csv&quot;);
++				csvFilter.set_name(&quot;CSV&quot;);
++				fileChooser.add_filter(csvFilter);
++				xmlFilter.add_mime_type(&quot;application/xml&quot;);
++				xmlFilter.set_name(&quot;OpenSearch response&quot;);
++				fileChooser.add_filter(xmlFilter);
++
++				fileChooser.show();
++				if (fileChooser.run() == RESPONSE_OK)
++				{
++					// Retrieve the chosen location
++					location = filename_to_utf8(fileChooser.get_filename());
++					// What file format was selected ?
++					const FileFilter *pFilter = fileChooser.get_filter();
++					if ((pFilter != NULL) &amp;&amp;
++						(pFilter-&gt;get_name() != &quot;CSV&quot;))
++					{
++						exportToCSV = false;
++					}
++
++					pResultsTree-&gt;exportResults(location, exportToCSV);
++				}
++			}
++		}
++	}
++}
++
++//
+ // Results &gt; View menu selected
+ //
+ void mainWindow::on_viewresults_activate()
+@@ -1898,13 +1947,13 @@
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+-		IndexTree *pIndexTree = pIndexPage-&gt;getTree();
++		ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+ 
+-		if (pIndexTree != NULL)
++		if (pResultsTree != NULL)
+ 		{
+ 			vector&lt;DocumentInfo&gt; documentsList;
+ 
+-			if (pIndexTree-&gt;getSelection(documentsList) == true)
++			if (pResultsTree-&gt;getSelection(documentsList) == true)
+ 			{
+ 				view_documents(documentsList);
+ 			}
+@@ -1923,11 +1972,11 @@
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+-		IndexTree *pIndexTree = pIndexPage-&gt;getTree();
++		ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+ 
+-		if (pIndexTree != NULL)
++		if (pResultsTree != NULL)
+ 		{
+-			if ((pIndexTree-&gt;getSelection(documentsList) == false) ||
++			if ((pResultsTree-&gt;getSelection(documentsList) == false) ||
+ 				(documentsList.empty() == true))
+ 			{
+ 				// No selection
+@@ -1980,13 +2029,13 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: called&quot; &lt;&lt; endl;
+ #endif
+-	IndexTree *pIndexTree = NULL;
++	ResultsTree *pResultsTree = NULL;
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+ 		indexName = from_utf8(pIndexPage-&gt;getTitle());
+ 		labelName = from_utf8(pIndexPage-&gt;getLabelName());
+-		pIndexTree = pIndexPage-&gt;getTree();
++		pResultsTree = pIndexPage-&gt;getTree();
+ 	}
+ 
+ 	const std::map&lt;string, string&gt; &amp;indexesMap = m_settings.getIndexes();
+@@ -2003,8 +2052,8 @@
+ 	}
+ 
+ 	// Get the current documents selection
+-	if ((pIndexTree == NULL) ||
+-		(pIndexTree-&gt;getSelection(documentsList) == false) ||
++	if ((pResultsTree == NULL) ||
++		(pResultsTree-&gt;getSelection(documentsList) == false) ||
+ 		(documentsList.empty() == true))
+ 	{
+ 		// No selection
+@@ -2156,16 +2205,16 @@
+ 	vector&lt;DocumentInfo&gt; documentsList;
+ 	ustring boxTitle = _(&quot;Remove this document from the index ?&quot;);
+ 
+-	IndexTree *pIndexTree = NULL;
++	ResultsTree *pResultsTree = NULL;
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+ 	if (pIndexPage != NULL)
+ 	{
+-		pIndexTree = pIndexPage-&gt;getTree();
++		pResultsTree = pIndexPage-&gt;getTree();
+ 	}
+ 
+ 	// Get the current documents selection
+-	if ((pIndexTree == NULL) ||
+-		(pIndexTree-&gt;getSelection(documentsList) == false) ||
++	if ((pResultsTree == NULL) ||
++		(pResultsTree-&gt;getSelection(documentsList) == false) ||
+ 		(documentsList.empty() == true))
+ 	{
+ 		return;
+@@ -2187,7 +2236,7 @@
+ 	}
+ 
+ 	// Remove these documents from the tree
+-	pIndexTree-&gt;deleteSelection();
++	pResultsTree-&gt;deleteSelection();
+ 
+ 	set&lt;unsigned int&gt; docIdList;
+ 	for (vector&lt;DocumentInfo&gt;::const_iterator docIter = documentsList.begin();
+@@ -2635,6 +2684,7 @@
+ void mainWindow::show_global_menuitems(bool showItems)
+ {
+ 	// Results menuitems that depend on the page
++	exportresults1-&gt;set_sensitive(showItems);
+ 	clearresults1-&gt;set_sensitive(showItems);
+ }
+ 
+@@ -2977,11 +3027,11 @@
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+ 	if (pIndexPage != NULL)
+ 	{
+-		IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-		if (pIndexTree != NULL)
++		ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++		if (pResultsTree != NULL)
+ 		{
+ 			// Remove existing rows in the index tree
+-			pIndexTree-&gt;clear();
++			pResultsTree-&gt;clear();
+ 		}
+ 		pIndexPage-&gt;setFirstDocument(startDoc);
+ 
+@@ -3072,6 +3122,8 @@
+ 
+ 		if (type != currentType)
+ 		{
++			Url urlObj(url);
++
+ 			if ((action.m_exec.empty() == false) &amp;&amp;
+ 				(arguments.empty() == false))
+ 			{
+@@ -3089,22 +3141,20 @@
+ 			}
+ 
+ 			// Get the action for this MIME type
++			if ((urlObj.getProtocol() == &quot;http&quot;) ||
++				(urlObj.getProtocol() == &quot;https&quot;))
++			{
++				// Chances are the web browser will be able to open this
++				type = &quot;text/html&quot;;
++#ifdef DEBUG
++				cout &lt;&lt; &quot;mainWindow::view_documents: defaulting to text/html&quot; &lt;&lt; endl;
++#endif
++			}
+ 			if (MIMEScanner::getDefaultAction(type, action) == false)
+ 			{
+-				Url urlObj(url);
+ 				bool foundAction = false;
+ 
+-				if ((urlObj.getProtocol() == &quot;http&quot;) ||
+-					(urlObj.getProtocol() == &quot;https&quot;))
+-				{
+-					// Chances are the web browser will be able to open this
+-					type = &quot;text/html&quot;;
+-					foundAction = MIMEScanner::getDefaultAction(type, action);
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;mainWindow::view_documents: defaulting to text/html&quot; &lt;&lt; endl;
+-#endif
+-				}
+-				else if ((type.length() &gt; 5) &amp;&amp;
++				if ((type.length() &gt; 5) &amp;&amp;
+ 					(type.substr(0, 5) == &quot;text/&quot;))
+ 				{
+ 					// It's a subtype of text
+@@ -3185,8 +3235,8 @@
+ 		return false;
+ 	}
+ 
+-	IndexTree *pIndexTree = pIndexPage-&gt;getTree();
+-	if (pIndexTree == NULL)
++	ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++	if (pResultsTree == NULL)
+ 	{
+ 		return false;
+ 	}
+@@ -3214,8 +3264,11 @@
+ 
+ 	if (appendToList == true)
+ 	{
++		vector&lt;DocumentInfo&gt; docsList;
++
+ 		// Add a row
+-		pIndexTree-&gt;appendDocument(docInfo);
++		docsList.push_back(docInfo);
++		pResultsTree-&gt;addResults(&quot;&quot;, docsList, &quot;&quot;);
+ 
+ 		return true;
+ 	}
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2007-04-26 11:28:12 UTC (rev 814)
++++ trunk/UI/GTK2/src/mainWindow.hh	2007-04-26 11:33:08 UTC (rev 815)
+@@ -87,6 +87,7 @@
+ 	virtual void on_clearresults_activate();
+ 	virtual void on_showextract_activate();
+ 	virtual void on_groupresults_activate();
++	virtual void on_exportresults_activate();
+ 	virtual void on_viewresults_activate();
+ 	virtual void on_morelikethis_activate();
+ 	virtual void on_indexresults_activate();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000808.html">[Pinot-svn] r814 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000810.html">[Pinot-svn] r816 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#809">[ date ]</a>
+              <a href="thread.html#809">[ thread ]</a>
+              <a href="subject.html#809">[ subject ]</a>
+              <a href="author.html#809">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,1878 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r874 - in trunk/UI/GTK2: . src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r874%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200707210417.l6L4HuN5023875%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000867.html">
+   <LINK REL="Next"  HREF="000868.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r874 - in trunk/UI/GTK2: . src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r874%20-%20in%20trunk/UI/GTK2%3A%20.%20src&In-Reply-To=%3C200707210417.l6L4HuN5023875%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r874 - in trunk/UI/GTK2: . src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jul 21 06:17:56 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000867.html">[Pinot-svn] r873 - in trunk/Search: . Google
+</A></li>
+        <LI>Next message: <A HREF="000868.html">[Pinot-svn] r875 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#870">[ date ]</a>
+              <a href="thread.html#870">[ thread ]</a>
+              <a href="subject.html#870">[ subject ]</a>
+              <a href="author.html#870">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-07-21 06:17:51 +0200 (Sat, 21 Jul 2007)
+New Revision: 874
+
+Removed:
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/MboxHandler.h
+Modified:
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/Makefile.am
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/prefsDialog.cc
+   trunk/UI/GTK2/src/prefsDialog.hh
+   trunk/UI/GTK2/src/prefsDialog_glade.cc
+   trunk/UI/GTK2/src/prefsDialog_glade.hh
+Log:
+Mbox files are no longer a special case, they don't need to be configured
+separately. Any mbox file found during a crawl should be handled correctly;
+same for any other file type that has sub-documents.
+The file patterns list may be used as a blacklist or a whitelist, depending
+on preferences.
+Some other minor changes.
+
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/metase-gtk2.glade	2007-07-21 04:17:51 UTC (rev 874)
+@@ -1993,9 +1993,9 @@
+ 	      &lt;/child&gt;
+ 
+ 	      &lt;child&gt;
+-		&lt;widget class=&quot;GtkLabel&quot; id=&quot;mailAccountsLabel&quot;&gt;
++		&lt;widget class=&quot;GtkLabel&quot; id=&quot;patternsLabel&quot;&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Mail boxes of type mbox can be monitored and indexed:&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;File patterns:&lt;/property&gt;
+ 		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
+@@ -2018,213 +2018,67 @@
+ 	      &lt;/child&gt;
+ 
+ 	      &lt;child&gt;
+-		&lt;widget class=&quot;GtkHBox&quot; id=&quot;mailHbox&quot;&gt;
++		&lt;widget class=&quot;GtkHBox&quot; id=&quot;patternsHbox&quot;&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+ 		  &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;spacing&quot;&gt;0&lt;/property&gt;
+ 
+ 		  &lt;child&gt;
+-		    &lt;widget class=&quot;GtkScrolledWindow&quot; id=&quot;mailScrolledwindow&quot;&gt;
+-		      &lt;property name=&quot;border_width&quot;&gt;4&lt;/property&gt;
++		    &lt;widget class=&quot;GtkVBox&quot; id=&quot;patternsVbox&quot;&gt;
+ 		      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		      &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-		      &lt;property name=&quot;hscrollbar_policy&quot;&gt;GTK_POLICY_AUTOMATIC&lt;/property&gt;
+-		      &lt;property name=&quot;vscrollbar_policy&quot;&gt;GTK_POLICY_AUTOMATIC&lt;/property&gt;
+-		      &lt;property name=&quot;shadow_type&quot;&gt;GTK_SHADOW_NONE&lt;/property&gt;
+-		      &lt;property name=&quot;window_placement&quot;&gt;GTK_CORNER_TOP_LEFT&lt;/property&gt;
+-
+-		      &lt;child&gt;
+-			&lt;widget class=&quot;GtkTreeView&quot; id=&quot;mailTreeview&quot;&gt;
+-			  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+-			  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;headers_visible&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;rules_hint&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;reorderable&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;enable_search&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;fixed_height_mode&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;hover_selection&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;hover_expand&quot;&gt;False&lt;/property&gt;
+-			&lt;/widget&gt;
+-		      &lt;/child&gt;
+-		    &lt;/widget&gt;
+-		    &lt;packing&gt;
+-		      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+-		      &lt;property name=&quot;expand&quot;&gt;True&lt;/property&gt;
+-		      &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
+-		    &lt;/packing&gt;
+-		  &lt;/child&gt;
+-
+-		  &lt;child&gt;
+-		    &lt;widget class=&quot;GtkVButtonBox&quot; id=&quot;mailVbuttonbox&quot;&gt;
+-		      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		      &lt;property name=&quot;layout_style&quot;&gt;GTK_BUTTONBOX_START&lt;/property&gt;
++		      &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+ 		      &lt;property name=&quot;spacing&quot;&gt;0&lt;/property&gt;
+ 
+ 		      &lt;child&gt;
+-			&lt;widget class=&quot;GtkButton&quot; id=&quot;addAccountButton&quot;&gt;
++			&lt;widget class=&quot;GtkScrolledWindow&quot; id=&quot;patternsScrolledwindow&quot;&gt;
+ 			  &lt;property name=&quot;border_width&quot;&gt;4&lt;/property&gt;
+-			  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 			  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;can_default&quot;&gt;True&lt;/property&gt;
+ 			  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;relief&quot;&gt;GTK_RELIEF_NORMAL&lt;/property&gt;
+-			  &lt;property name=&quot;focus_on_click&quot;&gt;True&lt;/property&gt;
+-			  &lt;signal name=&quot;clicked&quot; handler=&quot;on_addAccountButton_clicked&quot; last_modification_time=&quot;Tue, 20 Sep 2005 13:19:44 GMT&quot;/&gt;
++			  &lt;property name=&quot;hscrollbar_policy&quot;&gt;GTK_POLICY_AUTOMATIC&lt;/property&gt;
++			  &lt;property name=&quot;vscrollbar_policy&quot;&gt;GTK_POLICY_AUTOMATIC&lt;/property&gt;
++			  &lt;property name=&quot;shadow_type&quot;&gt;GTK_SHADOW_NONE&lt;/property&gt;
++			  &lt;property name=&quot;window_placement&quot;&gt;GTK_CORNER_TOP_LEFT&lt;/property&gt;
+ 
+ 			  &lt;child&gt;
+-			    &lt;widget class=&quot;GtkAlignment&quot; id=&quot;alignment28&quot;&gt;
++			    &lt;widget class=&quot;GtkTreeView&quot; id=&quot;patternsTreeview&quot;&gt;
++			      &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 			      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-			      &lt;property name=&quot;xalign&quot;&gt;0.5&lt;/property&gt;
+-			      &lt;property name=&quot;yalign&quot;&gt;0.5&lt;/property&gt;
+-			      &lt;property name=&quot;xscale&quot;&gt;0&lt;/property&gt;
+-			      &lt;property name=&quot;yscale&quot;&gt;0&lt;/property&gt;
+-			      &lt;property name=&quot;top_padding&quot;&gt;0&lt;/property&gt;
+-			      &lt;property name=&quot;bottom_padding&quot;&gt;0&lt;/property&gt;
+-			      &lt;property name=&quot;left_padding&quot;&gt;0&lt;/property&gt;
+-			      &lt;property name=&quot;right_padding&quot;&gt;0&lt;/property&gt;
+-
+-			      &lt;child&gt;
+-				&lt;widget class=&quot;GtkHBox&quot; id=&quot;hbox42&quot;&gt;
+-				  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-				  &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+-				  &lt;property name=&quot;spacing&quot;&gt;2&lt;/property&gt;
+-
+-				  &lt;child&gt;
+-				    &lt;widget class=&quot;GtkImage&quot; id=&quot;image497&quot;&gt;
+-				      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-				      &lt;property name=&quot;stock&quot;&gt;gtk-add&lt;/property&gt;
+-				      &lt;property name=&quot;icon_size&quot;&gt;4&lt;/property&gt;
+-				      &lt;property name=&quot;xalign&quot;&gt;0.5&lt;/property&gt;
+-				      &lt;property name=&quot;yalign&quot;&gt;0.5&lt;/property&gt;
+-				      &lt;property name=&quot;xpad&quot;&gt;0&lt;/property&gt;
+-				      &lt;property name=&quot;ypad&quot;&gt;0&lt;/property&gt;
+-				    &lt;/widget&gt;
+-				    &lt;packing&gt;
+-				      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+-				      &lt;property name=&quot;expand&quot;&gt;False&lt;/property&gt;
+-				      &lt;property name=&quot;fill&quot;&gt;False&lt;/property&gt;
+-				    &lt;/packing&gt;
+-				  &lt;/child&gt;
+-
+-				  &lt;child&gt;
+-				    &lt;widget class=&quot;GtkLabel&quot; id=&quot;label49&quot;&gt;
+-				      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-				      &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Add&lt;/property&gt;
+-				      &lt;property name=&quot;use_underline&quot;&gt;True&lt;/property&gt;
+-				      &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
+-				      &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
+-				      &lt;property name=&quot;wrap&quot;&gt;False&lt;/property&gt;
+-				      &lt;property name=&quot;selectable&quot;&gt;False&lt;/property&gt;
+-				      &lt;property name=&quot;xalign&quot;&gt;0.5&lt;/property&gt;
+-				      &lt;property name=&quot;yalign&quot;&gt;0.5&lt;/property&gt;
+-				      &lt;property name=&quot;xpad&quot;&gt;0&lt;/property&gt;
+-				      &lt;property name=&quot;ypad&quot;&gt;0&lt;/property&gt;
+-				      &lt;property name=&quot;ellipsize&quot;&gt;PANGO_ELLIPSIZE_NONE&lt;/property&gt;
+-				      &lt;property name=&quot;width_chars&quot;&gt;-1&lt;/property&gt;
+-				      &lt;property name=&quot;single_line_mode&quot;&gt;False&lt;/property&gt;
+-				      &lt;property name=&quot;angle&quot;&gt;0&lt;/property&gt;
+-				    &lt;/widget&gt;
+-				    &lt;packing&gt;
+-				      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+-				      &lt;property name=&quot;expand&quot;&gt;False&lt;/property&gt;
+-				      &lt;property name=&quot;fill&quot;&gt;False&lt;/property&gt;
+-				    &lt;/packing&gt;
+-				  &lt;/child&gt;
+-				&lt;/widget&gt;
+-			      &lt;/child&gt;
++			      &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
++			      &lt;property name=&quot;headers_visible&quot;&gt;True&lt;/property&gt;
++			      &lt;property name=&quot;rules_hint&quot;&gt;False&lt;/property&gt;
++			      &lt;property name=&quot;reorderable&quot;&gt;False&lt;/property&gt;
++			      &lt;property name=&quot;enable_search&quot;&gt;True&lt;/property&gt;
++			      &lt;property name=&quot;fixed_height_mode&quot;&gt;True&lt;/property&gt;
++			      &lt;property name=&quot;hover_selection&quot;&gt;False&lt;/property&gt;
++			      &lt;property name=&quot;hover_expand&quot;&gt;False&lt;/property&gt;
+ 			    &lt;/widget&gt;
+ 			  &lt;/child&gt;
+ 			&lt;/widget&gt;
++			&lt;packing&gt;
++			  &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
++			  &lt;property name=&quot;expand&quot;&gt;True&lt;/property&gt;
++			  &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
++			&lt;/packing&gt;
+ 		      &lt;/child&gt;
+ 
+ 		      &lt;child&gt;
+-			&lt;widget class=&quot;GtkButton&quot; id=&quot;removeAccountButton&quot;&gt;
+-			  &lt;property name=&quot;border_width&quot;&gt;4&lt;/property&gt;
++			&lt;widget class=&quot;GtkComboBox&quot; id=&quot;patternsCombobox&quot;&gt;
+ 			  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+ 			  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;can_default&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;label&quot;&gt;gtk-remove&lt;/property&gt;
+-			  &lt;property name=&quot;use_stock&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;relief&quot;&gt;GTK_RELIEF_NORMAL&lt;/property&gt;
++			  &lt;property name=&quot;items&quot; translatable=&quot;yes&quot;&gt;&lt;/property&gt;
++			  &lt;property name=&quot;add_tearoffs&quot;&gt;False&lt;/property&gt;
+ 			  &lt;property name=&quot;focus_on_click&quot;&gt;True&lt;/property&gt;
+-			  &lt;signal name=&quot;clicked&quot; handler=&quot;on_removeAccountButton_clicked&quot; last_modification_time=&quot;Fri, 02 Sep 2005 21:58:06 GMT&quot;/&gt;
++			  &lt;signal name=&quot;changed&quot; handler=&quot;on_patternsCombobox_changed&quot; last_modification_time=&quot;Tue, 03 Jul 2007 13:02:19 GMT&quot;/&gt;
+ 			&lt;/widget&gt;
++			&lt;packing&gt;
++			  &lt;property name=&quot;padding&quot;&gt;4&lt;/property&gt;
++			  &lt;property name=&quot;expand&quot;&gt;True&lt;/property&gt;
++			  &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
++			&lt;/packing&gt;
+ 		      &lt;/child&gt;
+ 		    &lt;/widget&gt;
+ 		    &lt;packing&gt;
+ 		      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+-		      &lt;property name=&quot;expand&quot;&gt;False&lt;/property&gt;
+-		      &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
+-		    &lt;/packing&gt;
+-		  &lt;/child&gt;
+-		&lt;/widget&gt;
+-		&lt;packing&gt;
+-		  &lt;property name=&quot;padding&quot;&gt;4&lt;/property&gt;
+-		  &lt;property name=&quot;expand&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
+-		&lt;/packing&gt;
+-	      &lt;/child&gt;
+-
+-	      &lt;child&gt;
+-		&lt;widget class=&quot;GtkLabel&quot; id=&quot;patternsLabel&quot;&gt;
+-		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;Specify any file pattern you wish to exclude from indexing:&lt;/property&gt;
+-		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
+-		  &lt;property name=&quot;wrap&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;selectable&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;xalign&quot;&gt;0&lt;/property&gt;
+-		  &lt;property name=&quot;yalign&quot;&gt;0.5&lt;/property&gt;
+-		  &lt;property name=&quot;xpad&quot;&gt;4&lt;/property&gt;
+-		  &lt;property name=&quot;ypad&quot;&gt;4&lt;/property&gt;
+-		  &lt;property name=&quot;ellipsize&quot;&gt;PANGO_ELLIPSIZE_NONE&lt;/property&gt;
+-		  &lt;property name=&quot;width_chars&quot;&gt;-1&lt;/property&gt;
+-		  &lt;property name=&quot;single_line_mode&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;angle&quot;&gt;0&lt;/property&gt;
+-		&lt;/widget&gt;
+-		&lt;packing&gt;
+-		  &lt;property name=&quot;padding&quot;&gt;4&lt;/property&gt;
+-		  &lt;property name=&quot;expand&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;fill&quot;&gt;False&lt;/property&gt;
+-		&lt;/packing&gt;
+-	      &lt;/child&gt;
+-
+-	      &lt;child&gt;
+-		&lt;widget class=&quot;GtkHBox&quot; id=&quot;patternsHbox&quot;&gt;
+-		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;homogeneous&quot;&gt;False&lt;/property&gt;
+-		  &lt;property name=&quot;spacing&quot;&gt;0&lt;/property&gt;
+-
+-		  &lt;child&gt;
+-		    &lt;widget class=&quot;GtkScrolledWindow&quot; id=&quot;patternsScrolledwindow&quot;&gt;
+-		      &lt;property name=&quot;border_width&quot;&gt;4&lt;/property&gt;
+-		      &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		      &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-		      &lt;property name=&quot;hscrollbar_policy&quot;&gt;GTK_POLICY_AUTOMATIC&lt;/property&gt;
+-		      &lt;property name=&quot;vscrollbar_policy&quot;&gt;GTK_POLICY_AUTOMATIC&lt;/property&gt;
+-		      &lt;property name=&quot;shadow_type&quot;&gt;GTK_SHADOW_NONE&lt;/property&gt;
+-		      &lt;property name=&quot;window_placement&quot;&gt;GTK_CORNER_TOP_LEFT&lt;/property&gt;
+-
+-		      &lt;child&gt;
+-			&lt;widget class=&quot;GtkTreeView&quot; id=&quot;patternsTreeview&quot;&gt;
+-			  &lt;property agent=&quot;glademm&quot; name=&quot;cxx_visibility&quot;&gt;protected&lt;/property&gt;
+-			  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;can_focus&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;headers_visible&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;rules_hint&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;reorderable&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;enable_search&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;fixed_height_mode&quot;&gt;True&lt;/property&gt;
+-			  &lt;property name=&quot;hover_selection&quot;&gt;False&lt;/property&gt;
+-			  &lt;property name=&quot;hover_expand&quot;&gt;False&lt;/property&gt;
+-			&lt;/widget&gt;
+-		      &lt;/child&gt;
+-		    &lt;/widget&gt;
+-		    &lt;packing&gt;
+-		      &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
+ 		      &lt;property name=&quot;expand&quot;&gt;True&lt;/property&gt;
+ 		      &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
+ 		    &lt;/packing&gt;
+@@ -2336,7 +2190,7 @@
+ 		  &lt;/child&gt;
+ 		&lt;/widget&gt;
+ 		&lt;packing&gt;
+-		  &lt;property name=&quot;padding&quot;&gt;0&lt;/property&gt;
++		  &lt;property name=&quot;padding&quot;&gt;4&lt;/property&gt;
+ 		  &lt;property name=&quot;expand&quot;&gt;True&lt;/property&gt;
+ 		  &lt;property name=&quot;fill&quot;&gt;True&lt;/property&gt;
+ 		&lt;/packing&gt;
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-07-21 04:17:51 UTC (rev 874)
+@@ -31,7 +31,6 @@
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;XapianIndex.h&quot;
+ #include &quot;DaemonState.h&quot;
+-#include &quot;MboxHandler.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+@@ -43,9 +42,7 @@
+ DaemonState::DaemonState() :
+ 	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 20),
+ 	m_fullScan(false),
+-	m_pMailMonitor(MonitorFactory::getMonitor()),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+-	m_pMailHandler(NULL),
+ 	m_pDiskHandler(NULL)
+ {
+ 	m_onThreadEndSignal.connect(SigC::slot(*this, &amp;DaemonState::on_thread_end));
+@@ -57,11 +54,7 @@
+ 	{
+ 		delete m_pDiskMonitor;
+ 	}
+-	if (m_pMailMonitor != NULL)
+-	{
+-		delete m_pMailMonitor;
+-	}
+-	// Don't delete m_pDiskHandler and m_pMailHandler, threads may need them
++	// Don't delete m_pDiskHandler, threads may need it
+ 	// Since DaemonState is destroyed when the program exits, it's okay
+ }
+ 
+@@ -124,13 +117,7 @@
+ #endif
+ 	}
+ 
+-	// Fire up the mail monitor thread now
+-	m_pMailHandler = new MboxHandler();
+-	MonitorThread *pMailMonitorThread = new MonitorThread(m_pMailMonitor, m_pMailHandler);
+-	pMailMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+-	start_thread(pMailMonitorThread, true);
+-
+-	// Same for the disk monitor thread
++	// Fire up the disk monitor thread
+ 	m_pDiskHandler = new OnDiskHandler();
+ 	MonitorThread *pDiskMonitorThread = new MonitorThread(m_pDiskMonitor, m_pDiskHandler);
+ 	pDiskMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/DaemonState.h	2007-07-21 04:17:51 UTC (rev 874)
+@@ -46,9 +46,7 @@
+ 
+ 	protected:
+ 		bool m_fullScan;
+-		MonitorInterface *m_pMailMonitor;
+ 		MonitorInterface *m_pDiskMonitor;
+-		MonitorHandler *m_pMailHandler;
+ 		MonitorHandler *m_pDiskHandler;
+ 		std::string m_locationBeingCrawled;
+ 		SigC::Signal1&lt;void, int&gt; m_signalQuit;
+
+Modified: trunk/UI/GTK2/src/Makefile.am
+===================================================================
+--- trunk/UI/GTK2/src/Makefile.am	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/Makefile.am	2007-07-21 04:17:51 UTC (rev 874)
+@@ -22,7 +22,6 @@
+ 	DaemonState.h \
+ 	EnginesTree.h \
+ 	IndexPage.h \
+-	MboxHandler.h \
+ 	ModelColumns.h \
+ 	Notebook.h \
+ 	OnDiskHandler.h \
+@@ -54,7 +53,6 @@
+ 	statisticsDialog.cc \
+ 	EnginesTree.cpp \
+ 	IndexPage.cpp \
+-	MboxHandler.cpp \
+ 	ModelColumns.cpp \
+ 	Notebook.cpp \
+ 	PinotSettings.cpp \
+@@ -65,7 +63,6 @@
+ pinot_dbus_daemon_SOURCES = \
+ 	pinot-dbus-daemon.cc \
+ 	DaemonState.cpp \
+-	MboxHandler.cpp \
+ 	OnDiskHandler.cpp \
+ 	PinotSettings.cpp \
+ 	ServerThreads.cpp \
+
+Deleted: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2007-07-21 04:17:51 UTC (rev 874)
+@@ -1,386 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+-
+-#include &lt;sys/types.h&gt;
+-#include &lt;sys/stat.h&gt;
+-#include &lt;fcntl.h&gt;
+-#include &lt;unistd.h&gt;
+-#include &lt;iostream&gt;
+-#include &lt;fstream&gt;
+-
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
+-#include &quot;StringManip.h&quot;
+-#include &quot;Timer.h&quot;
+-#include &quot;TimeConverter.h&quot;
+-#include &quot;Url.h&quot;
+-#include &quot;FilterFactory.h&quot;
+-#include &quot;FilterUtils.h&quot;
+-#include &quot;FilterWrapper.h&quot;
+-#include &quot;XapianDatabase.h&quot;
+-#include &quot;MboxHandler.h&quot;
+-
+-using namespace std;
+-using namespace SigC;
+-
+-MboxHandler::MboxHandler() :
+-	MonitorHandler(),
+-	m_history(PinotSettings::getInstance().getHistoryDatabaseName()),
+-	m_index(PinotSettings::getInstance().m_daemonIndexLocation),
+-	m_sourceId(0)
+-{
+-	// Does the email source exist ?
+-	if (m_history.hasSource(&quot;My Email&quot;, m_sourceId) == false)
+-	{
+-		// Create it
+-		m_sourceId = m_history.insertSource(&quot;My Email&quot;);
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler: My Email source ID is &quot; &lt;&lt; m_sourceId &lt;&lt; endl;
+-#endif
+-}
+-
+-MboxHandler::~MboxHandler()
+-{
+-}
+-
+-bool MboxHandler::checkMailAccount(const string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount)
+-{
+-	struct stat fileStat;
+-	CrawlHistory::CrawlStatus status;
+-	time_t lastModDate = 0;
+-	mailAccount.m_name = fileName;
+-
+-	// Ensure it's one of our mail accounts
+-	set&lt;PinotSettings::TimestampedItem&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = mailAccounts.find(mailAccount);
+-	if (mailIter == mailAccounts.end())
+-	{
+-		// It doesn't seem to be
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not one of &quot; &lt;&lt; mailAccounts.size() &lt;&lt; &quot; accounts&quot; &lt;&lt; endl;
+-#endif
+-		return false;
+-	}
+-
+-	// Find out when it was last modified
+-	if ((stat(fileName.c_str(), &amp;fileStat) == 0) &amp;&amp;
+-		(!S_ISREG(fileStat.st_mode)))
+-	{
+-		// This is not a file !
+-		return false;
+-	}
+-
+-	// Is there a record for this mail account ?
+-	if (m_history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, status, lastModDate) == true)
+-	{
+-		if (fileStat.st_mtime &lt;= lastModDate)
+-		{
+-			// No change since last time...
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::checkMailAccount: not modified since last time (&quot;
+-				&lt;&lt; lastModDate &lt;&lt; &quot;&gt;&quot; &lt;&lt; fileStat.st_mtime &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+-#endif
+-			return false;
+-		}
+-	}
+-	else
+-	{
+-		m_history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, CrawlHistory::CRAWLING, m_sourceId, time(NULL));
+-	}
+-
+-	// Update this mail account's properties
+-	mailAccount = (*mailIter);
+-	mailAccount.m_modTime = fileStat.st_mtime;
+-
+-	return true;
+-}
+-
+-bool MboxHandler::indexMessages(const string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount,
+-	off_t mboxOffset)
+-{
+-	string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+-
+-	// Come up with a label for this mbox file's messages
+-	sourceLabel += fileName;
+-
+-	if (m_index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::indexMessages: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Get the mbox filter
+-	Dijon::Filter *pFilter = Dijon::FilterFactory::getFilter(&quot;application/mbox&quot;);
+-	if (pFilter == NULL)
+-	{
+-		return false;
+-	}
+-
+-	Document emptyDoc;
+-	emptyDoc.setLocation(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
+-	if (FilterUtils::feedFilter(emptyDoc, pFilter) == false)
+-	{
+-		delete pFilter;
+-		return false;
+-	}
+-
+-	bool indexedFile = parseMailAccount(pFilter, sourceLabel);
+-
+-	delete pFilter;
+-
+-	// Flush the index
+-	m_index.flush();
+-
+-	// Update this mail account's record
+-	m_history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + fileName, CrawlHistory::CRAWLED, mailAccount.m_modTime);
+-
+-	return indexedFile;
+-}
+-
+-bool MboxHandler::parseMailAccount(Dijon::Filter *pFilter, const string &amp;sourceLabel)
+-{
+-	set&lt;unsigned int&gt; docIdList;
+-	set&lt;string&gt; labels;
+-	char sourceStr[64];
+-	unsigned int docNum = 0;
+-	bool indexedFile = false;
+-#ifdef DEBUG
+-	Timer timer;
+-	timer.start();
+-#endif
+-
+-	// Get a list of documents labeled with this source label
+-	m_index.listDocumentsWithLabel(sourceLabel, docIdList); 
+-
+-	// This is the labels we'll apply to new documents
+-	snprintf(sourceStr, 64, &quot;SOURCE%u&quot;, m_sourceId);
+-	labels.insert(sourceStr);
+-	labels.insert(sourceLabel);
+-
+-	// Parse the mbox file
+-	while (pFilter-&gt;next_document() == true)
+-	{
+-		Document currentMessage;
+-
+-		FilterUtils::populateDocument(currentMessage, pFilter);
+-
+-		// Has this message already been indexed ?
+-		unsigned int docId = m_index.hasDocument(currentMessage.getLocation());
+-		if (docId == 0)
+-		{
+-			m_index.setStemmingMode(IndexInterface::STORE_BOTH);
+-
+-			unsigned int docId = 0;
+-			indexedFile = FilterWrapper::indexDocument(m_index, currentMessage, labels, docId);
+-#ifdef DEBUG
+-			if (indexedFile == false)
+-			{
+-				cout &lt;&lt; &quot;MboxHandler::parseMailAccount: couldn't index message &quot; &lt;&lt; docNum &lt;&lt; endl;
+-			}
+-#endif
+-		}
+-		else
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MboxHandler::parseMailAccount: already indexed message &quot;
+-				&lt;&lt; docNum &lt;&lt; &quot;, document ID &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-			set&lt;unsigned int&gt;::iterator docIter = docIdList.find(docId);
+-			if (docIter != docIdList.end())
+-			{
+-				// Remove this document from the list
+-				docIdList.erase(docIter);
+-			}
+-		}
+-
+-		++docNum;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::parseMailAccount: parsed &quot; &lt;&lt; docNum &lt;&lt; &quot; documents in &quot;
+-		&lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+-#endif
+-
+-	// Any document still in the list wasn't found this time around
+-	// and should be unindexed
+-	deleteMessages(docIdList);
+-
+-	return indexedFile;
+-}
+-
+-bool MboxHandler::deleteMessages(set&lt;unsigned int&gt; &amp;docIdList)
+-{
+-	bool unindexedMsgs = false;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::deleteMessages: &quot; &lt;&lt; docIdList.size() &lt;&lt; &quot; message(s) to unindex&quot; &lt;&lt; endl;
+-#endif
+-	for (set&lt;unsigned int&gt;::iterator docIter = docIdList.begin();
+-		docIter != docIdList.end(); ++docIter)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MboxHandler::deleteMessages: unindexing document ID &quot; &lt;&lt; *docIter &lt;&lt; endl;
+-#endif
+-		if (m_index.unindexDocument(*docIter) == true)
+-		{
+-			unindexedMsgs = true;
+-		}
+-	}
+-
+-	return unindexedMsgs;
+-}
+-
+-void MboxHandler::initialize(void)
+-{
+-	set&lt;string&gt; mailboxes;
+-
+-	// Get the mail accounts map
+-	set&lt;PinotSettings::TimestampedItem&gt; &amp;mailAccounts = PinotSettings::getInstance().m_mailAccounts;
+-	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = mailAccounts.begin();
+-		mailIter != mailAccounts.end(); ++mailIter)
+-	{
+-		m_fileNames.insert(mailIter-&gt;m_name);
+-	}
+-
+-	// Unindex messages that belong to mailboxes that no longer exist
+-	if (m_history.getSourceItems(m_sourceId, CrawlHistory::CRAWLED, mailboxes) &gt; 0)
+-	{
+-		for(set&lt;string&gt;::const_iterator mailIter = mailboxes.begin();
+-			mailIter != mailboxes.end(); ++mailIter)
+-		{
+-			Url urlObj(*mailIter);
+-
+-			// Is this a file and does it still exist ?
+-			if ((urlObj.getProtocol() == &quot;file&quot;) &amp;&amp;
+-				(m_fileNames.find(mailIter-&gt;substr(7)) == m_fileNames.end()))
+-			{
+-				string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+-
+-				sourceLabel += urlObj.getLocation();
+-				sourceLabel += &quot;/&quot;;
+-				sourceLabel += urlObj.getFile();
+-
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;MboxHandler::initialize: removing messages with label &quot;
+-					&lt;&lt; sourceLabel &lt;&lt; endl;
+-#endif
+-				// All documents with this label will be unindexed
+-				m_index.unindexDocuments(sourceLabel, false);
+-
+-				// Delete this item
+-				m_history.deleteItem(*mailIter);
+-			}
+-#ifdef DEBUG
+-			else cout &lt;&lt; &quot;MboxHandler::initialize: &quot; &lt;&lt; *mailIter
+-				&lt;&lt; &quot; still configured for monitoring&quot; &lt;&lt; endl;
+-#endif
+-		}
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::initialize: &quot; &lt;&lt; m_fileNames.size() &lt;&lt; &quot; mail accounts&quot; &lt;&lt; endl;
+-#endif
+-}
+-
+-void MboxHandler::flushIndex(void)
+-{
+-	// The index is flushed after indexing a mailbox
+-}
+-
+-bool MboxHandler::fileExists(const string &amp;fileName)
+-{
+-	PinotSettings::TimestampedItem mailAccount;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::fileExists: &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-	if (checkMailAccount(fileName, mailAccount) == false)
+-	{
+-		return false;
+-	}
+-
+-	return indexMessages(fileName, mailAccount, 0);
+-}
+-
+-bool MboxHandler::fileCreated(const string &amp;fileName)
+-{
+-	// Nothing to do here
+-	return true;
+-}
+-
+-bool MboxHandler::fileModified(const string &amp;fileName)
+-{
+-	PinotSettings::TimestampedItem mailAccount;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MboxHandler::fileModified: &quot; &lt;&lt; fileName &lt;&lt; &quot; changed&quot; &lt;&lt; endl;
+-#endif
+-	if (checkMailAccount(fileName, mailAccount) == false)
+-	{
+-		return false;
+-	}
+-
+-	// Parse the file in whole
+-	return indexMessages(fileName, mailAccount, 0);
+-}
+-
+-bool MboxHandler::fileMoved(const string &amp;fileName, const string &amp;previousFileName)
+-{
+-	// Nothing to do here
+-	return true;
+-}
+-
+-bool MboxHandler::directoryMoved(const string &amp;dirName,
+-	const string &amp;previousDirName)
+-{
+-	// Nothing to do here
+-	return true;
+-}
+-
+-bool MboxHandler::fileDeleted(const string &amp;fileName)
+-{
+-	set&lt;unsigned int&gt; docIdList;
+-	string sourceLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+-
+-	sourceLabel += fileName;
+-
+-	if (m_index.isGood() == false)
+-	{
+-		cerr &lt;&lt; &quot;MboxHandler::fileDeleted: couldn't get mail index&quot; &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	// Get a list of documents labeled with this source label
+-	if (m_index.listDocumentsWithLabel(sourceLabel, docIdList) == true)
+-	{
+-		// Unindex all documents labeled with this source label
+-		deleteMessages(docIdList); 
+-		// Delete the label
+-		m_index.deleteLabel(sourceLabel);
+-
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-bool MboxHandler::directoryDeleted(const string &amp;dirName)
+-{
+-	// Nothing to do here
+-	return true;
+-}
+-
+
+Deleted: trunk/UI/GTK2/src/MboxHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.h	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/MboxHandler.h	2007-07-21 04:17:51 UTC (rev 874)
+@@ -1,88 +0,0 @@
+-/*
+- *  Copyright 2005,2006 Fabrice Colin
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- */
+- 
+-#ifndef _MBOXHANDLER_HH
+-#define _MBOXHANDLER_HH
+-
+-#include &lt;time.h&gt;
+-#include &lt;string&gt;
+-#include &lt;set&gt;
+-#include &lt;sigc++/slot.h&gt;
+-
+-#include &quot;Filter.h&quot;
+-#include &quot;CrawlHistory.h&quot;
+-#include &quot;MonitorHandler.h&quot;
+-#include &quot;XapianIndex.h&quot;
+-#include &quot;PinotSettings.h&quot;
+-
+-class MboxHandler : public MonitorHandler
+-{
+-	public:
+-		MboxHandler();
+-		virtual ~MboxHandler();
+-
+-		/// Initializes things before starting monitoring.
+-		virtual void initialize(void);
+-
+-		/// Handles flushing the index.
+-		virtual void flushIndex(void);
+-
+-		/// Handles file existence events.
+-		virtual bool fileExists(const std::string &amp;fileName);
+-
+-		/// Handles file creation events.
+-		virtual bool fileCreated(const std::string &amp;fileName);
+-
+-		/// Handles file modified events.
+-		virtual bool fileModified(const std::string &amp;fileName);
+-
+-		/// Handles file moved events.
+-		virtual bool fileMoved(const std::string &amp;fileName,
+-			const std::string &amp;previousFileName);
+-
+-		/// Handles directory moved events.
+-		virtual bool directoryMoved(const std::string &amp;dirName,
+-			const std::string &amp;previousDirName);
+-
+-		/// Handles file deleted events.
+-		virtual bool fileDeleted(const std::string &amp;fileName);
+-
+-		/// Handles directory deleted events.
+-		virtual bool directoryDeleted(const std::string &amp;dirName);
+-
+-	protected:
+-		CrawlHistory m_history;
+-		XapianIndex m_index;
+-		unsigned int m_sourceId;
+-
+-		bool checkMailAccount(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount);
+-
+-		bool indexMessages(const std::string &amp;fileName, PinotSettings::TimestampedItem &amp;mailAccount,
+-			off_t mboxOffset);
+-
+-		bool parseMailAccount(Dijon::Filter *pFilter, const std::string &amp;sourceLabel);
+-
+-		bool deleteMessages(std::set&lt;unsigned int&gt; &amp;docIdList);
+-
+-	private:
+-		MboxHandler(const MboxHandler &amp;other);
+-		MboxHandler &amp;operator=(const MboxHandler &amp;other);
+-
+-};
+-
+-#endif // _MBOXHANDLER_HH
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-07-21 04:17:51 UTC (rev 874)
+@@ -116,15 +116,17 @@
+ 		pDoc = new Document(docInfo);
+ 	}
+ 
++	FilterWrapper wrapFilter(&amp;m_index);
++
+ 	// Get an ad hoc tokenizer for the message
+ 	// Index or update ?
+ 	if (docId == 0)
+ 	{
+-		indexedFile = FilterWrapper::indexDocument(m_index, *pDoc, labels, docId);
++		indexedFile = wrapFilter.indexDocument(*pDoc, labels, docId);
+ 	}
+ 	else
+ 	{
+-		indexedFile = FilterWrapper::updateDocument(docId, m_index, *pDoc);
++		indexedFile = wrapFilter.updateDocument(*pDoc, docId);
+ 	}
+ 
+ #ifdef DEBUG
+@@ -141,8 +143,10 @@
+ 
+ bool OnDiskHandler::replaceFile(unsigned int docId, DocumentInfo &amp;docInfo)
+ {
++	FilterWrapper wrapFilter(&amp;m_index);
++
+ 	// Unindex the destination file
+-	m_index.unindexDocument(docInfo.getLocation());
++	wrapFilter.unindexDocument(docInfo.getLocation());
+ 
+ 	// Update the document info
+ 	return m_index.updateDocumentInfo(docId, docInfo);
+@@ -186,7 +190,7 @@
+ 					&lt;&lt; &quot;, source &quot; &lt;&lt; sourceId &lt;&lt; &quot; was removed&quot; &lt;&lt; endl;
+ #endif
+ 				// All documents with this label will be unindexed
+-				if (m_index.unindexDocuments(sourceStr, false) == true)
++				if (m_index.unindexDocuments(sourceStr, IndexInterface::BY_LABEL) == true)
+ 				{
+ 					// Delete the source itself and all its items
+ 					m_history.deleteSource(sourceId);
+@@ -326,20 +330,23 @@
+ 
+ bool OnDiskHandler::fileDeleted(const string &amp;fileName)
+ {
++	FilterWrapper wrapFilter(&amp;m_index);
++	string location(&quot;<A HREF="file://">file://</A>&quot;);
+ 	bool handledEvent = true;
+ 
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;OnDiskHandler::fileDeleted: &quot; &lt;&lt; fileName &lt;&lt; endl;
+ #endif
++	location += fileName;
+ 	pthread_mutex_lock(&amp;m_mutex);
+-	unsigned int docId = m_index.hasDocument(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
++	unsigned int docId = m_index.hasDocument(location);
+ 	if (docId &gt; 0)
+ 	{
+ 		// Unindex the file
+-		handledEvent = m_index.unindexDocument(docId);
++		handledEvent = wrapFilter.unindexDocument(location);
+ 		if (handledEvent == true)
+ 		{
+-			m_history.deleteItem(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
++			m_history.deleteItem(location);
+ 		}
+ 	}
+ 	pthread_mutex_unlock(&amp;m_mutex);
+@@ -356,7 +363,7 @@
+ 	cout &lt;&lt; &quot;OnDiskHandler::directoryDeleted: &quot; &lt;&lt; dirName &lt;&lt; endl;
+ #endif
+ 	pthread_mutex_lock(&amp;m_mutex);
+-	if (m_index.unindexDocuments(dirName, true) == true)
++	if (m_index.unindexDocuments(dirName, IndexInterface::BY_DIRECTORY) == true)
+ 	{
+ 		m_history.deleteItems(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName);
+ 		handledEvent = true;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-07-21 04:17:51 UTC (rev 874)
+@@ -104,6 +104,7 @@
+ 	m_newResultsColourBlue(0),
+ 	m_proxyPort(8080),
+ 	m_proxyEnabled(false),
++	m_isBlackList(true),
+ 	m_firstRun(false)
+ {
+ 	string directoryName(getConfigurationDirectory());
+@@ -252,9 +253,8 @@
+ 	m_engineIds.clear();
+ 	m_queries.clear();
+ 	m_labels.clear();
+-	m_mailAccounts.clear();
+ 	m_indexableLocations.clear();
+-	m_filePatternsBlackList.clear();
++	m_filePatternsList.clear();
+ 	m_cacheProviders.clear();
+ }
+ 
+@@ -289,25 +289,25 @@
+ 		m_labels.insert(_(&quot;New&quot;));
+ 		m_labels.insert(_(&quot;Personal&quot;));
+ 		// Skip common image, video and archive types
+-		m_filePatternsBlackList.insert(&quot;*.Z&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.avi&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.asf&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.gif&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.iso&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.jpeg&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.jpg&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.lha&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.mov&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.msf&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.mpeg&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.mpg&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.png&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.rar&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.sh&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.tiff&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.wmv&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.xbm&quot;);
+-		m_filePatternsBlackList.insert(&quot;*.xpm&quot;);
++		m_filePatternsList.insert(&quot;*.Z&quot;);
++		m_filePatternsList.insert(&quot;*.avi&quot;);
++		m_filePatternsList.insert(&quot;*.asf&quot;);
++		m_filePatternsList.insert(&quot;*.gif&quot;);
++		m_filePatternsList.insert(&quot;*.iso&quot;);
++		m_filePatternsList.insert(&quot;*.jpeg&quot;);
++		m_filePatternsList.insert(&quot;*.jpg&quot;);
++		m_filePatternsList.insert(&quot;*.lha&quot;);
++		m_filePatternsList.insert(&quot;*.mov&quot;);
++		m_filePatternsList.insert(&quot;*.msf&quot;);
++		m_filePatternsList.insert(&quot;*.mpeg&quot;);
++		m_filePatternsList.insert(&quot;*.mpg&quot;);
++		m_filePatternsList.insert(&quot;*.png&quot;);
++		m_filePatternsList.insert(&quot;*.rar&quot;);
++		m_filePatternsList.insert(&quot;*.sh&quot;);
++		m_filePatternsList.insert(&quot;*.tiff&quot;);
++		m_filePatternsList.insert(&quot;*.wmv&quot;);
++		m_filePatternsList.insert(&quot;*.xbm&quot;);
++		m_filePatternsList.insert(&quot;*.xpm&quot;);
+ 	}
+ 
+ 	// Some search engines are hardcoded
+@@ -446,15 +446,12 @@
+ 				{
+ 					loadProxy(pElem);
+ 				}
+-				else if (nodeName == &quot;mailaccount&quot;)
+-				{
+-					loadMailAccounts(pElem);
+-				}
+ 				else if (nodeName == &quot;indexable&quot;)
+ 				{
+ 					loadIndexableLocations(pElem);
+ 				}
+-				else if (nodeName == &quot;blacklist&quot;)
++				else if ((nodeName == &quot;blacklist&quot;) ||
++					(nodeName == &quot;patterns&quot;))
+ 				{
+ 					loadFilePatterns(pElem);
+ 				}
+@@ -941,52 +938,6 @@
+ 	return true;
+ }
+ 
+-bool PinotSettings::loadMailAccounts(const Element *pElem)
+-{
+-	if (pElem == NULL)
+-	{
+-		return false;
+-	}
+-
+-	Node::NodeList childNodes = pElem-&gt;get_children();
+-	if (childNodes.empty() == true)
+-	{
+-		return false;
+-	}
+-
+-	TimestampedItem mailAccount;
+-
+-	// Load the mail account's properties
+-	for (Node::NodeList::iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+-	{
+-		Node *pNode = (*iter);
+-		Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
+-		if (pElem == NULL)
+-		{
+-			continue;
+-		}
+-
+-		string nodeName = pElem-&gt;get_name();
+-		string nodeContent = getElementContent(pElem);
+-
+-		if (nodeName == &quot;name&quot;)
+-		{
+-			mailAccount.m_name = nodeContent;
+-		}
+-		else if (nodeName == &quot;mtime&quot;)
+-		{
+-			mailAccount.m_modTime = (time_t)atoi(nodeContent.c_str());
+-		}
+-	}
+-
+-	if (mailAccount.m_name.empty() == false)
+-	{
+-		m_mailAccounts.insert(mailAccount);
+-	}
+-
+-	return true;
+-}
+-
+ bool PinotSettings::loadIndexableLocations(const Element *pElem)
+ {
+ 	if (pElem == NULL)
+@@ -1068,8 +1019,19 @@
+ 
+ 		if (nodeName == &quot;pattern&quot;)
+ 		{
+-			m_filePatternsBlackList.insert(nodeContent);
++			m_filePatternsList.insert(nodeContent);
+ 		}
++		else if (nodeName == &quot;forbid&quot;)
++		{
++			if (nodeContent == &quot;YES&quot;)
++			{
++				m_isBlackList = true;
++			}
++			else
++			{
++				m_isBlackList = false;
++			}
++		}
+ 	}
+ 
+ 	return true;
+@@ -1336,18 +1298,6 @@
+ 	addChildElement(pElem, &quot;port&quot;, numStr);
+ 	addChildElement(pElem, &quot;type&quot;, m_proxyType);
+ 	addChildElement(pElem, &quot;enable&quot;, (m_proxyEnabled ? &quot;YES&quot; : &quot;NO&quot;));
+-	// Mail accounts
+-	for (set&lt;TimestampedItem&gt;::iterator mailIter = m_mailAccounts.begin(); mailIter != m_mailAccounts.end(); ++mailIter)
+-	{
+-		pElem = pRootElem-&gt;add_child(&quot;mailaccount&quot;);
+-		if (pElem == NULL)
+-		{
+-			return false;
+-		}
+-		addChildElement(pElem, &quot;name&quot;, mailIter-&gt;m_name);
+-		sprintf(numStr, &quot;%ld&quot;, mailIter-&gt;m_modTime);
+-		addChildElement(pElem, &quot;mtime&quot;, numStr);
+-	}
+ 	// Locations to index 
+ 	for (set&lt;IndexableLocation&gt;::iterator locationIter = m_indexableLocations.begin(); locationIter != m_indexableLocations.end(); ++locationIter)
+ 	{
+@@ -1359,16 +1309,17 @@
+ 		addChildElement(pElem, &quot;name&quot;, locationIter-&gt;m_name);
+ 		addChildElement(pElem, &quot;monitor&quot;, (locationIter-&gt;m_monitor ? &quot;YES&quot; : &quot;NO&quot;));
+ 	}
+-	// File patterns that are blacklisted
+-	pElem = pRootElem-&gt;add_child(&quot;blacklist&quot;);
++	// File patterns
++	pElem = pRootElem-&gt;add_child(&quot;patterns&quot;);
+ 	if (pElem == NULL)
+ 	{
+ 		return false;
+ 	}
+-	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsBlackList.begin(); patternIter != m_filePatternsBlackList.end() ; ++patternIter)
++	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsList.begin(); patternIter != m_filePatternsList.end() ; ++patternIter)
+ 	{
+ 		addChildElement(pElem, &quot;pattern&quot;, *patternIter);
+ 	}
++	addChildElement(pElem, &quot;forbid&quot;, (m_isBlackList ? &quot;YES&quot; : &quot;NO&quot;));
+ 
+ 	// Save to file
+ 	doc.write_to_file_formatted(getConfigurationFileName());
+@@ -1661,24 +1612,32 @@
+ /// Determines if a file matches the blacklist.
+ bool PinotSettings::isBlackListed(const string &amp;fileName)
+ {
+-	if (m_filePatternsBlackList.empty() == true)
++	if (m_filePatternsList.empty() == true)
+ 	{
+-		return false;
++		if (m_isBlackList == true)
++		{
++			// There is no black-list
++			return false;
++		}
++
++		// The file is not in the (empty) whitelist
++		return true;
+ 	}
+ 
+ 	// Any pattern matches this file name ?
+-	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsBlackList.begin(); patternIter != m_filePatternsBlackList.end() ; ++patternIter)
++	for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsList.begin(); patternIter != m_filePatternsList.end() ; ++patternIter)
+ 	{
+ 		if (fnmatch(patternIter-&gt;c_str(), fileName.c_str(), FNM_NOESCAPE) == 0)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;PinotSettings::isBlackListed: &quot; &lt;&lt; fileName &lt;&lt; &quot; matches &quot; &lt;&lt; *patternIter &lt;&lt; endl;
+ #endif
+-			return true;
++			// Fail if it's in the blacklist, let the file through otherwise
++			return m_isBlackList;
+ 		}
+ 	}
+ 
+-	return false;
++	return !m_isBlackList;
+ }
+ 
+ PinotSettings::Engine::Engine()
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/PinotSettings.h	2007-07-21 04:17:51 UTC (rev 874)
+@@ -210,9 +210,9 @@
+ 		unsigned int m_proxyPort;
+ 		Glib::ustring  m_proxyType;
+ 		bool m_proxyEnabled;
+-		std::set&lt;TimestampedItem&gt; m_mailAccounts;
+ 		std::set&lt;IndexableLocation&gt; m_indexableLocations;
+-		std::set&lt;Glib::ustring&gt; m_filePatternsBlackList;
++		std::set&lt;Glib::ustring&gt; m_filePatternsList;
++		bool m_isBlackList;
+ 		std::vector&lt;CacheProvider&gt; m_cacheProviders;
+ 		std::set&lt;Glib::ustring&gt; m_cacheProtocols;
+ 
+@@ -237,7 +237,6 @@
+ 		bool loadLabels(const xmlpp::Element *pElem);
+ 		bool loadColour(const xmlpp::Element *pElem);
+ 		bool loadProxy(const xmlpp::Element *pElem);
+-		bool loadMailAccounts(const xmlpp::Element *pElem);
+ 		bool loadIndexableLocations(const xmlpp::Element *pElem);
+ 		bool loadFilePatterns(const xmlpp::Element *pElem);
+ 		bool loadCacheProviders(const xmlpp::Element *pElem);
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-07-21 04:17:51 UTC (rev 874)
+@@ -34,6 +34,7 @@
+ #include &lt;glibmm/miscutils.h&gt;
+ 
+ #include &quot;Languages.h&quot;
++#include &quot;MIMEScanner.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;Url.h&quot;
+@@ -681,6 +682,11 @@
+ 			{
+ 				docInfo.setType(&quot;x-directory/normal&quot;);
+ 			}
++			else
++			{
++				// We might as well scan the file for its type now
++				docInfo.setType(MIMEScanner::scanFile(entryName));
++			}
+ 			docInfo.setTimestamp(TimeConverter::toTimestamp(fileStat.st_mtime));
+ 			docInfo.setSize(fileStat.st_size);
+ 
+@@ -751,7 +757,7 @@
+ 			}
+ 		}
+ 	}
+-	cout &lt;&lt; &quot;Scanned &quot; &lt;&lt; m_dirName &lt;&lt; &quot; in &quot; &lt;&lt; scanTimer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;Scanned &quot; &lt;&lt; m_dirName &lt;&lt; &quot; in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ }
+ 
+ DBusServletThread::DBusServletThread(DaemonState *pServer, DBusConnection *pConnection, DBusMessage *pRequest) :
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-07-21 04:17:51 UTC (rev 874)
+@@ -18,6 +18,7 @@
+ 
+ #include &lt;unistd.h&gt;
+ #include &lt;stdlib.h&gt;
++#include &lt;stdio.h&gt;
+ #include &lt;fcntl.h&gt;
+ #include &lt;string.h&gt;
+ #include &lt;signal.h&gt;
+@@ -41,6 +42,7 @@
+ #include &quot;DBusXapianIndex.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+ #include &quot;ActionQueue.h&quot;
++#include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+@@ -1448,13 +1450,16 @@
+ 
+ 		if (m_done == false)
+ 		{
++			FilterWrapper wrapFilter(pIndex);
++			const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
++
+ 			pIndex-&gt;setStemmingMode(IndexInterface::STORE_BOTH);
+ 
+ 			// Update an existing document or add to the index ?
+ 			if (m_update == true)
+ 			{
+ 				// Update the document
+-				if (FilterWrapper::updateDocument(m_docId, *pIndex, *m_pDoc) == true)
++				if (wrapFilter.updateDocument(*m_pDoc, m_docId) == true)
+ 				{
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;IndexingThread::doWork: updated &quot; &lt;&lt; m_pDoc-&gt;getLocation()
+@@ -1468,11 +1473,10 @@
+ 			}
+ 			else
+ 			{
+-				const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+ 				unsigned int docId = 0;
+ 
+ 				// Index the document
+-				success = FilterWrapper::indexDocument(*pIndex, *m_pDoc, labels, docId);
++				success = wrapFilter.indexDocument(*m_pDoc, labels, docId);
+ 				if (success == true)
+ 				{
+ 					m_docId = docId;
+@@ -1583,7 +1587,7 @@
+ 
+ 			// By unindexing all documents that match the label,
+ 			// we effectively delete the label from the index
+-			if (pIndex-&gt;unindexDocuments(labelName, false) == true)
++			if (pIndex-&gt;unindexDocuments(labelName, IndexInterface::BY_LABEL) == true)
+ 			{
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;UnindexingThread::doWork: removed label &quot; &lt;&lt; labelName &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/prefsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.cc	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/prefsDialog.cc	2007-07-21 04:17:51 UTC (rev 874)
+@@ -92,14 +92,6 @@
+ 	directoriesTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	populate_directoriesTreeview();
+ 
+-	// Associate the columns model to the mail accounts tree
+-	m_refMailTree = ListStore::create(m_mailColumns);
+-	mailTreeview-&gt;set_model(m_refMailTree);
+-	mailTreeview-&gt;append_column(_(&quot;Location&quot;), m_mailColumns.m_location);
+-	// Allow only single selection
+-	mailTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+-	populate_mailTreeview();
+-
+ 	// Associate the columns model to the file patterns tree
+ 	m_refPatternsTree = ListStore::create(m_patternsColumns);
+ 	patternsTreeview-&gt;set_model(m_refPatternsTree);
+@@ -107,6 +99,14 @@
+ 	// Allow only single selection
+ 	patternsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 	populate_patternsTreeview();
++	if (m_settings.m_isBlackList == true)
++	{
++		patternsCombobox-&gt;set_active(0);
++	}
++	else
++	{
++		patternsCombobox-&gt;set_active(1);
++	}
+ 
+ 	// Hide the Google API entry field ?
+ 	if (SearchEngineFactory::isSupported(&quot;googleapi&quot;) == false)
+@@ -289,84 +289,12 @@
+ 	return startService;
+ }
+ 
+-void prefsDialog::populate_mailTreeview()
+-{
+-	TreeModel::iterator iter;
+-	TreeModel::Row row;
+-
+-	if (m_settings.m_mailAccounts.empty() == true)
+-	{
+-		// This button will stay disabled until mail is added to the list
+-		removeAccountButton-&gt;set_sensitive(false);
+-		return;
+-	}
+-
+-	// Populate the tree
+-	for (set&lt;PinotSettings::TimestampedItem&gt;::iterator mailIter = m_settings.m_mailAccounts.begin();
+-		mailIter != m_settings.m_mailAccounts.end();
+-		++mailIter)
+-	{
+-		// Create a new row
+-		iter = m_refMailTree-&gt;append();
+-		row = *iter;
+-		// Set its name, type and minium date
+-		row[m_mailColumns.m_location] = mailIter-&gt;m_name;
+-		row[m_mailColumns.m_mTime] = mailIter-&gt;m_modTime;
+-	}
+-
+-	removeAccountButton-&gt;set_sensitive(true);
+-}
+-
+-bool prefsDialog::save_mailTreeview()
+-{
+-	bool startService = false;
+-
+-	// Clear the current settings
+-	m_settings.m_mailAccounts.clear();
+-
+-	// Go through the mail accounts tree
+-	TreeModel::Children children = m_refMailTree-&gt;children();
+-	if (children.empty() == false)
+-	{
+-		TreeModel::Children::iterator iter = children.begin();
+-		for (; iter != children.end(); ++iter)
+-		{
+-			TreeModel::Row row = *iter;
+-			PinotSettings::TimestampedItem mailAccount;
+-
+-			// FIXME: unlike libmagic, shared-mime-info fails to identify most mbox files
+-			// as being of type text/x-mail
+-			// Add this new mail account to the settings
+-			mailAccount.m_name = row[m_mailColumns.m_location];
+-			mailAccount.m_modTime = row[m_mailColumns.m_mTime];
+-
+-			string mailLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+-			mailLabel += from_utf8(mailAccount.m_name);
+-
+-			// Check user didn't recreate this mail account after having deleted it
+-			set&lt;string&gt;::iterator mailIter = m_deletedMail.find(mailLabel);
+-			if (mailIter != m_deletedMail.end())
+-			{
+-				m_deletedMail.erase(mailIter);
+-			}
+-
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;prefsDialog::save_mailTreeview: &quot; &lt;&lt; mailAccount.m_name &lt;&lt; endl;
+-#endif
+-			m_settings.m_mailAccounts.insert(mailAccount);
+-			startService = true;
+-		}
+-	}
+-
+-	return startService;
+-}
+-
+ void prefsDialog::populate_patternsTreeview()
+ {
+ 	TreeModel::iterator iter;
+ 	TreeModel::Row row;
+ 
+-	if (m_settings.m_filePatternsBlackList.empty() == true)
++	if (m_settings.m_filePatternsList.empty() == true)
+ 	{
+ 		// This button will stay disabled until a ppatern is added to the list
+ 		removePatternButton-&gt;set_sensitive(false);
+@@ -374,8 +302,8 @@
+ 	}
+ 
+ 	// Populate the tree
+-	for (set&lt;ustring&gt;::iterator patternIter = m_settings.m_filePatternsBlackList.begin();
+-		patternIter != m_settings.m_filePatternsBlackList.end();
++	for (set&lt;ustring&gt;::iterator patternIter = m_settings.m_filePatternsList.begin();
++		patternIter != m_settings.m_filePatternsList.end();
+ 		++patternIter)
+ 	{
+ 		// Create a new row
+@@ -384,6 +312,8 @@
+ 		// Set its name
+ 		row[m_patternsColumns.m_location] = *patternIter;
+ 	}
++	patternsCombobox-&gt;append_text(_(&quot;Exclude these patterns from indexing&quot;));
++	patternsCombobox-&gt;append_text(_(&quot;Only index these patterns&quot;));
+ 
+ 	removePatternButton-&gt;set_sensitive(true);
+ }
+@@ -391,7 +321,7 @@
+ void prefsDialog::save_patternsTreeview()
+ {
+ 	// Clear the current settings
+-	m_settings.m_filePatternsBlackList.clear();
++	m_settings.m_filePatternsList.clear();
+ 
+ 	// Go through the file patterns tree
+ 	TreeModel::Children children = m_refPatternsTree-&gt;children();
+@@ -405,10 +335,18 @@
+ 
+ 			if (pattern.empty() == false)
+ 			{
+-				m_settings.m_filePatternsBlackList.insert(pattern);
++				m_settings.m_filePatternsList.insert(pattern);
+ 			}
+ 		}
+ 	}
++	if (patternsCombobox-&gt;get_active_row_number() == 0)
++	{
++		m_settings.m_isBlackList = true;
++	}
++	else
++	{
++		m_settings.m_isBlackList = false;
++	}
+ }
+ 
+ void prefsDialog::on_prefsOkbutton_clicked()
+@@ -442,10 +380,8 @@
+ 	// Validate the current lists
+ 	save_labelsTreeview();
+ 	bool startForDirectories = save_directoriesTreeview();
+-	bool startForMail = save_mailTreeview();
+ 	save_patternsTreeview();
+-	if ((startForDirectories == true) ||
+-		(startForMail == true))
++	if (startForDirectories == true)
+ 	{
+ 		// Save the settings
+ 		m_settings.save();
+@@ -559,63 +495,21 @@
+ 	}
+ }
+ 
+-void prefsDialog::on_addAccountButton_clicked()
++void prefsDialog::on_patternsCombobox_changed ()
+ {
+-	ustring fileName;
++	int activeRow = patternsCombobox-&gt;get_active_row_number();
+ 
+-	TreeModel::Children children = m_refMailTree-&gt;children();
+-	bool wasEmpty = children.empty();
+-
+-	if (select_file_name(_(&quot;Mbox File Location&quot;), fileName, true) == true)
++	if (((activeRow == 0) &amp;&amp; (m_settings.m_isBlackList == true)) ||
++		((activeRow &gt; 0) &amp;&amp; (m_settings.m_isBlackList == false)))
+ 	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;prefsDialog::on_addAccountButton_clicked: &quot; &lt;&lt; fileName &lt;&lt; endl;
+-#endif
+-		// FIXME: unlike libmagic, shared-mime-info fails to identify most mbox files
+-		// as being of type text/x-mail
+-		// Create a new entry in the mail accounts list
+-		TreeModel::iterator iter = m_refMailTree-&gt;append();
+-		TreeModel::Row row = *iter;
+-	
+-		row[m_mailColumns.m_location] = to_utf8(fileName);
+-		row[m_mailColumns.m_mTime] = time(NULL);
+-
+-		if (wasEmpty == true)
+-		{
+-			// Enable this button
+-			removeAccountButton-&gt;set_sensitive(true);
+-		}
++		// No change
++		return;
+ 	}
+-}
+ 
+-void prefsDialog::on_removeAccountButton_clicked()
+-{
+-	// Get the selected mail account in the list
+-	TreeModel::iterator iter = mailTreeview-&gt;get_selection()-&gt;get_selected();
+-	if (iter)
+-	{
+-		string mailLabel(&quot;<A HREF="mailbox://">mailbox://</A>&quot;);
+-
+-		// Unselect
+-		mailTreeview-&gt;get_selection()-&gt;unselect(iter);
+-		// Select another row
+-		TreeModel::Path path = m_refMailTree-&gt;get_path(iter);
+-		path.next();
+-		mailTreeview-&gt;get_selection()-&gt;select(path);
+-
+-		// Erase
+-		TreeModel::Row row = *iter;
+-		mailLabel += from_utf8(row[m_mailColumns.m_location]);
+-		m_deletedMail.insert(mailLabel);
+-		m_refMailTree-&gt;erase(row);
+-
+-		TreeModel::Children children = m_refMailTree-&gt;children();
+-		if (children.empty() == true)
+-		{
+-			// Disable this button
+-			removeAccountButton-&gt;set_sensitive(false);
+-		}
+-	}
++	// Unselect results
++	patternsTreeview-&gt;get_selection()-&gt;unselect_all();
++	// Remove all patterns in order to make sure the user enters a new bunch
++	m_refPatternsTree-&gt;clear();
+ }
+ 
+ void prefsDialog::on_addPatternButton_clicked()
+
+Modified: trunk/UI/GTK2/src/prefsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog.hh	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/prefsDialog.hh	2007-07-21 04:17:51 UTC (rev 874)
+@@ -49,8 +49,7 @@
+ 	virtual void on_removeLabelButton_clicked();
+ 	virtual void on_addDirectoryButton_clicked();
+ 	virtual void on_removeDirectoryButton_clicked();
+-	virtual void on_addAccountButton_clicked();
+-	virtual void on_removeAccountButton_clicked();
++	virtual void on_patternsCombobox_changed();
+ 	virtual void on_addPatternButton_clicked();
+ 	virtual void on_removePatternButton_clicked();
+ 
+@@ -59,8 +58,6 @@
+ 	void save_labelsTreeview();
+ 	void populate_directoriesTreeview();
+ 	bool save_directoriesTreeview();
+-	void populate_mailTreeview();
+-	bool save_mailTreeview();
+ 	void populate_patternsTreeview();
+ 	void save_patternsTreeview();
+ 
+@@ -72,13 +69,11 @@
+ 	IndexableModelColumns m_directoriesColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refDirectoriesTree;
+ 	TimestampedModelColumns m_mailColumns;
+-	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refMailTree;
+ 	TimestampedModelColumns m_patternsColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refPatternsTree;
+ 	std::set&lt;std::string&gt; m_deletedLabels;
+ 	std::map&lt;std::string, std::string&gt; m_renamedLabels;
+ 	std::set&lt;std::string&gt; m_deletedDirectories;
+-	std::set&lt;std::string&gt; m_deletedMail;
+ 	bool m_startDaemon;
+ 
+ };
+
+Modified: trunk/UI/GTK2/src/prefsDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog_glade.cc	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/prefsDialog_glade.cc	2007-07-21 04:17:51 UTC (rev 874)
+@@ -1,9 +1,9 @@
+-// generated 2007/3/23 21:55:56 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2007/7/10 19:55:24 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.8 and gtkmm 2.10.7
++// for gtk 2.10.13 and gtkmm 2.10.9
+ //
+ // Please modify the corresponding derived classes in ./src/prefsDialog.cc
+ 
+@@ -124,23 +124,13 @@
+    
+    Gtk::VButtonBox *directoriesVbuttonbox = Gtk::manage(new class Gtk::VButtonBox(Gtk::BUTTONBOX_START, 0));
+    Gtk::HBox *directoriesHbox = Gtk::manage(new class Gtk::HBox(false, 0));
+-   Gtk::Label *mailAccountsLabel = Gtk::manage(new class Gtk::Label(_(&quot;Mail boxes of type mbox can be monitored and indexed:&quot;)));
+-   mailTreeview = Gtk::manage(new class Gtk::TreeView());
+-   
+-   Gtk::ScrolledWindow *mailScrolledwindow = Gtk::manage(new class Gtk::ScrolledWindow());
+-   Gtk::Image *image497 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-add&quot;), Gtk::IconSize(4)));
+-   Gtk::Label *label49 = Gtk::manage(new class Gtk::Label(_(&quot;Add&quot;)));
+-   Gtk::HBox *hbox42 = Gtk::manage(new class Gtk::HBox(false, 2));
+-   Gtk::Alignment *alignment28 = Gtk::manage(new class Gtk::Alignment(0.5, 0.5, 0, 0));
+-   addAccountButton = Gtk::manage(new class Gtk::Button());
+-   removeAccountButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-remove&quot;)));
+-   
+-   Gtk::VButtonBox *mailVbuttonbox = Gtk::manage(new class Gtk::VButtonBox(Gtk::BUTTONBOX_START, 0));
+-   Gtk::HBox *mailHbox = Gtk::manage(new class Gtk::HBox(false, 0));
+-   Gtk::Label *patternsLabel = Gtk::manage(new class Gtk::Label(_(&quot;Specify any file pattern you wish to exclude from indexing:&quot;)));
++   Gtk::Label *patternsLabel = Gtk::manage(new class Gtk::Label(_(&quot;File patterns:&quot;)));
+    patternsTreeview = Gtk::manage(new class Gtk::TreeView());
+    
+    Gtk::ScrolledWindow *patternsScrolledwindow = Gtk::manage(new class Gtk::ScrolledWindow());
++   patternsCombobox = Gtk::manage(new class Gtk::ComboBoxText());
++   
++   Gtk::VBox *patternsVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    Gtk::Image *image624 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-add&quot;), Gtk::IconSize(4)));
+    Gtk::Label *label60 = Gtk::manage(new class Gtk::Label(_(&quot;Add&quot;)));
+    Gtk::HBox *hbox56 = Gtk::manage(new class Gtk::HBox(false, 2));
+@@ -433,55 +423,6 @@
+    directoriesVbuttonbox-&gt;pack_start(*removeDirectoryButton);
+    directoriesHbox-&gt;pack_start(*directoriesScrolledwindow);
+    directoriesHbox-&gt;pack_start(*directoriesVbuttonbox, Gtk::PACK_SHRINK, 0);
+-   mailAccountsLabel-&gt;set_alignment(0,0.5);
+-   mailAccountsLabel-&gt;set_padding(4,4);
+-   mailAccountsLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   mailAccountsLabel-&gt;set_line_wrap(true);
+-   mailAccountsLabel-&gt;set_use_markup(false);
+-   mailAccountsLabel-&gt;set_selectable(false);
+-   mailAccountsLabel-&gt;set_ellipsize(Pango::ELLIPSIZE_NONE);
+-   mailAccountsLabel-&gt;set_width_chars(-1);
+-   mailAccountsLabel-&gt;set_angle(0);
+-   mailAccountsLabel-&gt;set_single_line_mode(false);
+-   mailTreeview-&gt;set_flags(Gtk::CAN_FOCUS);
+-   mailTreeview-&gt;set_headers_visible(true);
+-   mailTreeview-&gt;set_rules_hint(false);
+-   mailTreeview-&gt;set_reorderable(false);
+-   mailTreeview-&gt;set_enable_search(true);
+-   mailScrolledwindow-&gt;set_flags(Gtk::CAN_FOCUS);
+-   mailScrolledwindow-&gt;set_border_width(4);
+-   mailScrolledwindow-&gt;set_shadow_type(Gtk::SHADOW_NONE);
+-   mailScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+-   mailScrolledwindow-&gt;property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
+-   mailScrolledwindow-&gt;add(*mailTreeview);
+-   image497-&gt;set_alignment(0.5,0.5);
+-   image497-&gt;set_padding(0,0);
+-   label49-&gt;set_alignment(0.5,0.5);
+-   label49-&gt;set_padding(0,0);
+-   label49-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+-   label49-&gt;set_line_wrap(false);
+-   label49-&gt;set_use_markup(false);
+-   label49-&gt;set_selectable(false);
+-   label49-&gt;set_ellipsize(Pango::ELLIPSIZE_NONE);
+-   label49-&gt;set_width_chars(-1);
+-   label49-&gt;set_angle(0);
+-   label49-&gt;set_single_line_mode(false);
+-   hbox42-&gt;pack_start(*image497, Gtk::PACK_SHRINK, 0);
+-   hbox42-&gt;pack_start(*label49, Gtk::PACK_SHRINK, 0);
+-   alignment28-&gt;add(*hbox42);
+-   addAccountButton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   addAccountButton-&gt;set_flags(Gtk::CAN_DEFAULT);
+-   addAccountButton-&gt;set_border_width(4);
+-   addAccountButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   addAccountButton-&gt;add(*alignment28);
+-   removeAccountButton-&gt;set_flags(Gtk::CAN_FOCUS);
+-   removeAccountButton-&gt;set_flags(Gtk::CAN_DEFAULT);
+-   removeAccountButton-&gt;set_border_width(4);
+-   removeAccountButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+-   mailVbuttonbox-&gt;pack_start(*addAccountButton);
+-   mailVbuttonbox-&gt;pack_start(*removeAccountButton);
+-   mailHbox-&gt;pack_start(*mailScrolledwindow);
+-   mailHbox-&gt;pack_start(*mailVbuttonbox, Gtk::PACK_SHRINK, 0);
+    patternsLabel-&gt;set_alignment(0,0.5);
+    patternsLabel-&gt;set_padding(4,4);
+    patternsLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+@@ -503,6 +444,8 @@
+    patternsScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+    patternsScrolledwindow-&gt;property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
+    patternsScrolledwindow-&gt;add(*patternsTreeview);
++   patternsVbox-&gt;pack_start(*patternsScrolledwindow);
++   patternsVbox-&gt;pack_start(*patternsCombobox, Gtk::PACK_EXPAND_WIDGET, 4);
+    image624-&gt;set_alignment(0.5,0.5);
+    image624-&gt;set_padding(0,0);
+    label60-&gt;set_alignment(0.5,0.5);
+@@ -529,14 +472,12 @@
+    removePatternButton-&gt;set_relief(Gtk::RELIEF_NORMAL);
+    patternsVbuttonbox-&gt;pack_start(*addPatternButton);
+    patternsVbuttonbox-&gt;pack_start(*removePatternButton);
+-   patternsHbox-&gt;pack_start(*patternsScrolledwindow);
++   patternsHbox-&gt;pack_start(*patternsVbox);
+    patternsHbox-&gt;pack_start(*patternsVbuttonbox, Gtk::PACK_SHRINK, 0);
+    indexingVbox-&gt;pack_start(*directoriesLabel, Gtk::PACK_SHRINK, 4);
+    indexingVbox-&gt;pack_start(*directoriesHbox, Gtk::PACK_EXPAND_WIDGET, 4);
+-   indexingVbox-&gt;pack_start(*mailAccountsLabel, Gtk::PACK_SHRINK, 4);
+-   indexingVbox-&gt;pack_start(*mailHbox, Gtk::PACK_EXPAND_WIDGET, 4);
+    indexingVbox-&gt;pack_start(*patternsLabel, Gtk::PACK_SHRINK, 4);
+-   indexingVbox-&gt;pack_start(*patternsHbox);
++   indexingVbox-&gt;pack_start(*patternsHbox, Gtk::PACK_EXPAND_WIDGET, 4);
+    indexingLabel-&gt;set_alignment(0.5,0.5);
+    indexingLabel-&gt;set_padding(0,0);
+    indexingLabel-&gt;set_justify(Gtk::JUSTIFY_LEFT);
+@@ -622,20 +563,11 @@
+    removeDirectoryButton-&gt;show();
+    directoriesVbuttonbox-&gt;show();
+    directoriesHbox-&gt;show();
+-   mailAccountsLabel-&gt;show();
+-   mailTreeview-&gt;show();
+-   mailScrolledwindow-&gt;show();
+-   image497-&gt;show();
+-   label49-&gt;show();
+-   hbox42-&gt;show();
+-   alignment28-&gt;show();
+-   addAccountButton-&gt;show();
+-   removeAccountButton-&gt;show();
+-   mailVbuttonbox-&gt;show();
+-   mailHbox-&gt;show();
+    patternsLabel-&gt;show();
+    patternsTreeview-&gt;show();
+    patternsScrolledwindow-&gt;show();
++   patternsCombobox-&gt;show();
++   patternsVbox-&gt;show();
+    image624-&gt;show();
+    label60-&gt;show();
+    hbox56-&gt;show();
+@@ -654,8 +586,7 @@
+    removeLabelButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_removeLabelButton_clicked), false);
+    addDirectoryButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_addDirectoryButton_clicked), false);
+    removeDirectoryButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_removeDirectoryButton_clicked), false);
+-   addAccountButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_addAccountButton_clicked), false);
+-   removeAccountButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_removeAccountButton_clicked), false);
++   patternsCombobox-&gt;signal_changed().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_patternsCombobox_changed), false);
+    addPatternButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_addPatternButton_clicked), false);
+    removePatternButton-&gt;signal_clicked().connect(SigC::slot(*this, &amp;prefsDialog_glade::on_removePatternButton_clicked), false);
+ }
+
+Modified: trunk/UI/GTK2/src/prefsDialog_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsDialog_glade.hh	2007-07-21 04:09:30 UTC (rev 873)
++++ trunk/UI/GTK2/src/prefsDialog_glade.hh	2007-07-21 04:17:51 UTC (rev 874)
+@@ -1,9 +1,9 @@
+-// generated 2007/3/23 21:55:56 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2007/7/10 19:55:24 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.8 and gtkmm 2.10.7
++// for gtk 2.10.13 and gtkmm 2.10.9
+ //
+ // Please modify the corresponding derived classes in ./src/prefsDialog.hh and./src/prefsDialog.cc
+ 
+@@ -69,10 +69,8 @@
+         class Gtk::TreeView * directoriesTreeview;
+         class Gtk::Button * addDirectoryButton;
+         class Gtk::Button * removeDirectoryButton;
+-        class Gtk::TreeView * mailTreeview;
+-        class Gtk::Button * addAccountButton;
+-        class Gtk::Button * removeAccountButton;
+         class Gtk::TreeView * patternsTreeview;
++        class Gtk::ComboBoxText * patternsCombobox;
+         class Gtk::Button * addPatternButton;
+         class Gtk::Button * removePatternButton;
+         class Gtk::Notebook * prefsNotebook;
+@@ -87,8 +85,7 @@
+         virtual void on_removeLabelButton_clicked() = 0;
+         virtual void on_addDirectoryButton_clicked() = 0;
+         virtual void on_removeDirectoryButton_clicked() = 0;
+-        virtual void on_addAccountButton_clicked() = 0;
+-        virtual void on_removeAccountButton_clicked() = 0;
++        virtual void on_patternsCombobox_changed() = 0;
+         virtual void on_addPatternButton_clicked() = 0;
+         virtual void on_removePatternButton_clicked() = 0;
+ };
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000867.html">[Pinot-svn] r873 - in trunk/Search: . Google
+</A></li>
+	<LI>Next message: <A HREF="000868.html">[Pinot-svn] r875 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#870">[ date ]</a>
+              <a href="thread.html#870">[ thread ]</a>
+              <a href="subject.html#870">[ subject ]</a>
+              <a href="author.html#870">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

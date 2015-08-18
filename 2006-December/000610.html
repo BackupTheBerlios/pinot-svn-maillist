@@ -1,0 +1,236 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r617 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r617%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200612041038.kB4AcDfq011448%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000609.html">
+   <LINK REL="Next"  HREF="000611.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r617 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r617%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200612041038.kB4AcDfq011448%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r617 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec  4 11:38:13 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000609.html">[Pinot-svn] r616 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000611.html">[Pinot-svn] r618 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#610">[ date ]</a>
+              <a href="thread.html#610">[ thread ]</a>
+              <a href="subject.html#610">[ subject ]</a>
+              <a href="author.html#610">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-12-04 11:38:12 +0100 (Mon, 04 Dec 2006)
+New Revision: 617
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+Don't update the index list incrementally, do it when IndexBrowser returns. This
+fixes a crash on SMP systems due to calls to GTK by the UI and a worker thread.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-12-04 10:31:41 UTC (rev 616)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-12-04 10:38:12 UTC (rev 617)
+@@ -158,6 +158,9 @@
+ 
+ void WorkerThread::threadHandler(void)
+ {
++#ifdef DEBUG
++	cout &lt;&lt; &quot;WorkerThread::threadHandler: thread &quot; &lt;&lt; m_id &lt;&lt; &quot; &quot; &lt;&lt; pthread_self() &lt;&lt; endl;
++#endif
+ 	try
+ 	{
+ 		doWork();
+@@ -648,29 +651,17 @@
+ 	return m_indexDocsCount;
+ }
+ 
++const vector&lt;IndexedDocument&gt; &amp;IndexBrowserThread::getDocuments(void) const
++{
++	return m_documentsList;
++}
++
+ bool IndexBrowserThread::stop(void)
+ {
+-	// Disconnect the signal
+-	Signal3&lt;void, IndexedDocument, unsigned int, string&gt;::slot_list_type slotsList = m_signalUpdate.slots();
+-	Signal3&lt;void, IndexedDocument, unsigned int, string&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+-	if (slotIter != slotsList.end())
+-	{
+-		if (slotIter-&gt;empty() == false)
+-		{
+-			slotIter-&gt;block();
+-			slotIter-&gt;disconnect();
+-		}
+-	}
+ 	m_done = true;
+-
+ 	return true;
+ }
+ 
+-SigC::Signal3&lt;void, IndexedDocument, unsigned int, string&gt;&amp; IndexBrowserThread::getUpdateSignal(void)
+-{
+-	return m_signalUpdate;
+-}
+-
+ void IndexBrowserThread::doWork(void)
+ {
+ 	set&lt;unsigned int&gt; docIDList;
+@@ -725,6 +716,8 @@
+ 	{
+ 		pIndex-&gt;listDocumentsWithLabel(m_labelName, docIDList, m_maxDocsCount, m_startDoc);
+ 	}
++
++	m_documentsList.reserve(m_maxDocsCount);
+ 	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+ 	{
+ 		if (m_done == true)
+@@ -751,8 +744,8 @@
+ 			indexedDoc.setTimestamp(docInfo.getTimestamp());
+ 			indexedDoc.setSize(docInfo.getSize());
+ 
+-			// Signal
+-			m_signalUpdate(indexedDoc, docId, m_indexName);
++			// Insert that document
++			m_documentsList.push_back(indexedDoc);
+ 			++numDocs;
+ 		}
+ #ifdef DEBUG
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-12-04 10:31:41 UTC (rev 616)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-12-04 10:38:12 UTC (rev 617)
+@@ -167,17 +167,17 @@
+ 
+ 		unsigned int getDocumentsCount(void) const;
+ 
++		const std::vector&lt;IndexedDocument&gt; &amp;getDocuments(void) const;
++
+ 		virtual bool stop(void);
+ 
+-		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
+-
+ 	protected:
+ 		std::string m_indexName;
+ 		std::string m_labelName;
+ 		unsigned int m_indexDocsCount;
+ 		unsigned int m_maxDocsCount;
+ 		unsigned int m_startDoc;
+-		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt; m_signalUpdate;
++		std::vector&lt;IndexedDocument&gt; m_documentsList;
+ 
+ 		virtual void doWork(void);
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-12-04 10:31:41 UTC (rev 616)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-12-04 10:38:12 UTC (rev 617)
+@@ -867,6 +867,11 @@
+ 			pIndexTree = pIndexPage-&gt;getTree();
+ 			if (pIndexTree != NULL)
+ 			{
++				const vector&lt;IndexedDocument&gt; &amp;docsList = pBrowseThread-&gt;getDocuments();
++
++				// Add the documents to the tree
++				pIndexTree-&gt;addDocuments(docsList);
++
+ 				pIndexPage-&gt;setDocumentsCount(pBrowseThread-&gt;getDocumentsCount());
+ 				pIndexPage-&gt;updateButtonsState(m_maxDocsCount);
+ 
+@@ -1331,25 +1336,6 @@
+ }
+ 
+ //
+-// Message reception from IndexBrowserThread
+-//
+-void mainWindow::on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, string indexName)
+-{
+-	// Find the page for this index
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(to_utf8(indexName), NotebookPageBox::INDEX_PAGE));
+-	if (pIndexPage == NULL)
+-	{
+-		// It's probably been closed by the user
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_message_indexupdate: &quot; &lt;&lt; indexName &lt;&lt; &quot; not being shown&quot; &lt;&lt; endl;
+-#endif
+-		return;
+-	}
+-
+-	append_document(pIndexPage, to_utf8(indexName), docInfo);
+-}
+-
+-//
+ // Session &gt; Configure menu selected
+ //
+ void mainWindow::on_configure_activate()
+@@ -2932,8 +2918,6 @@
+ 	// Spawn a new thread to browse the index
+ 	IndexBrowserThread *pBrowseThread = new IndexBrowserThread(
+ 		from_utf8(indexName), labelName, m_maxDocsCount, startDoc);
+-	pBrowseThread-&gt;getUpdateSignal().connect(SigC::slot(*this,
+-		&amp;mainWindow::on_message_indexupdate));
+ 	start_thread(pBrowseThread);
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-12-04 10:31:41 UTC (rev 616)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-12-04 10:38:12 UTC (rev 617)
+@@ -74,7 +74,6 @@
+ 	void on_close_page(Glib::ustring title, NotebookPageBox::PageType type);
+ 	void on_thread_end(WorkerThread *pThread);
+ 	void on_editindex(Glib::ustring indexName, Glib::ustring location);
+-	void on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, std::string indexName);
+ 
+ 	// Handlers inherited from the base class
+ 	virtual void on_configure_activate();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000609.html">[Pinot-svn] r616 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000611.html">[Pinot-svn] r618 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#610">[ date ]</a>
+              <a href="thread.html#610">[ thread ]</a>
+              <a href="subject.html#610">[ subject ]</a>
+              <a href="author.html#610">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

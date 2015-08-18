@@ -1,0 +1,548 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r464 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r464%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200609071135.k87BZY1K020439%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000456.html">
+   <LINK REL="Next"  HREF="000458.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r464 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r464%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200609071135.k87BZY1K020439%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r464 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Sep  7 13:35:34 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000456.html">[Pinot-svn] r463 - trunk/UI
+</A></li>
+        <LI>Next message: <A HREF="000458.html">[Pinot-svn] r465 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#457">[ date ]</a>
+              <a href="thread.html#457">[ thread ]</a>
+              <a href="subject.html#457">[ subject ]</a>
+              <a href="author.html#457">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-09-07 13:35:33 +0200 (Thu, 07 Sep 2006)
+New Revision: 464
+
+Modified:
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+DirectoryScanner deletes items and informs the MonitorHandler for all entries
+associated to the source that were not found by the current crawl.
+
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2006-09-07 00:24:02 UTC (rev 463)
++++ trunk/SQL/CrawlHistory.cpp	2006-09-07 11:35:33 UTC (rev 464)
+@@ -46,9 +46,6 @@
+ 		case CRAWLED:
+ 			text = &quot;CRAWLED&quot;;
+ 			break;
+-		case DIRECTORY:
+-			text = &quot;DIRECTORY&quot;;
+-			break;
+ 		default:
+ 			break;
+ 	}
+@@ -68,10 +65,6 @@
+ 	{
+ 		status = CRAWLED;
+ 	}
+-	else if (text == &quot;DIRECTORY&quot;)
+-	{
+-		status = DIRECTORY;
+-	}
+ 
+ 	return status;
+ }
+@@ -270,15 +263,45 @@
+ 	return success;
+ }
+ 
++/// Updates the status of items en masse.
++bool CrawlHistory::updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus)
++{
++	bool success = false;
++
++	SQLiteResults *results = executeStatement(&quot;UPDATE CrawlHistory \
++		SET Status='%q' WHERE SourceId='%u' AND Status='%q';&quot;,
++		statusToText(newStatus).c_str(), sourceId,
++		statusToText(currentStatus).c_str());
++	if (results != NULL)
++	{
++		success = true;
++		delete results;
++	}
++
++	return success;
++}
++
+ /// Returns items that belong to a source.
+ unsigned int CrawlHistory::getSourceItems(unsigned int sourceId, CrawlStatus status,
+-	time_t minDate, set&lt;string&gt; &amp;urls) const
++	set&lt;string&gt; &amp;urls, time_t maxDate) const
+ {
++	SQLiteResults *results = NULL;
+ 	unsigned int count = 0;
+ 
+-	SQLiteResults *results = executeStatement(&quot;SELECT Url FROM CrawlHistory \
+-		WHERE SourceId='%u' AND Status='%q' AND Date&gt;='%d';&quot;,
+-		sourceId, statusToText(status).c_str(), minDate);
++	if (maxDate &gt; 0)
++	{
++		results = executeStatement(&quot;SELECT Url FROM CrawlHistory \
++			WHERE SourceId='%u' AND Status='%q' AND Date&lt;'%d';&quot;,
++			sourceId, statusToText(status).c_str(), maxDate);
++	}
++	else
++	{
++		// Ignore the date
++		results = executeStatement(&quot;SELECT Url FROM CrawlHistory \
++			WHERE SourceId='%u' AND Status='%q';&quot;,
++			sourceId, statusToText(status).c_str());
++	}
++
+ 	if (results != NULL)
+ 	{
+ 		while (results-&gt;hasMoreRows() == true)
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2006-09-07 00:24:02 UTC (rev 463)
++++ trunk/SQL/CrawlHistory.h	2006-09-07 11:35:33 UTC (rev 464)
+@@ -32,7 +32,7 @@
+ 		CrawlHistory(const string &amp;database);
+ 		virtual ~CrawlHistory();
+ 
+-		typedef enum { UNKNOWN, CRAWLING, CRAWLED, DIRECTORY } CrawlStatus;
++		typedef enum { UNKNOWN, CRAWLING, CRAWLED } CrawlStatus;
+ 
+ 		/// Creates the CrawlHistory table in the database.
+ 		static bool create(const string &amp;database);
+@@ -58,9 +58,12 @@
+ 		/// Updates an URL.
+ 		bool updateItem(const string &amp;url, CrawlStatus status, time_t date);
+ 
++		/// Updates the status of items en masse.
++		bool updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus);
++
+ 		/// Returns items that belong to a source.
+ 		unsigned int getSourceItems(unsigned int sourceId, CrawlStatus status,
+-			time_t minDate, set&lt;string&gt; &amp;urls) const;
++			set&lt;string&gt; &amp;urls, time_t maxDate = 0) const;
+ 
+ 		/// Returns the number of URLs.
+ 		unsigned int getItemsCount(void) const;
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2006-09-07 00:24:02 UTC (rev 463)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2006-09-07 11:35:33 UTC (rev 464)
+@@ -35,9 +35,10 @@
+ using namespace Glib;
+ 
+ DaemonState::DaemonState() :
+-	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 10),
++	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 20),
+ 	m_pMailMonitor(MonitorFactory::getMonitor()),
+-	m_pDiskMonitor(MonitorFactory::getMonitor())
++	m_pDiskMonitor(MonitorFactory::getMonitor()),
++	m_pDiskHandler(NULL)
+ {
+ 	m_onThreadEndSignal.connect(SigC::slot(*this, &amp;DaemonState::on_thread_end));
+ }
+@@ -66,11 +67,11 @@
+ 	if (monitor == false)
+ 	{
+ 		// Monitoring is not necessary
+-		pScannerThread = new DirectoryScannerThread(NULL, locationToCrawl, 0, true);
++		pScannerThread = new DirectoryScannerThread(locationToCrawl, 0, true, NULL, NULL);
+ 	}
+ 	else
+ 	{
+-		pScannerThread = new DirectoryScannerThread(m_pDiskMonitor, locationToCrawl, 0, true);
++		pScannerThread = new DirectoryScannerThread(locationToCrawl, 0, true, m_pDiskMonitor, m_pDiskHandler);
+ 	}
+ 	pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+ 
+@@ -90,20 +91,20 @@
+ 	WorkerThread::immediateFlush(false);
+ 
+ 	// Fire up the mail monitor thread now
+-	MboxHandler *pMbox = new MboxHandler();
++	MboxHandler *pMboxHandler = new MboxHandler();
+ 	// Connect to its update signal
+-	pMbox-&gt;getUpdateSignal().connect(
++	pMboxHandler-&gt;getUpdateSignal().connect(
+ 		SigC::slot(*this, &amp;DaemonState::on_message_indexupdate));
+-	MonitorThread *pMailMonitorThread = new MonitorThread(m_pMailMonitor, pMbox);
++	MonitorThread *pMailMonitorThread = new MonitorThread(m_pMailMonitor, pMboxHandler);
+ 	pMailMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+ 	start_thread(pMailMonitorThread, true);
+ 
+ 	// Same for the disk monitor thread
+-	OnDiskHandler *pDisk = new OnDiskHandler();
++	m_pDiskHandler = new OnDiskHandler();
+ 	// Connect to its update signal
+-	pDisk-&gt;getUpdateSignal().connect(
++	m_pDiskHandler-&gt;getUpdateSignal().connect(
+ 		SigC::slot(*this, &amp;DaemonState::on_message_indexupdate));
+-	MonitorThread *pDiskMonitorThread = new MonitorThread(m_pDiskMonitor, pDisk);
++	MonitorThread *pDiskMonitorThread = new MonitorThread(m_pDiskMonitor, m_pDiskHandler);
+ 	pDiskMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+ 	start_thread(pDiskMonitorThread, true);
+ 
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2006-09-07 00:24:02 UTC (rev 463)
++++ trunk/UI/GTK2/src/DaemonState.h	2006-09-07 11:35:33 UTC (rev 464)
+@@ -45,6 +45,7 @@
+ 	protected:
+ 		MonitorInterface *m_pMailMonitor;
+ 		MonitorInterface *m_pDiskMonitor;
++		MonitorHandler *m_pDiskHandler;
+ 		std::string m_locationBeingCrawled;
+ 
+ 		bool crawlLocation(const std::string &amp;locationToCrawl, bool monitor);
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-09-07 00:24:02 UTC (rev 463)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-09-07 11:35:33 UTC (rev 464)
+@@ -1511,6 +1511,9 @@
+ {
+ 	queue&lt;MonitorEvent&gt; events;
+ 
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MonitorThread::processEvents: checking for events&quot; &lt;&lt; endl;
++#endif
+ 	if ((m_pMonitor == NULL) ||
+ 		(m_pMonitor-&gt;retrievePendingEvents(events) == false))
+ 	{
+@@ -1575,8 +1578,7 @@
+ 			}
+ 			else
+ 			{
+-				// FIXME: stop monitoring if not under an indexable location
+-
++				// We should receive this only if the destination directory is monitored too
+ 				m_pHandler-&gt;directoryMoved(event.m_location, event.m_previousLocation);
+ 			}
+ 		}
+@@ -1588,7 +1590,7 @@
+ 			}
+ 			else
+ 			{
+-				// The monitoring should have stopped monitoring this
++				// The monitor should have stopped monitoring this
+ 				// In practice, events for the files in this directory will already have been received 
+ 				m_pHandler-&gt;directoryDeleted(event.m_location);
+ 			}
+@@ -1666,13 +1668,14 @@
+ 	}
+ }
+ 
+-DirectoryScannerThread::DirectoryScannerThread(MonitorInterface *pMonitor,
+-	const string &amp;dirName, unsigned int maxLevel, bool followSymLinks) :
++DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName, unsigned int maxLevel,
++	bool followSymLinks, MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+ 	WorkerThread(),
+-	m_pMonitor(pMonitor),
+ 	m_dirName(dirName),
+ 	m_maxLevel(maxLevel),
+ 	m_followSymLinks(followSymLinks),
++	m_pMonitor(pMonitor),
++	m_pHandler(pHandler),
+ 	m_currentLevel(0),
+ 	m_sourceId(0)
+ {
+@@ -1728,7 +1731,7 @@
+ 	m_signalFileFound(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName, labelStr, false);
+ }
+ 
+-bool DirectoryScannerThread::scanDirectory(const string &amp;dirName)
++bool DirectoryScannerThread::scanEntry(const string &amp;entryName)
+ {
+ 	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
+ 	CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
+@@ -1736,13 +1739,13 @@
+ 	struct stat fileStat;
+ 	int statSuccess = 0;
+ 
+-	if (dirName.empty() == true)
++	if (entryName.empty() == true)
+ 	{
+ 		return false;
+ 	}
+ 
+ 	// Skip . .. and dotfiles
+-	Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + dirName);
++	Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + entryName);
+ 	if (urlObj.getFile()[0] == '.')
+ 	{
+ 		return false;
+@@ -1750,12 +1753,12 @@
+ 
+ 	if (m_followSymLinks == false)
+ 	{
+-		statSuccess = lstat(dirName.c_str(), &amp;fileStat);
++		statSuccess = lstat(entryName.c_str(), &amp;fileStat);
+ 	}
+ 	else
+ 	{
+ 		// Stat the files pointed to by symlinks
+-		statSuccess = stat(dirName.c_str(), &amp;fileStat);
++		statSuccess = stat(entryName.c_str(), &amp;fileStat);
+ 	}
+ 
+ 	if (statSuccess == -1)
+@@ -1763,7 +1766,7 @@
+ 		return false;
+ 	}
+ 
+-	bool itemExists = history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, status, itemDate);
++	bool itemExists = history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, status, itemDate);
+ 
+ 	// Is it a file or a directory ?
+ 	if (S_ISLNK(fileStat.st_mode))
+@@ -1776,23 +1779,34 @@
+ 		bool reportFile = false;
+ 
+ 		// It's actually a file
+-		// Was it crawled since it was last modified ?
+ 		if (itemExists == false)
+ 		{
+ 			// Record it
+-			history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++			history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, m_sourceId, fileStat.st_mtime);
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting new file &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
+ 			reportFile = true;
+ 		}
+-		else if (itemDate &lt; fileStat.st_mtime)
++		else
+ 		{
+ 			// Update the record
+-			history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::CRAWLED, fileStat.st_mtime);
+-			reportFile = true;
++			history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + entryName, CrawlHistory::CRAWLED, fileStat.st_mtime);
++
++			// Was it last crawled after it was modified ?
++			if (itemDate &lt; fileStat.st_mtime)
++			{
++#ifdef DEBUG
++				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: reporting modified file &quot; &lt;&lt; entryName &lt;&lt; endl;
++#endif
++				// No, crawl and index it again
++				reportFile = true;
++			}
+ 		}
+ 
+ 		if (reportFile == true)
+ 		{
+-			foundFile(dirName);
++			foundFile(entryName);
+ 		}
+ 	}
+ 	else if (S_ISDIR(fileStat.st_mode))
+@@ -1804,20 +1818,19 @@
+ 			++m_currentLevel;
+ 
+ 			// Open the directory
+-			DIR *pDir = opendir(dirName.c_str());
++			DIR *pDir = opendir(entryName.c_str());
+ 			if (pDir == NULL)
+ 			{
+ 				return false;
+ 			}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: entering &quot;
+-				&lt;&lt; dirName &lt;&lt; endl;
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: entering &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+ 
+ 			if (m_pMonitor != NULL)
+ 			{
+ 				// Monitor first so that we don't miss events
+-				m_pMonitor-&gt;addLocation(dirName, true);
++				m_pMonitor-&gt;addLocation(entryName, true);
+ 			}
+ 
+ 			// Iterate through this directory's entries
+@@ -1831,20 +1844,20 @@
+ 				if ((pEntryName != NULL) &amp;&amp;
+ 					(pEntryName[0] != '.'))
+ 				{
+-					string entryName(dirName);
++					string subEntryName(entryName);
+ 
+-					if (dirName[dirName.length() - 1] != '/')
++					if (entryName[entryName.length() - 1] != '/')
+ 					{
+-						entryName += &quot;/&quot;;
++						subEntryName += &quot;/&quot;;
+ 					}
+-					entryName += pEntryName;
++					subEntryName += pEntryName;
+ 
+ 					// Scan this entry
+-					if (scanDirectory(entryName) == false)
++					if (scanEntry(subEntryName) == false)
+ 					{
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: failed to open &quot;
+-							&lt;&lt; entryName &lt;&lt; endl;
++						cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: failed to open &quot;
++							&lt;&lt; subEntryName &lt;&lt; endl;
+ #endif
+ 					}
+ 				}
+@@ -1852,17 +1865,8 @@
+ 				// Next entry
+ 				pDirEntry = readdir(pDir);
+ 			}
+-
+-			if (itemExists == false)
+-			{
+-				history.insertItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::DIRECTORY, m_sourceId, fileStat.st_mtime);
+-			}
+-			else
+-			{
+-				history.updateItem(&quot;<A HREF="file://">file://</A>&quot; + dirName, CrawlHistory::DIRECTORY, fileStat.st_mtime);
+-			}
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;DirectoryScannerThread::scanDirectory: done with &quot; &lt;&lt; dirName &lt;&lt; endl;
++			cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: done with &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+ 
+ 			// Close the directory
+@@ -1881,6 +1885,7 @@
+ void DirectoryScannerThread::doWork(void)
+ {
+ 	CrawlHistory history(PinotSettings::getInstance().m_historyDatabase);
++	set&lt;string&gt; deletedFiles;
+ 
+ 	// Does this source exist ?
+ 	if ((m_dirName.empty() == false) &amp;&amp;
+@@ -1890,10 +1895,35 @@
+ 		m_sourceId = history.insertSource(&quot;<A HREF="file://">file://</A>&quot; + m_dirName);
+ 	}
+ 
+-	if (scanDirectory(m_dirName) == false)
++	// Update this source's items status
++	history.updateItemsStatus(m_sourceId, CrawlHistory::CRAWLED, CrawlHistory::CRAWLING);
++
++	if (scanEntry(m_dirName) == false)
+ 	{
+ 		m_status = _(&quot;Couldn't open directory&quot;);
+ 		m_status += &quot; &quot;;
+ 		m_status += m_dirName;
+ 	}
++
++	// All files with status set to CRAWLING were not found in this crawl
++	// Chances are they were removed after the previous crawl
++	if (history.getSourceItems(m_sourceId, CrawlHistory::CRAWLING, deletedFiles) &gt; 0)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DirectoryScannerThread::doWork: &quot; &lt;&lt; deletedFiles.size() &lt;&lt; &quot; files were deleted&quot; &lt;&lt; endl;
++#endif
++		for(set&lt;string&gt;::const_iterator fileIter = deletedFiles.begin();
++			fileIter != deletedFiles.end(); ++fileIter)
++		{
++			if (m_pHandler != NULL)
++			{
++				// Inform the MonitorHandler
++				m_pHandler-&gt;fileDeleted(*fileIter);
++			}
++
++			// Delete this item
++			history.deleteItem(*fileIter);
++		}
++	}
+ }
++
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-09-07 00:24:02 UTC (rev 463)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-09-07 11:35:33 UTC (rev 464)
+@@ -425,8 +425,9 @@
+ class DirectoryScannerThread : public WorkerThread
+ {
+ 	public:
+-		DirectoryScannerThread(MonitorInterface *pMonitor,
+-			const std::string &amp;dirName, unsigned int maxLevel, bool followSymLinks);
++		DirectoryScannerThread(const std::string &amp;dirName, unsigned int maxLevel,
++			bool followSymLinks, MonitorInterface *pMonitor,
++			MonitorHandler *pHandler);
+ 		virtual ~DirectoryScannerThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -438,16 +439,17 @@
+ 		SigC::Signal3&lt;void, const std::string&amp;, const std::string&amp;, bool&gt;&amp; getFileFoundSignal(void);
+ 
+ 	protected:
+-		MonitorInterface *m_pMonitor;
+ 		std::string m_dirName;
+ 		unsigned int m_maxLevel;
+ 		bool m_followSymLinks;
++		MonitorInterface *m_pMonitor;
++		MonitorHandler *m_pHandler;
+ 		unsigned int m_currentLevel;
+ 		unsigned int m_sourceId;
+ 		SigC::Signal3&lt;void, const std::string&amp;, const std::string&amp;, bool&gt; m_signalFileFound;
+ 
+ 		void foundFile(const std::string &amp;fileName);
+-		bool scanDirectory(const std::string &amp;dirName);
++		bool scanEntry(const std::string &amp;entryName);
+ 		virtual void doWork(void);
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000456.html">[Pinot-svn] r463 - trunk/UI
+</A></li>
+	<LI>Next message: <A HREF="000458.html">[Pinot-svn] r465 - trunk/Monitor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#457">[ date ]</a>
+              <a href="thread.html#457">[ thread ]</a>
+              <a href="subject.html#457">[ subject ]</a>
+              <a href="author.html#457">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

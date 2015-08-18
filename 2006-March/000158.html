@@ -1,0 +1,307 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r159 - in trunk: Search Search/Google Search/ObjectsSearch Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r159%20-%20in%20trunk%3A%20Search%20Search/Google%20Search/ObjectsSearch%20Utils&In-Reply-To=%3C200603190534.k2J5YeXH005970%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000157.html">
+   <LINK REL="Next"  HREF="000159.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r159 - in trunk: Search Search/Google Search/ObjectsSearch Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r159%20-%20in%20trunk%3A%20Search%20Search/Google%20Search/ObjectsSearch%20Utils&In-Reply-To=%3C200603190534.k2J5YeXH005970%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r159 - in trunk: Search Search/Google Search/ObjectsSearch Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun Mar 19 06:34:40 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000157.html">[Pinot-svn] r158 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000159.html">[Pinot-svn] r160 - in trunk: Search UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#158">[ date ]</a>
+              <a href="thread.html#158">[ thread ]</a>
+              <a href="subject.html#158">[ subject ]</a>
+              <a href="author.html#158">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-19 06:34:05 +0100 (Sun, 19 Mar 2006)
+New Revision: 159
+
+Modified:
+   trunk/Search/AbstractGenerator.cpp
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/SearchEngineInterface.cpp
+   trunk/Search/SearchEngineInterface.h
+   trunk/Utils/Url.cpp
+   trunk/Utils/Url.h
+Log:
+When a result's URL points to the same host name as the engine's, try to extract
+the URL embedded in it if any.
+
+
+Modified: trunk/Search/AbstractGenerator.cpp
+===================================================================
+--- trunk/Search/AbstractGenerator.cpp	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Search/AbstractGenerator.cpp	2006-03-19 05:34:05 UTC (rev 159)
+@@ -175,8 +175,8 @@
+ 			Xapian::termpos termPos = *positionIter;
+ 
+ 			// ...and get those that fall in the abstract window
+-			if ((startPosition &lt;= termPos) &amp;&amp;
+-				(termPos &lt;= startPosition + m_wordsCount))
++			if ((startPosition &lt;= termPos + 1) &amp;&amp;
++				(termPos &lt; startPosition + m_wordsCount))
+ 			{
+ 				wordsBuffer[termPos] = *termIter;
+ 			}
+@@ -190,7 +190,8 @@
+ 		summary += wordIter-&gt;second;
+ 	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: summarized document &quot; &lt;&lt; docId &lt;&lt; &quot; in &quot; &lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: summarized document &quot;
++		&lt;&lt; docId &lt;&lt; &quot; in &quot; &lt;&lt; timer.stop()/1000 &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ #endif
+ 
+ 	return summary;
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2006-03-19 05:34:05 UTC (rev 159)
+@@ -123,7 +123,7 @@
+ 		struct gapi1__ResultElement *resultElement = searchResult-&gt;resultElements-&gt;__ptr[i];
+ 
+ 		string resultUrl(resultElement-&gt;URL);
+-		if (processResult(resultUrl) == true)
++		if (processResult(&quot;<A HREF="http://www.google.com/">http://www.google.com/</A>&quot;, resultUrl) == true)
+ 		{
+ 			m_resultsList.push_back(Result(resultUrl, resultElement-&gt;title, resultElement-&gt;snippet, &quot;&quot;, pseudoScore));
+ 			--pseudoScore;
+
+Modified: trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp
+===================================================================
+--- trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Search/ObjectsSearch/ObjectsSearchAPIEngine.cpp	2006-03-19 05:34:05 UTC (rev 159)
+@@ -82,7 +82,7 @@
+ 						cout &lt;&lt; &quot;ObjectsSearchAPIEngine::makeCall: &quot; &lt;&lt; *(pElem-&gt;title) &lt;&lt; endl;
+ 
+ 						string resultUrl(*(pElem-&gt;URL));
+-						if (processResult(resultUrl) == true)
++						if (processResult(&quot;<A HREF="http://www.objectssearch.com/">http://www.objectssearch.com/</A>&quot;, resultUrl) == true)
+ 						{
+ 							m_resultsList.push_back(Result(*(pElem-&gt;URL), *(pElem-&gt;title), *(pElem-&gt;summary), &quot;&quot;, pseudoScore));
+ 							--pseudoScore;
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Search/PluginWebEngine.cpp	2006-03-19 05:34:05 UTC (rev 159)
+@@ -100,7 +100,7 @@
+ 	{
+ 		string url(resultIter-&gt;getLocation());
+ 
+-		if (processResult(url) == false)
++		if (processResult(formattedQuery, url) == false)
+ 		{
+ 			// Remove this result
+ 			if (resultIter == m_resultsList.begin())
+@@ -117,6 +117,8 @@
+ 		}
+ 		else
+ 		{
++			resultIter-&gt;setLocation(url);
++
+ 			// Next
+ 			++resultIter;
+ 		}
+
+Modified: trunk/Search/SearchEngineInterface.cpp
+===================================================================
+--- trunk/Search/SearchEngineInterface.cpp	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Search/SearchEngineInterface.cpp	2006-03-19 05:34:05 UTC (rev 159)
+@@ -80,12 +80,13 @@
+ 	m_fileFilter = filter;
+ }
+ 
+-bool SearchEngineInterface::processResult(string &amp;resultUrl)
++bool SearchEngineInterface::processResult(const string &amp;queryUrl, string &amp;resultUrl)
+ {
+-	Url urlObj(resultUrl);
++	Url queryUrlObj(queryUrl);
++	Url resultUrlObj(resultUrl);
+ 
+ 	if ((m_hostFilter.empty() == false) &amp;&amp;
+-		(urlObj.getHost() != m_hostFilter))
++		(resultUrlObj.getHost() != m_hostFilter))
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;SearchEngineInterface::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
+@@ -94,7 +95,7 @@
+ 	}
+ 
+ 	if ((m_fileFilter.empty() == false) &amp;&amp;
+-		(urlObj.getFile() != m_fileFilter))
++		(resultUrlObj.getFile() != m_fileFilter))
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;SearchEngineInterface::processResult: skipping &quot; &lt;&lt; resultUrl &lt;&lt; endl;
+@@ -102,8 +103,42 @@
+ 		return false;
+ 	}
+ 
++	// Is the result's host name the same as the search engine's ?
++	// FIXME: not all TLDs have leafs at level 2
++	if (Url::reduceHost(queryUrlObj.getHost(), 2) == Url::reduceHost(resultUrlObj.getHost(), 2))
++	{
++		string protocol(resultUrlObj.getProtocol());
++
++		if (protocol.empty() == false)
++		{
++			string embeddedUrl;
++
++			string::size_type startPos = resultUrl.find(protocol, protocol.length());
++			if (startPos != string::npos)
++			{
++				string::size_type endPos = resultUrl.find(&quot;&amp;&quot;, startPos);
++				if (endPos != string::npos)
++				{
++					embeddedUrl = resultUrl.substr(startPos, endPos - startPos);
++				}
++				else
++				{
++					embeddedUrl = resultUrl.substr(startPos);
++				}
++
++				resultUrl = Url::unescapeUrl(embeddedUrl);
++			}
++#ifdef DEBUG
++			else cout &lt;&lt; &quot;SearchEngineInterface::processResult: no embedded URL&quot; &lt;&lt; endl;
++#endif
++		}
++#ifdef DEBUG
++		else cout &lt;&lt; &quot;SearchEngineInterface::processResult: no protocol&quot; &lt;&lt; endl;
++#endif
++	}
++
+ 	// Remove trailing spaces at the end of the URL
+-	string trimmedUrl = resultUrl;
++	string trimmedUrl(resultUrl);
+ 	string::size_type pos = trimmedUrl.find_last_of(&quot; &quot;);
+ 	while (pos != string::npos)
+ 	{
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Search/SearchEngineInterface.h	2006-03-19 05:34:05 UTC (rev 159)
+@@ -71,7 +71,7 @@
+ 
+ 		void setFileNameFilter(const string &amp;filter);
+ 
+-		virtual bool processResult(string &amp;resultUrl);
++		virtual bool processResult(const string &amp;queryUrl, string &amp;resultUrl);
+ 
+ };
+ 
+
+Modified: trunk/Utils/Url.cpp
+===================================================================
+--- trunk/Utils/Url.cpp	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Utils/Url.cpp	2006-03-19 05:34:05 UTC (rev 159)
+@@ -289,6 +289,41 @@
+ 	return prettyUrl;
+ }
+ 
++/// Reduces a host name to the given TLD level.
++string Url::reduceHost(const string &amp;hostName, unsigned int level)
++{
++	string reducedHost;
++	unsigned int currentLevel = 0;
++
++	if (hostName.empty() == true)
++	{
++		return &quot;&quot;;
++	}
++
++	string::size_type endPos = string::npos;
++	string::size_type pos = hostName.find_last_of(&quot;.&quot;);
++	while ((pos != string::npos) &amp;&amp;
++		(currentLevel &lt; level))
++	{
++		if (endPos == string::npos)
++		{
++			reducedHost = hostName.substr(pos + 1);
++		}
++		else
++		{
++			string level(hostName.substr(pos + 1, endPos - pos));
++			level += reducedHost;
++			reducedHost = level;
++		}
++
++		// Next
++		pos = hostName.find_last_of(&quot;.&quot;, pos - 1);
++		++currentLevel;
++	}
++
++	return reducedHost;
++}
++
+ /// Escapes an URL.
+ string Url::escapeUrl(const string &amp;url)
+ {
+
+Modified: trunk/Utils/Url.h
+===================================================================
+--- trunk/Utils/Url.h	2006-03-19 05:31:45 UTC (rev 158)
++++ trunk/Utils/Url.h	2006-03-19 05:34:05 UTC (rev 159)
+@@ -32,6 +32,9 @@
+ 		/// Truncates an URL to the given length by discarding characters in the middle.
+ 		static std::string prettifyUrl(const std::string &amp;url, unsigned int maxLen);
+ 
++		/// Reduces a host name to the given TLD level.
++		static std::string reduceHost(const std::string &amp;hostName, unsigned int level);
++
+ 		/// Escapes an URL.
+ 		static std::string escapeUrl(const std::string &amp;url);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000157.html">[Pinot-svn] r158 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000159.html">[Pinot-svn] r160 - in trunk: Search UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#158">[ date ]</a>
+              <a href="thread.html#158">[ thread ]</a>
+              <a href="subject.html#158">[ subject ]</a>
+              <a href="author.html#158">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

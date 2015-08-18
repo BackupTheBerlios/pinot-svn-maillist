@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r938 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r938%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708171617.l7HGH9UF010332%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000931.html">
+   <LINK REL="Next"  HREF="000933.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r938 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r938%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200708171617.l7HGH9UF010332%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r938 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug 17 18:17:09 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000931.html">[Pinot-svn] r937 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000933.html">[Pinot-svn] r939 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#932">[ date ]</a>
+              <a href="thread.html#932">[ thread ]</a>
+              <a href="subject.html#932">[ subject ]</a>
+              <a href="author.html#932">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-17 18:17:08 +0200 (Fri, 17 Aug 2007)
+New Revision: 938
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+Log:
+Don't open ViewHistory every time appendResult() is called.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-08-17 15:54:00 UTC (rev 937)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-08-17 16:17:08 UTC (rev 938)
+@@ -500,9 +500,10 @@
+ 	cout &lt;&lt; &quot;ResultsTree::addResults: ID for engine &quot; &lt;&lt; engineName &lt;&lt; &quot; is &quot; &lt;&lt; engineId &lt;&lt;  endl;
+ #endif
+ 
+-	QueryHistory history(m_settings.getHistoryDatabaseName());
++	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
++	ViewHistory viewHistory(m_settings.getHistoryDatabaseName());
+ 	bool isNewQuery = false;
+-	if (history.getLastRun(m_treeName, engineName).empty() == true)
++	if (queryHistory.getLastRun(m_treeName, engineName).empty() == true)
+ 	{
+ 		isNewQuery = true;
+ 	}
+@@ -539,19 +540,19 @@
+ 
+ 			// Has the result's ranking changed ?
+ 			float oldestScore = 0;
+-			float previousScore = history.hasItem(m_treeName, engineName,
++			float previousScore = queryHistory.hasItem(m_treeName, engineName,
+ 				location, oldestScore);
+ 			if (previousScore &gt; 0)
+ 			{
+ 				// Update this result whatever the current and previous rankings were
+-				history.updateItem(m_treeName, engineName, location,
++				queryHistory.updateItem(m_treeName, engineName, location,
+ 					title, extract, charset, currentScore);
+ 				rankDiff = (int)(currentScore - previousScore);
+ 			}
+ 			else
+ 			{
+ 				// No, this is a new result
+-				history.insertItem(m_treeName, engineName, location,
++				queryHistory.insertItem(m_treeName, engineName, location,
+ 					resultIter-&gt;getTitle(), extract, charset, currentScore);
+ 				// New results are displayed as such only if the query has already been run on the engine
+ 				if (isNewQuery == false)
+@@ -572,9 +573,12 @@
+ 			isIndexed = true;
+ 		}
+ 
++		// Has it been already viewed ?
++		bool wasViewed = viewHistory.hasItem(location);
++
+ 		// OK, add a row for this result within the group
+ 		TreeModel::iterator titleIter;
+-		if (appendResult(title, location, resultIter-&gt;getType(), (int)currentScore, rankDiff, isIndexed,
++		if (appendResult(title, location, resultIter-&gt;getType(), (int)currentScore, rankDiff, isIndexed, wasViewed,
+ 			docId, resultIter-&gt;getTimestamp(), engineId, indexId, titleIter, groupIter, true) == true)
+ 		{
+ #ifdef DEBUG
+@@ -715,6 +719,7 @@
+ 						childRow[m_resultsColumns.m_score],
+ 						childRow[m_resultsColumns.m_rankDiff],
+ 						childRow[m_resultsColumns.m_indexed],
++						childRow[m_resultsColumns.m_viewed],
+ 						childRow[m_resultsColumns.m_docId],
+ 						childRow[m_resultsColumns.m_timestamp],
+ 						engineIds, indexIds,
+@@ -789,6 +794,7 @@
+ 								childRow[m_resultsColumns.m_score],
+ 								childRow[m_resultsColumns.m_rankDiff],
+ 								childRow[m_resultsColumns.m_indexed],
++								childRow[m_resultsColumns.m_viewed],
+ 								childRow[m_resultsColumns.m_docId],
+ 								childRow[m_resultsColumns.m_timestamp],
+ 								engineId, indexId,
+@@ -1185,7 +1191,7 @@
+ //
+ void ResultsTree::exportResults(const string &amp;fileName, bool csvFormat)
+ {
+-	QueryHistory history(m_settings.getHistoryDatabaseName());
++	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
+ 	QueryProperties queryProps(m_treeName, &quot;&quot;);
+ 	ResultsExporter *pExporter = NULL;
+ 	unsigned int maxResultsCount = 0;
+@@ -1272,7 +1278,7 @@
+ 			}
+ 			if (m_groupMode != FLAT)
+ 			{
+-				result.setExtract(history.getItemExtract(from_utf8(m_treeName),
++				result.setExtract(queryHistory.getItemExtract(from_utf8(m_treeName),
+ 					engineName, result.getLocation(), charset));
+ 			}
+ 
+@@ -1307,7 +1313,7 @@
+ // Adds a new row in the results tree.
+ //
+ bool ResultsTree::appendResult(const ustring &amp;text, const ustring &amp;url,
+-	const ustring &amp;type, int score, int rankDiff, bool isIndexed,
++	const ustring &amp;type, int score, int rankDiff, bool isIndexed, bool wasViewed,
+ 	unsigned int docId, const ustring &amp;timestamp, unsigned int engineId,
+ 	unsigned int indexId, TreeModel::iterator &amp;newRowIter,
+ 	const TreeModel::iterator &amp;parentIter, bool noDuplicates)
+@@ -1353,10 +1359,6 @@
+ 		newRowIter = m_refStore-&gt;append(parentRow.children());
+ 	}
+ 
+-	// Has it been already viewed ?
+-	ViewHistory viewHistory(m_settings.getHistoryDatabaseName());
+-	bool wasViewed = viewHistory.hasItem(url);
+-
+ 	TreeModel::Row childRow = *newRowIter;
+ 	updateRow(childRow, text, url, type, score, engineId, indexId,
+ 		docId, timestamp, ResultsModelColumns::ROW_RESULT, isIndexed,
+@@ -1491,7 +1493,7 @@
+ //
+ ustring ResultsTree::findResultsExtract(const Gtk::TreeModel::Row &amp;row)
+ {
+-	QueryHistory history(m_settings.getHistoryDatabaseName());
++	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
+ 	set&lt;string&gt; engineNames, indexNames;
+ 	string url(from_utf8(row[m_resultsColumns.m_url]));
+ 	string extract, charset;
+@@ -1528,7 +1530,7 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;ResultsTree::findResultsExtract: first engine for &quot; &lt;&lt; url &lt;&lt; &quot; was &quot; &lt;&lt; engineName &lt;&lt; endl;
+ #endif
+-		extract = history.getItemExtract(from_utf8(m_treeName), engineName, url, charset);
++		extract = queryHistory.getItemExtract(from_utf8(m_treeName), engineName, url, charset);
+ 	}
+ 
+ 	return to_utf8(extract, charset);
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2007-08-17 15:54:00 UTC (rev 937)
++++ trunk/UI/GTK2/src/ResultsTree.h	2007-08-17 16:17:08 UTC (rev 938)
+@@ -160,7 +160,7 @@
+ 		/// Adds a new row in the results tree.
+ 		bool appendResult(const Glib::ustring &amp;text, const Glib::ustring &amp;url,
+ 			const Glib::ustring &amp;type, int score, int rankDiff,
+-			bool isIndexed, unsigned int docId, const Glib::ustring &amp;timestamp,
++			bool isIndexed, bool wasViewed, unsigned int docId, const Glib::ustring &amp;timestamp,
+ 			unsigned int engineId, unsigned int indexId,
+ 			Gtk::TreeModel::iterator &amp;newRowIter,
+ 			const Gtk::TreeModel::iterator &amp;parentIter,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000931.html">[Pinot-svn] r937 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000933.html">[Pinot-svn] r939 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#932">[ date ]</a>
+              <a href="thread.html#932">[ thread ]</a>
+              <a href="subject.html#932">[ subject ]</a>
+              <a href="author.html#932">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

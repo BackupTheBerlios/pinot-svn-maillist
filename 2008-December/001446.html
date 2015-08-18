@@ -1,0 +1,2327 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1456 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1456%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200812301404.mBUE43xe022381%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001445.html">
+   <LINK REL="Next"  HREF="001447.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1456 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1456%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200812301404.mBUE43xe022381%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1456 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec 30 15:04:03 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001445.html">[Pinot-svn] r1455 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="001447.html">[Pinot-svn] r1457 - trunk/UI/GTK2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1446">[ date ]</a>
+              <a href="thread.html#1446">[ thread ]</a>
+              <a href="subject.html#1446">[ subject ]</a>
+              <a href="author.html#1446">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-30 15:03:54 +0100 (Tue, 30 Dec 2008)
+New Revision: 1456
+
+Modified:
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/mainWindow_glade.cc
+   trunk/UI/GTK2/src/mainWindow_glade.hh
+Log:
+Reorganized menus, merged menuitems from Results and Index that overlapped in
+functionality.
+Unified expansion from a document selected with More Like This and from one
+dropped on the queries list.
+Export works on both results lists and index pages.
+Index Results will index new documents or update documents in My Web Pages, not
+My Documents.
+
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2008-12-29 18:32:55 UTC (rev 1455)
++++ trunk/UI/GTK2/src/mainWindow.cc	2008-12-30 14:03:54 UTC (rev 1456)
+@@ -93,6 +93,14 @@
+ unsigned int mainWindow::m_maxDocsCount = 100;
+ unsigned int mainWindow::m_maxIndexThreads = 2;
+ 
++mainWindow::ExpandSet::ExpandSet()
++{
++}
++
++mainWindow::ExpandSet::~ExpandSet()
++{
++}
++
+ mainWindow::InternalState::InternalState(unsigned int maxIndexThreads, mainWindow *pWindow) :
+ 	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads, 60),
+ 	m_liveQueryLength(0),
+@@ -212,7 +220,7 @@
+ 	removeQueryButton-&gt;set_sensitive(false);
+ 	queryHistoryButton-&gt;set_sensitive(false);
+ 	findQueryButton-&gt;set_sensitive(false);
+-	show_global_menuitems(false);
++	show_pagebased_menuitems(false);
+ 	show_selectionbased_menuitems(false);
+ 	// ...and buttons
+ 	removeIndexButton-&gt;set_sensitive(false);
+@@ -252,7 +260,7 @@
+ 	// Open the preferences on first run
+ 	if (m_settings.isFirstRun() == true)
+ 	{
+-		on_configure_activate();
++		on_preferences_activate();
+ 	}
+ 	else if	(m_settings.m_warnAboutVersion == true)
+ 	{
+@@ -402,7 +410,7 @@
+ 	if (m_pCacheMenu == NULL)
+ 	{
+ 		m_pCacheMenu = manage(new Menu());
+-		viewcache1-&gt;set_submenu(*m_pCacheMenu);
++		opencache1-&gt;set_submenu(*m_pCacheMenu);
+ 	}
+ 	else
+ 	{
+@@ -415,7 +423,7 @@
+ 	if (m_settings.m_cacheProviders.empty() == true)
+ 	{
+ 		// Hide the submenu
+-		viewcache1-&gt;hide();
++		opencache1-&gt;hide();
+ 	}
+ 	else
+ 	{
+@@ -441,7 +449,7 @@
+ 	if (m_pIndexMenu == NULL)
+ 	{
+ 		m_pIndexMenu = manage(new Menu());
+-		list1-&gt;set_submenu(*m_pIndexMenu);
++		listcontents1-&gt;set_submenu(*m_pIndexMenu);
+ 	}
+ 	else
+ 	{
+@@ -473,7 +481,7 @@
+ 	if (m_pFindMenu == NULL)
+ 	{
+ 		m_pFindMenu = manage(new Menu());
+-		searchagain1-&gt;set_submenu(*m_pFindMenu);
++		searchthisfor1-&gt;set_submenu(*m_pFindMenu);
+ 	}
+ 	else
+ 	{
+@@ -481,7 +489,7 @@
+ 		m_pFindMenu-&gt;items().clear();
+ 	}
+ 
+-	sigc::slot1&lt;void, ustring&gt; findSlot = sigc::mem_fun(*this, &amp;mainWindow::on_searchagain_changed);
++	sigc::slot1&lt;void, ustring&gt; findSlot = sigc::mem_fun(*this, &amp;mainWindow::on_searchthis_changed);
+ 
+ 	TreeModel::Children children = m_refQueryTree-&gt;children();
+ 	for (TreeModel::Children::iterator iter = children.begin();
+@@ -548,10 +556,12 @@
+ // Get selected results in the current results tab
+ //
+ bool mainWindow::get_results_page_details(const ustring &amp;queryName,
+-	QueryProperties &amp;queryProps, set&lt;string&gt; &amp;locations)
++	QueryProperties &amp;queryProps, set&lt;string&gt; &amp;locations,
++	set&lt;string&gt; &amp;locationsToIndex)
+ {
+ 	vector&lt;DocumentInfo&gt; resultsList;
+ 	ustring currentQueryName(queryName);
++	bool foundQuery = false;
+ 
+ 	locations.clear();
+ 
+@@ -560,23 +570,31 @@
+ 		NotebookPageBox *pNotebookPage = get_current_page();
+ 		if (pNotebookPage != NULL)
+ 		{
+-			ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-			if (pResultsPage != NULL)
++			ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++			if (pResultsTree != NULL)
+ 			{
+-				ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-				if (pResultsTree != NULL)
++				pResultsTree-&gt;getSelection(resultsList);
++			}
++
++			NotebookPageBox::PageType type = pNotebookPage-&gt;getType();
++			if (type == NotebookPageBox::RESULTS_PAGE)
++			{
++				currentQueryName = pNotebookPage-&gt;getTitle();
++
++				if (currentQueryName.empty() == true)
+ 				{
+-					pResultsTree-&gt;getSelection(resultsList);
++					return false;
+ 				}
+-
+-				currentQueryName = pResultsPage-&gt;getTitle();
+ 			}
++			else if (type == NotebookPageBox::INDEX_PAGE)
++			{
++				IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(pNotebookPage);
++				if (pIndexPage != NULL)
++				{
++					currentQueryName = pIndexPage-&gt;getQueryName();
++				}
++			}
+ 		}
+-
+-		if (currentQueryName.empty() == true)
+-		{
+-			return false;
+-		}
+ 	}
+ 
+ 	// Find this query
+@@ -585,10 +603,8 @@
+ 		queryProps.setName(currentQueryName);
+ 		queryProps.setFreeQuery(liveQueryEntry-&gt;get_text());
+ 	}
+-	else
++	else if (currentQueryName.empty() == false)
+ 	{
+-		bool foundQuery = false;
+-
+ 		TreeModel::Children children = m_refQueryTree-&gt;children();
+ 		for (TreeModel::Children::iterator iter = children.begin();
+ 			iter != children.end(); ++iter)
+@@ -613,12 +629,27 @@
+ 	for (vector&lt;DocumentInfo&gt;::const_iterator docIter = resultsList.begin();
+ 		docIter != resultsList.end(); ++docIter)
+ 	{
+-		if (docIter-&gt;getIsIndexed() == true)
++		if (docIter-&gt;getIsIndexed() == false)
+ 		{
+-			locations.insert(docIter-&gt;getLocation());
++			locationsToIndex.insert(docIter-&gt;getLocation());
+ 		}
++		locations.insert(docIter-&gt;getLocation());
+ 	}
+ 
++	if (foundQuery == false)
++	{
++		Url urlObj(*locations.begin());
++		string queryName(urlObj.getFile());
++
++		if (locations.size() &gt; 1)
++		{
++			queryName += &quot;...&quot;;
++		}
++
++		queryProps.setName(queryName);
++		queryProps.setFreeQuery(&quot;dir:/&quot;);
++	}
++
+ 	return true;
+ }
+ 
+@@ -626,7 +657,7 @@
+ // Drag and drop
+ //
+ void mainWindow::on_data_received(const RefPtr&lt;DragContext&gt; &amp;context,
+-	int x, int y, const SelectionData &amp;data, guint info, guint time)
++	int x, int y, const SelectionData &amp;data, guint info, guint dataTime)
+ {
+ 	list&lt;ustring&gt; droppedUris = data.get_uris();
+ 	ustring droppedText(data.get_text());
+@@ -639,15 +670,17 @@
+ 	{
+ 		IndexInterface *pIndex = m_settings.getIndex(&quot;MERGED&quot;);
+ 		set&lt;string&gt; locationsToIndex;
+-		bool isIndexing = true;
++		ExpandSet expandSet;
++		string queryName;
+ 
++		expandSet.m_queryProps.setFreeQuery(&quot;dir:/&quot;);
++
+ 		for (list&lt;ustring&gt;::iterator uriIter = droppedUris.begin();
+ 			uriIter != droppedUris.end(); ++uriIter)
+ 		{
+ 			string uri(*uriIter);
+ 
+-			cout &lt;&lt; &quot;mainWindow::on_data_received: received URI \&quot;&quot;
+-				&lt;&lt; uri &lt;&lt; &quot;\&quot;&quot; &lt;&lt; endl; 
++			cout &lt;&lt; &quot;mainWindow::on_data_received: received &quot; &lt;&lt; uri &lt;&lt; endl; 
+ 
+ 			// Query the merged index
+ 			if (pIndex != NULL)
+@@ -660,7 +693,14 @@
+ 				}
+ 			}
+ 
+-			m_expandLocations.insert(uri);
++			// Name the query after the first document
++			if (queryName.empty() == true)
++			{
++				Url urlObj(uri);
++				queryName = urlObj.getFile();
++			}
++
++			expandSet.m_locations.insert(uri);
+ 			goodDrop = true;
+ 		}
+ 
+@@ -669,8 +709,16 @@
+ 			delete pIndex;
+ 		}
+ 
++		if (expandSet.m_locations.size() &gt; 1)
++		{
++			queryName += &quot;...&quot;;
++		}
++
+ 		if (goodDrop == true)
+ 		{
++			expandSet.m_queryProps.setName(queryName);
++			m_expandSets.push_back(expandSet);
++
+ 			for (set&lt;string&gt;::iterator locationIter = locationsToIndex.begin();
+ 				locationIter != locationsToIndex.end(); ++locationIter)
+ 			{
+@@ -682,7 +730,7 @@
+ 
+ 			if (locationsToIndex.empty() == true)
+ 			{
+-				// We can run a catch-all query and expand on these documents right away
++				// Expand on these documents right away
+ 				expand_locations();
+ 			}
+ 			// Else, do it when indexing is completed
+@@ -699,7 +747,7 @@
+ 		goodDrop = true;
+ 	}
+ 
+-	context-&gt;drag_finish(goodDrop, false, time);
++	context-&gt;drag_finish(goodDrop, false, dataTime);
+ }
+ 
+ //
+@@ -760,9 +808,6 @@
+ 	findQueryButton-&gt;set_sensitive(enableButtons);
+ }
+ 
+-//
+-// Results tree selection changed
+-//
+ void mainWindow::on_resultsTreeviewSelection_changed(ustring queryName)
+ {
+ 	vector&lt;DocumentInfo&gt; resultsList;
+@@ -771,22 +816,53 @@
+ 	NotebookPageBox *pNotebookPage = get_page(queryName, NotebookPageBox::RESULTS_PAGE);
+ 	if (pNotebookPage != NULL)
+ 	{
+-		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-		if (pResultsPage != NULL)
++		ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++		if (pResultsTree != NULL)
+ 		{
+-			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-			if (pResultsTree != NULL)
+-			{
+-				hasSelection = pResultsTree-&gt;getSelection(resultsList);
+-			}
++			hasSelection = pResultsTree-&gt;getSelection(resultsList);
+ 		}
+ 	}
+ 
+-	if ((hasSelection == true) &amp;&amp;
+-		(resultsList.empty() == false))
++	on_document_changed(resultsList, false, false, true);
++}
++
++void mainWindow::on_indexTreeviewSelection_changed(ustring indexName)
++{
++	vector&lt;DocumentInfo&gt; resultsList;
++	bool hasSelection = false;
++
++	NotebookPageBox *pNotebookPage = get_page(indexName, NotebookPageBox::INDEX_PAGE);
++	if (pNotebookPage != NULL)
+ 	{
+-		bool firstResult = true, isViewable = true, isCached = false, isIndexed = false, isIndexable = true;
++		ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++		if (pResultsTree != NULL)
++		{
++			hasSelection = pResultsTree-&gt;getSelection(resultsList);
++		}
++	}
+ 
++	bool isDocumentsIndex = true;
++	bool editDocuments = true;
++
++	if (indexName != _(&quot;My Web Pages&quot;))
++	{
++		isDocumentsIndex = false;
++		if (indexName != _(&quot;My Documents&quot;))
++		{
++			editDocuments = false;
++		}
++	}
++
++	on_document_changed(resultsList, isDocumentsIndex, editDocuments, false);
++}
++
++void mainWindow::on_document_changed(vector&lt;DocumentInfo&gt; &amp;resultsList,
++	bool isDocumentsIndex, bool editDocuments, bool areResults)
++{
++	if (resultsList.empty() == false)
++	{
++		bool firstResult = true, isViewable = true, isCached = false, isLocal = false, isIndexed = false, isIndexable = true;
++
+ 		for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
+ 			resultIter != resultsList.end(); ++resultIter)
+ 		{
+@@ -795,12 +871,12 @@
+ 			string protocol(urlObj.getProtocol());
+ 
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_resultsTreeviewSelection_changed: &quot; &lt;&lt; url &lt;&lt; endl;
++			cout &lt;&lt; &quot;mainWindow::on_document_changed: &quot; &lt;&lt; url &lt;&lt; endl;
+ #endif
+ 			if (firstResult == true)
+ 			{
+-				// Show the URL of the first result in the status bar
+-				ustring statusText = _(&quot;Result location is&quot;);
++				// Show the URL of the first document in the status bar
++				ustring statusText = _(&quot;Document location is&quot;);
+ 				statusText += &quot; &quot;;
+ 				statusText += url;
+ 				set_status(statusText, true);
+@@ -821,90 +897,48 @@
+ 					isCached = true;
+ 				}
+ 
++				if (urlObj.isLocal() == true)
++				{
++					isLocal = true;
++				}
++
+ 				isIndexed = resultIter-&gt;getIsIndexed();
++				isIndexable = !isIndexed;
+ 			}
+ 		}
+ 
+ 		// Enable these menu items
+-		viewresults1-&gt;set_sensitive(isViewable);
+-		viewcache1-&gt;set_sensitive(isCached);
+-		morelikethis1-&gt;set_sensitive(isIndexed);
+-		searchagain1-&gt;set_sensitive(isIndexed);
+-		indexresults1-&gt;set_sensitive(isIndexable);
++		open1-&gt;set_sensitive(isViewable);
++		opencache1-&gt;set_sensitive(isCached);
++		openparent1-&gt;set_sensitive(isLocal);
++		addtoindex1-&gt;set_sensitive(isIndexable);
++		updateindex1-&gt;set_sensitive(isDocumentsIndex);
++		unindex1-&gt;set_sensitive(isDocumentsIndex);
++		morelikethis1-&gt;set_sensitive(true);
++		searchthisfor1-&gt;set_sensitive(areResults);
++		properties1-&gt;set_sensitive(editDocuments);
+ 	}
+ 	else
+ 	{
+ 		// Disable these menu items
+-		viewresults1-&gt;set_sensitive(false);
+-		viewcache1-&gt;set_sensitive(false);
++		open1-&gt;set_sensitive(false);
++		opencache1-&gt;set_sensitive(false);
++		openparent1-&gt;set_sensitive(false);
++		addtoindex1-&gt;set_sensitive(false);
++		updateindex1-&gt;set_sensitive(false);
++		unindex1-&gt;set_sensitive(false);
+ 		morelikethis1-&gt;set_sensitive(false);
+-		searchagain1-&gt;set_sensitive(false);
+-		indexresults1-&gt;set_sensitive(false);
++		searchthisfor1-&gt;set_sensitive(false);
++		addtoindex1-&gt;set_sensitive(false);
+ 
+ 		// Reset
+ 		set_status(&quot;&quot;);
+ 	}
+ }
+ 
+-//
+-// Index tree selection changed
+-//
+-void mainWindow::on_indexTreeviewSelection_changed(ustring indexName)
+-{
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+-	if (pIndexPage == NULL)
+-	{
+-		return;
+-	}
+-
+-	ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+-	if (pResultsTree != NULL)
+-	{
+-		string url(pResultsTree-&gt;getFirstSelectionURL());
+-
+-		if (url.empty() == false)
+-		{
+-			bool isDocumentsIndex = true;
+-			bool editDocument = true;
+-
+-			// Enable these menu items unless it is not the documents index
+-			if (indexName != _(&quot;My Web Pages&quot;))
+-			{
+-				isDocumentsIndex = false;
+-				if (indexName != _(&quot;My Documents&quot;))
+-				{
+-					editDocument = false;
+-				}
+-			}
+-			viewfromindex1-&gt;set_sensitive(true);
+-			refreshindex1-&gt;set_sensitive(isDocumentsIndex);
+-			unindex1-&gt;set_sensitive(isDocumentsIndex);
+-			showfromindex1-&gt;set_sensitive(editDocument);
+-
+-			// Show the URL in the status bar
+-			ustring statusText = _(&quot;Document location is&quot;);
+-			statusText += &quot; &quot;;
+-			statusText += pResultsTree-&gt;getFirstSelectionURL();
+-			set_status(statusText, true);
+-		}
+-	}
+-	else
+-	{
+-		// No, disable these
+-		viewfromindex1-&gt;set_sensitive(false);
+-		refreshindex1-&gt;set_sensitive(false);
+-		unindex1-&gt;set_sensitive(false);
+-		showfromindex1-&gt;set_sensitive(false);
+-	}
+-}
+-
+-//
+-// Index &gt; List Contents Of menu selected
+-//
+ void mainWindow::on_index_changed(ustring indexName)
+ {
+ 	ResultsTree *pResultsTree = NULL;
+-	IndexPage *pIndexPage = NULL;
+ 	ustring queryName;
+ 	bool foundPage = false;
+ 
+@@ -913,7 +947,7 @@
+ #endif
+ 
+ 	// Is there already a page for this index ?
+-	pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+ 	if (pIndexPage != NULL)
+ 	{
+ 		// Force a refresh
+@@ -934,7 +968,7 @@
+ 			sigc::mem_fun(*this, &amp;mainWindow::on_close_page));
+ 
+ 		// Position the index tree
+-		pResultsTree = manage(new ResultsTree(indexName, indexMenuitem-&gt;get_submenu(),
++		pResultsTree = manage(new ResultsTree(indexName, fileMenuitem-&gt;get_submenu(),
+ 			ResultsTree::FLAT, m_settings));
+ 		pIndexPage = manage(new IndexPage(indexName, pResultsTree, m_settings));
+ 		// Connect to the &quot;changed&quot; signal
+@@ -942,7 +976,7 @@
+ 			sigc::mem_fun(*this, &amp;mainWindow::on_indexTreeviewSelection_changed));
+ 		// Connect to the edit document signal
+ 		pResultsTree-&gt;getDoubleClickSignal().connect(
+-			sigc::mem_fun(*this, &amp;mainWindow::on_showfromindex_activate));
++			sigc::mem_fun(*this, &amp;mainWindow::on_properties_activate));
+ 		// Connect to the query changed signal
+ 		pIndexPage-&gt;getQueryChangedSignal().connect(
+ 			sigc::mem_fun(*this, &amp;mainWindow::on_query_changed));
+@@ -987,65 +1021,61 @@
+ 	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+-		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-		if (pResultsPage != NULL)
++		ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++		if (pResultsTree != NULL)
+ 		{
+-			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-			if (pResultsTree != NULL)
+-			{
+-				vector&lt;DocumentInfo&gt; resultsList;
++			vector&lt;DocumentInfo&gt; resultsList;
+ 
+-				if (pResultsTree-&gt;getSelection(resultsList) == true)
++			if (pResultsTree-&gt;getSelection(resultsList) == true)
++			{
++				for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
++					resultIter != resultsList.end(); ++resultIter)
+ 				{
+-					for (vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
+-						resultIter != resultsList.end(); ++resultIter)
++					string url(resultIter-&gt;getLocation());
++					Url urlObj(url);
++					string protocol(urlObj.getProtocol());
++
++					// Is this protocol supported ?
++					if (cacheProvider.m_protocols.find(protocol) == cacheProvider.m_protocols.end())
+ 					{
+-						string url(resultIter-&gt;getLocation());
+-						Url urlObj(url);
+-						string protocol(urlObj.getProtocol());
++						// No, it isn't... This document will be open in place
++						continue;
++					}
+ 
+-						// Is this protocol supported ?
+-						if (cacheProvider.m_protocols.find(protocol) == cacheProvider.m_protocols.end())
++					// Rewrite the URL
++					ustring location(cacheProvider.m_location);
++					ustring::size_type argPos = location.find(&quot;%url0&quot;);
++					if (argPos != ustring::npos)
++					{
++						string::size_type pos = url.find(&quot;://&quot;);
++						if ((pos != string::npos) &amp;&amp;
++							(pos + 3 &lt; url.length()))
+ 						{
+-							// No, it isn't... This document will be open in place
+-							continue;
++							// URL without protocol
++							location.replace(argPos, 5, url.substr(pos + 3));
+ 						}
+-
+-						// Rewrite the URL
+-						ustring location(cacheProvider.m_location);
+-						ustring::size_type argPos = location.find(&quot;%url0&quot;);
++					}
++					else
++					{
++						argPos = location.find(&quot;%url&quot;);
+ 						if (argPos != ustring::npos)
+ 						{
+-							string::size_type pos = url.find(&quot;://&quot;);
+-							if ((pos != string::npos) &amp;&amp;
+-								(pos + 3 &lt; url.length()))
+-							{
+-								// URL without protocol
+-								location.replace(argPos, 5, url.substr(pos + 3));
+-							}
++							// Full protocol
++							location.replace(argPos, 4, url);
+ 						}
+-						else
+-						{
+-							argPos = location.find(&quot;%url&quot;);
+-							if (argPos != ustring::npos)
+-							{
+-								// Full protocol
+-								location.replace(argPos, 4, url);
+-							}
+-						}
++					}
+ 
+-						resultIter-&gt;setLocation(location);
++					resultIter-&gt;setLocation(location);
+ #ifdef DEBUG
+-						cout &lt;&lt; &quot;mainWindow::on_cache_changed: rewritten &quot;
+-							&lt;&lt; url &lt;&lt; &quot; to &quot; &lt;&lt; location &lt;&lt; endl;
++					cout &lt;&lt; &quot;mainWindow::on_cache_changed: rewritten &quot;
++						&lt;&lt; url &lt;&lt; &quot; to &quot; &lt;&lt; location &lt;&lt; endl;
+ #endif
+-					}
++				}
+ 
+-					view_documents(resultsList);
++				view_documents(resultsList);
+ 
+-					// Update the rows right now
+-					pResultsTree-&gt;setSelectionState(true);
+-				}
++				// Update the rows right now
++				pResultsTree-&gt;setSelectionState(true);
+ 			}
+ 		}
+ 	}
+@@ -1054,28 +1084,22 @@
+ //
+ // Results &gt; Search This For menu selected
+ //
+-void mainWindow::on_searchagain_changed(ustring queryName)
++void mainWindow::on_searchthis_changed(ustring queryName)
+ {
+ 	QueryProperties queryProps;
+ 	QueryProperties currentQueryProps;
+-	set&lt;string&gt; locations;
++	set&lt;string&gt; locations, locationsToIndex;
+ 
+ 	// Get the properties of the given query and
+ 	// selected results on the current results page
+-	if ((get_results_page_details(queryName, queryProps, locations) == false) ||
+-		(get_results_page_details(&quot;&quot;, currentQueryProps, locations) == false))
++	if ((get_results_page_details(queryName, queryProps, locations, locationsToIndex) == false) ||
++		(get_results_page_details(&quot;&quot;, currentQueryProps, locations, locationsToIndex) == false))
+ 	{
+-		// Maybe the query was deleted
+-		if (queryProps.getName().empty() == false)
+-		{
+-			ustring status(_(&quot;Couldn't find query&quot;));
+-			status += &quot; &quot;;
+-			status += queryName;
+-			set_status(status);
+-		}
++		set_status(_(&quot;Couldn't search in results&quot;));
+ 
+ 		return;
+ 	}
++	// FIXME: index locations that need to be indexed
+ 
+ 	if (locations.empty() == false)
+ 	{
+@@ -1106,16 +1130,11 @@
+ //
+ void mainWindow::on_query_changed(ustring indexName, ustring queryName)
+ {
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+-	if (pIndexPage == NULL)
++	NotebookPageBox *pNotebookPage = get_page(indexName, NotebookPageBox::INDEX_PAGE);
++	if (pNotebookPage == NULL)
+ 	{
+ 		return;
+ 	}
+-	ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+-	if (pResultsTree == NULL)
+-	{
+-		return;
+-	}
+ 
+ 	browse_index(indexName, queryName, 0);
+ }
+@@ -1125,8 +1144,6 @@
+ //
+ void mainWindow::on_switch_page(GtkNotebookPage *p0, guint p1)
+ {
+-	bool showResultsMenuitems = false;
+-
+ 	NotebookPageBox *pNotebookPage = dynamic_cast&lt;NotebookPageBox*&gt;(m_pNotebook-&gt;get_nth_page(p1));
+ 	if (pNotebookPage != NULL)
+ 	{
+@@ -1134,33 +1151,28 @@
+ 		if (type == NotebookPageBox::RESULTS_PAGE)
+ 		{
+ 			// Show or hide the extract field
+-			ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-			if (pResultsPage != NULL)
++			ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++			if (pResultsTree != NULL)
+ 			{
+-				ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-				if (pResultsTree != NULL)
++				// Sync the results tree with the menuitems
++				pResultsTree-&gt;showExtract(showextracts1-&gt;get_active());
++				if (searchenginegroup1-&gt;get_active() == true)
+ 				{
+-					// Sync the results tree with the menuitems
+-					pResultsTree-&gt;showExtract(showextract1-&gt;get_active());
+-					if (searchenginegroup1-&gt;get_active() == true)
+-					{
+-						pResultsTree-&gt;setGroupMode(ResultsTree::BY_ENGINE);
+-					}
+-					else
+-					{
+-						pResultsTree-&gt;setGroupMode(ResultsTree::BY_HOST);
+-					}
++					pResultsTree-&gt;setGroupMode(ResultsTree::BY_ENGINE);
+ 				}
++				else
++				{
++					pResultsTree-&gt;setGroupMode(ResultsTree::BY_HOST);
++				}
+ 			}
+-
+-			showResultsMenuitems = true;
+ 		}
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;mainWindow::on_switch_page: page &quot; &lt;&lt; p1 &lt;&lt; &quot; has type &quot; &lt;&lt; type &lt;&lt; endl;
+ #endif
+ 	}
+ 
+-	show_global_menuitems(showResultsMenuitems);
++	show_pagebased_menuitems(true);
++
+ 	// Did the page change ?
+ 	if (m_state.m_currentPage != p1)
+ 	{
+@@ -1193,7 +1205,7 @@
+ 
+ 	if (m_pNotebook-&gt;get_n_pages() - pageDecrement &lt;= 0)
+ 	{
+-		show_global_menuitems(false);
++		show_pagebased_menuitems(false);
+ 		show_selectionbased_menuitems(false);
+ 	}
+ 
+@@ -1252,16 +1264,14 @@
+ 			return;
+ 		}
+ 
+-		IndexPage *pIndexPage = NULL;
+-		ResultsTree *pResultsTree = NULL;
+ 		ustring indexName = to_utf8(pListThread-&gt;getIndexName());
+ 
+ 		// Find the page for this index
+ 		// It may have been closed by the user
+-		pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
++		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+ 		if (pIndexPage != NULL)
+ 		{
+-			pResultsTree = pIndexPage-&gt;getTree();
++			ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+ 			if (pResultsTree != NULL)
+ 			{
+ 				const vector&lt;DocumentInfo&gt; &amp;docsList = pListThread-&gt;getDocuments();
+@@ -1358,14 +1368,19 @@
+ 					isNewResult = true;
+ 				}
+ 				
+-				if ((docId == 0) &amp;&amp;
+-					((indexResults == QueryProperties::ALL_RESULTS) || (isNewResult == true)))
++				if ((indexResults == QueryProperties::ALL_RESULTS) || (isNewResult == true))
+ 				{
+-					// This document is not in either index
+-					docsToIndex.insert(*resultIter);
++					if ((docId == 0) ||
++						(indexId != m_settings.getIndexIdByName(_(&quot;My Documents&quot;))))
++					{
++						// This document will be indexed or updated
++						docsToIndex.insert(*resultIter);
++					}
+ 				}
+-				else if (labels.empty() == false)
++				else if ((docId &gt; 0) &amp;&amp;
++					(labels.empty() == false))
+ 				{
++					// Apply this label
+ 					if (indexId == m_settings.getIndexIdByName(_(&quot;My Web Pages&quot;)))
+ 					{
+ 						docsIds.insert(docId);
+@@ -1408,16 +1423,18 @@
+ 				groupMode = ResultsTree::BY_HOST;
+ 			}
+ 			// Position the results tree
+-			pResultsTree = manage(new ResultsTree(queryName, resultsMenuitem-&gt;get_submenu(), groupMode, m_settings));
+-			pResultsPage = manage(new ResultsPage(queryName, pResultsTree, m_pNotebook-&gt;get_height(), m_settings));
++			pResultsTree = manage(new ResultsTree(queryName, fileMenuitem-&gt;get_submenu(),
++				groupMode, m_settings));
++			pResultsPage = manage(new ResultsPage(queryName, pResultsTree,
++				m_pNotebook-&gt;get_height(), m_settings));
+ 			// Sync the results tree with the menuitems
+-			pResultsTree-&gt;showExtract(showextract1-&gt;get_active());
++			pResultsTree-&gt;showExtract(showextracts1-&gt;get_active());
+ 			// Connect to the &quot;changed&quot; signal
+ 			pResultsTree-&gt;getSelectionChangedSignal().connect(
+ 				sigc::mem_fun(*this, &amp;mainWindow::on_resultsTreeviewSelection_changed));
+ 			// Connect to the view results signal
+ 			pResultsTree-&gt;getDoubleClickSignal().connect(
+-				sigc::mem_fun(*this, &amp;mainWindow::on_viewresults_activate));
++				sigc::mem_fun(*this, &amp;mainWindow::on_open_activate));
+ 
+ 			// Append the page
+ 			if (m_state.write_lock_lists() == true)
+@@ -1815,10 +1832,71 @@
+ }
+ 
+ //
+-// Session &gt; Statistics menu selected
++// Suggest query button click
+ //
+-void mainWindow::on_statistics_activate()
++void mainWindow::on_suggestQueryButton_clicked(ustring queryName, ustring queryText)
+ {
++	// Find the query
++	const std::map&lt;string, QueryProperties&gt; &amp;queriesMap = m_settings.getQueries();
++	std::map&lt;string, QueryProperties&gt;::const_iterator queryIter = queriesMap.find(queryName);
++	if (queryIter != queriesMap.end())
++	{
++		QueryProperties queryProps(queryIter-&gt;second);
++
++		queryProps.setName(&quot;&quot;);
++		queryProps.setFreeQuery(queryText);
++		queryProps.setModified(true);
++
++		edit_query(queryProps, true);
++	}
++}
++
++//
++// Index back button click
++//
++void mainWindow::on_indexBackButton_clicked(ustring indexName)
++{
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
++	if (pIndexPage != NULL)
++	{
++		if (pIndexPage-&gt;getFirstDocument() &gt;= m_maxDocsCount)
++		{
++			browse_index(indexName, pIndexPage-&gt;getQueryName(), pIndexPage-&gt;getFirstDocument() - m_maxDocsCount);
++		}
++	}
++}
++
++//
++// Index forward button click
++//
++void mainWindow::on_indexForwardButton_clicked(ustring indexName)
++{
++	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
++	if (pIndexPage != NULL)
++	{
++		if (pIndexPage-&gt;getDocumentsCount() == 0)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: first&quot; &lt;&lt; endl;
++#endif
++			browse_index(indexName, pIndexPage-&gt;getQueryName(), 0);
++		}
++		else if (pIndexPage-&gt;getDocumentsCount() &gt;= pIndexPage-&gt;getFirstDocument() + m_maxDocsCount)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: next&quot; &lt;&lt; endl;
++#endif
++			browse_index(indexName, pIndexPage-&gt;getQueryName(), pIndexPage-&gt;getFirstDocument() + m_maxDocsCount);
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: counts &quot;
++			&lt;&lt; pIndexPage-&gt;getFirstDocument() &lt;&lt; &quot; &quot; &lt;&lt; pIndexPage-&gt;getDocumentsCount() &lt;&lt; endl;
++#endif
++	}
++}
++
++void mainWindow::on_status_activate()
++{
+ 	m_state.disconnect();
+ 
+ 	statisticsDialog statsDialog;
+@@ -1828,10 +1906,7 @@
+ 	m_state.connect();
+ }
+ 
+-//
+-// Edit &gt; Preferences menu selected
+-//
+-void mainWindow::on_configure_activate()
++void mainWindow::on_preferences_activate()
+ {
+ 	MIMEAction prefsAction(&quot;pinot-prefs&quot;, &quot;pinot-prefs&quot;);
+ 	vector&lt;string&gt; arguments;
+@@ -1842,17 +1917,11 @@
+ 	CommandLine::runAsync(prefsAction, arguments);
+ }
+ 
+-//
+-// Session &gt; Quit menu selected
+-//
+ void mainWindow::on_quit_activate()
+ {
+ 	on_mainWindow_delete_event(NULL);
+ }
+ 
+-//
+-// Edit &gt; Cut menu selected
+-//
+ void mainWindow::on_cut_activate()
+ {
+ 	// Copy
+@@ -1861,9 +1930,6 @@
+ 	on_delete_activate();
+ }
+ 
+-//
+-// Edit &gt; Copy menu selected
+-//
+ void mainWindow::on_copy_activate()
+ {
+ 	ustring text;
+@@ -1892,38 +1958,17 @@
+ 			vector&lt;DocumentInfo&gt; documentsList;
+ 			bool firstItem = true;
+ 
+-			ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-			if (pResultsPage != NULL)
++			ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++			if (pResultsTree != NULL)
+ 			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;mainWindow::on_copy_activate: results tree&quot; &lt;&lt; endl;
+-#endif
+-				ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-				if (pResultsTree != NULL)
++				if (pResultsTree-&gt;focusOnExtract() == true)
+ 				{
+-					if (pResultsTree-&gt;focusOnExtract() == true)
+-					{
+-						// Retrieve the extract
+-						text = pResultsTree-&gt;getExtract();
+-					}
+-					else
+-					{
+-						// Get the current results selection
+-						pResultsTree-&gt;getSelection(documentsList);
+-					}
++					// Retrieve the extract
++					text = pResultsTree-&gt;getExtract();
+ 				}
+-			}
+-
+-			IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(pNotebookPage);
+-			if (pIndexPage != NULL)
+-			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;mainWindow::on_copy_activate: index tree&quot; &lt;&lt; endl;
+-#endif
+-				ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
+-				if (pResultsTree != NULL)
++				else
+ 				{
+-					// Get the current documents selection
++					// Get the current results selection
+ 					pResultsTree-&gt;getSelection(documentsList);
+ 				}
+ 			}
+@@ -1964,9 +2009,6 @@
+ 	}
+ }
+ 
+-//
+-// Edit &gt; Paste menu selected
+-//
+ void mainWindow::on_paste_activate()
+ {
+ 	RefPtr&lt;Clipboard&gt; refClipboard = Clipboard::get();
+@@ -2008,9 +2050,6 @@
+ 	}
+ }
+ 
+-//
+-// Edit &gt; Delete menu selected
+-//
+ void mainWindow::on_delete_activate()
+ {
+ 	if (liveQueryEntry-&gt;is_focus() == true)
+@@ -2039,10 +2078,7 @@
+ 	// Nothing else can be deleted
+ }
+ 
+-//
+-// Results &gt; Clear menu selected
+-//
+-void mainWindow::on_clearresults_activate()
++void mainWindow::on_showextracts_activate()
+ {
+ 	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+@@ -2053,35 +2089,12 @@
+ 			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+ 			if (pResultsTree != NULL)
+ 			{
+-				pResultsTree-&gt;clear();
++				pResultsTree-&gt;showExtract(showextracts1-&gt;get_active());
+ 			}
+ 		}
+ 	}
+ }
+ 
+-//
+-// Results &gt; Show Extract menu selected
+-//
+-void mainWindow::on_showextract_activate()
+-{
+-	NotebookPageBox *pNotebookPage = get_current_page();
+-	if (pNotebookPage != NULL)
+-	{
+-		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-		if (pResultsPage != NULL)
+-		{
+-			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-			if (pResultsTree != NULL)
+-			{
+-				pResultsTree-&gt;showExtract(showextract1-&gt;get_active());
+-			}
+-		}
+-	}
+-}
+-
+-//
+-// Results &gt; Group menu selected
+-//
+ void mainWindow::on_groupresults_activate()
+ {
+ 	// What's the new grouping criteria ?
+@@ -2107,120 +2120,91 @@
+ 	}
+ }
+ 
+-//
+-// Results &gt; Export menu selected
+-//
+-void mainWindow::on_exportresults_activate()
++void mainWindow::on_export_activate()
+ {
+ 	NotebookPageBox *pNotebookPage = get_current_page();
+ 	if (pNotebookPage != NULL)
+ 	{
+-		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-		if (pResultsPage != NULL)
++		string queryName = from_utf8(pNotebookPage-&gt;getTitle());
++
++		IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
++		if (pIndexPage != NULL)
+ 		{
+-			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-			if (pResultsTree != NULL)
+-			{
+-				FileChooserDialog fileChooser(_(&quot;Export Results&quot;));
+-				FileFilter csvFilter, xmlFilter;
+-				ustring location(m_settings.getHomeDirectory());
+-				bool exportToCSV = true;
++			queryName = from_utf8(pIndexPage-&gt;getQueryName());
++		}
+ 
+-				location += &quot;/&quot;;
+-				location += pNotebookPage-&gt;getTitle();
+-				location += &quot;.csv&quot;;
+-				prepare_file_chooser(fileChooser, location, false);
++		ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++		if (pResultsTree != NULL)
++		{
++			FileChooserDialog fileChooser(_(&quot;Export&quot;));
++			FileFilter csvFilter, xmlFilter;
++			ustring location(m_settings.getHomeDirectory());
++			bool exportToCSV = true;
+ 
+-				// Add filters
+-				csvFilter.add_mime_type(&quot;application/csv&quot;);
+-				csvFilter.set_name(&quot;CSV&quot;);
+-				fileChooser.add_filter(csvFilter);
+-				xmlFilter.add_mime_type(&quot;application/xml&quot;);
+-				xmlFilter.set_name(&quot;OpenSearch response&quot;);
+-				fileChooser.add_filter(xmlFilter);
++			location += &quot;/&quot;;
++			location += pNotebookPage-&gt;getTitle();
++			location += &quot;.csv&quot;;
++			prepare_file_chooser(fileChooser, location, false);
+ 
+-				fileChooser.show();
+-				if (fileChooser.run() == RESPONSE_OK)
+-				{
+-					// Retrieve the chosen location
+-					location = filename_to_utf8(fileChooser.get_filename());
+-					// What file format was selected ?
+-					const FileFilter *pFilter = fileChooser.get_filter();
+-					if ((pFilter != NULL) &amp;&amp;
+-						(pFilter-&gt;get_name() != &quot;CSV&quot;))
+-					{
+-						exportToCSV = false;
+-					}
++			// Add filters
++			csvFilter.add_mime_type(&quot;application/csv&quot;);
++			csvFilter.set_name(&quot;CSV&quot;);
++			fileChooser.add_filter(csvFilter);
++			xmlFilter.add_mime_type(&quot;application/xml&quot;);
++			xmlFilter.set_name(&quot;OpenSearch response&quot;);
++			fileChooser.add_filter(xmlFilter);
+ 
+-					pResultsTree-&gt;exportResults(location, exportToCSV);
+-				}
+-			}
+-		}
+-	}
+-}
+-
+-//
+-// Results &gt; View menu selected
+-//
+-void mainWindow::on_viewresults_activate()
+-{
+-	NotebookPageBox *pNotebookPage = get_current_page();
+-	if (pNotebookPage != NULL)
+-	{
+-		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
+-		if (pResultsPage != NULL)
+-		{
+-			ResultsTree *pResultsTree = pResultsPage-&gt;getTree();
+-			if (pResultsTree != NULL)
++			fileChooser.show();
++			if (fileChooser.run() == RESPONSE_OK)
+ 			{
+-				vector&lt;DocumentInfo&gt; resultsList;
+-
+-				if (pResultsTree-&gt;getSelection(resultsList) == true)
++				// Retrieve the chosen location
++				location = filename_to_utf8(fileChooser.get_filename());
++				// What file format was selected ?
++				const FileFilter *pFilter = fileChooser.get_filter();
++				if ((pFilter != NULL) &amp;&amp;
++					(pFilter-&gt;get_name() != &quot;CSV&quot;))
+ 				{
+-					view_documents(resultsList);
+-
+-					// We can update the rows right now
+-					pResultsTree-&gt;setSelectionState(true);
++					exportToCSV = false;
+ 				}
++
++				pResultsTree-&gt;exportResults(location, queryName, exportToCSV);
+ 			}
+ 		}
+ 	}
+ }
+ 
+-//
+-// Results &gt; More Like This menu selected
+-//
+ void mainWindow::on_morelikethis_activate()
+ {
+-	QueryProperties queryProps;
+-	set&lt;string&gt; locations;
++	set&lt;string&gt; locationsToIndex;
++	ExpandSet expandSet;
+ 
+ 	// Get the current page's details
+-	if (get_results_page_details(&quot;&quot;, queryProps, locations) == false)
++	if (get_results_page_details(&quot;&quot;, expandSet.m_queryProps, expandSet.m_locations, locationsToIndex) == false)
+ 	{
+-		// Maybe the query was deleted
+-		if (queryProps.getName().empty() == false)
+-		{
+-			ustring status(_(&quot;Couldn't find query&quot;));
+-			status += &quot; &quot;;
+-			status += queryProps.getName();
+-			set_status(status);
+-		}
++		set_status(_(&quot;Couldn't find similar documents&quot;));
+ 
+ 		return;
+ 	}
++	m_expandSets.push_back(expandSet);
+ 
+-	if (locations.empty() == false)
++	for (set&lt;string&gt;::iterator locationIter = locationsToIndex.begin();
++		locationIter != locationsToIndex.end(); ++locationIter)
+ 	{
+-		// Spawn a new thread
+-		start_thread(new ExpandQueryThread(queryProps, locations));
++		DocumentInfo docInfo(&quot;&quot;, *locationIter, &quot;&quot;, &quot;&quot;);
++
++		// Add this to My Web Pages
++		m_state.queue_index(docInfo);
+ 	}
++
++	if (locationsToIndex.empty() == true)
++	{
++		// Expand on these documents right away
++		expand_locations();
++	}
++	// Else, do it when indexing is completed
+ }
+ 
+-//
+-// Results &gt; Index menu selected
+-//
+-void mainWindow::on_indexresults_activate()
++void mainWindow::on_addtoindex_activate()
+ {
+ 	vector&lt;DocumentInfo&gt; resultsList;
+ 
+@@ -2240,7 +2224,7 @@
+ 					resultIter != resultsList.end(); ++resultIter)
+ 				{
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;mainWindow::on_indexresults_activate: URL is &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
++					cout &lt;&lt; &quot;mainWindow::on_addtoindex_activate: URL is &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
+ #endif
+ 					ustring status = m_state.queue_index(*resultIter);
+ 					if (status.empty() == false)
+@@ -2253,9 +2237,6 @@
+ 	}
+ }
+ 
+-//
+-// Index &gt; Import menu selected
+-//
+ void mainWindow::on_import_activate()
+ {
+ 	importDialog importBox;
+@@ -2281,33 +2262,90 @@
+ 	}
+ }
+ 
+-//
+-// Index &gt; View menu selected
+-//
+-void mainWindow::on_viewfromindex_activate()
++void mainWindow::on_open_activate()
+ {
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+-	if (pIndexPage != NULL)
++	NotebookPageBox *pNotebookPage = get_current_page();
++	if (pNotebookPage != NULL)
+ 	{
+-		ResultsTree *pResultsTree = pIndexPage-&gt;getTree();
++		ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++		bool updateSelectionState = false;
+ 
++		ResultsPage *pResultsPage = dynamic_cast&lt;ResultsPage*&gt;(pNotebookPage);
++		if (pResultsPage != NULL)
++		{
++			updateSelectionState = true;
++		}
++
+ 		if (pResultsTree != NULL)
+ 		{
+-			vector&lt;DocumentInfo&gt; documentsList;
++			vector&lt;DocumentInfo&gt; resultsList;
+ 
+-			if (pResultsTree-&gt;getSelection(documentsList) == true)
++			if (pResultsTree-&gt;getSelection(resultsList) == true)
+ 			{
+-				view_documents(documentsList);
++				view_documents(resultsList);
++
++				if (updateSelectionState == true)
++				{
++					// We can update the rows right now
++					pResultsTree-&gt;setSelectionState(true);
++				}
+ 			}
+ 		}
+ 	}
+ }
+ 
+-//
+-// Index &gt; Refresh menu selected
+-//
+-void mainWindow::on_refreshindex_activate()
++void mainWindow::on_openparent_activate()
+ {
++	NotebookPageBox *pNotebookPage = get_current_page();
++	if (pNotebookPage != NULL)
++	{
++		ResultsTree *pResultsTree = pNotebookPage-&gt;getTree();
++		if (pResultsTree != NULL)
++		{
++			vector&lt;DocumentInfo&gt; resultsList;
++
++			if (pResultsTree-&gt;getSelection(resultsList) == true)
++			{
++				vector&lt;DocumentInfo&gt;::iterator resultIter = resultsList.begin();
++				while (resultIter != resultsList.end())
++				{
++					string location(resultIter-&gt;getLocation());
++					Url urlObj(location);
++					string::size_type slashPos = location.find_last_of(&quot;/&quot;);
++
++					if ((urlObj.isLocal() == true) &amp;&amp;
++						(slashPos != string::npos))
++					{
++						location.erase(slashPos);
++#ifdef DEBUG
++						cout &lt;&lt; &quot;mainWindow::on_openparent_activate: &quot; &lt;&lt; location &lt;&lt; endl;
++#endif
++						resultIter-&gt;setLocation(location);
++						resultIter-&gt;setType(&quot;x-directory/normal&quot;);
++
++						// Next
++						++resultIter;
++					}
++					else
++					{
++						vector&lt;DocumentInfo&gt;::iterator nextIter = resultIter;
++						++nextIter;
++
++						resultsList.erase(resultIter);
++
++						// Next
++						resultIter = nextIter;
++					}
++				}
++
++				view_documents(resultsList);
++			}
++		}
++	}
++}
++
++void mainWindow::on_updateindex_activate()
++{
+ 	vector&lt;DocumentInfo&gt; documentsList;
+ 
+ 	// Get the current documents selection
+@@ -2338,13 +2376,11 @@
+ 			continue;
+ 		}
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_refreshindex_activate: URL is &quot; &lt;&lt; docIter-&gt;getLocation() &lt;&lt; endl;
++		cout &lt;&lt; &quot;mainWindow::on_updateindex_activate: URL is &quot; &lt;&lt; docIter-&gt;getLocation() &lt;&lt; endl;
+ #endif
+ 
+ 		// Add this action to the queue
+-		DocumentInfo docInfo(*docIter);
+-
+-		ustring status = m_state.queue_index(docInfo);
++		ustring status = m_state.queue_index(*docIter);
+ 		if (status.empty() == false)
+ 		{
+ 			set_status(status);
+@@ -2352,10 +2388,7 @@
+ 	}
+ }
+ 
+-//
+-// Index &gt; Show Properties menu selected
+-//
+-void mainWindow::on_showfromindex_activate()
++void mainWindow::on_properties_activate()
+ {
+ 	vector&lt;DocumentInfo&gt; documentsList;
+ 	set&lt;unsigned int&gt; docIds;
+@@ -2364,7 +2397,7 @@
+ 	bool docsIndex = false, daemonIndex = false;
+ 
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: called&quot; &lt;&lt; endl;
++	cout &lt;&lt; &quot;mainWindow::on_properties_activate: called&quot; &lt;&lt; endl;
+ #endif
+ 	ResultsTree *pResultsTree = NULL;
+ 	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_current_page());
+@@ -2462,9 +2495,6 @@
+ 	}
+ }
+ 
+-//
+-// Index &gt; Unindex menu selected
+-//
+ void mainWindow::on_unindex_activate()
+ {
+ 	vector&lt;DocumentInfo&gt; documentsList;
+@@ -2527,9 +2557,6 @@
+ 	}
+ }
+ 
+-//
+-// Help &gt; About menu selected
+-//
+ void mainWindow::on_about_activate()
+ {
+ 	AboutDialog aboutBox;
+@@ -2747,9 +2774,6 @@
+ 	}
+ }
+ 
+-//
+-// Return key pressed in live query entry field
+-//
+ void mainWindow::on_liveQueryEntry_activate()
+ {
+ 	on_findButton_clicked();
+@@ -2888,70 +2912,6 @@
+ }
+ 
+ //
+-// Suggest query button click
+-//
+-void mainWindow::on_suggestQueryButton_clicked(ustring queryName, ustring queryText)
+-{
+-	// Find the query
+-	const std::map&lt;string, QueryProperties&gt; &amp;queriesMap = m_settings.getQueries();
+-	std::map&lt;string, QueryProperties&gt;::const_iterator queryIter = queriesMap.find(queryName);
+-	if (queryIter != queriesMap.end())
+-	{
+-		QueryProperties queryProps(queryIter-&gt;second);
+-
+-		queryProps.setName(&quot;&quot;);
+-		queryProps.setFreeQuery(queryText);
+-		queryProps.setModified(true);
+-
+-		edit_query(queryProps, true);
+-	}
+-}
+-
+-//
+-// Index back button click
+-//
+-void mainWindow::on_indexBackButton_clicked(ustring indexName)
+-{
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+-	if (pIndexPage != NULL)
+-	{
+-		if (pIndexPage-&gt;getFirstDocument() &gt;= m_maxDocsCount)
+-		{
+-			browse_index(indexName, pIndexPage-&gt;getQueryName(), pIndexPage-&gt;getFirstDocument() - m_maxDocsCount);
+-		}
+-	}
+-}
+-
+-//
+-// Index forward button click
+-//
+-void mainWindow::on_indexForwardButton_clicked(ustring indexName)
+-{
+-	IndexPage *pIndexPage = dynamic_cast&lt;IndexPage*&gt;(get_page(indexName, NotebookPageBox::INDEX_PAGE));
+-	if (pIndexPage != NULL)
+-	{
+-		if (pIndexPage-&gt;getDocumentsCount() == 0)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: first&quot; &lt;&lt; endl;
+-#endif
+-			browse_index(indexName, pIndexPage-&gt;getQueryName(), 0);
+-		}
+-		else if (pIndexPage-&gt;getDocumentsCount() &gt;= pIndexPage-&gt;getFirstDocument() + m_maxDocsCount)
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: next&quot; &lt;&lt; endl;
+-#endif
+-			browse_index(indexName, pIndexPage-&gt;getQueryName(), pIndexPage-&gt;getFirstDocument() + m_maxDocsCount);
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;mainWindow::on_indexForwardButton_clicked: counts &quot;
+-			&lt;&lt; pIndexPage-&gt;getFirstDocument() &lt;&lt; &quot; &quot; &lt;&lt; pIndexPage-&gt;getDocumentsCount() &lt;&lt; endl;
+-#endif
+-	}
+-}
+-
+-//
+ // Query list mouse click
+ //
+ bool mainWindow::on_queryTreeview_button_press_event(GdkEventButton *ev)
+@@ -3024,11 +2984,10 @@
+ //
+ // Show or hide menuitems.
+ //
+-void mainWindow::show_global_menuitems(bool showItems)
++void mainWindow::show_pagebased_menuitems(bool showItems)
+ {
+ 	// Results menuitems that depend on the page
+-	exportresults1-&gt;set_sensitive(showItems);
+-	clearresults1-&gt;set_sensitive(showItems);
++	export1-&gt;set_sensitive(showItems);
+ }
+ 
+ //
+@@ -3036,18 +2995,16 @@
+ //
+ void mainWindow::show_selectionbased_menuitems(bool showItems)
+ {
+-	// Results menuitems that depend on selection
+-	viewresults1-&gt;set_sensitive(showItems);
+-	viewcache1-&gt;set_sensitive(showItems);
++	// Menuitems that depend on selection
++	open1-&gt;set_sensitive(showItems);
++	opencache1-&gt;set_sensitive(showItems);
++	openparent1-&gt;set_sensitive(showItems);
+ 	morelikethis1-&gt;set_sensitive(showItems);
+-	searchagain1-&gt;set_sensitive(showItems);
+-	indexresults1-&gt;set_sensitive(showItems);
+-
+-	// Index menuitems that depend on selection
+-	viewfromindex1-&gt;set_sensitive(showItems);
+-	refreshindex1-&gt;set_sensitive(showItems);
++	searchthisfor1-&gt;set_sensitive(showItems);
++	addtoindex1-&gt;set_sensitive(showItems);
++	updateindex1-&gt;set_sensitive(showItems);
+ 	unindex1-&gt;set_sensitive(showItems);
+-	showfromindex1-&gt;set_sensitive(showItems);
++	properties1-&gt;set_sensitive(showItems);
+ }
+ 
+ //
+@@ -3463,6 +3420,9 @@
+ 		string url(docIter-&gt;getLocation());
+ 		string mimeType(docIter-&gt;getType());
+ 
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::view_documents: &quot; &lt;&lt; url &lt;&lt; endl;
++#endif
+ 		if (url.empty() == true)
+ 		{
+ 			continue;
+@@ -3493,13 +3453,6 @@
+ 			mimeType = MIMEScanner::scanUrl(urlObj);
+ 		}
+ 
+-		// Remove the charset, if any
+-		string::size_type semiColonPos = mimeType.find(&quot;;&quot;);
+-		if (semiColonPos != string::npos)
+-		{
+-			mimeType.erase(semiColonPos);
+-		}
+-
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;mainWindow::view_documents: &quot; &lt;&lt; url &lt;&lt; &quot; has type &quot; &lt;&lt; mimeType &lt;&lt; endl;
+ #endif
+@@ -3709,27 +3662,27 @@
+ 
+ bool mainWindow::expand_locations(void)
+ {
+-	// Was an expand operation delayed by indexing ?
+-	if (m_expandLocations.empty() == true)
++	ExpandQueryThread *pExpandQueryThread = NULL;
++
++	// Grab the first set
++	vector&lt;ExpandSet&gt;::iterator expandIter = m_expandSets.begin();
++	if (expandIter != m_expandSets.end())
+ 	{
+-		return false;
++		pExpandQueryThread = new ExpandQueryThread(expandIter-&gt;m_queryProps, expandIter-&gt;m_locations);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::expand_locations: &quot; &lt;&lt; expandIter-&gt;m_locations.size() &lt;&lt; &quot; locations in set&quot; &lt;&lt; endl;
++#endif
++
++		m_expandSets.erase(expandIter);
+ 	}
+ 
+-	Url urlObj(*m_expandLocations.begin());
+-	string queryName(urlObj.getFile());
+-
+-	if (m_expandLocations.size() &gt; 1)
++	if (pExpandQueryThread != NULL)
+ 	{
+-		queryName += &quot;...&quot;;
++		// Run a catch-all query and expand on these documents
++		return start_thread(pExpandQueryThread);
+ 	}
+-	QueryProperties queryProps(queryName, &quot;dir:/&quot;);
+ 
+-	// Run a catch-all query and expand on these documents
+-	ExpandQueryThread *pExpandQueryThread = new ExpandQueryThread(queryProps, m_expandLocations);
+-	m_expandLocations.clear();
+-	start_thread(pExpandQueryThread);
+-
+-	return true;
++	return false;
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2008-12-29 18:32:55 UTC (rev 1455)
++++ trunk/UI/GTK2/src/mainWindow.hh	2008-12-30 14:03:54 UTC (rev 1456)
+@@ -65,72 +65,65 @@
+ 	void populate_findMenu();
+ 	void add_query(QueryProperties &amp;queryProps, bool mergeQueries);
+ 	bool get_results_page_details(const Glib::ustring &amp;queryName,
+-		QueryProperties &amp;queryProps, std::set&lt;std::string&gt; &amp;locations);
++		QueryProperties &amp;queryProps, std::set&lt;std::string&gt; &amp;locations,
++		std::set&lt;std::string&gt; &amp;locationsToIndex);
+ 
+ 	// Handlers
+ 	void on_data_received(const Glib::RefPtr&lt;Gdk::DragContext&gt; &amp;context,
+-		int x, int y, const Gtk::SelectionData &amp;data, guint info, guint time);
++		int x, int y, const Gtk::SelectionData &amp;data, guint info, guint dataTime);
+ 	void on_enginesTreeviewSelection_changed();
+ 	void on_queryTreeviewSelection_changed();
+ 	void on_resultsTreeviewSelection_changed(Glib::ustring queryName);
+ 	void on_indexTreeviewSelection_changed(Glib::ustring indexName);
++	void on_document_changed(std::vector&lt;DocumentInfo&gt; &amp;resultsList,
++		bool isDocumentsIndex, bool editDocument, bool areResults);
+ 	void on_index_changed(Glib::ustring indexName);
+ 	void on_cache_changed(PinotSettings::CacheProvider cacheProvider);
+-	void on_searchagain_changed(Glib::ustring queryName);
++	void on_searchthis_changed(Glib::ustring queryName);
+ 	void on_query_changed(Glib::ustring indexName, Glib::ustring queryName);
+ 	void on_switch_page(GtkNotebookPage *p0, guint p1);
+ 	void on_close_page(Glib::ustring title, NotebookPageBox::PageType type);
+ 	void on_thread_end(WorkerThread *pThread);
+ 	void on_editindex(Glib::ustring indexName, Glib::ustring location);
++	void on_suggestQueryButton_clicked(Glib::ustring queryName, Glib::ustring queryText);
++	void on_indexBackButton_clicked(Glib::ustring indexName);
++	void on_indexForwardButton_clicked(Glib::ustring indexName);
+ 
+ 	// Handlers inherited from the base class
+-	virtual void on_statistics_activate();
+-	virtual void on_configure_activate();
+-	virtual void on_quit_activate();
++        virtual void on_open_activate();
++        virtual void on_openparent_activate();
++        virtual void on_addtoindex_activate();
++        virtual void on_updateindex_activate();
++        virtual void on_unindex_activate();
++        virtual void on_morelikethis_activate();
++        virtual void on_properties_activate();
++        virtual void on_quit_activate();
++        virtual void on_cut_activate();
++        virtual void on_copy_activate();
++        virtual void on_paste_activate();
++        virtual void on_delete_activate();
++        virtual void on_preferences_activate();
++        virtual void on_groupresults_activate();
++        virtual void on_showextracts_activate();
++        virtual void on_import_activate();
++        virtual void on_export_activate();
++        virtual void on_status_activate();
++        virtual void on_about_activate();
++        virtual void on_addIndexButton_clicked();
++        virtual void on_removeIndexButton_clicked();
++        virtual void on_enginesTogglebutton_toggled();
++        virtual void on_liveQueryEntry_changed();
++        virtual void on_liveQueryEntry_activate();
++        virtual void on_findButton_clicked();
++        virtual bool on_queryTreeview_button_press_event(GdkEventButton *ev);
++        virtual void on_addQueryButton_clicked();
++        virtual void on_removeQueryButton_clicked();
++        virtual void on_queryHistoryButton_clicked();
++        virtual void on_findQueryButton_clicked();
++        virtual bool on_mainWindow_delete_event(GdkEventAny *ev);
+ 
+-	virtual void on_cut_activate();
+-	virtual void on_copy_activate();
+-	virtual void on_paste_activate();
+-	virtual void on_delete_activate();
+-
+-	virtual void on_clearresults_activate();
+-	virtual void on_showextract_activate();
+-	virtual void on_groupresults_activate();
+-	virtual void on_exportresults_activate();
+-	virtual void on_viewresults_activate();
+-	virtual void on_morelikethis_activate();
+-	virtual void on_indexresults_activate();
+-
+-	virtual void on_import_activate();
+-	virtual void on_viewfromindex_activate();
+-	virtual void on_refreshindex_activate();
+-	virtual void on_unindex_activate();
+-	virtual void on_showfromindex_activate();
+-
+-	virtual void on_about_activate();
+-
+-	virtual void on_addIndexButton_clicked();
+-	virtual void on_removeIndexButton_clicked();
+-
+-	virtual void on_enginesTogglebutton_toggled();
+-
+-	virtual void on_liveQueryEntry_changed();
+-	virtual void on_liveQueryEntry_activate();
+-	virtual void on_findButton_clicked();
+-	virtual void on_addQueryButton_clicked();
+-	virtual void on_removeQueryButton_clicked();
+-	virtual void on_queryHistoryButton_clicked();
+-	virtual void on_findQueryButton_clicked();
+-	virtual void on_suggestQueryButton_clicked(Glib::ustring queryName, Glib::ustring queryText);
+-
+-	virtual void on_indexBackButton_clicked(Glib::ustring indexName);
+-	virtual void on_indexForwardButton_clicked(Glib::ustring indexName);
+-
+-	virtual bool on_queryTreeview_button_press_event(GdkEventButton *ev);
+-	virtual bool on_mainWindow_delete_event(GdkEventAny *ev);
+-
+ 	// Action methods
+-	void show_global_menuitems(bool showItems);
++	void show_pagebased_menuitems(bool showItems);
+ 	void show_selectionbased_menuitems(bool showItems);
+ 	NotebookPageBox *get_current_page(void);
+ 	NotebookPageBox *get_page(const Glib::ustring &amp;title,
+@@ -161,7 +154,17 @@
+ 	Glib::RefPtr&lt;Gtk::EntryCompletion&gt; m_refLiveQueryCompletion;
+ 	QueryModelColumns m_queryColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refQueryTree;
+-	std::set&lt;std::string&gt; m_expandLocations;
++	class ExpandSet
++	{
++		public:
++			ExpandSet();
++			~ExpandSet();
++
++			QueryProperties m_queryProps;
++			set&lt;string&gt; m_locations;
++
++	};
++	std::vector&lt;ExpandSet&gt; m_expandSets;
+ 	// Notebook
+ 	Gtk::Notebook *m_pNotebook;
+ 	// Menus
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.cc	2008-12-29 18:32:55 UTC (rev 1455)
++++ trunk/UI/GTK2/src/mainWindow_glade.cc	2008-12-30 14:03:54 UTC (rev 1456)
+@@ -1,9 +1,9 @@
+-// generated 2007/9/26 23:15:09 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2008/12/30 0:57:52 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at rexor.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.14 and gtkmm 2.10.11
++// for gtk 2.14.5 and gtkmm 2.14.3
+ //
+ // Please modify the corresponding derived classes in ./src/mainWindow.cc
+ 
+@@ -38,8 +38,9 @@
+ #include &lt;gtkmm/accelgroup.h&gt;
+ #include &lt;gtk/gtkimagemenuitem.h&gt;
+ #include &lt;gtkmm/menuitem.h&gt;
++#include &lt;gtkmm/image.h&gt;
+ #include &lt;gtkmm/menu.h&gt;
+-#include &lt;gtkmm/image.h&gt;
++#include &lt;gtkmm/imagemenuitem.h&gt;
+ #include &lt;gtkmm/menubar.h&gt;
+ #include &lt;gtkmm/box.h&gt;
+ #include &lt;gtkmm/label.h&gt;
+@@ -60,51 +61,53 @@
+ ) : Gtk::Window(Gtk::WINDOW_TOPLEVEL)
+ {  mainWindow = this;
+    gmm_data = new GlademmData(get_accel_group());
+-   configure1 = NULL;
++   open1 = NULL;
+    
+-   Gtk::MenuItem *statistics1 = NULL;
++   Gtk::MenuItem *separator7 = NULL;
++   opencache1 = NULL;
++   Gtk::Image *image995 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-go-up&quot;), Gtk::IconSize(1)));
++   openparent1 = NULL;
++   Gtk::MenuItem *separator8 = NULL;
++   Gtk::Image *image996 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-add&quot;), Gtk::IconSize(1)));
++   addtoindex1 = NULL;
++   Gtk::Image *image997 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-refresh&quot;), Gtk::IconSize(1)));
++   updateindex1 = NULL;
++   Gtk::Image *image998 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-delete&quot;), Gtk::IconSize(1)));
++   unindex1 = NULL;
++   Gtk::MenuItem *separator9 = NULL;
++   morelikethis1 = NULL;
++   searchthisfor1 = NULL;
++   Gtk::MenuItem *separator10 = NULL;
++   properties1 = NULL;
+    separatormenuitem1 = NULL;
+    quit1 = NULL;
+-   Gtk::Menu *sessionMenuitem_menu = Gtk::manage(new class Gtk::Menu());
+-   sessionMenuitem = NULL;
++   Gtk::Menu *fileMenuitem_menu = Gtk::manage(new class Gtk::Menu());
++   fileMenuitem = NULL;
+    cut1 = NULL;
+    copy1 = NULL;
+    paste1 = NULL;
+    delete1 = NULL;
++   Gtk::MenuItem *separator5 = NULL;
++   preferences1 = NULL;
+    Gtk::Menu *editMenuitem_menu = Gtk::manage(new class Gtk::Menu());
+    editMenuitem = NULL;
+-   showextract1 = NULL;
++   listcontents1 = NULL;
+    Gtk::RadioMenuItem::Group _RadioMIGroup_searchenginegroup1;
+    searchenginegroup1 = NULL;
+    hostnamegroup1 = NULL;
+    Gtk::Menu *groupresults1_menu = Gtk::manage(new class Gtk::Menu());
+    groupresults1 = NULL;
+-   exportresults1 = NULL;
+-   Gtk::Image *image718 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-clear&quot;), Gtk::IconSize(1)));
+-   clearresults1 = NULL;
+-   Gtk::MenuItem *separator1 = NULL;
+-   viewresults1 = NULL;
+-   viewcache1 = NULL;
+-   Gtk::Image *image719 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-add&quot;), Gtk::IconSize(1)));
+-   morelikethis1 = NULL;
+-   Gtk::Image *image720 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-find&quot;), Gtk::IconSize(1)));
+-   searchagain1 = NULL;
+-   indexresults1 = NULL;
+-   Gtk::Menu *resultsMenuitem_menu = Gtk::manage(new class Gtk::Menu());
+-   resultsMenuitem = NULL;
+-   list1 = NULL;
+-   Gtk::Image *image721 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-open&quot;), Gtk::IconSize(1)));
++   showextracts1 = NULL;
++   Gtk::MenuItem *separator4 = NULL;
++   Gtk::Image *image999 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-open&quot;), Gtk::IconSize(1)));
+    import1 = NULL;
+-   Gtk::MenuItem *separator3 = NULL;
+-   viewfromindex1 = NULL;
+-   Gtk::Image *image722 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-refresh&quot;), Gtk::IconSize(1)));
+-   refreshindex1 = NULL;
+-   Gtk::Image *image723 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-delete&quot;), Gtk::IconSize(1)));
+-   unindex1 = NULL;
+-   Gtk::Image *image724 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-properties&quot;), Gtk::IconSize(1)));
+-   showfromindex1 = NULL;
+-   Gtk::Menu *indexMenuitem_menu = Gtk::manage(new class Gtk::Menu());
+-   indexMenuitem = NULL;
++   Gtk::Image *image1000 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-save-as&quot;), Gtk::IconSize(1)));
++   export1 = NULL;
++   Gtk::MenuItem *separator6 = NULL;
++   Gtk::Image *image1001 = Gtk::manage(new class Gtk::Image(Gtk::StockID(&quot;gtk-info&quot;), Gtk::IconSize(1)));
++   Gtk::ImageMenuItem *status1 = NULL;
++   Gtk::Menu *optionsMenuitem_menu = Gtk::manage(new class Gtk::Menu());
++   Gtk::MenuItem *optionsMenuitem = NULL;
+    about1 = NULL;
+    Gtk::Menu *helpMenuitem_menu = Gtk::manage(new class Gtk::Menu());
+    helpMenuitem = NULL;
+@@ -140,7 +143,11 @@
+    Gtk::VButtonBox *queryVbuttonbox = Gtk::manage(new class Gtk::VButtonBox(Gtk::BUTTONBOX_START, 0));
+    Gtk::HBox *queryHbox = Gtk::manage(new class Gtk::HBox(false, 0));
+    Gtk::Label *queryLabel = Gtk::manage(new class Gtk::Label(_(&quot;Stored queries&quot;)));
++#if GTKMM_MAJOR_VERSION==2 &amp;&amp; GTKMM_MINOR_VERSION&gt;=3
+    queryExpander = Gtk::manage(new class Gtk::Expander());
++#else //
++   queryExpander = Gtk::manage(new class Gtk::HandleBox());
++#endif //
+    rightVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    mainHpaned = Gtk::manage(new class Gtk::HPaned());
+    mainProgressbar = Gtk::manage(new class Gtk::ProgressBar());
+@@ -149,18 +156,51 @@
+    Gtk::HBox *mainHbox = Gtk::manage(new class Gtk::HBox(false, 0));
+    Gtk::VBox *mainVbox = Gtk::manage(new class Gtk::VBox(false, 0));
+    
+-   sessionMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-preferences&quot;)));
+-   configure1 = (Gtk::ImageMenuItem *)&amp;sessionMenuitem_menu-&gt;items().back();
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-open&quot;)));
++   open1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
+    
+-   sessionMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;Status&quot;)));
+-   statistics1 = (Gtk::MenuItem *)&amp;sessionMenuitem_menu-&gt;items().back();
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator7 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
+    
+-   sessionMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
+-   separatormenuitem1 = (Gtk::MenuItem *)&amp;sessionMenuitem_menu-&gt;items().back();
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;Open Cache&quot;)));
++   opencache1 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
+    
+-   sessionMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-quit&quot;)));
+-   quit1 = (Gtk::ImageMenuItem *)&amp;sessionMenuitem_menu-&gt;items().back();
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Open Parent&quot;), *image995));
++   openparent1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
+    
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator8 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;_Add To Index&quot;), *image996));
++   addtoindex1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Update&quot;), *image997));
++   updateindex1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Unindex&quot;), *image998));
++   unindex1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator9 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;More Like This&quot;)));
++   morelikethis1 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;Search This For&quot;)));
++   searchthisfor1 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator10 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-properties&quot;)));
++   properties1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separatormenuitem1 = (Gtk::MenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
++   fileMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-quit&quot;)));
++   quit1 = (Gtk::ImageMenuItem *)&amp;fileMenuitem_menu-&gt;items().back();
++   
+    editMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-cut&quot;)));
+    cut1 = (Gtk::ImageMenuItem *)&amp;editMenuitem_menu-&gt;items().back();
+    
+@@ -173,97 +213,73 @@
+    editMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-delete&quot;)));
+    delete1 = (Gtk::ImageMenuItem *)&amp;editMenuitem_menu-&gt;items().back();
+    
++   editMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator5 = (Gtk::MenuItem *)&amp;editMenuitem_menu-&gt;items().back();
++   
++   editMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-preferences&quot;)));
++   preferences1 = (Gtk::ImageMenuItem *)&amp;editMenuitem_menu-&gt;items().back();
++   
+    groupresults1_menu-&gt;items().push_back(Gtk::Menu_Helpers::RadioMenuElem(_RadioMIGroup_searchenginegroup1, _(&quot;Search Engine&quot;)));
+    searchenginegroup1 = (Gtk::RadioMenuItem *)&amp;groupresults1_menu-&gt;items().back();
+    
+    groupresults1_menu-&gt;items().push_back(Gtk::Menu_Helpers::RadioMenuElem(_RadioMIGroup_searchenginegroup1, _(&quot;Host Name&quot;)));
+    hostnamegroup1 = (Gtk::RadioMenuItem *)&amp;groupresults1_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::CheckMenuElem(_(&quot;Show Extract&quot;)));
+-   showextract1 = (Gtk::CheckMenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;List Contents Of&quot;)));
++   listcontents1 = (Gtk::MenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;Group By&quot;), *groupresults1_menu));
+-   groupresults1 = (Gtk::MenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;Group Results By&quot;), *groupresults1_menu));
++   groupresults1 = (Gtk::MenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::StockMenuElem(Gtk::StockID(&quot;gtk-save-as&quot;)));
+-   exportresults1 = (Gtk::ImageMenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::CheckMenuElem(_(&quot;Show Extracts&quot;)));
++   showextracts1 = (Gtk::CheckMenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Clear List&quot;), *image718));
+-   clearresults1 = (Gtk::ImageMenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator4 = (Gtk::MenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
+-   separator1 = (Gtk::MenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Import URL&quot;), *image999));
++   import1 = (Gtk::ImageMenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;Vie_w&quot;)));
+-   viewresults1 = (Gtk::MenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Export List&quot;), *image1000));
++   export1 = (Gtk::ImageMenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;View Cache&quot;)));
+-   viewcache1 = (Gtk::MenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
++   separator6 = (Gtk::MenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;More Like This&quot;), *image719));
+-   morelikethis1 = (Gtk::ImageMenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
++   optionsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Status&quot;), *image1001));
++   status1 = (Gtk::ImageMenuItem *)&amp;optionsMenuitem_menu-&gt;items().back();
+    
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Search This For&quot;), *image720));
+-   searchagain1 = (Gtk::ImageMenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
+-   
+-   resultsMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Index&quot;)));
+-   indexresults1 = (Gtk::MenuItem *)&amp;resultsMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;List Contents Of&quot;)));
+-   list1 = (Gtk::MenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Import URL&quot;), *image721));
+-   import1 = (Gtk::ImageMenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::SeparatorElem());
+-   separator3 = (Gtk::MenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;View&quot;)));
+-   viewfromindex1 = (Gtk::MenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Update&quot;), *image722));
+-   refreshindex1 = (Gtk::ImageMenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Unindex&quot;), *image723));
+-   unindex1 = (Gtk::ImageMenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+-   indexMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::ImageMenuElem(_(&quot;Properties&quot;), *image724));
+-   showfromindex1 = (Gtk::ImageMenuItem *)&amp;indexMenuitem_menu-&gt;items().back();
+-   
+    helpMenuitem_menu-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_About&quot;)));
+    about1 = (Gtk::MenuItem *)&amp;helpMenuitem_menu-&gt;items().back();
+    
+-   mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Session&quot;), *sessionMenuitem_menu));
+-   sessionMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
++   mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_File&quot;), *fileMenuitem_menu));
++   fileMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
+    
+    mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Edit&quot;), *editMenuitem_menu));
+    editMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
+    
+-   mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Results&quot;), *resultsMenuitem_menu));
+-   resultsMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
++   mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Options&quot;), *optionsMenuitem_menu));
++   optionsMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
+    
+-   mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Index&quot;), *indexMenuitem_menu));
+-   indexMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
+-   
+    mainMenubar-&gt;items().push_back(Gtk::Menu_Helpers::MenuElem(_(&quot;_Help&quot;), *helpMenuitem_menu));
+    helpMenuitem = (Gtk::MenuItem *)&amp;mainMenubar-&gt;items().back();
+-   showextract1-&gt;set_active(true);
++   image995-&gt;set_alignment(0.5,0.5);
++   image995-&gt;set_padding(0,0);
++   image996-&gt;set_alignment(0.5,0.5);
++   image996-&gt;set_padding(0,0);
++   image997-&gt;set_alignment(0.5,0.5);
++   image997-&gt;set_padding(0,0);
++   image998-&gt;set_alignment(0.5,0.5);
++   image998-&gt;set_padding(0,0);
+    searchenginegroup1-&gt;set_active(true);
+    hostnamegroup1-&gt;set_active(false);
+-   image718-&gt;set_alignment(0.5,0.5);
+-   image718-&gt;set_padding(0,0);
+-   image719-&gt;set_alignment(0.5,0.5);
+-   image719-&gt;set_padding(0,0);
+-   image720-&gt;set_alignment(0.5,0.5);
+-   image720-&gt;set_padding(0,0);
+-   image721-&gt;set_alignment(0.5,0.5);
+-   image721-&gt;set_padding(0,0);
+-   image722-&gt;set_alignment(0.5,0.5);
+-   image722-&gt;set_padding(0,0);
+-   image723-&gt;set_alignment(0.5,0.5);
+-   image723-&gt;set_padding(0,0);
+-   image724-&gt;set_alignment(0.5,0.5);
+-   image724-&gt;set_padding(0,0);
++   showextracts1-&gt;set_active(true);
++   image999-&gt;set_alignment(0.5,0.5);
++   image999-&gt;set_padding(0,0);
++   image1000-&gt;set_alignment(0.5,0.5);
++   image1000-&gt;set_padding(0,0);
++   image1001-&gt;set_alignment(0.5,0.5);
++   image1001-&gt;set_padding(0,0);
+    image439-&gt;set_alignment(0.5,0.5);
+    image439-&gt;set_padding(0,0);
+    addIndexButton-&gt;set_flags(Gtk::CAN_FOCUS);
+@@ -381,44 +397,47 @@
+    mainWindow-&gt;set_resizable(true);
+    mainWindow-&gt;property_destroy_with_parent().set_value(false);
+    mainWindow-&gt;add(*mainVbox);
+-   configure1-&gt;show();
+-   statistics1-&gt;show();
++   open1-&gt;show();
++   separator7-&gt;show();
++   opencache1-&gt;show();
++   image995-&gt;show();
++   openparent1-&gt;show();
++   separator8-&gt;show();
++   image996-&gt;show();
++   addtoindex1-&gt;show();
++   image997-&gt;show();
++   updateindex1-&gt;show();
++   image998-&gt;show();
++   unindex1-&gt;show();
++   separator9-&gt;show();
++   morelikethis1-&gt;show();
++   searchthisfor1-&gt;show();
++   separator10-&gt;show();
++   properties1-&gt;show();
+    separatormenuitem1-&gt;show();
+    quit1-&gt;show();
+-   sessionMenuitem-&gt;show();
++   fileMenuitem-&gt;show();
+    cut1-&gt;show();
+    copy1-&gt;show();
+    paste1-&gt;show();
+    delete1-&gt;show();
++   separator5-&gt;show();
++   preferences1-&gt;show();
+    editMenuitem-&gt;show();
+-   showextract1-&gt;show();
++   listcontents1-&gt;show();
+    searchenginegroup1-&gt;show();
+    hostnamegroup1-&gt;show();
+    groupresults1-&gt;show();
+-   exportresults1-&gt;show();
+-   image718-&gt;show();
+-   clearresults1-&gt;show();
+-   separator1-&gt;show();
+-   viewresults1-&gt;show();
+-   viewcache1-&gt;show();
+-   image719-&gt;show();
+-   morelikethis1-&gt;show();
+-   image720-&gt;show();
+-   searchagain1-&gt;show();
+-   indexresults1-&gt;show();
+-   resultsMenuitem-&gt;show();
+-   list1-&gt;show();
+-   image721-&gt;show();
++   showextracts1-&gt;show();
++   separator4-&gt;show();
++   image999-&gt;show();
+    import1-&gt;show();
+-   separator3-&gt;show();
+-   viewfromindex1-&gt;show();
+-   image722-&gt;show();
+-   refreshindex1-&gt;show();
+-   image723-&gt;show();
+-   unindex1-&gt;show();
+-   image724-&gt;show();
+-   showfromindex1-&gt;show();
+-   indexMenuitem-&gt;show();
++   image1000-&gt;show();
++   export1-&gt;show();
++   separator6-&gt;show();
++   image1001-&gt;show();
++   status1-&gt;show();
++   optionsMenuitem-&gt;show();
+    about1-&gt;show();
+    helpMenuitem-&gt;show();
+    mainMenubar-&gt;show();
+@@ -451,25 +470,24 @@
+    mainStatusbar-&gt;show();
+    mainHbox-&gt;show();
+    mainVbox-&gt;show();
+-   configure1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_configure_activate), false);
+-   statistics1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_statistics_activate), false);
++   open1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_open_activate), false);
++   openparent1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_openparent_activate), false);
++   addtoindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_addtoindex_activate), false);
++   updateindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_updateindex_activate), false);
++   unindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_unindex_activate), false);
++   morelikethis1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_morelikethis_activate), false);
++   properties1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_properties_activate), false);
+    quit1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_quit_activate), false);
+    cut1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_cut_activate), false);
+    copy1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_copy_activate), false);
+    paste1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_paste_activate), false);
+    delete1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_delete_activate), false);
+-   showextract1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_showextract_activate), false);
++   preferences1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_preferences_activate), false);
+    searchenginegroup1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_groupresults_activate), false);
+-   exportresults1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_exportresults_activate), false);
+-   clearresults1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_clearresults_activate), false);
+-   viewresults1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_viewresults_activate), false);
+-   morelikethis1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_morelikethis_activate), false);
+-   indexresults1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_indexresults_activate), false);
++   showextracts1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_showextracts_activate), false);
+    import1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_import_activate), false);
+-   viewfromindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_viewfromindex_activate), false);
+-   refreshindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_refreshindex_activate), false);
+-   unindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_unindex_activate), false);
+-   showfromindex1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_showfromindex_activate), false);
++   export1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_export_activate), false);
++   status1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_status_activate), false);
+    about1-&gt;signal_activate().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_about_activate), false);
+    addIndexButton-&gt;signal_clicked().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_addIndexButton_clicked), false);
+    removeIndexButton-&gt;signal_clicked().connect(sigc::mem_fun(*this, &amp;mainWindow_glade::on_removeIndexButton_clicked), false);
+
+Modified: trunk/UI/GTK2/src/mainWindow_glade.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow_glade.hh	2008-12-29 18:32:55 UTC (rev 1455)
++++ trunk/UI/GTK2/src/mainWindow_glade.hh	2008-12-30 14:03:54 UTC (rev 1456)
+@@ -1,9 +1,9 @@
+-// generated 2007/9/26 23:15:09 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at amra.dyndns.org.</A>(none)
++// generated 2008/12/30 0:57:52 SGT by <A HREF="https://lists.berlios.de/mailman/listinfo/pinot-svn">fabrice at rexor.dyndns.org.</A>(none)
+ // using glademm V2.12.1
+ //
+ // DO NOT EDIT THIS FILE ! It was created using
+ // glade-- /home/fabrice/Projects/MetaSE/pinot/UI/GTK2/metase-gtk2.glade
+-// for gtk 2.10.14 and gtkmm 2.10.11
++// for gtk 2.14.5 and gtkmm 2.14.3
+ //
+ // Please modify the corresponding derived classes in ./src/mainWindow.hh and./src/mainWindow.cc
+ 
+@@ -34,8 +34,8 @@
+ #include &lt;gtkmm/window.h&gt;
+ #include &lt;gtkmm/imagemenuitem.h&gt;
+ #include &lt;gtkmm/menuitem.h&gt;
+-#include &lt;gtkmm/checkmenuitem.h&gt;
+ #include &lt;gtkmm/radiomenuitem.h&gt;
++#include &lt;gtkmm/checkmenuitem.h&gt;
+ #include &lt;gtkmm/box.h&gt;
+ #include &lt;gtkmm/button.h&gt;
+ #include &lt;gtkmm/togglebutton.h&gt;
+@@ -54,34 +54,31 @@
+ public:
+         class Gtk::Window * mainWindow;
+ protected:
+-        class Gtk::ImageMenuItem * configure1;
++        class Gtk::ImageMenuItem * open1;
++        class Gtk::MenuItem * opencache1;
++        class Gtk::ImageMenuItem * openparent1;
++        class Gtk::ImageMenuItem * addtoindex1;
++        class Gtk::ImageMenuItem * updateindex1;
++        class Gtk::ImageMenuItem * unindex1;
++        class Gtk::MenuItem * morelikethis1;
++        class Gtk::MenuItem * searchthisfor1;
++        class Gtk::ImageMenuItem * properties1;
+         class Gtk::MenuItem * separatormenuitem1;
+         class Gtk::ImageMenuItem * quit1;
+-        class Gtk::MenuItem * sessionMenuitem;
++        class Gtk::MenuItem * fileMenuitem;
+         class Gtk::ImageMenuItem * cut1;
+         class Gtk::ImageMenuItem * copy1;
+         class Gtk::ImageMenuItem * paste1;
+         class Gtk::ImageMenuItem * delete1;
++        class Gtk::ImageMenuItem * preferences1;
+         class Gtk::MenuItem * editMenuitem;
+-        class Gtk::CheckMenuItem * showextract1;
++        class Gtk::MenuItem * listcontents1;
+         class Gtk::RadioMenuItem * searchenginegroup1;
+         class Gtk::RadioMenuItem * hostnamegroup1;
+         class Gtk::MenuItem * groupresults1;
+-        class Gtk::ImageMenuItem * exportresults1;
+-        class Gtk::ImageMenuItem * clearresults1;
+-        class Gtk::MenuItem * viewresults1;
+-        class Gtk::MenuItem * viewcache1;
+-        class Gtk::ImageMenuItem * morelikethis1;
+-        class Gtk::ImageMenuItem * searchagain1;
+-        class Gtk::MenuItem * indexresults1;
+-        class Gtk::MenuItem * resultsMenuitem;
+-        class Gtk::MenuItem * list1;
++        class Gtk::CheckMenuItem * showextracts1;
+         class Gtk::ImageMenuItem * import1;
+-        class Gtk::MenuItem * viewfromindex1;
+-        class Gtk::ImageMenuItem * refreshindex1;
+-        class Gtk::ImageMenuItem * unindex1;
+-        class Gtk::ImageMenuItem * showfromindex1;
+-        class Gtk::MenuItem * indexMenuitem;
++        class Gtk::ImageMenuItem * export1;
+         class Gtk::MenuItem * about1;
+         class Gtk::MenuItem * helpMenuitem;
+         class Gtk::VBox * enginesVbox;
+@@ -106,25 +103,24 @@
+         
+         ~mainWindow_glade();
+ private:
+-        virtual void on_configure_activate() = 0;
+-        virtual void on_statistics_activate() = 0;
++        virtual void on_open_activate() = 0;
++        virtual void on_openparent_activate() = 0;
++        virtual void on_addtoindex_activate() = 0;
++        virtual void on_updateindex_activate() = 0;
++        virtual void on_unindex_activate() = 0;
++        virtual void on_morelikethis_activate() = 0;
++        virtual void on_properties_activate() = 0;
+         virtual void on_quit_activate() = 0;
+         virtual void on_cut_activate() = 0;
+         virtual void on_copy_activate() = 0;
+         virtual void on_paste_activate() = 0;
+         virtual void on_delete_activate() = 0;
+-        virtual void on_showextract_activate() = 0;
++        virtual void on_preferences_activate() = 0;
+         virtual void on_groupresults_activate() = 0;
+-        virtual void on_exportresults_activate() = 0;
+-        virtual void on_clearresults_activate() = 0;
+-        virtual void on_viewresults_activate() = 0;
+-        virtual void on_morelikethis_activate() = 0;
+-        virtual void on_indexresults_activate() = 0;
++        virtual void on_showextracts_activate() = 0;
+         virtual void on_import_activate() = 0;
+-        virtual void on_viewfromindex_activate() = 0;
+-        virtual void on_refreshindex_activate() = 0;
+-        virtual void on_unindex_activate() = 0;
+-        virtual void on_showfromindex_activate() = 0;
++        virtual void on_export_activate() = 0;
++        virtual void on_status_activate() = 0;
+         virtual void on_about_activate() = 0;
+         virtual void on_addIndexButton_clicked() = 0;
+         virtual void on_removeIndexButton_clicked() = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001445.html">[Pinot-svn] r1455 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="001447.html">[Pinot-svn] r1457 - trunk/UI/GTK2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1446">[ date ]</a>
+              <a href="thread.html#1446">[ thread ]</a>
+              <a href="subject.html#1446">[ subject ]</a>
+              <a href="author.html#1446">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

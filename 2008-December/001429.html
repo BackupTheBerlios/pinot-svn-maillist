@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1439 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1439%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200812111342.mBBDgZj3004619%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001428.html">
+   <LINK REL="Next"  HREF="001430.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1439 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1439%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200812111342.mBBDgZj3004619%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1439 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Dec 11 14:42:35 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001428.html">[Pinot-svn] r1438 - trunk/scripts/bash
+</A></li>
+        <LI>Next message: <A HREF="001430.html">[Pinot-svn] r1440 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1429">[ date ]</a>
+              <a href="thread.html#1429">[ thread ]</a>
+              <a href="subject.html#1429">[ subject ]</a>
+              <a href="author.html#1429">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-11 14:42:28 +0100 (Thu, 11 Dec 2008)
+New Revision: 1439
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/IndexSearch/Xapian/XapianEngine.h
+Log:
+Get PrefixDecider to reject short terms instead of doing it after it ran. Also
+reject terms that occur only once and stop words.
+If Xapian &gt;= 1.0.4 is available, set the empty prefix so that both text and
+title are searched for on non-prefixed query terms.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-12-07 05:44:07 UTC (rev 1438)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2008-12-11 13:42:28 UTC (rev 1439)
+@@ -140,8 +140,12 @@
+ class PrefixDecider : public Xapian::ExpandDecider
+ {
+ 	public:
+-		PrefixDecider(const string &amp;allowedPrefixes) :
++		PrefixDecider(Xapian::Database *pIndex,
++			Xapian::Stopper *pStopper,
++			const string &amp;allowedPrefixes) :
+ 			Xapian::ExpandDecider(),
++			m_pIndex(pIndex),
++			m_pStopper(pStopper),
+ 			m_allowedPrefixes(allowedPrefixes)
+ 		{
+ 		}
+@@ -151,19 +155,44 @@
+ 
+ 		virtual bool operator()(const std::string &amp;term) const
+ 		{
+-			if ((isupper((int)(term[0])) == 0) ||
+-				(m_allowedPrefixes.find(term[0]) != string::npos))
++			CJKVTokenizer tokenizer;
++
++			// Reject short terms
++			if ((tokenizer.has_cjkv(term) == false) &amp;&amp;
++				(term.length() &lt; 3))
+ 			{
+-				return true;
++				return false;
+ 			}
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;PrefixDecider::operator: rejecting &quot; &lt;&lt; term &lt;&lt; endl;
+-#endif
+ 
+-			return false;
++			// Reject terms with prefixes we don't want
++			if ((isupper((int)(term[0])) != 0) &amp;&amp; 
++				(m_allowedPrefixes.find(term[0]) == string::npos))
++			{
++				return false;
++			}
++
++			// Reject terms that occur only once
++			if ((m_pIndex != NULL) &amp;&amp;
++				(m_pIndex-&gt;get_termfreq(term) &lt;= 1))
++			{
++				return false;
++			}
++
++			// Reject stop words
++			if ((m_pStopper != NULL) &amp;&amp;
++				((*m_pStopper)(term) == true))
++			{
++				return false;
++			}
++
++			// FIXME: reject terms that stem to the same as query terms
++
++			return true;
+ 		}
+ 
+ 	protected:
++		Xapian::Database *m_pIndex;
++		Xapian::Stopper *m_pStopper;
+ 		string m_allowedPrefixes;
+ 
+ };
+@@ -560,9 +589,7 @@
+ 		// Don't bother loading the stopwords list if there's only one token
+ 		if (tokensCount &gt; 1)
+ 		{
+-			string languageCode(Languages::toCode(stemLanguage));
+-
+-			FileStopper *pStopper = FileStopper::get_stopper(languageCode);
++			FileStopper *pStopper = FileStopper::get_stopper(Languages::toCode(stemLanguage));
+ 			if ((pStopper != NULL) &amp;&amp;
+ 				(pStopper-&gt;get_stopwords_count() &gt; 0))
+ 			{
+@@ -586,6 +613,11 @@
+ 	{
+ 		parser.set_default_op(Xapian::Query::OP_OR);
+ 	}
++#if XAPIAN_NUM_VERSION &gt;= 1000004
++	// Search across text body and title
++	parser.add_prefix(&quot;&quot;, &quot;&quot;);
++	parser.add_prefix(&quot;&quot;, &quot;S&quot;);
++#endif
+ 	// X prefixes should always include a colon
+ 	parser.add_boolean_prefix(&quot;site&quot;, &quot;H&quot;);
+ 	parser.add_boolean_prefix(&quot;file&quot;, &quot;P&quot;);
+@@ -760,7 +792,7 @@
+ }
+ 
+ bool XapianEngine::queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+-	unsigned int startDoc, const QueryProperties &amp;queryProps)
++	const string &amp;stemLanguage, unsigned int startDoc, const QueryProperties &amp;queryProps)
+ {
+ 	Timer timer;
+ 	unsigned int maxResultsCount = queryProps.getMaximumResultsCount();
+@@ -904,7 +936,6 @@
+ 		if (m_expandDocuments.empty() == false)
+ 		{
+ 			Xapian::RSet expandDocs;
+-			unsigned int count = 0;
+ 
+ 			for (set&lt;string&gt;::const_iterator docIter = m_expandDocuments.begin();
+ 				docIter != m_expandDocuments.end(); ++docIter)
+@@ -924,25 +955,18 @@
+ 
+ 			// Get 10 non-prefixed terms
+ 			string allowedPrefixes(&quot;RS&quot;);
+-			PrefixDecider expandDecider(allowedPrefixes);
++			PrefixDecider expandDecider(pIndex, FileStopper::get_stopper(Languages::toCode(stemLanguage)), allowedPrefixes);
+ 			CJKVTokenizer tokenizer;
+-			Xapian::ESet expandTerms = enquire.get_eset(20, expandDocs, &amp;expandDecider);
++			Xapian::ESet expandTerms = enquire.get_eset(10, expandDocs, &amp;expandDecider);
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::queryDatabase: &quot; &lt;&lt; expandTerms.size() &lt;&lt; &quot; expand terms&quot; &lt;&lt; endl;
+ #endif
+ 			for (Xapian::ESetIterator termIter = expandTerms.begin();
+-				(termIter != expandTerms.end()) &amp;&amp; (count &lt; 10); ++termIter)
++				termIter != expandTerms.end(); ++termIter)
+ 			{
+ 				string expandTerm(*termIter);
+ 				char firstChar = expandTerm[0];
+ 
+-				// Skip short terms
+-				if ((tokenizer.has_cjkv(expandTerm) == false) &amp;&amp;
+-					(expandTerm.length() &lt; 3))
+-				{
+-					continue;
+-				}
+-
+ 				// Is this prefixed ?
+ 				if (allowedPrefixes.find(firstChar) != string::npos)
+ 				{
+@@ -950,7 +974,6 @@
+ 				}
+ 
+ 				m_expandTerms.insert(expandTerm);
+-				++count;
+ 			}
+ 		}
+ 	}
+@@ -1064,14 +1087,14 @@
+ 		unsigned int searchStep = 1;
+ 
+ 		// Searches are run in this order :
+-		// 1. don't stem terms
+-		// 2. if no results, stem terms if a language is defined for the query
++		// 1. no stemming, exact matches only
++		// 2. stem terms if a language is defined for the query
+ 		Xapian::Query fullQuery = parseQuery(pIndex, queryProps, &quot;&quot;,
+ 			m_defaultOperator, m_limitQuery, m_correctedFreeQuery);
+ 		while (fullQuery.empty() == false)
+ 		{
+ 			// Query the database
+-			if (queryDatabase(pIndex, fullQuery, startDoc, queryProps) == false)
++			if (queryDatabase(pIndex, fullQuery, stemLanguage, startDoc, queryProps) == false)
+ 			{
+ 				break;
+ 			}
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.h	2008-12-07 05:44:07 UTC (rev 1438)
++++ trunk/IndexSearch/Xapian/XapianEngine.h	2008-12-11 13:42:28 UTC (rev 1439)
+@@ -64,7 +64,8 @@
+ 		std::set&lt;std::string&gt; m_expandDocuments;
+ 
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query,
+-			unsigned int startDoc, const QueryProperties &amp;queryProps);
++			const string &amp;stemLanguage, unsigned int startDoc,
++			const QueryProperties &amp;queryProps);
+ 
+ 		static Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, DefaultOperator defaultOperator,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001428.html">[Pinot-svn] r1438 - trunk/scripts/bash
+</A></li>
+	<LI>Next message: <A HREF="001430.html">[Pinot-svn] r1440 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1429">[ date ]</a>
+              <a href="thread.html#1429">[ thread ]</a>
+              <a href="subject.html#1429">[ subject ]</a>
+              <a href="author.html#1429">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

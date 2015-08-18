@@ -1,0 +1,1377 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1552 - in trunk: Core UI/GTK2/src po
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1552%20-%20in%20trunk%3A%20Core%20UI/GTK2/src%20po&In-Reply-To=%3C200902121402.n1CE2vEd018443%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001541.html">
+   <LINK REL="Next"  HREF="001543.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1552 - in trunk: Core UI/GTK2/src po</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1552%20-%20in%20trunk%3A%20Core%20UI/GTK2/src%20po&In-Reply-To=%3C200902121402.n1CE2vEd018443%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1552 - in trunk: Core UI/GTK2/src po">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 12 15:02:57 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001541.html">[Pinot-svn] r1551 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001543.html">[Pinot-svn] r1553 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1542">[ date ]</a>
+              <a href="thread.html#1542">[ thread ]</a>
+              <a href="subject.html#1542">[ subject ]</a>
+              <a href="author.html#1542">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-12 15:02:28 +0100 (Thu, 12 Feb 2009)
+New Revision: 1552
+
+Added:
+   trunk/UI/GTK2/src/UIThreads.cc
+   trunk/UI/GTK2/src/UIThreads.hh
+Modified:
+   trunk/Core/WorkerThreads.cpp
+   trunk/Core/WorkerThreads.h
+   trunk/Core/pinot-index.cpp
+   trunk/UI/GTK2/src/Makefile.am
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/prefsWindow.hh
+   trunk/UI/GTK2/src/statisticsDialog.hh
+   trunk/po/POTFILES.in
+Log:
+ThreadsManager needs to know whether local files should be scanned with
+DirectoryScanner or indexed right away with IndexingThread. This only makes
+sense in pinot-index and the UI.
+Moved UI-specific thread classes to UIThreads.
+
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/Core/WorkerThreads.cpp	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -46,7 +46,6 @@
+ #include &quot;FilterUtils.h&quot;
+ #include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+-#include &quot;QueryHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ #include &quot;ModuleFactory.h&quot;
+@@ -272,11 +271,13 @@
+ unsigned int ThreadsManager::m_nextThreadId = 1;
+ 
+ ThreadsManager::ThreadsManager(const string &amp;defaultIndexLocation,
+-	unsigned int maxIndexThreads, unsigned int maxThreadsTime) :
++	unsigned int maxIndexThreads, unsigned int maxThreadsTime,
++	bool scanLocalFiles) :
+ 	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+ 	m_backgroundThreadsCount(0),
+ 	m_foregroundThreadsMaxTime(maxThreadsTime),
++	m_scanLocalFiles(scanLocalFiles),
+ 	m_numCPUs(1),
+ 	m_stopIndexing(false)
+ {
+@@ -467,7 +468,8 @@
+ 		return status;
+ 	}
+ 
+-	if (urlObj.isLocal() == true)
++	if ((m_scanLocalFiles == true) &amp;&amp;
++		(urlObj.isLocal() == true))
+ 	{
+ 		// This handles both directories and files
+ 		start_thread(new DirectoryScannerThread(urlObj.getLocation() + &quot;/&quot; + urlObj.getFile(),
+@@ -796,93 +798,6 @@
+ 	return m_documentsCount;
+ }
+ 
+-IndexBrowserThread::IndexBrowserThread(const PinotSettings::IndexProperties &amp;indexProps,
+-	unsigned int maxDocsCount, unsigned int startDoc) :
+-	ListerThread(indexProps, startDoc),
+-	m_maxDocsCount(maxDocsCount)
+-{
+-}
+-
+-IndexBrowserThread::~IndexBrowserThread()
+-{
+-}
+-
+-void IndexBrowserThread::doWork(void)
+-{
+-	set&lt;unsigned int&gt; docIDList;
+-	set&lt;string&gt; docLabels;
+-	unsigned int numDocs = 0;
+-
+-	if (m_indexProps.m_location.empty() == true)
+-	{
+-		m_errorNum = UNKNOWN_INDEX;
+-		m_errorParam = m_indexProps.m_name.c_str();
+-		return;
+-	}
+-
+-	// Get the index at that location
+-	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexProps.m_location);
+-	if ((pIndex == NULL) ||
+-		(pIndex-&gt;isGood() == false))
+-	{
+-		m_errorNum = INDEX_ERROR;
+-		m_errorParam = m_indexProps.m_location;
+-		if (pIndex != NULL)
+-		{
+-			delete pIndex;
+-		}
+-		return;
+-	}
+-
+-	m_documentsCount = pIndex-&gt;getDocumentsCount();
+-	if (m_documentsCount == 0)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;IndexBrowserThread::doWork: no documents&quot; &lt;&lt; endl;
+-#endif
+-		return;
+-	}
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;IndexBrowserThread::doWork: &quot; &lt;&lt; m_maxDocsCount &lt;&lt; &quot; off &quot; &lt;&lt; m_documentsCount
+-		&lt;&lt; &quot; documents to browse, starting at position &quot; &lt;&lt; m_startDoc &lt;&lt; endl;
+-#endif
+-	pIndex-&gt;listDocuments(docIDList, m_maxDocsCount, m_startDoc);
+-
+-	m_documentsList.clear();
+-	m_documentsList.reserve(m_maxDocsCount);
+-
+-	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
+-	{
+-		unsigned int docId = (*iter);
+-
+-		if (m_done == true)
+-		{
+-			break;
+-		}
+-
+-		DocumentInfo docInfo;
+-		if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+-		{
+-			string type(docInfo.getType());
+-
+-			if (type.empty() == true)
+-			{
+-				docInfo.setType(&quot;text/html&quot;);
+-			}
+-			docInfo.setIsIndexed(m_indexProps.m_id, docId);
+-
+-			// Insert that document
+-			m_documentsList.push_back(docInfo);
+-			++numDocs;
+-		}
+-#ifdef DEBUG
+-		else cout &lt;&lt; &quot;IndexBrowserThread::doWork: couldn't retrieve document &quot; &lt;&lt; docId &lt;&lt; endl;
+-#endif
+-	}
+-	delete pIndex;
+-}
+-
+ QueryingThread::QueryingThread(const PinotSettings::IndexProperties &amp;indexProps,
+ 	const QueryProperties &amp;queryProps, unsigned int startDoc, bool listingIndex) :
+ 	ListerThread(indexProps, startDoc),
+@@ -1248,192 +1163,6 @@
+ 	delete pEngine;
+ }
+ 
+-EngineHistoryThread::EngineHistoryThread(const string &amp;engineDisplayableName,
+-	const QueryProperties &amp;queryProps, unsigned int maxDocsCount) :
+-	QueryingThread(&quot;&quot;, engineDisplayableName, &quot;&quot;, queryProps, 0),
+-	m_maxDocsCount(maxDocsCount)
+-{
+-	// Results are converted to UTF-8 prior to insertion in the history database
+-	m_resultsCharset = &quot;UTF-8&quot;;
+-	m_isLive = false;
+-}
+-
+-EngineHistoryThread::~EngineHistoryThread()
+-{
+-}
+-
+-void EngineHistoryThread::doWork(void)
+-{
+-	QueryHistory queryHistory(PinotSettings::getInstance().getHistoryDatabaseName());
+-
+-	if (queryHistory.getItems(m_queryProps.getName(), m_engineDisplayableName,
+-		m_maxDocsCount, m_documentsList) == false)
+-	{
+-		m_errorNum = HISTORY_FAILED;
+-		m_errorParam = m_engineDisplayableName;
+-	}
+-	else if (m_documentsList.empty() == false)
+-	{
+-		// Get the first result's charset
+-		queryHistory.getItemExtract(m_queryProps.getName(), m_engineDisplayableName,
+-			m_documentsList.front().getLocation());
+-	}
+-}
+-
+-ExpandQueryThread::ExpandQueryThread(const QueryProperties &amp;queryProps,
+-	const set&lt;string&gt; &amp;expandFromDocsSet) :
+-	WorkerThread(),
+-	m_queryProps(queryProps)
+-{
+-	copy(expandFromDocsSet.begin(), expandFromDocsSet.end(),
+-		inserter(m_expandFromDocsSet, m_expandFromDocsSet.begin()));
+-}
+-
+-ExpandQueryThread::~ExpandQueryThread()
+-{
+-}
+-
+-string ExpandQueryThread::getType(void) const
+-{
+-	return &quot;ExpandQueryThread&quot;;
+-}
+-
+-QueryProperties ExpandQueryThread::getQuery(void) const
+-{
+-	return m_queryProps;
+-}
+-
+-const set&lt;string&gt; &amp;ExpandQueryThread::getExpandTerms(void) const
+-{
+-	return m_expandTerms;
+-}
+-
+-void ExpandQueryThread::doWork(void)
+-{
+-	// Get the SearchEngine
+-	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(PinotSettings::getInstance().m_defaultBackend, &quot;MERGED&quot;);
+-	if (pEngine == NULL)
+-	{
+-		m_errorNum = UNKNOWN_ENGINE;
+-		m_errorParam = m_queryProps.getName();
+-		return;
+-	}
+-
+-	// Expand the query
+-	pEngine-&gt;setExpandSet(m_expandFromDocsSet);
+-
+-	// Run the query
+-	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+-	if (pEngine-&gt;runQuery(m_queryProps) == false)
+-	{
+-		m_errorNum = QUERY_FAILED;
+-	}
+-	else
+-	{
+-		// Copy the expand terms
+-		const set&lt;string&gt; &amp;expandTerms = pEngine-&gt;getExpandTerms();
+-		copy(expandTerms.begin(), expandTerms.end(),
+-			inserter(m_expandTerms, m_expandTerms.begin()));
+-	}
+-
+-	delete pEngine;
+-}
+-
+-LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToAdd,
+-	const set&lt;string&gt; &amp;labelsToDelete) :
+-	WorkerThread(),
+-	m_resetLabels(false)
+-{
+-	copy(labelsToAdd.begin(), labelsToAdd.end(),
+-		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
+-	copy(labelsToDelete.begin(), labelsToDelete.end(),
+-		inserter(m_labelsToDelete, m_labelsToDelete.begin()));
+-}
+-
+-LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToAdd,
+-	const set&lt;unsigned int&gt; &amp;docsIds, const set&lt;unsigned int&gt; &amp;daemonIds,
+-	bool resetLabels) :
+-	WorkerThread(),
+-	m_resetLabels(resetLabels)
+-{
+-	copy(labelsToAdd.begin(), labelsToAdd.end(),
+-		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
+-	copy(docsIds.begin(), docsIds.end(),
+-		inserter(m_docsIds, m_docsIds.begin()));
+-	copy(daemonIds.begin(), daemonIds.end(),
+-		inserter(m_daemonIds, m_daemonIds.begin()));
+-}
+-
+-LabelUpdateThread::~LabelUpdateThread()
+-{
+-}
+-
+-string LabelUpdateThread::getType(void) const
+-{
+-	return &quot;LabelUpdateThread&quot;;
+-}
+-
+-bool LabelUpdateThread::modifiedDocsIndex(void) const
+-{
+-	return !m_docsIds.empty();
+-}
+-
+-bool LabelUpdateThread::modifiedDaemonIndex(void) const
+-{
+-	return !m_daemonIds.empty();
+-}
+-
+-void LabelUpdateThread::doWork(void)
+-{
+-	bool actOnDocuments = false;
+-
+-	IndexInterface *pDocsIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
+-	if (pDocsIndex == NULL)
+-	{
+-		m_errorNum = INDEX_ERROR;
+-		m_errorParam = PinotSettings::getInstance().m_docsIndexLocation;
+-		return;
+-	}
+-
+-	IndexInterface *pDaemonIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+-	if (pDaemonIndex == NULL)
+-	{
+-		m_errorNum = INDEX_ERROR;
+-		m_errorParam = PinotSettings::getInstance().m_daemonIndexLocation;
+-		delete pDocsIndex;
+-		return;
+-	}
+-
+-	// Apply the labels to existing documents
+-	if (m_docsIds.empty() == false)
+-	{
+-		pDocsIndex-&gt;setDocumentsLabels(m_docsIds, m_labelsToAdd, m_resetLabels);
+-		actOnDocuments = true;
+-	}
+-	if (m_daemonIds.empty() == false)
+-	{
+-		pDaemonIndex-&gt;setDocumentsLabels(m_daemonIds, m_labelsToAdd, m_resetLabels);
+-		actOnDocuments = true;
+-	}
+-
+-	if (actOnDocuments == false)
+-	{
+-		// Add and/or delete labels on the daemon's index only
+-		// The documents index is not required to have labels set
+-		for (set&lt;string&gt;::iterator iter = m_labelsToAdd.begin(); iter != m_labelsToAdd.end(); ++iter)
+-		{
+-			pDaemonIndex-&gt;addLabel(*iter);
+-		}
+-		for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
+-		{
+-			pDaemonIndex-&gt;deleteLabel(*iter);
+-		}
+-	}
+-
+-	delete pDaemonIndex;
+-	delete pDocsIndex;
+-}
+-
+ DownloadingThread::DownloadingThread(const DocumentInfo &amp;docInfo) :
+ 	WorkerThread(),
+ 	m_docInfo(docInfo),
+@@ -1673,9 +1402,12 @@
+ 
+ 	if (m_pDoc != NULL)
+ 	{
++		Timer indexTimer;
+ 		string docType(m_pDoc-&gt;getType());
+ 		bool success = false;
+ 
++		indexTimer.start();
++
+ 		// The type may have been obtained when downloading
+ 		if (docType.empty() == false)
+ 		{
+@@ -1815,6 +1547,8 @@
+ 				m_docInfo.setIsIndexed(
+ 					PinotSettings::getInstance().getIndexPropertiesByLocation(m_indexLocation).m_id,
+ 					m_docId);
++
++				cout &lt;&lt; &quot;Indexed &quot; &lt;&lt; m_docInfo.getLocation() &lt;&lt; &quot; in &quot; &lt;&lt; indexTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+ 			}
+ 		}
+ 	}
+@@ -1942,93 +1676,6 @@
+ 	delete pIndex;
+ }
+ 
+-UpdateDocumentThread::UpdateDocumentThread(const PinotSettings::IndexProperties &amp;indexProps, unsigned int docId,
+-	const DocumentInfo &amp;docInfo, bool updateLabels) :
+-	WorkerThread(),
+-	m_indexProps(indexProps),
+-	m_docId(docId),
+-	m_docInfo(docInfo),
+-	m_updateLabels(updateLabels)
+-{
+-}
+-
+-UpdateDocumentThread::~UpdateDocumentThread()
+-{
+-}
+-
+-string UpdateDocumentThread::getType(void) const
+-{
+-	return &quot;UpdateDocumentThread&quot;;
+-}
+-
+-PinotSettings::IndexProperties UpdateDocumentThread::getIndexProperties(void) const
+-{
+-	return m_indexProps;
+-}
+-
+-unsigned int UpdateDocumentThread::getDocumentID(void) const
+-{
+-	return m_docId;
+-}
+-
+-const DocumentInfo &amp;UpdateDocumentThread::getDocumentInfo(void) const
+-{
+-	return m_docInfo;
+-}
+-
+-void UpdateDocumentThread::doWork(void)
+-{
+-	if (m_done == false)
+-	{
+-		if (m_indexProps.m_location.empty() == true)
+-		{
+-			m_errorNum = UNKNOWN_INDEX;
+-			m_errorParam = m_indexProps.m_name.c_str();
+-			return;
+-		}
+-
+-		// Get the index at that location
+-		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexProps.m_location);
+-		if ((pIndex == NULL) ||
+-			(pIndex-&gt;isGood() == false))
+-		{
+-			m_errorNum = INDEX_ERROR;
+-			m_errorParam = m_indexProps.m_location;
+-			if (pIndex != NULL)
+-			{
+-				delete pIndex;
+-			}
+-			return;
+-		}
+-
+-		// Update the DocumentInfo
+-		if (pIndex-&gt;updateDocumentInfo(m_docId, m_docInfo) == false)
+-		{
+-			m_errorNum = UPDATE_FAILED;
+-			m_errorParam = m_docInfo.getLocation();
+-			return;
+-		}
+-		// ...and the labels if necessary
+-		if (m_updateLabels == true)
+-		{
+-			if (pIndex-&gt;setDocumentLabels(m_docId, m_docInfo.getLabels()) == false)
+-			{
+-				m_errorNum = UPDATE_FAILED;
+-				m_errorParam = m_docInfo.getLocation();
+-				return;
+-			}
+-		}
+-
+-		// Flush the index ?
+-		if (m_immediateFlush == true)
+-		{
+-			pIndex-&gt;flush();
+-		}
+-
+-		delete pIndex;
+-	}
+-}
+-
+ MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 	bool checkHistory) :
+ 	WorkerThread(),
+
+Modified: trunk/Core/WorkerThreads.h
+===================================================================
+--- trunk/Core/WorkerThreads.h	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/Core/WorkerThreads.h	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -111,7 +111,8 @@
+ 	public:
+ 		ThreadsManager(const std::string &amp;defaultIndexLocation,
+ 			unsigned int maxIndexThreads,
+-			unsigned int maxThreadsTime = 300);
++			unsigned int maxThreadsTime = 300,
++			bool scanLocalFiles = false);
+ 		virtual ~ThreadsManager();
+ 
+ 		static unsigned int get_next_id(void);
+@@ -148,6 +149,7 @@
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_backgroundThreadsCount;
+ 		unsigned int m_foregroundThreadsMaxTime;
++		bool m_scanLocalFiles;
+ 		long m_numCPUs;
+ 		sigc::signal1&lt;void, WorkerThread *&gt; m_onThreadEndSignal;
+ 		std::set&lt;std::string&gt; m_beingIndexed;
+@@ -200,26 +202,6 @@
+ 
+ };
+ 
+-class IndexBrowserThread : public ListerThread
+-{
+-	public:
+-		IndexBrowserThread(const PinotSettings::IndexProperties &amp;indexProps,
+-			unsigned int maxDocsCount, unsigned int startDoc = 0);
+-		~IndexBrowserThread();
+-
+-		std::string getLabelName(void) const;
+-
+-	protected:
+-		unsigned int m_maxDocsCount;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		IndexBrowserThread(const IndexBrowserThread &amp;other);
+-		IndexBrowserThread &amp;operator=(const IndexBrowserThread &amp;other);
+-
+-};
+-
+ class QueryingThread : public ListerThread
+ {
+ 	public:
+@@ -289,83 +271,6 @@
+ 
+ };
+ 
+-class EngineHistoryThread : public QueryingThread
+-{
+-	public:
+-		EngineHistoryThread(const std::string &amp;engineDisplayableName,
+-			const QueryProperties &amp;queryProps, unsigned int maxDocsCount);
+-		virtual ~EngineHistoryThread();
+-
+-	protected:
+-		unsigned int m_maxDocsCount;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		EngineHistoryThread(const EngineHistoryThread &amp;other);
+-		EngineHistoryThread &amp;operator=(const EngineHistoryThread &amp;other);
+-
+-};
+-
+-class ExpandQueryThread : public WorkerThread
+-{
+-	public:
+-		ExpandQueryThread(const QueryProperties &amp;queryProps,
+-			const std::set&lt;std::string&gt; &amp;expandFromDocsSet);
+-		virtual ~ExpandQueryThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		QueryProperties getQuery(void) const;
+-
+-		const std::set&lt;std::string&gt; &amp;getExpandTerms(void) const;
+-
+-	protected:
+-		QueryProperties m_queryProps;
+-		std::set&lt;std::string&gt; m_expandFromDocsSet;
+-		std::set&lt;std::string&gt; m_expandTerms;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		ExpandQueryThread(const ExpandQueryThread &amp;other);
+-		ExpandQueryThread &amp;operator=(const ExpandQueryThread &amp;other);
+-
+-};
+-
+-class LabelUpdateThread : public WorkerThread
+-{
+-	public:
+-		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToAdd,
+-			const std::set&lt;std::string&gt; &amp;labelsToDelete);
+-		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToAdd,
+-			const std::set&lt;unsigned int&gt; &amp;docsIds,
+-			const std::set&lt;unsigned int&gt; &amp;daemonIds,
+-			bool resetLabels);
+-
+-		virtual ~LabelUpdateThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		bool modifiedDocsIndex(void) const;
+-
+-		bool modifiedDaemonIndex(void) const;
+-
+-	protected:
+-		std::set&lt;std::string&gt; m_labelsToAdd;
+-		std::set&lt;std::string&gt; m_labelsToDelete;
+-		std::set&lt;unsigned int&gt; m_docsIds;
+-		std::set&lt;unsigned int&gt; m_daemonIds;
+-		bool m_resetLabels;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		LabelUpdateThread(const LabelUpdateThread &amp;other);
+-		LabelUpdateThread &amp;operator=(const LabelUpdateThread &amp;other);
+-
+-};
+-
+ class DownloadingThread : public WorkerThread
+ {
+ 	public:
+@@ -453,37 +358,6 @@
+ 
+ };
+ 
+-class UpdateDocumentThread : public WorkerThread
+-{
+-	public:
+-		// Update a document's properties
+-		UpdateDocumentThread(const PinotSettings::IndexProperties &amp;indexProps,
+-			unsigned int docId, const DocumentInfo &amp;docInfo,
+-			bool updateLabels);
+-		virtual ~UpdateDocumentThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		PinotSettings::IndexProperties getIndexProperties(void) const;
+-
+-		unsigned int getDocumentID(void) const;
+-
+-		const DocumentInfo &amp;getDocumentInfo(void) const;
+-
+-	protected:
+-		PinotSettings::IndexProperties m_indexProps;
+-		unsigned int m_docId;
+-		DocumentInfo m_docInfo;
+-		bool m_updateLabels;
+-
+-		virtual void doWork(void);
+-
+-	private:
+-		UpdateDocumentThread(const UpdateDocumentThread &amp;other);
+-		UpdateDocumentThread &amp;operator=(const UpdateDocumentThread &amp;other);
+-
+-};
+-
+ class MonitorThread : public WorkerThread
+ {
+ 	public:
+
+Modified: trunk/Core/pinot-index.cpp
+===================================================================
+--- trunk/Core/pinot-index.cpp	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/Core/pinot-index.cpp	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -59,7 +59,7 @@
+ {
+ 	public:
+ 		IndexingState(const string &amp;indexLocation) :
+-			ThreadsManager(indexLocation, 1, 60),
++			ThreadsManager(indexLocation, 1, 60, true),
+ 			m_docId(0)
+ 		{
+ 			m_onThreadEndSignal.connect(sigc::mem_fun(*this, &amp;IndexingState::on_thread_end));
+
+Modified: trunk/UI/GTK2/src/Makefile.am
+===================================================================
+--- trunk/UI/GTK2/src/Makefile.am	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/Makefile.am	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -21,7 +21,8 @@
+ 	IndexPage.hh \
+ 	ModelColumns.hh \
+ 	Notebook.hh \
+-	ResultsTree.hh
++	ResultsTree.hh \
++	UIThreads.hh
+ 
+ pinot_SOURCES = \
+ 	pinot.cc \
+@@ -45,7 +46,8 @@
+ 	IndexPage.cc \
+ 	ModelColumns.cc \
+ 	Notebook.cc \
+-	ResultsTree.cc
++	ResultsTree.cc \
++	UIThreads.cc
+ 
+ bin_PROGRAMS = pinot
+ 
+
+Added: trunk/UI/GTK2/src/UIThreads.cc
+===================================================================
+--- trunk/UI/GTK2/src/UIThreads.cc	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/UIThreads.cc	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -0,0 +1,397 @@
++/*
++ *  Copyright 2009 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;unistd.h&gt;
++#include &lt;stdlib.h&gt;
++#include &lt;stdio.h&gt;
++#include &lt;fcntl.h&gt;
++#include &lt;string.h&gt;
++#include &lt;signal.h&gt;
++#include &lt;exception&gt;
++#include &lt;iostream&gt;
++
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
++#include &quot;QueryHistory.h&quot;
++#include &quot;ModuleFactory.h&quot;
++#include &quot;PinotSettings.h&quot;
++#include &quot;UIThreads.hh&quot;
++
++using namespace Glib;
++using namespace std;
++
++IndexBrowserThread::IndexBrowserThread(const PinotSettings::IndexProperties &amp;indexProps,
++	unsigned int maxDocsCount, unsigned int startDoc) :
++	ListerThread(indexProps, startDoc),
++	m_maxDocsCount(maxDocsCount)
++{
++}
++
++IndexBrowserThread::~IndexBrowserThread()
++{
++}
++
++void IndexBrowserThread::doWork(void)
++{
++	set&lt;unsigned int&gt; docIDList;
++	set&lt;string&gt; docLabels;
++	unsigned int numDocs = 0;
++
++	if (m_indexProps.m_location.empty() == true)
++	{
++		m_errorNum = UNKNOWN_INDEX;
++		m_errorParam = m_indexProps.m_name.c_str();
++		return;
++	}
++
++	// Get the index at that location
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexProps.m_location);
++	if ((pIndex == NULL) ||
++		(pIndex-&gt;isGood() == false))
++	{
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = m_indexProps.m_location;
++		if (pIndex != NULL)
++		{
++			delete pIndex;
++		}
++		return;
++	}
++
++	m_documentsCount = pIndex-&gt;getDocumentsCount();
++	if (m_documentsCount == 0)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;IndexBrowserThread::doWork: no documents&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;IndexBrowserThread::doWork: &quot; &lt;&lt; m_maxDocsCount &lt;&lt; &quot; off &quot; &lt;&lt; m_documentsCount
++		&lt;&lt; &quot; documents to browse, starting at position &quot; &lt;&lt; m_startDoc &lt;&lt; endl;
++#endif
++	pIndex-&gt;listDocuments(docIDList, m_maxDocsCount, m_startDoc);
++
++	m_documentsList.clear();
++	m_documentsList.reserve(m_maxDocsCount);
++
++	for (set&lt;unsigned int&gt;::iterator iter = docIDList.begin(); iter != docIDList.end(); ++iter)
++	{
++		unsigned int docId = (*iter);
++
++		if (m_done == true)
++		{
++			break;
++		}
++
++		DocumentInfo docInfo;
++		if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
++		{
++			string type(docInfo.getType());
++
++			if (type.empty() == true)
++			{
++				docInfo.setType(&quot;text/html&quot;);
++			}
++			docInfo.setIsIndexed(m_indexProps.m_id, docId);
++
++			// Insert that document
++			m_documentsList.push_back(docInfo);
++			++numDocs;
++		}
++#ifdef DEBUG
++		else cout &lt;&lt; &quot;IndexBrowserThread::doWork: couldn't retrieve document &quot; &lt;&lt; docId &lt;&lt; endl;
++#endif
++	}
++	delete pIndex;
++}
++
++EngineHistoryThread::EngineHistoryThread(const string &amp;engineDisplayableName,
++	const QueryProperties &amp;queryProps, unsigned int maxDocsCount) :
++	QueryingThread(&quot;&quot;, engineDisplayableName, &quot;&quot;, queryProps, 0),
++	m_maxDocsCount(maxDocsCount)
++{
++	// Results are converted to UTF-8 prior to insertion in the history database
++	m_resultsCharset = &quot;UTF-8&quot;;
++	m_isLive = false;
++}
++
++EngineHistoryThread::~EngineHistoryThread()
++{
++}
++
++void EngineHistoryThread::doWork(void)
++{
++	QueryHistory queryHistory(PinotSettings::getInstance().getHistoryDatabaseName());
++
++	if (queryHistory.getItems(m_queryProps.getName(), m_engineDisplayableName,
++		m_maxDocsCount, m_documentsList) == false)
++	{
++		m_errorNum = HISTORY_FAILED;
++		m_errorParam = m_engineDisplayableName;
++	}
++	else if (m_documentsList.empty() == false)
++	{
++		// Get the first result's charset
++		queryHistory.getItemExtract(m_queryProps.getName(), m_engineDisplayableName,
++			m_documentsList.front().getLocation());
++	}
++}
++
++ExpandQueryThread::ExpandQueryThread(const QueryProperties &amp;queryProps,
++	const set&lt;string&gt; &amp;expandFromDocsSet) :
++	WorkerThread(),
++	m_queryProps(queryProps)
++{
++	copy(expandFromDocsSet.begin(), expandFromDocsSet.end(),
++		inserter(m_expandFromDocsSet, m_expandFromDocsSet.begin()));
++}
++
++ExpandQueryThread::~ExpandQueryThread()
++{
++}
++
++string ExpandQueryThread::getType(void) const
++{
++	return &quot;ExpandQueryThread&quot;;
++}
++
++QueryProperties ExpandQueryThread::getQuery(void) const
++{
++	return m_queryProps;
++}
++
++const set&lt;string&gt; &amp;ExpandQueryThread::getExpandTerms(void) const
++{
++	return m_expandTerms;
++}
++
++void ExpandQueryThread::doWork(void)
++{
++	// Get the SearchEngine
++	SearchEngineInterface *pEngine = ModuleFactory::getSearchEngine(PinotSettings::getInstance().m_defaultBackend, &quot;MERGED&quot;);
++	if (pEngine == NULL)
++	{
++		m_errorNum = UNKNOWN_ENGINE;
++		m_errorParam = m_queryProps.getName();
++		return;
++	}
++
++	// Expand the query
++	pEngine-&gt;setExpandSet(m_expandFromDocsSet);
++
++	// Run the query
++	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
++	if (pEngine-&gt;runQuery(m_queryProps) == false)
++	{
++		m_errorNum = QUERY_FAILED;
++	}
++	else
++	{
++		// Copy the expand terms
++		const set&lt;string&gt; &amp;expandTerms = pEngine-&gt;getExpandTerms();
++		copy(expandTerms.begin(), expandTerms.end(),
++			inserter(m_expandTerms, m_expandTerms.begin()));
++	}
++
++	delete pEngine;
++}
++
++LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToAdd,
++	const set&lt;string&gt; &amp;labelsToDelete) :
++	WorkerThread(),
++	m_resetLabels(false)
++{
++	copy(labelsToAdd.begin(), labelsToAdd.end(),
++		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
++	copy(labelsToDelete.begin(), labelsToDelete.end(),
++		inserter(m_labelsToDelete, m_labelsToDelete.begin()));
++}
++
++LabelUpdateThread::LabelUpdateThread(const set&lt;string&gt; &amp;labelsToAdd,
++	const set&lt;unsigned int&gt; &amp;docsIds, const set&lt;unsigned int&gt; &amp;daemonIds,
++	bool resetLabels) :
++	WorkerThread(),
++	m_resetLabels(resetLabels)
++{
++	copy(labelsToAdd.begin(), labelsToAdd.end(),
++		inserter(m_labelsToAdd, m_labelsToAdd.begin()));
++	copy(docsIds.begin(), docsIds.end(),
++		inserter(m_docsIds, m_docsIds.begin()));
++	copy(daemonIds.begin(), daemonIds.end(),
++		inserter(m_daemonIds, m_daemonIds.begin()));
++}
++
++LabelUpdateThread::~LabelUpdateThread()
++{
++}
++
++string LabelUpdateThread::getType(void) const
++{
++	return &quot;LabelUpdateThread&quot;;
++}
++
++bool LabelUpdateThread::modifiedDocsIndex(void) const
++{
++	return !m_docsIds.empty();
++}
++
++bool LabelUpdateThread::modifiedDaemonIndex(void) const
++{
++	return !m_daemonIds.empty();
++}
++
++void LabelUpdateThread::doWork(void)
++{
++	bool actOnDocuments = false;
++
++	IndexInterface *pDocsIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
++	if (pDocsIndex == NULL)
++	{
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = PinotSettings::getInstance().m_docsIndexLocation;
++		return;
++	}
++
++	IndexInterface *pDaemonIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++	if (pDaemonIndex == NULL)
++	{
++		m_errorNum = INDEX_ERROR;
++		m_errorParam = PinotSettings::getInstance().m_daemonIndexLocation;
++		delete pDocsIndex;
++		return;
++	}
++
++	// Apply the labels to existing documents
++	if (m_docsIds.empty() == false)
++	{
++		pDocsIndex-&gt;setDocumentsLabels(m_docsIds, m_labelsToAdd, m_resetLabels);
++		actOnDocuments = true;
++	}
++	if (m_daemonIds.empty() == false)
++	{
++		pDaemonIndex-&gt;setDocumentsLabels(m_daemonIds, m_labelsToAdd, m_resetLabels);
++		actOnDocuments = true;
++	}
++
++	if (actOnDocuments == false)
++	{
++		// Add and/or delete labels on the daemon's index only
++		// The documents index is not required to have labels set
++		for (set&lt;string&gt;::iterator iter = m_labelsToAdd.begin(); iter != m_labelsToAdd.end(); ++iter)
++		{
++			pDaemonIndex-&gt;addLabel(*iter);
++		}
++		for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
++		{
++			pDaemonIndex-&gt;deleteLabel(*iter);
++		}
++	}
++
++	delete pDaemonIndex;
++	delete pDocsIndex;
++}
++
++UpdateDocumentThread::UpdateDocumentThread(const PinotSettings::IndexProperties &amp;indexProps, unsigned int docId,
++	const DocumentInfo &amp;docInfo, bool updateLabels) :
++	WorkerThread(),
++	m_indexProps(indexProps),
++	m_docId(docId),
++	m_docInfo(docInfo),
++	m_updateLabels(updateLabels)
++{
++}
++
++UpdateDocumentThread::~UpdateDocumentThread()
++{
++}
++
++string UpdateDocumentThread::getType(void) const
++{
++	return &quot;UpdateDocumentThread&quot;;
++}
++
++PinotSettings::IndexProperties UpdateDocumentThread::getIndexProperties(void) const
++{
++	return m_indexProps;
++}
++
++unsigned int UpdateDocumentThread::getDocumentID(void) const
++{
++	return m_docId;
++}
++
++const DocumentInfo &amp;UpdateDocumentThread::getDocumentInfo(void) const
++{
++	return m_docInfo;
++}
++
++void UpdateDocumentThread::doWork(void)
++{
++	if (m_done == false)
++	{
++		if (m_indexProps.m_location.empty() == true)
++		{
++			m_errorNum = UNKNOWN_INDEX;
++			m_errorParam = m_indexProps.m_name.c_str();
++			return;
++		}
++
++		// Get the index at that location
++		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(m_indexProps.m_location);
++		if ((pIndex == NULL) ||
++			(pIndex-&gt;isGood() == false))
++		{
++			m_errorNum = INDEX_ERROR;
++			m_errorParam = m_indexProps.m_location;
++			if (pIndex != NULL)
++			{
++				delete pIndex;
++			}
++			return;
++		}
++
++		// Update the DocumentInfo
++		if (pIndex-&gt;updateDocumentInfo(m_docId, m_docInfo) == false)
++		{
++			m_errorNum = UPDATE_FAILED;
++			m_errorParam = m_docInfo.getLocation();
++			return;
++		}
++		// ...and the labels if necessary
++		if (m_updateLabels == true)
++		{
++			if (pIndex-&gt;setDocumentLabels(m_docId, m_docInfo.getLabels()) == false)
++			{
++				m_errorNum = UPDATE_FAILED;
++				m_errorParam = m_docInfo.getLocation();
++				return;
++			}
++		}
++
++		// Flush the index ?
++		if (m_immediateFlush == true)
++		{
++			pIndex-&gt;flush();
++		}
++
++		delete pIndex;
++	}
++}
++
+
+Added: trunk/UI/GTK2/src/UIThreads.hh
+===================================================================
+--- trunk/UI/GTK2/src/UIThreads.hh	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/UIThreads.hh	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -0,0 +1,158 @@
++/*
++ *  Copyright 2009 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _UITHREADS_HH
++#define _UITHREADS_HH
++
++#include &lt;string&gt;
++#include &lt;set&gt;
++#include &lt;glibmm/ustring.h&gt;
++
++#include &quot;DocumentInfo.h&quot;
++#include &quot;QueryProperties.h&quot;
++#include &quot;WorkerThreads.h&quot;
++
++class IndexBrowserThread : public ListerThread
++{
++	public:
++		IndexBrowserThread(const PinotSettings::IndexProperties &amp;indexProps,
++			unsigned int maxDocsCount, unsigned int startDoc = 0);
++		~IndexBrowserThread();
++
++		std::string getLabelName(void) const;
++
++	protected:
++		unsigned int m_maxDocsCount;
++
++		virtual void doWork(void);
++
++	private:
++		IndexBrowserThread(const IndexBrowserThread &amp;other);
++		IndexBrowserThread &amp;operator=(const IndexBrowserThread &amp;other);
++
++};
++
++class EngineHistoryThread : public QueryingThread
++{
++	public:
++		EngineHistoryThread(const std::string &amp;engineDisplayableName,
++			const QueryProperties &amp;queryProps, unsigned int maxDocsCount);
++		virtual ~EngineHistoryThread();
++
++	protected:
++		unsigned int m_maxDocsCount;
++
++		virtual void doWork(void);
++
++	private:
++		EngineHistoryThread(const EngineHistoryThread &amp;other);
++		EngineHistoryThread &amp;operator=(const EngineHistoryThread &amp;other);
++
++};
++
++class ExpandQueryThread : public WorkerThread
++{
++	public:
++		ExpandQueryThread(const QueryProperties &amp;queryProps,
++			const std::set&lt;std::string&gt; &amp;expandFromDocsSet);
++		virtual ~ExpandQueryThread();
++
++		virtual std::string getType(void) const;
++
++		QueryProperties getQuery(void) const;
++
++		const std::set&lt;std::string&gt; &amp;getExpandTerms(void) const;
++
++	protected:
++		QueryProperties m_queryProps;
++		std::set&lt;std::string&gt; m_expandFromDocsSet;
++		std::set&lt;std::string&gt; m_expandTerms;
++
++		virtual void doWork(void);
++
++	private:
++		ExpandQueryThread(const ExpandQueryThread &amp;other);
++		ExpandQueryThread &amp;operator=(const ExpandQueryThread &amp;other);
++
++};
++
++class LabelUpdateThread : public WorkerThread
++{
++	public:
++		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToAdd,
++			const std::set&lt;std::string&gt; &amp;labelsToDelete);
++		LabelUpdateThread(const std::set&lt;std::string&gt; &amp;labelsToAdd,
++			const std::set&lt;unsigned int&gt; &amp;docsIds,
++			const std::set&lt;unsigned int&gt; &amp;daemonIds,
++			bool resetLabels);
++
++		virtual ~LabelUpdateThread();
++
++		virtual std::string getType(void) const;
++
++		bool modifiedDocsIndex(void) const;
++
++		bool modifiedDaemonIndex(void) const;
++
++	protected:
++		std::set&lt;std::string&gt; m_labelsToAdd;
++		std::set&lt;std::string&gt; m_labelsToDelete;
++		std::set&lt;unsigned int&gt; m_docsIds;
++		std::set&lt;unsigned int&gt; m_daemonIds;
++		bool m_resetLabels;
++
++		virtual void doWork(void);
++
++	private:
++		LabelUpdateThread(const LabelUpdateThread &amp;other);
++		LabelUpdateThread &amp;operator=(const LabelUpdateThread &amp;other);
++
++};
++
++class UpdateDocumentThread : public WorkerThread
++{
++	public:
++		// Update a document's properties
++		UpdateDocumentThread(const PinotSettings::IndexProperties &amp;indexProps,
++			unsigned int docId, const DocumentInfo &amp;docInfo,
++			bool updateLabels);
++		virtual ~UpdateDocumentThread();
++
++		virtual std::string getType(void) const;
++
++		PinotSettings::IndexProperties getIndexProperties(void) const;
++
++		unsigned int getDocumentID(void) const;
++
++		const DocumentInfo &amp;getDocumentInfo(void) const;
++
++	protected:
++		PinotSettings::IndexProperties m_indexProps;
++		unsigned int m_docId;
++		DocumentInfo m_docInfo;
++		bool m_updateLabels;
++
++		virtual void doWork(void);
++
++	private:
++		UpdateDocumentThread(const UpdateDocumentThread &amp;other);
++		UpdateDocumentThread &amp;operator=(const UpdateDocumentThread &amp;other);
++
++};
++
++#endif // _UITHREADS_HH
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/mainWindow.cc	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -102,7 +102,7 @@
+ }
+ 
+ mainWindow::InternalState::InternalState(unsigned int maxIndexThreads, mainWindow *pWindow) :
+-	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads, 60),
++	ThreadsManager(PinotSettings::getInstance().m_docsIndexLocation, maxIndexThreads, 60, true),
+ 	m_liveQueryLength(0),
+ 	m_currentPage(0),
+ 	m_browsingIndex(false)
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/mainWindow.hh	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -40,12 +40,12 @@
+ #include &quot;MonitorInterface.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+-#include &quot;WorkerThreads.h&quot;
+ #include &quot;EnginesTree.hh&quot;
+ #include &quot;IndexPage.hh&quot;
+ #include &quot;ModelColumns.hh&quot;
+ #include &quot;Notebook.hh&quot;
+ #include &quot;ResultsTree.hh&quot;
++#include &quot;UIThreads.hh&quot;
+ #include &quot;mainWindow_glade.hh&quot;
+ 
+ class mainWindow : public mainWindow_glade
+
+Modified: trunk/UI/GTK2/src/prefsWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/prefsWindow.hh	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/prefsWindow.hh	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -28,8 +28,8 @@
+ #include &lt;gtkmm/liststore.h&gt;
+ 
+ #include &quot;PinotSettings.h&quot;
+-#include &quot;WorkerThreads.h&quot;
+ #include &quot;ModelColumns.hh&quot;
++#include &quot;UIThreads.hh&quot;
+ #include &quot;prefsWindow_glade.hh&quot;
+ 
+ class prefsWindow : public prefsWindow_glade
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -25,8 +25,8 @@
+ #include &lt;glibmm/refptr.h&gt;
+ #include &lt;gtkmm/treestore.h&gt;
+ 
+-#include &quot;WorkerThreads.h&quot;
+ #include &quot;ModelColumns.hh&quot;
++#include &quot;UIThreads.hh&quot;
+ #include &quot;statisticsDialog_glade.hh&quot;
+ 
+ class statisticsDialog : public statisticsDialog_glade
+
+Modified: trunk/po/POTFILES.in
+===================================================================
+--- trunk/po/POTFILES.in	2009-02-07 09:37:40 UTC (rev 1551)
++++ trunk/po/POTFILES.in	2009-02-12 14:02:28 UTC (rev 1552)
+@@ -31,3 +31,4 @@
+ UI/GTK2/src/ResultsTree.cc
+ UI/GTK2/src/statisticsDialog.cc
+ UI/GTK2/src/statisticsDialog_glade.cc
++UI/GTK2/src/UIThreads.cc
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001541.html">[Pinot-svn] r1551 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001543.html">[Pinot-svn] r1553 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1542">[ date ]</a>
+              <a href="thread.html#1542">[ thread ]</a>
+              <a href="subject.html#1542">[ subject ]</a>
+              <a href="author.html#1542">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

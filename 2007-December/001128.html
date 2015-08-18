@@ -1,0 +1,512 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1136 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1136%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200712010950.lB19o659027983%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001127.html">
+   <LINK REL="Next"  HREF="001131.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1136 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1136%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200712010950.lB19o659027983%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1136 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Dec  1 10:50:06 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001127.html">[Pinot-svn] r1135 - in trunk: . IndexSearch IndexSearch/Google	IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001131.html">[Pinot-svn] r1137 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1128">[ date ]</a>
+              <a href="thread.html#1128">[ thread ]</a>
+              <a href="subject.html#1128">[ subject ]</a>
+              <a href="author.html#1128">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-01 10:50:05 +0100 (Sat, 01 Dec 2007)
+New Revision: 1136
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/Makefile.am
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+Get headers and libraries from IndexSearch.
+Obtain indexes from PinotSettings. Use new DBusIndex class.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -60,7 +60,6 @@
+ #include &quot;Url.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+-#include &quot;XapianIndex.h&quot;
+ #include &quot;DaemonState.h&quot;
+ #include &quot;OnDiskHandler.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -408,9 +407,14 @@
+ #endif
+ 
+ 		// Explicitely flush the index once a directory has been crawled
+-		XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
+-		index.flush();
++		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++		if (pIndex != NULL)
++		{
++			pIndex-&gt;flush();
+ 
++			delete pIndex;
++		}
++
+ 		if (pScannerThread-&gt;isStopped() == false)
+ 		{
+ 			// Pop the queue
+
+Modified: trunk/UI/GTK2/src/Makefile.am
+===================================================================
+--- trunk/UI/GTK2/src/Makefile.am	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/Makefile.am	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -73,9 +73,9 @@
+ 	-I$(top_srcdir)/SQL \
+ 	-I$(top_srcdir)/Monitor \
+ 	-I$(top_srcdir)/Collect \
+-	-I$(top_srcdir)/Index \
+-	-I$(top_srcdir)/Search \
+-	-I$(top_srcdir)/Search/Google \
++	-I$(top_srcdir)/IndexSearch \
++	-I$(top_srcdir)/IndexSearch/Google \
++	-I$(top_srcdir)/IndexSearch/Xapian \
+ 	@SQL_CFLAGS@ @HTTP_CFLAGS@ @GMIME_CFLAGS@ @XML_CFLAGS@ \
+ 	@SOAP_CFLAGS@ @DBUS_CFLAGS@ @INDEX_CFLAGS@ @UI_CFLAGS@
+ 
+@@ -85,10 +85,10 @@
+ 	-L$(top_builddir)/SQL \
+ 	-L$(top_builddir)/Monitor \
+ 	-L$(top_builddir)/Collect \
+-	-L$(top_builddir)/Index \
+-	-L$(top_builddir)/Search \
+-	-L$(top_srcdir)/Search/Google \
+-	@SEARCH_LIBS@ -lIndex -lMonitor -lCollect -lSQL \
++	-L$(top_builddir)/IndexSearch \
++	-L$(top_builddir)/IndexSearch/Google \
++	-L$(top_builddir)/IndexSearch/Xapian \
++	-lIndexSearch -lIndexSearchXapian -lMonitor -lCollect -lSQL \
+ 	-lTokenize -lUtils -lBasicUtils @LIBS@ @UI_LIBS@ \
+ 	@INDEX_LIBS@ @DBUS_LIBS@ @SOAP_LIBS@ @XML_LIBS@ \
+ 	@GMIME_LIBS@ @HTTP_LIBS@ @SQL_LIBS@ @MISC_LIBS@
+@@ -99,10 +99,10 @@
+ 	-L$(top_builddir)/SQL \
+ 	-L$(top_builddir)/Monitor \
+ 	-L$(top_builddir)/Collect \
+-	-L$(top_builddir)/Index \
+-	-L$(top_builddir)/Search \
+-	-L$(top_srcdir)/Search/Google \
+-	@SEARCH_LIBS@ -lIndex -lMonitor -lCollect -lSQL \
++	-L$(top_builddir)/IndexSearch \
++	-L$(top_builddir)/IndexSearch/Google \
++	-L$(top_builddir)/IndexSearch/Xapian \
++	-lIndexSearch -lIndexSearchXapian -lMonitor -lCollect -lSQL \
+ 	-lTokenize -lUtils -lBasicUtils @LIBS@ @GLIBMM_LIBS@ \
+ 	@INDEX_LIBS@ @DBUS_LIBS@ @SOAP_LIBS@ @XML_LIBS@ @GMIME_LIBS@ \
+ 	@HTTP_LIBS@ @SQL_LIBS@ @MISC_LIBS@
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -1572,7 +1572,7 @@
+ 	else if ((m_clientMode == true) &amp;&amp;
+ 		(location == m_daemonIndexLocation))
+ 	{
+-		return IndexFactory::getIndex(&quot;dbus&quot;, m_daemonIndexLocation);
++		return IndexFactory::getIndex(&quot;dbus-xapian&quot;, m_daemonIndexLocation);
+ 	}
+ 
+ 	return IndexFactory::getIndex(&quot;xapian&quot;, location);
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -35,8 +35,7 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;DBusXapianIndex.h&quot;
+-#include &quot;XapianIndex.h&quot;
++#include &quot;DBusIndex.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -618,13 +617,14 @@
+ 
+ void DBusServletThread::doWork(void)
+ {
+-	XapianIndex index(PinotSettings::getInstance().m_daemonIndexLocation);
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+ 	DBusError error;
+ 	bool processedMessage = true, updateLabelsCache = false, flushIndex = false;
+ 
+ 	if ((m_pServer == NULL) ||
+ 		(m_pConnection == NULL) ||
+-		(m_pRequest == NULL))
++		(m_pRequest == NULL) ||
++		(pIndex == NULL))
+ 	{
+ 		return;
+ 	}
+@@ -635,7 +635,7 @@
+ 	set&lt;string&gt; &amp;labelsCache = PinotSettings::getInstance().m_labels;
+ 	if (labelsCache.empty() == true)
+ 	{
+-		index.getLabels(labelsCache);
++		pIndex-&gt;getLabels(labelsCache);
+ 	}
+ 
+ #ifdef DEBUG
+@@ -654,7 +654,7 @@
+ 	{
+ 		CrawlHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
+ 		unsigned int crawledFilesCount = history.getItemsCount(CrawlHistory::CRAWLED);
+-		unsigned int docsCount = index.getDocumentsCount();
++		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
+ 
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: received GetStatistics&quot; &lt;&lt; endl;
+@@ -757,7 +757,7 @@
+ 				string labelName(pLabel);
+ 
+ 				// Add the label
+-				flushIndex = index.addLabel(labelName);
++				flushIndex = pIndex-&gt;addLabel(labelName);
+ 				// Is this a known label ?
+ 				if (labelsCache.find(labelName) == labelsCache.end())
+ 				{
+@@ -795,7 +795,7 @@
+ 				(pNewLabel != NULL))
+ 			{
+ 				// Rename the label
+-				flushIndex = index.renameLabel(pOldLabel, pNewLabel);
++				flushIndex = pIndex-&gt;renameLabel(pOldLabel, pNewLabel);
+ 				// Update the labels list
+ 				set&lt;string&gt;::const_iterator oldLabelIter = labelsCache.find(pOldLabel);
+ 				if (oldLabelIter != labelsCache.end())
+@@ -830,7 +830,7 @@
+ 			if (pLabel != NULL)
+ 			{
+ 				// Delete the label
+-				flushIndex = index.deleteLabel(pLabel);
++				flushIndex = pIndex-&gt;deleteLabel(pLabel);
+ 				// Update the labels list
+ 				set&lt;string&gt;::const_iterator labelIter = labelsCache.find(pLabel);
+ 				if (labelIter != labelsCache.end())
+@@ -863,7 +863,7 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;DBusServletThread::doWork: received GetDocumentLabels &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+-			if (index.getDocumentLabels(docId, labels) == true)
++			if (pIndex-&gt;getDocumentLabels(docId, labels) == true)
+ 			{
+ 				m_pArray = g_ptr_array_new();
+ 
+@@ -932,7 +932,7 @@
+ 				&lt;&lt; &quot;, &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels &lt;&lt; endl;
+ #endif
+ 			// Set labels
+-			flushIndex = index.setDocumentLabels(docId, labels, ((resetLabels == TRUE) ? true : false));
++			flushIndex = pIndex-&gt;setDocumentLabels(docId, labels, ((resetLabels == TRUE) ? true : false));
+ 
+ 			// Free container types
+ 			g_strfreev(ppLabels);
+@@ -994,7 +994,7 @@
+ 				&lt;&lt; &quot; IDs, &quot; &lt;&lt; labelsCount &lt;&lt; &quot; labels&quot; &lt;&lt; &quot;, &quot; &lt;&lt; resetLabels &lt;&lt; endl;
+ #endif
+ 			// Set labels
+-			if (index.setDocumentsLabels(docIds, labels, ((resetLabels == TRUE) ? true : false)) == true)
++			if (pIndex-&gt;setDocumentsLabels(docIds, labels, ((resetLabels == TRUE) ? true : false)) == true)
+ 			{
+ 				resetLabels = TRUE;
+ 				flushIndex = true;
+@@ -1027,7 +1027,7 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;DBusServletThread::doWork: received GetDocumentInfo on &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+-			if (index.getDocumentInfo(docId, docInfo) == true)
++			if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+ 			{
+ 				// Prepare the reply
+ 				m_pReply = newDBusReply(m_pRequest);
+@@ -1036,7 +1036,7 @@
+ 					DBusMessageIter iter;
+ 
+ 					dbus_message_iter_init_append(m_pReply, &amp;iter);
+-					if (DBusXapianIndex::documentInfoToDBus(&amp;iter, 0, docInfo) == false)
++					if (DBusIndex::documentInfoToDBus(&amp;iter, 0, docInfo) == false)
+ 					{
+ 						dbus_message_unref(m_pReply);
+ 						m_pReply = dbus_message_new_error(m_pRequest,
+@@ -1060,7 +1060,7 @@
+ 		unsigned int docId = 0;
+ 
+ 		dbus_message_iter_init(m_pRequest, &amp;iter);
+-		if (DBusXapianIndex::documentInfoFromDBus(&amp;iter, docId, docInfo) == false)
++		if (DBusIndex::documentInfoFromDBus(&amp;iter, docId, docInfo) == false)
+ 		{
+ 			m_pReply = dbus_message_new_error(m_pRequest,
+ 				&quot;de.berlios.Pinot.SetDocumentInfo&quot;,
+@@ -1073,7 +1073,7 @@
+ #endif
+ 
+ 			// Update the document info
+-			flushIndex = index.updateDocumentInfo(docId, docInfo);
++			flushIndex = pIndex-&gt;updateDocumentInfo(docId, docInfo);
+ 
+ 			// Prepare the reply
+ 			m_pReply = newDBusReply(m_pRequest);
+@@ -1155,7 +1155,7 @@
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;DBusServletThread::doWork: received UpdateDocument &quot; &lt;&lt; docId &lt;&lt; endl;
+ #endif
+-			if (index.getDocumentInfo(docId, docInfo) == true)
++			if (pIndex-&gt;getDocumentInfo(docId, docInfo) == true)
+ 			{
+ 				// Update document
+ 				m_pServer-&gt;queue_index(docInfo);
+@@ -1213,11 +1213,11 @@
+ 
+ 	// Set labels ?
+ 	if ((updateLabelsCache == true) &amp;&amp;
+-		(index.setLabels(labelsCache) == false))
++		(pIndex-&gt;setLabels(labelsCache) == false))
+ 	{
+ 		// Updating failed... reset the cache
+ 		labelsCache.clear();
+-		index.getLabels(labelsCache);
++		pIndex-&gt;getLabels(labelsCache);
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::doWork: failed to update labels&quot; &lt;&lt; endl;
+ #endif
+@@ -1239,7 +1239,9 @@
+ 	if (flushIndex == true)
+ 	{
+ 		// Flush now for the sake of the client application
+-		index.flush();
++		pIndex-&gt;flush();
+ 	}
++
++	delete pIndex;
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -39,7 +39,7 @@
+ #include &quot;FilterFactory.h&quot;
+ #include &quot;FilterUtils.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+-#include &quot;DBusXapianIndex.h&quot;
++#include &quot;DBusIndex.h&quot;
+ #include &quot;ActionQueue.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+@@ -1865,7 +1865,7 @@
+ {
+ 	// Ask the daemon to reload its configuration
+ 	// Let D-Bus activate the service if necessary
+-	DBusXapianIndex::reload();
++	DBusIndex::reload();
+ }
+ 
+ MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler,
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -45,7 +45,6 @@
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+-#include &quot;XapianIndex.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;DaemonState.h&quot;
+@@ -542,29 +541,33 @@
+ 
+ 		try
+ 		{
+-			XapianIndex index(settings.m_daemonIndexLocation);
+ 			set&lt;string&gt; labels;
+-			string indexVersion(index.getVersion());
+-			bool gotLabels = index.getLabels(labels);
++			bool gotLabels = false;
+ 			bool onBattery = false;
+ 
+-			// What version is the index at ?
+-			if (indexVersion &lt; PINOT_INDEX_MIN_VERSION)
++			IndexInterface *pIndex = settings.getIndex(settings.m_daemonIndexLocation);
++			if (pIndex != NULL)
+ 			{
+-				cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; VERSION &lt;&lt; endl;
++				string indexVersion(pIndex-&gt;getVersion());
++				gotLabels = pIndex-&gt;getLabels(labels);
++				// What version is the index at ?
++				if (indexVersion &lt; PINOT_INDEX_MIN_VERSION)
++				{
++					cout &lt;&lt; &quot;Upgrading index from version &quot; &lt;&lt; indexVersion &lt;&lt; &quot; to &quot; &lt;&lt; VERSION &lt;&lt; endl;
+ 
+-				reindex = true;
+-			}
+-			if (reindex == true)
+-			{
+-				// Reset the index so that all documents are reindexed
+-				index.reset();
++					reindex = true;
++				}
++				if (reindex == true)
++				{
++					// Reset the index so that all documents are reindexed
++					pIndex-&gt;reset();
+ 
+-				cout &lt;&lt; &quot;Reset index&quot; &lt;&lt; endl;
++					cout &lt;&lt; &quot;Reset index&quot; &lt;&lt; endl;
+ 
+-				resetHistory = resetLabels = true;
++					resetHistory = resetLabels = true;
++				}
++				pIndex-&gt;setVersion(VERSION);
+ 			}
+-			index.setVersion(VERSION);
+ 
+ 			if (resetHistory == true)
+ 			{
+@@ -583,23 +586,29 @@
+ 				cout &lt;&lt; &quot;Reset crawler history&quot; &lt;&lt; endl;
+ 			}
+ 
+-			if (resetLabels == true)
++			if ((resetLabels == true) &amp;&amp;
++				(pIndex != NULL))
+ 			{
+ 				// Re-apply the labels list
+ 				if (gotLabels == false)
+ 				{
+ 					// If this is an upgrade from a version &lt; 0.80, the labels list
+ 					// needs to be pulled from the configuration file
+-					index.setLabels(settings.m_labels);
++					pIndex-&gt;setLabels(settings.m_labels);
+ 
+ 					cout &lt;&lt; &quot;Set labels as per the configuration file&quot; &lt;&lt; endl;
+ 				}
+ 				else
+ 				{
+-					index.setLabels(labels);
++					pIndex-&gt;setLabels(labels);
+ 				}
+ 			}
+ 
++			if (pIndex != NULL)
++			{
++				delete pIndex;
++			}
++
+ 			// Connect to the quit signal
+ 			server.getQuitSignal().connect(sigc::ptr_fun(&amp;quitAll));
+ 
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-12-01 09:39:35 UTC (rev 1135)
++++ trunk/UI/GTK2/src/pinot.cc	2007-12-01 09:50:05 UTC (rev 1136)
+@@ -50,7 +50,6 @@
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+-#include &quot;XapianIndex.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;mainWindow.hh&quot;
+@@ -311,20 +310,25 @@
+ 
+ 	atexit(closeAll);
+ 
+-	XapianIndex index(settings.m_docsIndexLocation);
+-	string indexVersion(index.getVersion());
++	IndexInterface *pIndex = settings.getIndex(settings.m_docsIndexLocation);
++	if (pIndex != NULL)
++	{
++		string indexVersion(pIndex-&gt;getVersion());
+ 
+-	// What version is the index at ?
+-	// Is an upgrade necessary ?
+-	if ((indexVersion &lt; PINOT_INDEX_MIN_VERSION) &amp;&amp;
+-		(index.getDocumentsCount() &gt; 0))
+-	{
+-		warnAboutVersion = true;
+-	}
++		// What version is the index at ?
++		// Is an upgrade necessary ?
++		if ((indexVersion &lt; PINOT_INDEX_MIN_VERSION) &amp;&amp;
++			(pIndex-&gt;getDocumentsCount() &gt; 0))
++		{
++			warnAboutVersion = true;
++		}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;My Web Pages was set to version &quot; &lt;&lt; indexVersion &lt;&lt; endl;
++		cout &lt;&lt; &quot;My Web Pages was set to version &quot; &lt;&lt; indexVersion &lt;&lt; endl;
+ #endif
+-	index.setVersion(VERSION);
++		pIndex-&gt;setVersion(VERSION);
++
++		delete pIndex;
++	}
+ 	if (warnAboutVersion == true)
+ 	{
+ 		settings.m_warnAboutVersion = warnAboutVersion;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001127.html">[Pinot-svn] r1135 - in trunk: . IndexSearch IndexSearch/Google	IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001131.html">[Pinot-svn] r1137 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1128">[ date ]</a>
+              <a href="thread.html#1128">[ thread ]</a>
+              <a href="subject.html#1128">[ subject ]</a>
+              <a href="author.html#1128">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

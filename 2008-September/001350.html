@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1359 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1359%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200809091318.m89DI31Q010573%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001349.html">
+   <LINK REL="Next"  HREF="001351.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1359 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1359%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200809091318.m89DI31Q010573%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1359 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep  9 15:18:03 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001349.html">[Pinot-svn] r1358 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001351.html">[Pinot-svn] r1360 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1350">[ date ]</a>
+              <a href="thread.html#1350">[ thread ]</a>
+              <a href="subject.html#1350">[ subject ]</a>
+              <a href="author.html#1350">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-09-09 15:17:59 +0200 (Tue, 09 Sep 2008)
+New Revision: 1359
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+Log:
+Unless_DIACRITICS_SENSITIVE is defined, always use our own TokensIndexer; terms
+with diacritics are indexed with and without.
+Only add a &quot;XTOK:CJKV&quot; term if CJKV was found.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-09-09 13:10:43 UTC (rev 1358)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-09-09 13:17:59 UTC (rev 1359)
+@@ -70,12 +70,18 @@
+ 			m_nGramSize(nGramSize),
+ 			m_nGramCount(0),
+ 			m_doSpelling(doSpelling),
+-			m_termPos(termPos)
++			m_termPos(termPos),
++			m_hasCJKV(false)
+ 		{
+ 		}
+ 
+ 		virtual ~TokensIndexer()
+ 		{
++			if (m_hasCJKV == true)
++			{
++				// This will help identify CJKV documents
++				m_doc.add_term(&quot;XTOK:CJKV&quot;);
++			}
+ 		}
+ 
+ 		virtual bool handle_token(const string &amp;tok, bool is_cjkv)
+@@ -101,6 +107,18 @@
+ 			// Is this CJKV ?
+ 			if (is_cjkv == false)
+ 			{
++#ifndef _DIACRITICS_SENSITIVE
++				// Remove accents and other diacritics
++				string unaccentedTerm(StringManip::stripDiacritics(term));
++				if (unaccentedTerm != term)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;TokensIndexer::handle_token: unaccented &quot; &lt;&lt; unaccentedTerm &lt;&lt; endl;
++#endif
++					m_doc.add_posting(m_prefix + XapianDatabase::limitTermLength(unaccentedTerm), m_termPos);
++				}
++#endif
++
+ 				// Don't stem if the term starts with a digit
+ 				if ((m_pStemmer != NULL) &amp;&amp;
+ 					(isdigit((int)term[0]) == 0))
+@@ -125,6 +143,7 @@
+ 					addSpelling = m_doSpelling;
+ 				}
+ 				++m_nGramCount;
++				m_hasCJKV = true;
+ 			}
+ 
+ 			if (addSpelling == true)
+@@ -153,6 +172,7 @@
+ 		unsigned int m_nGramCount;
+ 		bool &amp;m_doSpelling;
+ 		Xapian::termcount &amp;m_termPos;
++		bool m_hasCJKV;
+ 
+ };
+ 
+@@ -277,15 +297,20 @@
+ 		Dijon::CJKVTokenizer tokenizer;
+ 		string text(pRawData);
+ 
++#ifdef _DIACRITICS_SENSITIVE
+ 		if (tokenizer.has_cjkv(text) == true)
+ 		{
++#endif
+ 			// Use overload
+ 			addPostingsToDocument(tokenizer, pStemmer, text, doc, db,
+ 				prefix, doSpelling, termPos);
+ 			isCJKV = true;
++#ifdef _DIACRITICS_SENSITIVE
+ 		}
++#endif
+ 	}
+ 
++#ifdef _DIACRITICS_SENSITIVE
+ 	if (isCJKV == false)
+ 	{
+ 		Xapian::TermGenerator generator;
+@@ -326,6 +351,7 @@
+ 		}
+ 		termPos = generator.get_termpos();
+ 	}
++#endif
+ 
+ 	if (pStemmer != NULL)
+ 	{
+@@ -342,13 +368,9 @@
+ 
+ 	// Get the terms
+ 	tokenizer.tokenize(text, handler);
+-
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: CJKV terms to position &quot; &lt;&lt; termPos &lt;&lt; endl;
++	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: terms to position &quot; &lt;&lt; termPos &lt;&lt; endl;
+ #endif
+-
+-	// This will help identify which documents were processed here
+-	doc.add_term(&quot;XTOK:CJKV&quot;);
+ }
+ 
+ void XapianIndex::addLabelsToDocument(Xapian::Document &amp;doc, const set&lt;string&gt; &amp;labels,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001349.html">[Pinot-svn] r1358 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001351.html">[Pinot-svn] r1360 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1350">[ date ]</a>
+              <a href="thread.html#1350">[ thread ]</a>
+              <a href="subject.html#1350">[ subject ]</a>
+              <a href="author.html#1350">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

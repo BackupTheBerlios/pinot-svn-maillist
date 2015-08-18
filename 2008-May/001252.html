@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1258 - trunk/scripts/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1258%20-%20trunk/scripts/python&In-Reply-To=%3C200805190333.m4J3X27u020563%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001251.html">
+   <LINK REL="Next"  HREF="001253.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1258 - trunk/scripts/python</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1258%20-%20trunk/scripts/python&In-Reply-To=%3C200805190333.m4J3X27u020563%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1258 - trunk/scripts/python">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon May 19 05:33:02 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001251.html">[Pinot-svn] r1257 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="001253.html">[Pinot-svn] r1259 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1252">[ date ]</a>
+              <a href="thread.html#1252">[ thread ]</a>
+              <a href="subject.html#1252">[ subject ]</a>
+              <a href="author.html#1252">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-19 05:33:01 +0200 (Mon, 19 May 2008)
+New Revision: 1258
+
+Modified:
+   trunk/scripts/python/pinot-module.py
+Log:
+Support for snippets. I am not convinced this is useful considering the current
+Deskbar interface, so this is disabled for now.
+
+
+Modified: trunk/scripts/python/pinot-module.py
+===================================================================
+--- trunk/scripts/python/pinot-module.py	2008-05-19 03:30:29 UTC (rev 1257)
++++ trunk/scripts/python/pinot-module.py	2008-05-19 03:33:01 UTC (rev 1258)
+@@ -16,6 +16,7 @@
+ # Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ #
+ 
++import cgi, re
+ import gnome
+ import deskbar
+ from deskbar.handlers.actions.OpenFileAction import OpenFileAction
+@@ -37,23 +38,38 @@
+ 	def __init__(self, fields, **args):
+ 		deskbar.interfaces.Match.__init__ (self)
+ 		self.result = fields
+-		self.url = fields[&quot;url&quot;]
++		if fields.has_key(&quot;url&quot;):
++			self.url = fields[&quot;url&quot;]
+ 		url_scheme = self.url[:self.url.index(&quot;://&quot;)]
+ 		# The mailbox scheme is specific to Pinot
+ 		if url_scheme == &quot;mailbox&quot;:
+ 			mailbox_url = self.url
+-			print &quot;Mailbox hit: &quot;, mailbox_url
++			print 'Mailbox hit: ', mailbox_url
+ 			self.url = &quot;<A HREF="file://">file://</A>&quot; + mailbox_url[len(&quot;<A HREF="mailbox://">mailbox://</A>&quot;):mailbox_url.index('?')]
+ 			url_scheme = &quot;file&quot;
+ 
+ 		self.result[&quot;url&quot;] = self.url
+-		print &quot;Action: &quot;, self.result[&quot;caption&quot;], &quot; &quot;, self.result[&quot;url&quot;]
++		print 'Action: ', self.result[&quot;caption&quot;], &quot; &quot;, self.result[&quot;url&quot;]
+ 
++		# Snippet
++		self.result[&quot;snippet&quot;] = &quot;&quot;
++		if fields.has_key(&quot;extract&quot;):
++			snippet = fields[&quot;extract&quot;]
++			if snippet != None and snippet != &quot;&quot;:
++				# Remove trailing whitespaces and escape '%'
++				snippet.strip().replace(&quot;%&quot;, &quot;%%&quot;)
++				# Escape
++				tmp = re.sub(r&quot;&lt;.*?&gt;&quot;, &quot;&quot;, snippet)
++				tmp = re.sub(r&quot;&lt;/.*?&gt;&quot;, &quot;&quot;, tmp)
++				print 'Extract ', tmp
++				self.result[&quot;snippet&quot;] = &quot;\n%s&quot; % cgi.escape(tmp)
++        
+ 		if url_scheme == &quot;file&quot;:
+-			print &quot;File hit&quot;
++			print 'File hit'
++			#self.add_action(OpenFileAction(self.result[&quot;caption&quot;] + self.result[&quot;snippet&quot;], self.result[&quot;url&quot;]))
+ 			self.add_action(OpenFileAction(self.result[&quot;caption&quot;], self.result[&quot;url&quot;]))
+ 		else:
+-			print &quot;Other hit&quot;
++			print 'Other hit'
+ 			self.add_all_actions(get_actions_for_uri(self.result[&quot;url&quot;]))
+ 
+ 	def get_hash(self, text=None):
+@@ -163,7 +179,7 @@
+ 		try :
+ 			# Get the details of each hit
+ 			for doc_id in doc_ids:
+-				print &quot;Hit on document &quot;, doc_id
++				print 'Hit on document ', doc_id
+ 				self.pinot_iface.GetDocumentInfo (dbus.UInt32(doc_id),
+ 					reply_handler=self.__receive_hits, error_handler=self.__receive_error)
+ 		except Exception, msg:
+@@ -180,7 +196,7 @@
+ 			match_fields[field[0]] = field[1]
+ 
+ 		self.matches.append( PinotFileMatch(match_fields) )
+-		print &quot;Got hit &quot;, len(self.matches)
++		print 'Got hit ', len(self.matches)
+ 		if len(self.matches) == self.matches_count:
+ 			self._emit_query_ready(self.query_string, self.matches)
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001251.html">[Pinot-svn] r1257 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="001253.html">[Pinot-svn] r1259 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1252">[ date ]</a>
+              <a href="thread.html#1252">[ thread ]</a>
+              <a href="subject.html#1252">[ subject ]</a>
+              <a href="author.html#1252">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

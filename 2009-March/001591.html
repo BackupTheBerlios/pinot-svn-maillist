@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1601 - in trunk: IndexSearch Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1601%20-%20in%20trunk%3A%20IndexSearch%20Tokenize&In-Reply-To=%3C200903280350.n2S3ooou027927%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001590.html">
+   <LINK REL="Next"  HREF="001592.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1601 - in trunk: IndexSearch Tokenize</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1601%20-%20in%20trunk%3A%20IndexSearch%20Tokenize&In-Reply-To=%3C200903280350.n2S3ooou027927%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1601 - in trunk: IndexSearch Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 28 04:50:51 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001590.html">[Pinot-svn] r1600 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="001592.html">[Pinot-svn] r1602 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1591">[ date ]</a>
+              <a href="thread.html#1591">[ thread ]</a>
+              <a href="subject.html#1591">[ subject ]</a>
+              <a href="author.html#1591">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-28 04:50:41 +0100 (Sat, 28 Mar 2009)
+New Revision: 1601
+
+Modified:
+   trunk/IndexSearch/FilterWrapper.cpp
+   trunk/Tokenize/TextConverter.cpp
+   trunk/Tokenize/TextConverter.h
+Log:
+Work-around documents that declare an invalid charset, eg iso_8859_1 instead of
+iso-8859-1.
+
+
+Modified: trunk/IndexSearch/FilterWrapper.cpp
+===================================================================
+--- trunk/IndexSearch/FilterWrapper.cpp	2009-03-28 02:46:32 UTC (rev 1600)
++++ trunk/IndexSearch/FilterWrapper.cpp	2009-03-28 03:50:41 UTC (rev 1601)
+@@ -23,7 +23,6 @@
+ #include &quot;FilterFactory.h&quot;
+ #include &quot;TextFilter.h&quot;
+ #include &quot;FilterUtils.h&quot;
+-#include &quot;TextConverter.h&quot;
+ #include &quot;FilterWrapper.h&quot;
+ 
+ using std::cout;
+
+Modified: trunk/Tokenize/TextConverter.cpp
+===================================================================
+--- trunk/Tokenize/TextConverter.cpp	2009-03-28 02:46:32 UTC (rev 1600)
++++ trunk/Tokenize/TextConverter.cpp	2009-03-28 03:50:41 UTC (rev 1601)
+@@ -42,7 +42,7 @@
+ {
+ }
+ 
+-string TextConverter::toUTF8(const string &amp;text, const string &amp;charset)
++string TextConverter::toUTF8(const string &amp;text, string &amp;charset)
+ {
+ 	unsigned int textLen = (unsigned int)text.length();
+ 
+@@ -50,7 +50,7 @@
+ 	return toUTF8(text.c_str(), textLen, charset);
+ }
+ 
+-string TextConverter::toUTF8(const char *pText, unsigned int textLen, const string &amp;charset)
++string TextConverter::toUTF8(const char *pText, unsigned int textLen, string &amp;charset)
+ {
+ 	string textCharset(StringManip::toLowerCase(charset));
+ 	char outputBuffer[8192];
+@@ -147,6 +147,19 @@
+ 		cout &lt;&lt; &quot;TextConverter::toUTF8: &quot; &lt;&lt; ce.what() &lt;&lt; endl;
+ #endif
+ 		outputText.clear();
++
++		string::size_type pos = textCharset.find('_');
++		if (pos != string::npos)
++		{
++			string fixedCharset(StringManip::replaceSubString(textCharset, &quot;_&quot;, &quot;-&quot;));
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;TextConverter::toUTF8: trying with charset &quot; &lt;&lt; fixedCharset &lt;&lt; endl;
++#endif
++
++			textCharset = fixedCharset;
++			outputText = toUTF8(pText, textLen, fixedCharset);
++		}
+ 	}
+ 	catch (...)
+ 	{
+@@ -156,6 +169,7 @@
+ 		outputText.clear();
+ 	}
+ 
++	charset = textCharset;
+ 	return outputText;
+ }
+ 
+
+Modified: trunk/Tokenize/TextConverter.h
+===================================================================
+--- trunk/Tokenize/TextConverter.h	2009-03-28 02:46:32 UTC (rev 1600)
++++ trunk/Tokenize/TextConverter.h	2009-03-28 03:50:41 UTC (rev 1601)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2008 Fabrice Colin
++ *  Copyright 2008-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,10 +30,10 @@
+ 		virtual ~TextConverter();
+ 
+ 		/// Converts to UTF-8.
+-		std::string toUTF8(const std::string &amp;text, const std::string &amp;charset);
++		std::string toUTF8(const std::string &amp;text, std::string &amp;charset);
+ 
+ 		/// Converts to UTF-8.
+-		std::string toUTF8(const char *pText, unsigned int textLen, const std::string &amp;charset);
++		std::string toUTF8(const char *pText, unsigned int textLen, std::string &amp;charset);
+ 
+ 		/// Gets the number of conversion errors for the previous toUTF8() call.
+ 		unsigned int getErrorsCount(void) const;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001590.html">[Pinot-svn] r1600 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="001592.html">[Pinot-svn] r1602 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1591">[ date ]</a>
+              <a href="thread.html#1591">[ thread ]</a>
+              <a href="subject.html#1591">[ subject ]</a>
+              <a href="author.html#1591">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

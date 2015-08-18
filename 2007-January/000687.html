@@ -1,0 +1,460 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r693 - in trunk: Index Search Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r693%20-%20in%20trunk%3A%20Index%20Search%20Utils&In-Reply-To=%3C200701121246.l0CCkBY9023362%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000686.html">
+   <LINK REL="Next"  HREF="000688.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r693 - in trunk: Index Search Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r693%20-%20in%20trunk%3A%20Index%20Search%20Utils&In-Reply-To=%3C200701121246.l0CCkBY9023362%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r693 - in trunk: Index Search Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan 12 13:46:11 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000686.html">[Pinot-svn] r692 - in trunk: UI/GTK2/src Utils
+</A></li>
+        <LI>Next message: <A HREF="000688.html">[Pinot-svn] r694 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#687">[ date ]</a>
+              <a href="thread.html#687">[ thread ]</a>
+              <a href="subject.html#687">[ subject ]</a>
+              <a href="author.html#687">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-01-12 13:46:10 +0100 (Fri, 12 Jan 2007)
+New Revision: 693
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/Utils/TimeConverter.cpp
+   trunk/Utils/TimeConverter.h
+Log:
+Date range filtering, back-end part.
+Creation of the date range query is copied from Omega's date_range_filter()
+function found in xapian-applications/omega/date.cc.
+When the dates don't make sense, they are ignored. 
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-01-12 12:36:29 UTC (rev 692)
++++ trunk/Index/XapianIndex.cpp	2007-01-12 12:46:10 UTC (rev 693)
+@@ -45,8 +45,10 @@
+ using std::cerr;
+ using std::endl;
+ using std::string;
++using std::vector;
+ using std::set;
+ using std::min;
++using std::max;
+ 
+ // This puts a limit to terms length.
+ const unsigned int XapianIndex::m_maxTermLength = 240;
+@@ -397,7 +399,7 @@
+ 	// Add the date terms D, M and Y
+ 	time_t timeT = TimeConverter::fromTimestamp(info.getTimestamp());
+ 	struct tm *tm = localtime(&amp;timeT);
+-	string yyyymmdd = TimeConverter::toTimestamp(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
++	string yyyymmdd = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
+ 	if (yyyymmdd.length() == 8)
+ 	{
+ 		doc.add_term(string(&quot;D&quot;) + yyyymmdd);
+@@ -512,7 +514,7 @@
+ 	// Date terms
+ 	time_t timeT = TimeConverter::fromTimestamp(docInfo.getTimestamp());
+ 	struct tm *tm = localtime(&amp;timeT);
+-	string yyyymmdd = TimeConverter::toTimestamp(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
++	string yyyymmdd = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
+ 	if (yyyymmdd.length() == 8)
+ 	{
+ 		commonTerms.insert(string(&quot;D&quot;) + yyyymmdd);
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-01-12 12:36:29 UTC (rev 692)
++++ trunk/Search/XapianEngine.cpp	2007-01-12 12:46:10 UTC (rev 693)
+@@ -19,6 +19,7 @@
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;unistd.h&gt;
++#include &lt;time.h&gt;
+ #include &lt;string&gt;
+ #include &lt;vector&gt;
+ #include &lt;iostream&gt;
+@@ -26,6 +27,7 @@
+ 
+ #include &quot;Languages.h&quot;
+ #include &quot;StringManip.h&quot;
++#include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
+@@ -39,6 +41,21 @@
+ using std::endl;
+ using std::inserter;
+ 
++// The following function was lifted from Xapian's xapian-applications/omega/date.cc
++// where it's called last_day(), and prettified slightly
++static int lastDay(int year, int month)
++{
++	static const int lastDays[13] = { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
++
++	if (month != 2)
++	{
++		return lastDays[month];
++	}
++
++	// Good until 2100
++	return 28 + (year % 4 == 0);
++}
++
+ XapianEngine::XapianEngine(const string &amp;database) :
+ 	SearchEngineInterface()
+ {
+@@ -62,12 +79,93 @@
+ 	m_resultsList.clear();
+ }
+ 
++Xapian::Query XapianEngine::dateFilter(unsigned int minDay, unsigned int minMonth, unsigned int minYear,
++	unsigned int maxDay, unsigned int maxMonth, unsigned int maxYear)
++{
++	// The following was lifted from Xapian's date_range_filter() in
++	// xapian-applications/omega/date.cc and prettified slightly
++	vector&lt;Xapian::Query&gt; v;
++	char buf[10];
++
++	snprintf(buf, 10, &quot;D%04d%02d&quot;, minYear, minMonth);
++	int d_last = lastDay(minYear, minMonth);
++	int d_end = d_last;
++	if (minYear == maxYear &amp;&amp; minMonth == maxMonth &amp;&amp; maxDay &lt; d_last)
++	{
++		d_end = maxDay;
++	}
++	// Deal with any initial partial month
++	if (minDay &gt; 1 || d_end &lt; d_last)
++	{
++		for ( ; minDay &lt;= d_end ; minDay++)
++		{
++			snprintf(buf + 7, 3, &quot;%02d&quot;, minDay);
++			v.push_back(Xapian::Query(buf));
++		}
++	} else {
++		buf[0] = 'M';
++		v.push_back(Xapian::Query(buf));
++	}
++	
++	if (minYear == maxYear &amp;&amp; minMonth == maxMonth)
++	{
++		return Xapian::Query(Xapian::Query::OP_OR, v.begin(), v.end());
++	}
++
++	int m_last = (minYear &lt; maxYear) ? 12 : maxMonth - 1;
++	while (++minMonth &lt;= m_last)
++	{
++		snprintf(buf + 5, 5, &quot;%02d&quot;, minMonth);
++		buf[0] = 'M';
++		v.push_back(Xapian::Query(buf));
++	}
++	
++	if (minYear &lt; maxYear)
++	{
++		while (++minYear &lt; maxYear)
++		{
++			snprintf(buf + 1, 9, &quot;%04d&quot;, minYear);
++			buf[0] = 'Y';
++			v.push_back(Xapian::Query(buf));
++		}
++		snprintf(buf + 1, 9, &quot;%04d&quot;, maxYear);
++		buf[0] = 'M';
++		for (minMonth = 1; minMonth &lt; maxMonth; minMonth++)
++		{
++			snprintf(buf + 5, 5, &quot;%02d&quot;, minMonth);
++			v.push_back(Xapian::Query(buf));
++		}
++	}
++	
++	snprintf(buf + 5, 5, &quot;%02d&quot;, maxMonth);
++
++	// Deal with any final partial month
++	if (maxDay &lt; lastDay(maxYear, maxMonth))
++	{
++		buf[0] = 'D';
++		for (minDay = 1 ; minDay &lt;= maxDay; minDay++)
++		{
++			snprintf(buf + 7, 3, &quot;%02d&quot;, minDay);
++			v.push_back(Xapian::Query(buf));
++		}
++	}
++	else
++	{
++		buf[0] = 'M';
++		v.push_back(Xapian::Query(buf));
++	}
++
++	return Xapian::Query(Xapian::Query::OP_OR, v.begin(), v.end());
++}
++
+ Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 	const string &amp;stemLanguage, bool followOperators)
+ {
+ 	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 	Xapian::QueryParser parser;
+ 	Xapian::Stem stemmer;
++	unsigned int minDay, minMonth, minYear = 0;
++	unsigned int maxDay, maxMonth, maxYear = 0;
+ 
+ 	// Set things up
+ 	if (stemLanguage.empty() == false)
+@@ -106,8 +204,53 @@
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
+ 
+ 	// Activate all options and parse
+-	return parser.parse_query(freeQuery,
++	Xapian::Query parsedQuery = parser.parse_query(freeQuery,
+ 		Xapian::QueryParser::FLAG_BOOLEAN|Xapian::QueryParser::FLAG_PHRASE|Xapian::QueryParser::FLAG_LOVEHATE|Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE|Xapian::QueryParser::FLAG_WILDCARD);
++	// Apply a date range ?
++	bool enableMin = queryProps.getMinimumDate(minDay, minMonth, minYear);
++	bool enableMax = queryProps.getMaximumDate(maxDay, maxMonth, maxYear);
++	if ((enableMin == false) &amp;&amp; 
++		(enableMax == false))
++	{
++		// No
++		return parsedQuery;
++	}
++
++	// Anyone going as far back as Year 0 is taking the piss :-)
++	if ((enableMin == false) ||
++		(minYear == 0))
++	{
++		minDay = minMonth = 1;
++		minYear = 1970;
++	}
++	// If the second date is older than the Epoch, the first date should be set too
++	if ((enableMax == false) ||
++		(maxYear == 0))
++	{
++		time_t nowTime = time(NULL);
++		struct tm *timeTm = localtime(&amp;nowTime);
++		maxYear = timeTm-&gt;tm_year + 1900;
++		maxMonth = timeTm-&gt;tm_mon + 1;
++		maxDay = timeTm-&gt;tm_mday;
++	}
++
++	string yyyymmddMin(TimeConverter::toYYYYMMDDString(minDay, minMonth, minYear));
++	string yyyymmddMax(TimeConverter::toYYYYMMDDString(maxDay, maxMonth, maxYear));
++	time_t startTime = TimeConverter::fromYYYYMMDDString(yyyymmddMin);
++	time_t endTime = TimeConverter::fromYYYYMMDDString(yyyymmddMax);
++  
++	double diffTime = difftime(endTime, startTime);
++	if (diffTime &gt; 0)
++	{
++		return Xapian::Query(Xapian::Query::OP_FILTER, parsedQuery,
++			dateFilter(minDay, minMonth, minYear, maxDay, maxMonth, maxYear));
++	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;XapianEngine::parseQuery: date range is zero or bogus (&quot;
++		&lt;&lt; yyyymmddMax &lt;&lt; &quot; &lt;= &quot; &lt;&lt; yyyymmddMin &lt;&lt; &quot;)&quot; &lt;&lt; endl;
++#endif
++
++	return parsedQuery;
+ }
+ 
+ /// Validates a query and extracts its terms.
+@@ -118,11 +261,11 @@
+ 
+ 	try
+ 	{
+-		Xapian::Query freeQuery = parseQuery(NULL, queryProps, &quot;&quot;, true);
+-		if (freeQuery.empty() == false)
++		Xapian::Query fullQuery = parseQuery(NULL, queryProps, &quot;&quot;, true);
++		if (fullQuery.empty() == false)
+ 		{
+-			for (Xapian::TermIterator termIter = freeQuery.get_terms_begin();
+-				termIter != freeQuery.get_terms_end(); ++termIter)
++			for (Xapian::TermIterator termIter = fullQuery.get_terms_begin();
++				termIter != fullQuery.get_terms_end(); ++termIter)
+ 			{
+ 				// Skip prefixed terms unless instructed otherwise
+ 				if ((includePrefixed == true) ||
+@@ -279,7 +422,7 @@
+ 	copy(relevantDocuments.begin(), relevantDocuments.end(),
+ 		inserter(m_relevantDocuments, m_relevantDocuments.begin()));
+ 
+-        return true;
++	return true;
+ }
+ 
+ /// Runs a query; true if success.
+@@ -309,19 +452,19 @@
+ 		// 3. if no results, don't follow operators and don't stem terms
+ 		// 4. if no results, don't follow operators and stem terms
+ 		// Steps 2 and 4 depend on a language being defined for the query
+-		Xapian::Query freeQuery = parseQuery(pIndex, queryProps, &quot;&quot;, followOperators);
+-		while (freeQuery.empty() == false)
++		Xapian::Query fullQuery = parseQuery(pIndex, queryProps, &quot;&quot;, followOperators);
++		while (fullQuery.empty() == false)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;XapianEngine::runQuery: query terms are &quot; &lt;&lt; endl;
+-			for (Xapian::TermIterator termIter = freeQuery.get_terms_begin();
+-				termIter != freeQuery.get_terms_end(); ++termIter)
++			for (Xapian::TermIterator termIter = fullQuery.get_terms_begin();
++				termIter != fullQuery.get_terms_end(); ++termIter)
+ 			{
+ 				cout &lt;&lt; &quot; &quot; &lt;&lt; *termIter &lt;&lt; endl;
+ 			}
+ #endif
+ 			// Query the database
+-			if (queryDatabase(pIndex, freeQuery) == false)
++			if (queryDatabase(pIndex, fullQuery) == false)
+ 			{
+ 				break;
+ 			}
+@@ -360,7 +503,7 @@
+ #ifdef DEBUG
+ 				cout &lt;&lt; &quot;XapianEngine::runQuery: trying step &quot; &lt;&lt; searchStep &lt;&lt; endl;
+ #endif
+-				freeQuery = parseQuery(pIndex, queryProps,
++				fullQuery = parseQuery(pIndex, queryProps,
+ 					Languages::toEnglish(stemLanguage), followOperators);
+ 				continue;
+ 			}
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2007-01-12 12:36:29 UTC (rev 692)
++++ trunk/Search/XapianEngine.h	2007-01-12 12:46:10 UTC (rev 693)
+@@ -54,6 +54,9 @@
+ 
+ 		bool queryDatabase(Xapian::Database *pIndex, Xapian::Query &amp;query);
+ 
++		static Xapian::Query dateFilter(unsigned int minDay, unsigned int minMonth, unsigned int minYear,
++		        unsigned int maxDay, unsigned int maxMonth, unsigned int maxYear);
++
+ 		static Xapian::Query parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 			const string &amp;stemLanguage, bool followOperators);
+ 
+
+Modified: trunk/Utils/TimeConverter.cpp
+===================================================================
+--- trunk/Utils/TimeConverter.cpp	2007-01-12 12:36:29 UTC (rev 692)
++++ trunk/Utils/TimeConverter.cpp	2007-01-12 12:46:10 UTC (rev 693)
+@@ -101,6 +101,7 @@
+ 
+ using std::cout;
+ using std::endl;
++using std::string;
+ 
+ TimeConverter::TimeConverter()
+ {
+@@ -239,8 +240,8 @@
+ 	return 0;
+ }
+ 
+-/// Converts into a YYYYMMDD timestamp.
+-string TimeConverter::toTimestamp(int year, int month, int day)
++/// Converts to a YYYYMMDD-formatted string.
++string TimeConverter::toYYYYMMDDString(int year, int month, int day)
+ {
+ 	char timeStr[64];
+ 
+@@ -276,3 +277,23 @@
+ 
+ 	return &quot;&quot;;
+ }
++
++/// Converts from a YYYYMMDD-formatted string.
++time_t TimeConverter::fromYYYYMMDDString(const string &amp;yyyymmdd, bool inGMTime)
++{
++	struct tm timeTm;
++	time_t gmTime = 0;
++
++	strptime(yyyymmdd.c_str(), &quot;%Y%m%d&quot;, &amp;timeTm);
++	if (inGMTime == true)
++	{
++		gmTime = timegm(&amp;timeTm);
++	}
++	else
++	{
++		gmTime = mktime(&amp;timeTm);
++	}
++
++	return gmTime;
++}
++
+
+Modified: trunk/Utils/TimeConverter.h
+===================================================================
+--- trunk/Utils/TimeConverter.h	2007-01-12 12:36:29 UTC (rev 692)
++++ trunk/Utils/TimeConverter.h	2007-01-12 12:46:10 UTC (rev 693)
+@@ -21,21 +21,22 @@
+ 
+ #include &lt;string&gt;
+ 
+-using namespace std;
+-
+ /// This class handles time conversions.
+ class TimeConverter
+ {
+ 	public:
+ 		/// Converts into an RFC 822 timestamp.
+-		static string toTimestamp(time_t aTime, bool inGMTime = false);
++		static std::string toTimestamp(time_t aTime, bool inGMTime = false);
+ 
+ 		/// Converts from a RFC 822 timestamp.
+-		static time_t fromTimestamp(const string &amp;timestamp, bool inGMTime = false);
++		static time_t fromTimestamp(const std::string &amp;timestamp, bool inGMTime = false);
+ 
+-		/// Converts into a YYYYMMDD timestamp.
+-		static string toTimestamp(int year, int month, int day);
++		/// Converts to a YYYYMMDD-formatted string.
++		static std::string toYYYYMMDDString(int year, int month, int day);
+ 
++		/// Converts from a YYYYMMDD-formatted string.
++		static time_t fromYYYYMMDDString(const std::string &amp;yyyymmdd, bool inGMTime = false);
++
+ 	protected:
+ 		TimeConverter();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000686.html">[Pinot-svn] r692 - in trunk: UI/GTK2/src Utils
+</A></li>
+	<LI>Next message: <A HREF="000688.html">[Pinot-svn] r694 - trunk/Search
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#687">[ date ]</a>
+              <a href="thread.html#687">[ thread ]</a>
+              <a href="subject.html#687">[ subject ]</a>
+              <a href="author.html#687">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

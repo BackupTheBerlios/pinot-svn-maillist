@@ -1,0 +1,413 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r185 - in trunk: . Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-April/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r185%20-%20in%20trunk%3A%20.%20Tokenize&In-Reply-To=%3C200604041338.k34DcKxO005735%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000182.html">
+   <LINK REL="Next"  HREF="000184.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r185 - in trunk: . Tokenize</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r185%20-%20in%20trunk%3A%20.%20Tokenize&In-Reply-To=%3C200604041338.k34DcKxO005735%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r185 - in trunk: . Tokenize">fabricecolin at berlios.de
+       </A><BR>
+    <I>Tue Apr  4 15:38:20 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000182.html">[Pinot-svn] r184 - in trunk: Search UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000184.html">[Pinot-svn] r186 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#183">[ date ]</a>
+              <a href="thread.html#183">[ thread ]</a>
+              <a href="subject.html#183">[ subject ]</a>
+              <a href="author.html#183">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-04-04 15:38:06 +0200 (Tue, 04 Apr 2006)
+New Revision: 185
+
+Added:
+   trunk/Tokenize/TagLibTokenizer.cpp
+   trunk/Tokenize/TagLibTokenizer.h
+Modified:
+   trunk/Tokenize/Makefile.am
+   trunk/Tokenize/TokenizerFactory.cpp
+   trunk/configure.in
+   trunk/pinot.spec.in
+Log:
+New tokenizer for MP3, Vorbis and FLAC audio that extracts track information
+with taglib.
+
+
+Modified: trunk/Tokenize/Makefile.am
+===================================================================
+--- trunk/Tokenize/Makefile.am	2006-04-04 13:18:35 UTC (rev 184)
++++ trunk/Tokenize/Makefile.am	2006-04-04 13:38:06 UTC (rev 185)
+@@ -11,12 +11,14 @@
+ 	HtmlTokenizer.h \
+ 	PdfTokenizer.h \
+ 	RtfTokenizer.h \
++	TagLibTokenizer.h \
+ 	Tokenizer.h \
+ 	TokenizerFactory.h \
+ 	UnknownTypeTokenizer.h \
+ 	WordTokenizer.h
+ 
+-lib_LTLIBRARIES = libpdftokenizer.la librtftokenizer.la libwordtokenizer.la
++lib_LTLIBRARIES = libpdftokenizer.la librtftokenizer.la libwordtokenizer.la \
++	libtaglibtokenizer.la
+ 
+ noinst_LTLIBRARIES = libTokenize.la
+ 
+@@ -25,7 +27,7 @@
+ 	HtmlTokenizer.cpp \
+ 	Tokenizer.cpp
+ 
+-libpdftokenizer_la_LDFLAGS = 
++libpdftokenizer_la_LDFLAGS = -module
+ 
+ libpdftokenizer_la_LIBADD = ${UTILS_OBJS} 
+ 
+@@ -34,7 +36,7 @@
+ 	HtmlTokenizer.cpp \
+ 	Tokenizer.cpp
+ 
+-librtftokenizer_la_LDFLAGS = 
++librtftokenizer_la_LDFLAGS = -module
+ 
+ librtftokenizer_la_LIBADD = ${UTILS_OBJS}
+ 
+@@ -42,15 +44,23 @@
+ 	WordTokenizer.cpp \
+ 	Tokenizer.cpp
+ 
+-libwordtokenizer_la_LDFLAGS = 
++libwordtokenizer_la_LDFLAGS = -module
+ 
+ libwordtokenizer_la_LIBADD = ${UTILS_OBJS}
+ 
++libtaglibtokenizer_la_SOURCES = \
++	TagLibTokenizer.cpp \
++	Tokenizer.cpp
++
++libtaglibtokenizer_la_LDFLAGS = -module @TAGLIB_LIBS@
++
++libtaglibtokenizer_la_LIBADD = ${UTILS_OBJS}
++
+ libTokenize_la_SOURCES = \
+ 	HtmlTokenizer.cpp \
+ 	Tokenizer.cpp \
+ 	TokenizerFactory.cpp \
+ 	UnknownTypeTokenizer.cpp
+ 
+-AM_CXXFLAGS = -fPIC -I../Utils
++AM_CXXFLAGS = -fPIC -I../Utils @TAGLIB_CFLAGS@
+ 
+
+Added: trunk/Tokenize/TagLibTokenizer.cpp
+===================================================================
+--- trunk/Tokenize/TagLibTokenizer.cpp	2006-04-04 13:18:35 UTC (rev 184)
++++ trunk/Tokenize/TagLibTokenizer.cpp	2006-04-04 13:38:06 UTC (rev 185)
+@@ -0,0 +1,144 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &lt;string.h&gt;
++#include &lt;iostream&gt;
++
++#include &lt;fileref.h&gt;
++#include &lt;tfile.h&gt;
++#include &lt;tag.h&gt;
++
++#include &quot;Url.h&quot;
++#include &quot;TagLibTokenizer.h&quot;
++
++/**
++  * This returns the MIME type supported by the library's tokenizer.
++  * The character string is allocated with new[].
++  */
++char *getTokenizerType(unsigned int typeNum)
++{
++	if (typeNum == 0)
++	{
++		char *pType = new char[11];
++		strncpy(pType, &quot;audio/mpeg&quot;, 10);
++		pType[10] = '\0';
++		return pType;
++	}
++	else if (typeNum == 1)
++	{
++		char *pType = new char[12];
++		strncpy(pType, &quot;audio/x-mp3&quot;, 11);
++		pType[11] = '\0';
++		return pType;
++	}
++	else if (typeNum == 2)
++	{
++		char *pType = new char[16];
++		strncpy(pType, &quot;application/ogg&quot;, 15);
++		pType[15] = '\0';
++		return pType;
++	}
++	else if (typeNum == 3)
++	{
++		char *pType = new char[17];
++		strncpy(pType, &quot;audio/x-flac+ogg&quot;, 16);
++		pType[16] = '\0';
++		return pType;
++	}
++	else if (typeNum == 4)
++	{
++		char *pType = new char[13];
++		strncpy(pType, &quot;audio/x-flac&quot;, 12);
++		pType[12] = '\0';
++		return pType;
++	}
++
++	return NULL;
++}
++
++/// This returns a pointer to a Tokenizer, allocated with new.
++Tokenizer *getTokenizer(const Document *pDocument)
++{
++	return new TagLibTokenizer(pDocument);
++}
++
++TagLibTokenizer::TagLibTokenizer(const Document *pDocument) :
++	Tokenizer(NULL)
++{
++	if (pDocument != NULL)
++	{
++		Document *pPseudoDocument = NULL;
++		Url urlObj(pDocument-&gt;getLocation());
++		string pseudoContent;
++
++		if ((urlObj.isLocal() == true) &amp;&amp;
++			(urlObj.getFile().empty() == false))
++		{
++			string location(urlObj.getLocation());
++			string trackTitle;
++
++			location += &quot;/&quot;;
++			location += urlObj.getFile();
++
++			TagLib::FileRef fileRef(location.c_str(), false);
++
++			if ((fileRef.isNull() == false) &amp;&amp;
++				(fileRef.file()-&gt;isOpen() == true))
++			{
++				TagLib::Tag *pTag = fileRef.tag();
++				if ((pTag != NULL) &amp;&amp;
++					(pTag-&gt;isEmpty() == false))
++				{
++					char yearStr[64];
++
++					trackTitle = pTag-&gt;title().to8Bit(); 
++					trackTitle += &quot; &quot;;
++					trackTitle += pTag-&gt;artist().to8Bit();
++
++					pseudoContent = trackTitle;
++					pseudoContent += &quot; &quot;;
++					pseudoContent += pTag-&gt;album().to8Bit();
++					pseudoContent += &quot; &quot;;
++					pseudoContent += pTag-&gt;comment().to8Bit();
++					pseudoContent += &quot; &quot;;
++					pseudoContent += pTag-&gt;genre().to8Bit();
++					snprintf(yearStr, 64, &quot; %u&quot;, pTag-&gt;year());
++					pseudoContent += yearStr;
++				}
++			}
++			else
++			{
++				trackTitle = pseudoContent = pDocument-&gt;getTitle();
++			}
++
++			pPseudoDocument = new Document(trackTitle, pDocument-&gt;getLocation(),
++				pDocument-&gt;getType(), pDocument-&gt;getLanguage());
++			pPseudoDocument-&gt;setData(pseudoContent.c_str(), pseudoContent.length());
++
++			// Give the result to the parent class
++			setDocument(pPseudoDocument);
++		}
++	}
++}
++
++TagLibTokenizer::~TagLibTokenizer()
++{
++	if (m_pDocument != NULL)
++	{
++		// This should have been set by setDocument()
++		delete m_pDocument;
++	}
++}
+
+Added: trunk/Tokenize/TagLibTokenizer.h
+===================================================================
+--- trunk/Tokenize/TagLibTokenizer.h	2006-04-04 13:18:35 UTC (rev 184)
++++ trunk/Tokenize/TagLibTokenizer.h	2006-04-04 13:38:06 UTC (rev 185)
+@@ -0,0 +1,43 @@
++/*
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _WORD_TOKENIZER_H
++#define _WORD_TOKENIZER_H
++
++#include &quot;Document.h&quot;
++#include &quot;Tokenizer.h&quot;
++
++/**
++  * This returns the MIME type supported by the library's tokenizer.
++  * The character string is allocated with new[].
++  */
++char *getTokenizerType(unsigned int typeNum);
++/// This returns a pointer to a Tokenizer, allocated with new.
++Tokenizer *getTokenizer(const Document *pDocument);
++
++class TagLibTokenizer : public Tokenizer
++{
++	public:
++		TagLibTokenizer(const Document *pDocument);
++		virtual ~TagLibTokenizer();
++
++	private:
++		TagLibTokenizer(const TagLibTokenizer &amp;other);
++		TagLibTokenizer&amp; operator=(const TagLibTokenizer&amp; other);
++
++};
++
++#endif // _WORD_TOKENIZER_H
+
+Modified: trunk/Tokenize/TokenizerFactory.cpp
+===================================================================
+--- trunk/Tokenize/TokenizerFactory.cpp	2006-04-04 13:18:35 UTC (rev 184)
++++ trunk/Tokenize/TokenizerFactory.cpp	2006-04-04 13:38:06 UTC (rev 185)
+@@ -271,6 +271,9 @@
+ 			return new Tokenizer(pDocument);
+ 		}
+ 
++#ifdef DEBUG
++		cout &lt;&lt; &quot;TokenizerFactory::getTokenizerByType: unknown file type&quot; &lt;&lt; endl;
++#endif
+ 		return new UnknownTypeTokenizer(pDocument);
+ 	}
+ 
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2006-04-04 13:18:35 UTC (rev 184)
++++ trunk/configure.in	2006-04-04 13:38:06 UTC (rev 185)
+@@ -139,6 +139,9 @@
+ dnl Other libraries
+ MISC_LIBS=&quot;-lmagic -lcrypt&quot;
+ AC_SUBST(MISC_LIBS)
++PKG_CHECK_MODULES(TAGLIB, taglib &gt;= 1.4 )
++AC_SUBST(TAGLIB_CFLAGS)
++AC_SUBST(TAGLIB_LIBS)
+ PKG_CHECK_MODULES(SQL, sqlite3 &gt;= 3.1 )
+ AC_SUBST(SQL_CFLAGS)
+ AC_SUBST(SQL_LIBS)
+
+Modified: trunk/pinot.spec.in
+===================================================================
+--- trunk/pinot.spec.in	2006-04-04 13:18:35 UTC (rev 184)
++++ trunk/pinot.spec.in	2006-04-04 13:38:06 UTC (rev 185)
+@@ -12,7 +12,7 @@
+ URL: <A HREF="http://pinot.berlios.de/">http://pinot.berlios.de/</A>
+ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+ Requires: xapian-core-libs &gt;= 0.9.4, curl &gt;= 7.13, gtkmm24 &gt;= 2.6, libxml++ &gt;= 2.12, mozilla &gt;= %{mozilla_ver}, sqlite &gt;= 3.1.2, libtextcat &gt;= 2.2, fam &gt;= 2.6.10, gmime &gt;= 2.1, file
+-BuildRequires: xapian-core-devel &gt;= 0.9.4, curl-devel &gt;= 7.13, gtkmm24-devel &gt;= 2.6, libxml++-devel &gt;= 2.12, mozilla-devel &gt;= %{mozilla_ver}, sqlite-devel &gt;= 3.1.2, libtextcat-devel &gt;= 2.2, fam-devel &gt;= 2.6.10, gmime-devel &gt;= 2.1, file, boost-devel &gt;= 1.32, gettext-devel, desktop-file-utils
++BuildRequires: xapian-core-devel &gt;= 0.9.4, curl-devel &gt;= 7.13, gtkmm24-devel &gt;= 2.6, libxml++-devel &gt;= 2.12, mozilla-devel &gt;= %{mozilla_ver}, sqlite-devel &gt;= 3.1.2, libtextcat-devel &gt;= 2.2, fam-devel &gt;= 2.6.10, gmime-devel &gt;= 2.1, taglib-devel &gt;= 1.4, boost-devel &gt;= 1.32, gettext-devel, desktop-file-utils
+ 
+ %description
+ Pinot is a metasearch tool for the Free Desktop. It enables one to query
+@@ -29,6 +29,15 @@
+ %description text-docs 
+ The included tokenizers add support for PDF, MS Word and RTF documents.
+ 
++%package audio-docs 
++Summary: Tokenizers for Pinot that handle various audio document formats
++Group: Applications/Internet
++Requires: %{name} = %{version}
++Requires: taglib &gt;= 1.4
++
++%description audio-docs 
++The included tokenizer adds support for OGG and MP3 files.
++
+ %package omega 
+ Summary: Xapian Omega plugin for Pinot
+ Group: Applications/Internet
+@@ -115,6 +124,10 @@
+ %{_datadir}/pinot/tokenizers/librtftokenizer.so
+ %{_datadir}/pinot/tokenizers/libwordtokenizer.so
+ 
++%files audio-docs 
++%defattr(-, root, root, -)
++%{_datadir}/pinot/tokenizers/libtaglibtokenizer.so
++
+ %files omega
+ %defattr(-, root, root, -)
+ %config(noreplace) %{_datadir}/pinot/engines/OmegaDescription.xml
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000182.html">[Pinot-svn] r184 - in trunk: Search UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000184.html">[Pinot-svn] r186 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#183">[ date ]</a>
+              <a href="thread.html#183">[ thread ]</a>
+              <a href="subject.html#183">[ subject ]</a>
+              <a href="author.html#183">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

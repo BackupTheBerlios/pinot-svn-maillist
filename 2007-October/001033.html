@@ -1,0 +1,417 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1039%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200710150254.l9F2sSXn032350%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001032.html">
+   <LINK REL="Next"  HREF="001034.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1039%20-%20in%20trunk%3A%20SQL%20UI/GTK2/src&In-Reply-To=%3C200710150254.l9F2sSXn032350%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1039 - in trunk: SQL UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 15 04:54:28 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001032.html">[Pinot-svn] r1038 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="001034.html">[Pinot-svn] r1040 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1033">[ date ]</a>
+              <a href="thread.html#1033">[ thread ]</a>
+              <a href="subject.html#1033">[ subject ]</a>
+              <a href="author.html#1033">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-15 04:54:27 +0200 (Mon, 15 Oct 2007)
+New Revision: 1039
+
+Modified:
+   trunk/SQL/ActionQueue.cpp
+   trunk/UI/GTK2/src/ModelColumns.cpp
+   trunk/UI/GTK2/src/ModelColumns.h
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+Log:
+Use DocumentInfo serialization in ActionQueue and ResultsTree.
+
+
+Modified: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2007-10-15 02:52:22 UTC (rev 1038)
++++ trunk/SQL/ActionQueue.cpp	2007-10-15 02:54:27 UTC (rev 1039)
+@@ -110,7 +110,7 @@
+ bool ActionQueue::pushItem(ActionType type, const DocumentInfo &amp;docInfo)
+ {
+ 	string url(docInfo.getLocation());
+-	string info(&quot;caption=&quot;);
++	string info(docInfo.serialize());
+ 	bool update = false, success = false;
+ 
+ 	// Is there already an item for this URL ?
+@@ -134,42 +134,19 @@
+ 		delete results;
+ 	}
+ 
+-	// Serialize DocumentInfo
+-	info += docInfo.getTitle();
+-	info += &quot;\nurl=&quot;;
+-	info += url;
+-	info += &quot;\ntype=&quot;;
+-	info += docInfo.getType();
+-	info += &quot;\nlanguage=&quot;;
+-	info += docInfo.getLanguage();
+-	info += &quot;\nmodtime=&quot;;
+-	info += docInfo.getTimestamp();
+-	info += &quot;\nsize=&quot;;
+-	char sizeStr[64];
+-	snprintf(sizeStr, 64, &quot;%ld&quot;, docInfo.getSize());
+-	info += sizeStr;
+-	info += &quot;\nlabels=&quot;;
+-	const set&lt;string&gt; &amp;labels = docInfo.getLabels();
+-	for (set&lt;string&gt;::const_iterator labelIter = labels.begin();
+-		labelIter != labels.end(); ++labelIter)
+-	{
+-		info += &quot;[&quot; + Url::escapeUrl(*labelIter) + &quot;]&quot;;
+-	}
+-	info += &quot;\n&quot;;
+-
+ 	if (update == false)
+ 	{
+ 		results = executeStatement(&quot;INSERT INTO ActionQueue \
+ 			VALUES('%q', '%q', '%q', '%d', '%q');&quot;,
+ 			m_queueId.c_str(), Url::escapeUrl(url).c_str(),
+-			typeToText(type).c_str(), time(NULL), Url::escapeUrl(info).c_str());
++			typeToText(type).c_str(), time(NULL), info.c_str());
+ 	}
+ 	else
+ 	{
+ 		results = executeStatement(&quot;UPDATE ActionQueue \
+ 			SET Type='%q', Date='%d', Info='%q' WHERE \
+ 			QueueId='%q' AND Url='%q';&quot;,
+-			typeToText(type).c_str(), time(NULL), Url::escapeUrl(info).c_str(),
++			typeToText(type).c_str(), time(NULL), info.c_str(),
+ 			m_queueId.c_str(), Url::escapeUrl(url).c_str());
+ 	}
+ 	if (results != NULL)
+@@ -219,7 +196,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement(&quot;SELECT Url, Type, Info FROM ActionQueue \
++	SQLiteResults *results = executeStatement(&quot;SELECT Type, Info FROM ActionQueue \
+ 		WHERE QueueId='%q' ORDER BY Date DESC LIMIT 1&quot;,
+ 		m_queueId.c_str());
+ 	if (results != NULL)
+@@ -227,44 +204,12 @@
+ 		SQLiteRow *row = results-&gt;nextRow();
+ 		if (row != NULL)
+ 		{
+-			string url(Url::unescapeUrl(row-&gt;getColumn(0)));
+-			type = textToType(row-&gt;getColumn(1));
+-			string info(Url::unescapeUrl(row-&gt;getColumn(2)));
++			type = textToType(row-&gt;getColumn(0));
+ 			success = true;
+ 
+ 			// Deserialize DocumentInfo
+-			docInfo.setTitle(StringManip::extractField(info, &quot;caption=&quot;, &quot;\n&quot;));
+-			docInfo.setLocation(url);
+-			docInfo.setType(StringManip::extractField(info, &quot;type=&quot;, &quot;\n&quot;));
+-			docInfo.setLanguage(StringManip::extractField(info, &quot;language=&quot;, &quot;\n&quot;));
+-			docInfo.setTimestamp(StringManip::extractField(info, &quot;modtime=&quot;, &quot;\n&quot;));
+-			string bytesSize(StringManip::extractField(info, &quot;size=&quot;, &quot;\n&quot;));
+-			if (bytesSize.empty() == false)
+-			{
+-				docInfo.setSize((off_t )atol(bytesSize.c_str()));
+-			}
+-			string labelsString(StringManip::extractField(info, &quot;labels=&quot;, &quot;\n&quot;));
+-			if (labelsString.empty() == false)
+-			{
+-				string::size_type endPos = 0;
+-				string label(StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos));
+-				set&lt;string&gt; labels;
++			docInfo.deserialize(row-&gt;getColumn(1));
+ 
+-				// Parse labels
+-				while (label.empty() == false)
+-				{
+-					labels.insert(Url::unescapeUrl(label));
+-
+-					if (endPos == string::npos)
+-					{
+-						break;
+-					}
+-					label = StringManip::extractField(labelsString, &quot;[&quot;, &quot;]&quot;, endPos);
+-				}
+-
+-				docInfo.setLabels(labels);
+-			}
+-
+ 			delete row;
+ 		}
+ 
+
+Modified: trunk/UI/GTK2/src/ModelColumns.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.cpp	2007-10-15 02:52:22 UTC (rev 1038)
++++ trunk/UI/GTK2/src/ModelColumns.cpp	2007-10-15 02:54:27 UTC (rev 1039)
+@@ -58,7 +58,6 @@
+ {
+ 	add(m_text);
+ 	add(m_url);
+-	add(m_type);
+ 	add(m_indexed);
+ 	add(m_viewed);
+ 	add(m_rankDiff);
+@@ -70,6 +69,7 @@
+ 	add(m_resultType);
+ 	add(m_timestamp);
+ 	add(m_timestampTime);
++	add(m_serial);
+ }
+ 
+ ResultsModelColumns::~ResultsModelColumns()
+
+Modified: trunk/UI/GTK2/src/ModelColumns.h
+===================================================================
+--- trunk/UI/GTK2/src/ModelColumns.h	2007-10-15 02:52:22 UTC (rev 1038)
++++ trunk/UI/GTK2/src/ModelColumns.h	2007-10-15 02:54:27 UTC (rev 1039)
+@@ -81,7 +81,6 @@
+ 
+ 	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_text;
+ 	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_url;
+-	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_type;
+ 	Gtk::TreeModelColumn&lt;bool&gt; m_indexed;
+ 	Gtk::TreeModelColumn&lt;bool&gt; m_viewed;
+ 	Gtk::TreeModelColumn&lt;int&gt; m_rankDiff;
+@@ -94,6 +93,7 @@
+ 	Gtk::TreeModelColumn&lt;RowType&gt; m_resultType;
+ 	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_timestamp;
+ 	Gtk::TreeModelColumn&lt;time_t&gt; m_timestampTime;
++	Gtk::TreeModelColumn&lt;Glib::ustring&gt; m_serial;
+ 
+ };
+ 
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2007-10-15 02:52:22 UTC (rev 1038)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2007-10-15 02:54:27 UTC (rev 1039)
+@@ -592,8 +592,9 @@
+ 
+ 		// OK, add a row for this result within the group
+ 		TreeModel::iterator titleIter;
+-		if (appendResult(title, location, resultIter-&gt;getType(), (int)currentScore, rankDiff, isIndexed, wasViewed,
+-			docId, resultIter-&gt;getTimestamp(), engineId, indexId, titleIter, groupIter, true) == true)
++		if (appendResult(title, location, (int)currentScore, rankDiff, isIndexed, wasViewed,
++			docId, resultIter-&gt;getTimestamp(), resultIter-&gt;serialize(),
++			engineId, indexId, titleIter, groupIter, true) == true)
+ 		{
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;ResultsTree::addResults: added row for result &quot; &lt;&lt; count
+@@ -740,13 +741,13 @@
+ 					// Add result
+ 					success = appendResult(childRow[m_resultsColumns.m_text],
+ 						childRow[m_resultsColumns.m_url],
+-						childRow[m_resultsColumns.m_type],
+ 						childRow[m_resultsColumns.m_score],
+ 						childRow[m_resultsColumns.m_rankDiff],
+ 						childRow[m_resultsColumns.m_indexed],
+ 						childRow[m_resultsColumns.m_viewed],
+ 						childRow[m_resultsColumns.m_docId],
+ 						childRow[m_resultsColumns.m_timestamp],
++						childRow[m_resultsColumns.m_serial],
+ 						engineIds, indexIds,
+ 						newIter, groupIter, true);
+ 				}
+@@ -815,13 +816,13 @@
+ 							// Add result
+ 							appendResult(childRow[m_resultsColumns.m_text],
+ 								childRow[m_resultsColumns.m_url],
+-								childRow[m_resultsColumns.m_type],
+ 								childRow[m_resultsColumns.m_score],
+ 								childRow[m_resultsColumns.m_rankDiff],
+ 								childRow[m_resultsColumns.m_indexed],
+ 								childRow[m_resultsColumns.m_viewed],
+ 								childRow[m_resultsColumns.m_docId],
+ 								childRow[m_resultsColumns.m_timestamp],
++								childRow[m_resultsColumns.m_serial],
+ 								engineId, indexId,
+ 								newIter, groupIter, true);
+ #ifdef DEBUG
+@@ -911,10 +912,11 @@
+ 		if ((skipIndexed == false) ||
+ 			(isIndexed == false))
+ 		{
+-			DocumentInfo current(from_utf8(row[m_resultsColumns.m_text]),
+-				from_utf8(row[m_resultsColumns.m_url]),
+-				from_utf8(row[m_resultsColumns.m_type]), &quot;&quot;);
++			DocumentInfo current;
++			string serial(from_utf8(row[m_resultsColumns.m_serial]));
+ 
++			current.deserialize(serial);
++
+ 			if (isIndexed == true)
+ 			{
+ 				set&lt;string&gt; indexNames;
+@@ -997,10 +999,11 @@
+ 
+ 		if (docId == row[m_resultsColumns.m_docId])
+ 		{
+-			updateRow(row, result.getTitle(), result.getLocation(), result.getType(),
++			updateRow(row, result.getTitle(), result.getLocation(),
+ 				row[m_resultsColumns.m_score], row[m_resultsColumns.m_engines],
+ 				row[m_resultsColumns.m_indexes], docId,
+-				result.getTimestamp(), ResultsModelColumns::ROW_RESULT,
++				result.getTimestamp(), result.serialize(),
++				ResultsModelColumns::ROW_RESULT,
+ 				row[m_resultsColumns.m_indexed], row[m_resultsColumns.m_viewed],
+ 				row[m_resultsColumns.m_rankDiff]);
+ 			break;
+@@ -1276,16 +1279,15 @@
+ 		{
+ 			set&lt;string&gt; engineNames, indexNames;
+ 			TreeModel::Row childRow = *childIter;
+-			DocumentInfo result(from_utf8(childRow[m_resultsColumns.m_text]),
+-				from_utf8(childRow[m_resultsColumns.m_url]),
+-				from_utf8(childRow[m_resultsColumns.m_type]), &quot;&quot;);
+-			string engineName, charset;
++			DocumentInfo result;
++			string engineName, charset, serial(from_utf8(childRow[m_resultsColumns.m_serial]));
+ 			unsigned int engineIds = childRow[m_resultsColumns.m_engines];
+ 			unsigned int indexIds = childRow[m_resultsColumns.m_indexes];
+ 
+ #ifdef DEBUG
+ 			cout &lt;&lt; &quot;ResultsTree::exportResults: engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
+ #endif
++			result.deserialize(serial);
+ 			m_settings.getEngineNames(engineIds, engineNames);
+ 			if (engineNames.empty() == false)
+ 			{
+@@ -1339,8 +1341,9 @@
+ // Adds a new row in the results tree.
+ //
+ bool ResultsTree::appendResult(const ustring &amp;text, const ustring &amp;url,
+-	const ustring &amp;type, int score, int rankDiff, bool isIndexed, bool wasViewed,
+-	unsigned int docId, const ustring &amp;timestamp, unsigned int engineId,
++	int score, int rankDiff, bool isIndexed, bool wasViewed,
++	unsigned int docId, const ustring &amp;timestamp,
++	const ustring &amp;serial, unsigned int engineId,
+ 	unsigned int indexId, TreeModel::iterator &amp;newRowIter,
+ 	const TreeModel::iterator &amp;parentIter, bool noDuplicates)
+ {
+@@ -1386,8 +1389,8 @@
+ 	}
+ 
+ 	TreeModel::Row childRow = *newRowIter;
+-	updateRow(childRow, text, url, type, score, engineId, indexId,
+-		docId, timestamp, ResultsModelColumns::ROW_RESULT, isIndexed,
++	updateRow(childRow, text, url, score, engineId, indexId,
++		docId, timestamp, serial, ResultsModelColumns::ROW_RESULT, isIndexed,
+ 		wasViewed, rankDiff);
+ 
+ 	return true;
+@@ -1409,7 +1412,7 @@
+ 		groupIter = m_refStore-&gt;append();
+ 		TreeModel::Row groupRow = *groupIter;
+ 		updateRow(groupRow, to_utf8(groupName),
+-			&quot;&quot;, &quot;&quot;, 0, 0, 0, 0, &quot;&quot;, groupType,
++			&quot;&quot;, 0, 0, 0, 0, &quot;&quot;, &quot;&quot;, groupType,
+ 			false, false, false);
+ 
+ 		// Update the map
+@@ -1477,16 +1480,14 @@
+ // Updates a row.
+ //
+ void ResultsTree::updateRow(TreeModel::Row &amp;row, const ustring &amp;text,
+-	const ustring &amp;url, const ustring &amp;type, int score,
+-	unsigned int engineId, unsigned int indexId,
+-	unsigned int docId, const ustring &amp;timestamp,
++	const ustring &amp;url, int score, 	unsigned int engineId, unsigned int indexId,
++	unsigned int docId, const ustring &amp;timestamp, const ustring &amp;serial,
+ 	ResultsModelColumns::RowType resultType, bool indexed, bool viewed, int rankDiff)
+ {
+ 	try
+ 	{
+ 		row[m_resultsColumns.m_text] = text;
+ 		row[m_resultsColumns.m_url] = url;
+-		row[m_resultsColumns.m_type] = type;
+ 		row[m_resultsColumns.m_score] = score;
+ 		row[m_resultsColumns.m_scoreText] = &quot;&quot;;
+ 		row[m_resultsColumns.m_engines] = engineId;
+@@ -1495,6 +1496,7 @@
+ 		row[m_resultsColumns.m_resultType] = resultType;
+ 		row[m_resultsColumns.m_timestamp] = timestamp;
+ 		row[m_resultsColumns.m_timestampTime] = TimeConverter::fromTimestamp(timestamp);
++		row[m_resultsColumns.m_serial] = serial;
+ 
+ 		row[m_resultsColumns.m_indexed] = indexed;
+ 		row[m_resultsColumns.m_viewed] = viewed;
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2007-10-15 02:52:22 UTC (rev 1038)
++++ trunk/UI/GTK2/src/ResultsTree.h	2007-10-15 02:54:27 UTC (rev 1039)
+@@ -159,8 +159,8 @@
+ 
+ 		/// Adds a new row in the results tree.
+ 		bool appendResult(const Glib::ustring &amp;text, const Glib::ustring &amp;url,
+-			const Glib::ustring &amp;type, int score, int rankDiff,
+-			bool isIndexed, bool wasViewed, unsigned int docId, const Glib::ustring &amp;timestamp,
++			int score, int rankDiff, bool isIndexed, bool wasViewed,
++			unsigned int docId, const Glib::ustring &amp;timestamp, const Glib::ustring &amp;serial,
+ 			unsigned int engineId, unsigned int indexId,
+ 			Gtk::TreeModel::iterator &amp;newRowIter,
+ 			const Gtk::TreeModel::iterator &amp;parentIter,
+@@ -171,10 +171,9 @@
+ 
+ 		/// Updates a row.
+ 		void updateRow(Gtk::TreeModel::Row &amp;row, const Glib::ustring &amp;text,
+-			const Glib::ustring &amp;url, const Glib::ustring &amp;type,
+-			int score, unsigned int engineId, unsigned int indexId,
+-			unsigned int docId, const Glib::ustring &amp;timestamp,
+-			ResultsModelColumns::RowType type, bool indexed, bool viewed, int rankDiff);
++			const Glib::ustring &amp;url, int score, unsigned int engineId, unsigned int indexId,
++			unsigned int docId, const Glib::ustring &amp;timestamp, const Glib::ustring &amp;serial,
++			ResultsModelColumns::RowType resultType, bool indexed, bool viewed, int rankDiff);
+ 
+ 		/// Retrieves the extract to show for the given row.
+ 		Glib::ustring findResultsExtract(const Gtk::TreeModel::Row &amp;row);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001032.html">[Pinot-svn] r1038 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="001034.html">[Pinot-svn] r1040 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1033">[ date ]</a>
+              <a href="thread.html#1033">[ thread ]</a>
+              <a href="subject.html#1033">[ subject ]</a>
+              <a href="author.html#1033">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

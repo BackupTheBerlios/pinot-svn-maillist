@@ -1,0 +1,401 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r360 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r360%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201353.k6KDrJdK008124%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000352.html">
+   <LINK REL="Next"  HREF="000354.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r360 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r360%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200607201353.k6KDrJdK008124%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r360 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 20 15:53:19 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000352.html">[Pinot-svn] r359 - trunk/Utils
+</A></li>
+        <LI>Next message: <A HREF="000354.html">[Pinot-svn] r361 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#353">[ date ]</a>
+              <a href="thread.html#353">[ thread ]</a>
+              <a href="subject.html#353">[ subject ]</a>
+              <a href="author.html#353">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-20 15:53:17 +0200 (Thu, 20 Jul 2006)
+New Revision: 360
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+ThreadManager and IndexingThread expect the index to be specified.
+If the type of the document to index is not supported, skip its content and
+index only the metadata.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-07-20 13:47:46 UTC (rev 359)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-07-20 13:53:17 UTC (rev 360)
+@@ -44,7 +44,7 @@
+ #ifdef HAS_GOOGLEAPI
+ #include &quot;GoogleAPIEngine.h&quot;
+ #endif
+-#include &quot;XapianIndex.h&quot;
++#include &quot;WritableXapianIndex.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -161,8 +161,10 @@
+ 	m_dispatcher.emit();
+ }
+ 
+-ThreadsManager::ThreadsManager(unsigned int maxIndexThreads) :
++ThreadsManager::ThreadsManager(const string &amp;defaultIndexLocation,
++	unsigned int maxIndexThreads) :
+ 	SigC::Object(),
++	m_defaultIndexLocation(defaultIndexLocation),
+ 	m_maxIndexThreads(maxIndexThreads),
+ 	m_nextId(1),
+ 	m_backgroundThreadsCount(0)
+@@ -288,12 +290,12 @@
+ 	}
+ 
+ 	// Is it an update ?
+-	XapianIndex docsIndex(PinotSettings::getInstance().m_indexLocation);
+-	unsigned int docId = docsIndex.hasDocument(docInfo.getLocation());
++	XapianIndex index(m_defaultIndexLocation);
++	unsigned int docId = index.hasDocument(docInfo.getLocation());
+ 	if (docId &gt; 0)
+ 	{
+ 		// Yes, it is
+-		start_thread(new IndexingThread(docInfo, docId));
++		start_thread(new IndexingThread(docInfo, docId, m_defaultIndexLocation));
+ 	}
+ 	else
+ 	{
+@@ -318,7 +320,7 @@
+ 		}
+ 
+ 		// This is a new document
+-		start_thread(new IndexingThread(docInfo));
++		start_thread(new IndexingThread(docInfo, docId, m_defaultIndexLocation));
+ 	}
+ 
+ 	return true;
+@@ -342,6 +344,8 @@
+ 	Thread *pThread = pWorkerThread-&gt;start();
+ 	if (pThread == NULL)
+ 	{
++		delete pWorkerThread;
++
+ 		return false;
+ 	}
+ 
+@@ -417,7 +421,7 @@
+ 
+ 	// Connect the dispatcher
+ 	m_threadsEndConnection = WorkerThread::getDispatcher().connect(
+-		SigC::slot(*this, &amp;ThreadsManager::on_thread_end));
++		SigC::slot(*this, &amp;ThreadsManager::on_thread_signal));
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;ThreadsManager::connect: connected&quot; &lt;&lt; endl;
+ #endif
+@@ -432,13 +436,13 @@
+ #endif
+ }
+ 
+-void ThreadsManager::on_thread_end()
++void ThreadsManager::on_thread_signal()
+ {
+ 	WorkerThread *pThread = get_thread();
+ 	if (pThread == NULL)
+ 	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;ThreadsManager::on_thread_end: foreign thread&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;ThreadsManager::on_thread_signal: foreign thread&quot; &lt;&lt; endl;
+ #endif
+ 		return;
+ 	}
+@@ -801,16 +805,16 @@
+ 
+ void LabelUpdateThread::doWork(void)
+ {
+-	XapianIndex docsIndex(PinotSettings::getInstance().m_indexLocation);
++	WritableXapianIndex docsIndex(PinotSettings::getInstance().m_docsIndexLocation);
+ 	if (docsIndex.isGood() == false)
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+ 		m_status += &quot; &quot;;
+-		m_status += PinotSettings::getInstance().m_indexLocation;
++		m_status += PinotSettings::getInstance().m_docsIndexLocation;
+ 		return;
+ 	}
+ 
+-	XapianIndex mailIndex(PinotSettings::getInstance().m_mailIndexLocation);
++	WritableXapianIndex mailIndex(PinotSettings::getInstance().m_mailIndexLocation);
+ 	if (mailIndex.isGood() == false)
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+@@ -819,6 +823,8 @@
+ 		return;
+ 	}
+ 
++	// FIXME: what about the daemon index ?
++
+ 	// Delete labels
+ 	for (set&lt;string&gt;::iterator iter = m_labelsToDelete.begin(); iter != m_labelsToDelete.end(); ++iter)
+ 	{
+@@ -925,13 +931,13 @@
+ }
+ 
+ IndexingThread::IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId,
+-	bool allowAllMIMETypes) :
++	const string &amp;indexLocation, bool allowAllMIMETypes) :
+ 	DownloadingThread(docInfo, false),
+ 	m_docInfo(docInfo),
+ 	m_docId(docId),
++	m_indexLocation(indexLocation),
+ 	m_allowAllMIMETypes(allowAllMIMETypes)
+ {
+-	m_indexLocation = PinotSettings::getInstance().m_indexLocation;
+ 	if (m_docId &gt; 0)
+ 	{
+ 		// Ignore robots directives on updates
+@@ -992,7 +998,7 @@
+ void IndexingThread::doWork(void)
+ {
+ 	// First things first, get the index
+-	XapianIndex index(m_indexLocation);
++	WritableXapianIndex index(m_indexLocation);
+ 	if (index.isGood() == false)
+ 	{
+ 		m_status = _(&quot;Index error on&quot;);
+@@ -1008,7 +1014,8 @@
+ 
+ 	if (m_pDoc != NULL)
+ 	{
+-		string docType = m_pDoc-&gt;getType();
++		Tokenizer *pTokens = NULL;
++		string docType(m_pDoc-&gt;getType());
+ 		bool success = false;
+ 
+ 		// The type may have been obtained when downloading
+@@ -1021,20 +1028,6 @@
+ 			m_pDoc-&gt;setType(m_docInfo.getType());
+ 		}
+ 
+-		// Skip unsupported types ?
+-		if ((m_allowAllMIMETypes == false) &amp;&amp;
+-			(TokenizerFactory::isSupportedType(m_docInfo.getType()) == false))
+-		{
+-			m_status = _(&quot;Cannot index document type&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_docInfo.getType();
+-			m_status += &quot; &quot;;
+-			m_status += _(&quot;at&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_docInfo.getLocation();
+-			return;
+-		}
+-
+ 		if (m_docInfo.getTitle().empty() == false)
+ 		{
+ 			// Use the title we were supplied with
+@@ -1049,16 +1042,43 @@
+ 		cout &lt;&lt; &quot;IndexingThread::doWork: title is &quot; &lt;&lt; m_pDoc-&gt;getTitle() &lt;&lt; endl;
+ #endif
+ 
+-		// Tokenize this document
+-		Tokenizer *pTokens = TokenizerFactory::getTokenizerByType(m_docInfo.getType(), m_pDoc);
+-		if (pTokens == NULL)
++		if (TokenizerFactory::isSupportedType(m_docInfo.getType()) == false)
+ 		{
+-			m_status = _(&quot;Couldn't tokenize&quot;);
+-			m_status += &quot; &quot;;
+-			m_status += m_docInfo.getLocation();
+-			return;
++			// Skip unsupported types ?
++			if (m_allowAllMIMETypes == false)
++			{
++				m_status = _(&quot;Cannot index document type&quot;);
++				m_status += &quot; &quot;;
++				m_status += m_docInfo.getType();
++				m_status += &quot; &quot;;
++				m_status += _(&quot;at&quot;);
++				m_status += &quot; &quot;;
++				m_status += m_docInfo.getLocation();
++				return;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;IndexingThread::doWork: can't index document content&quot; &lt;&lt; endl;
++#endif
++
++			// Create an empty document so that the file's details are indexed but not its content
++			delete m_pDoc;
++			m_pDoc = new Document(m_docInfo);
++			// A simple text tokenizer will do the job
++			pTokens = new Tokenizer(m_pDoc);
+ 		}
++		else
++		{
++			pTokens = TokenizerFactory::getTokenizerByType(m_docInfo.getType(), m_pDoc);
++		}
+ 
++		if (pTokens == NULL)
++                {
++                        m_status = _(&quot;Couldn't tokenize&quot;);
++                        m_status += &quot; &quot;;
++                        m_status += m_docInfo.getLocation();
++                        return;
++                }
++
+ 		// Is indexing allowed ?
+ 		HtmlTokenizer *pHtmlTokens = dynamic_cast&lt;HtmlTokenizer*&gt;(pTokens);
+ 		if ((m_ignoreRobotsDirectives == false) &amp;&amp;
+@@ -1084,7 +1104,7 @@
+ 		{
+ 			const set&lt;string&gt; &amp;labels = m_docInfo.getLabels();
+ 
+-			index.setStemmingMode(IndexInterface::STORE_BOTH);
++			index.setStemmingMode(WritableIndexInterface::STORE_BOTH);
+ 
+ 			// Update an existing document or add to the index ?
+ 			if (m_update == true)
+@@ -1132,7 +1152,7 @@
+ 
+ UnindexingThread::UnindexingThread(const set&lt;unsigned int&gt; &amp;docIdList) :
+ 	WorkerThread(),
+-	m_indexLocation(PinotSettings::getInstance().m_indexLocation),
++	m_indexLocation(PinotSettings::getInstance().m_docsIndexLocation),
+ 	m_docsCount(0)
+ {
+ 	copy(docIdList.begin(), docIdList.end(), inserter(m_docIdList, m_docIdList.begin()));
+@@ -1146,7 +1166,7 @@
+ 	copy(labelNames.begin(), labelNames.end(), inserter(m_labelNames, m_labelNames.begin()));
+ 	if (indexLocation.empty() == true)
+ 	{
+-		m_indexLocation = PinotSettings::getInstance().m_indexLocation;
++		m_indexLocation = PinotSettings::getInstance().m_docsIndexLocation;
+ 	}
+ }
+ 
+@@ -1175,7 +1195,7 @@
+ {
+ 	if (m_done == false)
+ 	{
+-		XapianIndex index(m_indexLocation);
++		WritableXapianIndex index(m_indexLocation);
+ 
+ 		if (index.isGood() == false)
+ 		{
+@@ -1295,7 +1315,7 @@
+ 		}
+ 
+ 		// Get the index at that location
+-		XapianIndex index(mapIter-&gt;second);
++		WritableXapianIndex index(mapIter-&gt;second);
+ 		if (index.isGood() == false)
+ 		{
+ 			m_status = _(&quot;Index error on&quot;);
+@@ -1312,6 +1332,7 @@
+ 		{
+ 			// Flush the index
+ 			index.flush();
++
+ 			// The document properties may have changed
+ 			index.getDocumentInfo(m_docId, m_docInfo);
+ 		}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2006-07-20 13:47:46 UTC (rev 359)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2006-07-20 13:53:17 UTC (rev 360)
+@@ -91,7 +91,8 @@
+ class ThreadsManager : public SigC::Object
+ {
+ 	public:
+-		ThreadsManager(unsigned int maxIndexThreads);
++		ThreadsManager(const std::string &amp;defaultIndexLocation,
++			unsigned int maxIndexThreads);
+ 		virtual ~ThreadsManager();
+ 
+ 		bool start_thread(WorkerThread *pWorkerThread, bool inBackground = false);
+@@ -106,7 +107,7 @@
+ 
+ 		virtual void disconnect(void);
+ 
+-		void on_thread_end();
++		void on_thread_signal();
+ 
+ 		bool read_lock_lists(void);
+ 
+@@ -125,6 +126,7 @@
+ 		pthread_rwlock_t m_threadsLock;
+ 		pthread_rwlock_t m_listsLock;
+ 		std::map&lt;WorkerThread *, Glib::Thread *&gt; m_threads;
++		std::string m_defaultIndexLocation;
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_nextId;
+ 		unsigned int m_backgroundThreadsCount;
+@@ -272,8 +274,8 @@
+ class IndexingThread : public DownloadingThread
+ {
+ 	public:
+-		IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId = 0,
+-			bool allowAllMIMETypes = false);
++		IndexingThread(const DocumentInfo &amp;docInfo, unsigned int docId,
++			const std::string &amp;indexLocation, bool allowAllMIMETypes = true);
+ 		virtual ~IndexingThread();
+ 
+ 		virtual std::string getType(void) const;
+@@ -291,8 +293,8 @@
+ 	protected:
+ 		DocumentInfo m_docInfo;
+ 		unsigned int m_docId;
++		std::string m_indexLocation;
+ 		bool m_allowAllMIMETypes;
+-		std::string m_indexLocation;
+ 		bool m_ignoreRobotsDirectives;
+ 		bool m_update;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000352.html">[Pinot-svn] r359 - trunk/Utils
+</A></li>
+	<LI>Next message: <A HREF="000354.html">[Pinot-svn] r361 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#353">[ date ]</a>
+              <a href="thread.html#353">[ thread ]</a>
+              <a href="subject.html#353">[ subject ]</a>
+              <a href="author.html#353">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

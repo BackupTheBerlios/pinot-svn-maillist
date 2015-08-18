@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r355 - in trunk: Search UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r355%20-%20in%20trunk%3A%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200607161009.k6GA9Nhv028723%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000347.html">
+   <LINK REL="Next"  HREF="000349.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r355 - in trunk: Search UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r355%20-%20in%20trunk%3A%20Search%20UI/GTK2/src%20Utils&In-Reply-To=%3C200607161009.k6GA9Nhv028723%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r355 - in trunk: Search UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Jul 16 12:09:23 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000347.html">[Pinot-svn] r354 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000349.html">[Pinot-svn] r356 - trunk/Utils/xdgmime
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#348">[ date ]</a>
+              <a href="thread.html#348">[ thread ]</a>
+              <a href="subject.html#348">[ subject ]</a>
+              <a href="author.html#348">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-16 12:09:20 +0200 (Sun, 16 Jul 2006)
+New Revision: 355
+
+Modified:
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/XapianEngine.h
+   trunk/UI/GTK2/src/MboxHandler.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/Utils/XapianDatabase.cpp
+   trunk/Utils/XapianDatabase.h
+Log:
+Moved buildUrl() to XapianDatabase.
+
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/Search/XapianEngine.cpp	2006-07-16 10:09:20 UTC (rev 355)
+@@ -177,7 +177,7 @@
+ 					{
+ 						// Hmmm this shouldn't be empty...
+ 						// Use this instead, even though the document isn't cached in the index
+-						url = buildUrl(m_databaseName, *mIter);
++						url = XapianDatabase::buildUrl(m_databaseName, *mIter);
+ 					}
+ 					else
+ 					{
+@@ -424,20 +424,6 @@
+ 	}
+ }
+ 
+-/// Returns the URL for the given document in the given index.
+-string XapianEngine::buildUrl(const string &amp;database, unsigned int docId)
+-{
+-	// Make up a pseudo URL
+-	char docIdStr[64];
+-	sprintf(docIdStr, &quot;%u&quot;, docId);
+-	string url = &quot;<A HREF="xapian://localhost/">xapian://localhost/</A>&quot;;
+-	url += database;
+-	url += &quot;/&quot;;
+-	url += docIdStr;
+-
+-	return url;
+-}
+-
+ /// Runs a boolean query; true if success.
+ bool XapianEngine::runQuery(const string &amp;keyword)
+ {
+
+Modified: trunk/Search/XapianEngine.h
+===================================================================
+--- trunk/Search/XapianEngine.h	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/Search/XapianEngine.h	2006-07-16 10:09:20 UTC (rev 355)
+@@ -45,9 +45,6 @@
+ 		/// Returns the results for the previous query.
+ 		virtual const std::vector&lt;Result&gt; &amp;getResults(void) const;
+ 
+-		/// Returns the URL for the given document in the given index.
+-		static std::string buildUrl(const std::string &amp;database, unsigned int docId);
+-
+ 	protected:
+ 		std::string m_databaseName;
+ 		std::set&lt;unsigned int&gt; m_relevantDocuments;
+
+Modified: trunk/UI/GTK2/src/MboxHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/MboxHandler.cpp	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/UI/GTK2/src/MboxHandler.cpp	2006-07-16 10:09:20 UTC (rev 355)
+@@ -26,10 +26,10 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;Timer.h&quot;
+ #include &quot;TimeConverter.h&quot;
++#include &quot;XapianDatabase.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;FileCollector.h&quot;
+ #include &quot;XapianIndex.h&quot;
+-#include &quot;XapianEngine.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;MboxHandler.h&quot;
+ 
+@@ -192,7 +192,7 @@
+ 				pIndex-&gt;setDocumentLabels(docId, labels);
+ 
+ 				IndexedDocument docInfo(pMessage-&gt;getTitle(),
+-					XapianEngine::buildUrl(PinotSettings::getInstance().m_mailIndexLocation, docId),
++					XapianDatabase::buildUrl(PinotSettings::getInstance().m_mailIndexLocation, docId),
+ 					pMessage-&gt;getLocation(), pMessage-&gt;getType(), pMessage-&gt;getLanguage());
+ 				docInfo.setTimestamp(TimeConverter::toTimestamp(messageDate));
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-07-16 10:09:20 UTC (rev 355)
+@@ -35,6 +35,7 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;XapianDatabase.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;IndexedDocument.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+@@ -44,7 +45,6 @@
+ #include &quot;GoogleAPIEngine.h&quot;
+ #endif
+ #include &quot;XapianIndex.h&quot;
+-#include &quot;XapianEngine.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+@@ -610,7 +610,7 @@
+ 		// Get the document ID
+ 		unsigned int docId = (*iter);
+ 		// ...and the document URL
+-		string url = XapianEngine::buildUrl(mapIter-&gt;second, docId);
++		string url = XapianDatabase::buildUrl(mapIter-&gt;second, docId);
+ 
+ 		DocumentInfo docInfo;
+ 		if (index.getDocumentInfo(docId, docInfo) == true)
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-07-16 10:09:20 UTC (rev 355)
+@@ -38,13 +38,13 @@
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;XapianDatabase.h&quot;
+ #include &quot;TokenizerFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+ #include &quot;XapianIndex.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+-#include &quot;XapianEngine.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;MboxHandler.h&quot;
+@@ -1181,7 +1181,7 @@
+ 				{
+ 					// Add a row to the index tree
+ 					IndexedDocument indexedDoc(docInfo.getTitle(),
+-						XapianEngine::buildUrl(m_settings.m_indexLocation, docId),
++						XapianDatabase::buildUrl(m_settings.m_indexLocation, docId),
+ 						docInfo.getLocation(), docInfo.getType(),
+ 						docInfo.getLanguage());
+ 					indexedDoc.setTimestamp(docInfo.getTimestamp());
+
+Modified: trunk/Utils/XapianDatabase.cpp
+===================================================================
+--- trunk/Utils/XapianDatabase.cpp	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/Utils/XapianDatabase.cpp	2006-07-16 10:09:20 UTC (rev 355)
+@@ -233,3 +233,17 @@
+ #endif
+ 	pthread_rwlock_unlock(&amp;m_rwLock);
+ }
++
++/// Returns the URL for the given document in the given index.
++string XapianDatabase::buildUrl(const string &amp;database, unsigned int docId)
++{
++	// Make up a pseudo URL
++	char docIdStr[64];
++	sprintf(docIdStr, &quot;%u&quot;, docId);
++	string url = &quot;<A HREF="xapian://localhost/">xapian://localhost/</A>&quot;;
++	url += database;
++	url += &quot;/&quot;;
++	url += docIdStr;
++
++	return url;
++}
+
+Modified: trunk/Utils/XapianDatabase.h
+===================================================================
+--- trunk/Utils/XapianDatabase.h	2006-07-15 13:44:22 UTC (rev 354)
++++ trunk/Utils/XapianDatabase.h	2006-07-16 10:09:20 UTC (rev 355)
+@@ -44,6 +44,9 @@
+ 		/// Unlocks the database.
+ 		void unlock(void);
+ 
++		/// Returns the URL for the given document in the given index.
++		static std::string buildUrl(const std::string &amp;database, unsigned int docId);
++
+ 	protected:
+ 		std::string m_databaseName;
+ 		bool m_readOnly;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000347.html">[Pinot-svn] r354 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000349.html">[Pinot-svn] r356 - trunk/Utils/xdgmime
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#348">[ date ]</a>
+              <a href="thread.html#348">[ thread ]</a>
+              <a href="subject.html#348">[ subject ]</a>
+              <a href="author.html#348">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

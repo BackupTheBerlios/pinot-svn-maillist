@@ -1,0 +1,2078 @@
+From fabricecolin at mail.berlios.de  Thu Apr  3 15:07:15 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Thu, 3 Apr 2008 15:07:15 +0200
+Subject: [Pinot-svn] r1228 - trunk/UI/GTK2/src
+Message-ID: <200804031307.m33D7FoG024627@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-03 15:07:15 +0200 (Thu, 03 Apr 2008)
+New Revision: 1228
+
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Open the PID file, exit if that process is still running.
+
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-03-27 08:33:42 UTC (rev 1227)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-04-03 13:07:15 UTC (rev 1228)
+@@ -24,6 +24,7 @@
+ #include <sys/resource.h>
+ #include <sys/types.h>
+ #include <unistd.h>
++#include <errno.h>
+ #include <iostream>
+ #include <fstream>
+ #include <cstring>
+@@ -394,7 +395,7 @@
+ 	string confDirectory = PinotSettings::getConfigurationDirectory();
+ 	if (chdir(confDirectory.c_str()) == 0)
+ 	{
+-		ofstream pidFile;
++		fstream pidFile;
+ 		string fileName(confDirectory);
+ 
+ 		// Redirect cout and cerr to a file
+@@ -405,11 +406,40 @@
+ 		cout.rdbuf(g_outputFile.rdbuf());
+ 		cerr.rdbuf(g_outputFile.rdbuf());
+ 
+-		// Save the PID to file
++		// Open the PID file
+ 		g_pidFileName = confDirectory + "/pinot-dbus-daemon.pid";
+-		pidFile.open(g_pidFileName.c_str());
+-		pidFile << getpid() << endl;
+-		pidFile.close();
++		pidFile.open(g_pidFileName.c_str(), std::ios::in);
++		if (pidFile.is_open() == true)
++		{
++			pid_t daemonPID = 0;
++
++			pidFile >> daemonPID;
++			pidFile.close();
++
++			// Is another daemon running ?
++			if (daemonPID > 0)
++			{
++				if (kill(daemonPID, 0) == 0)
++				{
++					// It's still running
++					cout << "Daemon instance " << daemonPID << " is still running" << endl;
++					return EXIT_SUCCESS;
++				}
++				else if (errno == ESRCH)
++				{
++					// This PID doesn't exist
++					cerr << "Previous daemon instance " << daemonPID << " died prematurely" << endl;
++				}
++			}
++		}
++
++		// Now save our PID
++		pidFile.open(g_pidFileName.c_str(), std::ios::out);
++		if (pidFile.is_open() == true)
++		{
++			pidFile << getpid() << endl;
++			pidFile.close();
++		}
+ 	}
+ 
+ 	// Initialize utility classes
+
+
+
+From fabricecolin at mail.berlios.de  Fri Apr 11 17:40:11 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Fri, 11 Apr 2008 17:40:11 +0200
+Subject: [Pinot-svn] r1229 - trunk/SQL
+Message-ID: <200804111540.m3BFeBU0028133@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-11 17:40:10 +0200 (Fri, 11 Apr 2008)
+New Revision: 1229
+
+Modified:
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/QueryHistory.h
+   trunk/SQL/SQLiteBase.cpp
+   trunk/SQL/SQLiteBase.h
+   trunk/SQL/ViewHistory.cpp
+   trunk/SQL/ViewHistory.h
+Log:
+Mostly namespace related cleanups.
+
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/CrawlHistory.cpp	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -25,6 +25,12 @@
+ #include "Url.h"
+ #include "CrawlHistory.h"
+ 
++using std::cout;
++using std::endl;
++using std::string;
++using std::set;
++using std::map;
++
+ CrawlHistory::CrawlHistory(const string &database) :
+ 	SQLiteBase(database, false)
+ {
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/CrawlHistory.h	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -26,63 +26,61 @@
+ 
+ #include "SQLiteBase.h"
+ 
+-using namespace std;
+-
+ /// Manages crawl history.
+ class CrawlHistory : public SQLiteBase
+ {
+ 	public:
+-		CrawlHistory(const string &database);
++		CrawlHistory(const std::string &database);
+ 		virtual ~CrawlHistory();
+ 
+ 		typedef enum { UNKNOWN, CRAWLING, CRAWLED, ERROR } CrawlStatus;
+ 
+ 		/// Creates the CrawlHistory table in the database.
+-		static bool create(const string &database);
++		static bool create(const std::string &database);
+ 
+ 		/// Inserts a source.
+-		unsigned int insertSource(const string &url);
++		unsigned int insertSource(const std::string &url);
+ 
+ 		/// Checks if the source exists.
+-		bool hasSource(const string &url, unsigned int &sourceId);
++		bool hasSource(const std::string &url, unsigned int &sourceId);
+ 
+ 		/// Returns sources.
+-		unsigned int getSources(map<unsigned int, string> &sources);
++		unsigned int getSources(std::map<unsigned int, std::string> &sources);
+ 
+ 		/// Deletes a source.
+ 		bool deleteSource(unsigned int sourceId);
+ 
+ 		/// Inserts an URL.
+-		bool insertItem(const string &url, CrawlStatus status, unsigned int sourceId,
++		bool insertItem(const std::string &url, CrawlStatus status, unsigned int sourceId,
+ 			time_t date, int errNum = 0);
+ 
+ 		/// Checks if an URL is in the history.
+-		bool hasItem(const string &url, CrawlStatus &status, time_t &date);
++		bool hasItem(const std::string &url, CrawlStatus &status, time_t &date);
+ 
+ 		/// Updates an URL.
+-		bool updateItem(const string &url, CrawlStatus status, time_t date, int errNum = 0);
++		bool updateItem(const std::string &url, CrawlStatus status, time_t date, int errNum = 0);
+ 
+ 		/// Updates URLs.
+-		bool updateItems(const map<string, time_t> urls, CrawlStatus status);
++		bool updateItems(const std::map<std::string, time_t> urls, CrawlStatus status);
+ 
+ 		/// Updates the status of items en masse.
+ 		bool updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus);
+ 
+ 		/// Gets the error number and date for a URL.
+-		int getErrorDetails(const string &url, time_t &date);
++		int getErrorDetails(const std::string &url, time_t &date);
+ 
+ 		/// Returns items that belong to a source.
+ 		unsigned int getSourceItems(unsigned int sourceId, CrawlStatus status,
+-			set<string> &urls, time_t minDate = 0);
++			std::set<std::string> &urls, time_t minDate = 0);
+ 
+ 		/// Returns the number of URLs.
+ 		unsigned int getItemsCount(CrawlStatus status);
+ 
+ 		/// Deletes an URL.
+-		bool deleteItem(const string &url);
++		bool deleteItem(const std::string &url);
+ 
+ 		/// Deletes all items under a given URL.
+-		bool deleteItems(const string &url);
++		bool deleteItems(const std::string &url);
+ 
+ 		/// Deletes URLs belonging to a source.
+ 		bool deleteItems(unsigned int sourceId, CrawlStatus status = UNKNOWN);
+@@ -91,8 +89,8 @@
+ 		bool expireItems(time_t expiryDate);
+ 
+ 	protected:
+-		static string statusToText(CrawlStatus status);
+-		static CrawlStatus textToStatus(const string &text);
++		static std::string statusToText(CrawlStatus status);
++		static CrawlStatus textToStatus(const std::string &text);
+ 
+ 	private:
+ 		CrawlHistory(const CrawlHistory &other);
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/QueryHistory.cpp	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -26,6 +26,12 @@
+ #include "TimeConverter.h"
+ #include "QueryHistory.h"
+ 
++using std::cout;
++using std::endl;
++using std::string;
++using std::set;
++using std::vector;
++
+ QueryHistory::QueryHistory(const string &database) :
+ 	SQLiteBase(database)
+ {
+
+Modified: trunk/SQL/QueryHistory.h
+===================================================================
+--- trunk/SQL/QueryHistory.h	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/QueryHistory.h	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -26,57 +26,55 @@
+ #include "DocumentInfo.h"
+ #include "SQLiteBase.h"
+ 
+-using namespace std;
+-
+ /// Manages query history.
+ class QueryHistory : public SQLiteBase
+ {
+ 	public:
+-		QueryHistory(const string &database);
++		QueryHistory(const std::string &database);
+ 		virtual ~QueryHistory();
+ 
+ 		/// Creates the QueryHistory table in the database.
+-		static bool create(const string &database);
++		static bool create(const std::string &database);
+ 
+ 		/// Inserts an URL.
+-		bool insertItem(const string &queryName, const string &engineName, const string &url,
+-			const string &title, const string &extract, const string &charset, float score);
++		bool insertItem(const std::string &queryName, const std::string &engineName, const std::string &url,
++			const std::string &title, const std::string &extract, const std::string &charset, float score);
+ 
+ 		/**
+ 		  * Checks if an URL is in the query's history.
+ 		  * If it is, it returns the current and previous scores; returns 0 if not found.
+ 		  */
+-		float hasItem(const string &queryName, const string &engineName, const string &url,
++		float hasItem(const std::string &queryName, const std::string &engineName, const std::string &url,
+ 			float &previousScore);
+ 
+ 		/// Updates an URL's details.
+-		bool updateItem(const string &queryName, const string &engineName, const string &url,
+-			const string &title, const string &extract, const string &charset, float score);
++		bool updateItem(const std::string &queryName, const std::string &engineName, const std::string &url,
++			const std::string &title, const std::string &extract, const std::string &charset, float score);
+ 
+ 		/// Gets the list of engines the query was run on.
+-		bool getEngines(const string &queryName, set<string> &enginesList);
++		bool getEngines(const std::string &queryName, std::set<std::string> &enginesList);
+ 
+ 		/// Gets the first max items for the given query, engine pair.
+-		bool getItems(const string &queryName, const string &engineName,
+-			unsigned int max, vector<DocumentInfo> &resultsList);
++		bool getItems(const std::string &queryName, const std::string &engineName,
++			unsigned int max, std::vector<DocumentInfo> &resultsList);
+ 
+ 		/// Gets an item's extract.
+-		string getItemExtract(const string &queryName, const string &engineName,
+-			const string &url, string &charset);
++		std::string getItemExtract(const std::string &queryName, const std::string &engineName,
++			const std::string &url, std::string &charset);
+ 
+ 		/// Finds URLs.
+-		bool findUrlsLike(const string &url, unsigned int count,
+-			set<string> &urls);
++		bool findUrlsLike(const std::string &url, unsigned int count,
++			std::set<std::string> &urls);
+ 
+ 		/// Gets a query's last run time.
+-		string getLastRun(const string &queryName, const string &engineName = "");
++		std::string getLastRun(const std::string &queryName, const std::string &engineName = "");
+ 
+ 		/// Deletes items at least as old as the given date.
+-		bool deleteItems(const string &queryName, const string &engineName,
++		bool deleteItems(const std::string &queryName, const std::string &engineName,
+ 			time_t cutOffDate);
+ 
+ 		/// Deletes items.
+-		bool deleteItems(const string &name, bool isQueryName);
++		bool deleteItems(const std::string &name, bool isQueryName);
+ 
+ 		/// Expires items older than the given date.
+ 		bool expireItems(time_t expiryDate);
+
+Modified: trunk/SQL/SQLiteBase.cpp
+===================================================================
+--- trunk/SQL/SQLiteBase.cpp	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/SQLiteBase.cpp	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -26,7 +26,10 @@
+ #include "SQLiteBase.h"
+ 
+ using std::cout;
++using std::cerr;
+ using std::endl;
++using std::string;
++using std::vector;
+ 
+ static int busyHandler(void *pData, int lockNum)
+ {
+@@ -160,14 +163,14 @@
+ 	return true;
+ }
+ 
+-SQLiteBase::SQLiteBase(const string &database, bool onDemand) :
+-	m_databaseName(database),
++SQLiteBase::SQLiteBase(const string &databaseName, bool onDemand) :
++	m_databaseName(databaseName),
+ 	m_onDemand(onDemand),
+ 	m_pDatabase(NULL)
+ {
+ 	if (m_onDemand == false)
+ 	{
+-		open(m_databaseName);
++		open();
+ 	}
+ }
+ 
+@@ -179,38 +182,38 @@
+ 	}
+ }
+ 
+-bool SQLiteBase::check(const string &database)
++bool SQLiteBase::check(const string &databaseName)
+ {
+ 	struct stat dbStat;
+ 
+ 	// The specified path must be a file
+-	if ((stat(database.c_str(), &dbStat) != -1) &&
++	if ((stat(databaseName.c_str(), &dbStat) != -1) &&
+ 		(!S_ISREG(dbStat.st_mode)))
+ 	{
+ 		// It exists, but it's not a file as expected
+-		cerr << "SQLiteBase::check: " << database << " is not a file" << endl;
++		cerr << databaseName << " is not a file" << endl;
+ 		return false;
+ 	}
+ 
+ 	return true;
+ }
+ 
+-void SQLiteBase::open(const string &database)
++void SQLiteBase::open(void)
+ {
+ 	// Open the new database
+-	if (sqlite3_open(database.c_str(), &m_pDatabase) != SQLITE_OK)
++	if (sqlite3_open(m_databaseName.c_str(), &m_pDatabase) != SQLITE_OK)
+ 	{
+ 		// An handle is returned even when an error occurs !
+ 		if (m_pDatabase != NULL)
+ 		{
+-			cerr << "SQLiteBase::open: " << sqlite3_errmsg(m_pDatabase) << endl;
++			cerr << sqlite3_errmsg(m_pDatabase) << endl;
+ 			close();
+ 			m_pDatabase = NULL;
+ 		}
+ 	}
+ 	else if (m_pDatabase == NULL)
+ 	{
+-		cerr << "SQLiteBase::open: couldn't open " << database << endl;
++		cerr << "Couldn't open " << m_databaseName << endl;
+ 	}
+ 	else
+ 	{
+@@ -239,7 +242,7 @@
+ 
+ 	if (m_onDemand == true)
+ 	{
+-		open(m_databaseName);
++		open();
+ 	}
+ 	if (m_pDatabase == NULL)
+ 	{
+@@ -253,7 +256,7 @@
+ 	{
+ 		if (errMsg != NULL)
+ 		{
+-			cerr << "SQLiteBase::executeSimpleStatement: statement <" << sql << "> failed: " << errMsg << endl;
++			cerr << "Statement <" << sql << "> failed: " << errMsg << endl;
+ 
+ 			sqlite3_free(errMsg);
+ 		}
+@@ -283,7 +286,7 @@
+ 
+ 	if (m_onDemand == true)
+ 	{
+-		open(m_databaseName);
++		open();
+ 	}
+ 	if (m_pDatabase == NULL)
+ 	{
+@@ -344,7 +347,7 @@
+ 	{
+ 		if (errMsg != NULL)
+ 		{
+-			cerr << "SQLiteBase::executeStatement: statement <" << stringBuff << "> failed: " << errMsg << endl;
++			cerr << "Statement <" << stringBuff << "> failed: " << errMsg << endl;
+ 
+ 			sqlite3_free(errMsg);
+ 		}
+
+Modified: trunk/SQL/SQLiteBase.h
+===================================================================
+--- trunk/SQL/SQLiteBase.h	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/SQLiteBase.h	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -24,21 +24,19 @@
+ 
+ #include <sqlite3.h>
+ 
+-using namespace std;
+-
+ /// A row in a SQLite table.
+ class SQLiteRow
+ {
+ 	public:
+-		SQLiteRow(const vector<string> &rowColumns, int nColumns);
++		SQLiteRow(const std::vector<std::string> &rowColumns, int nColumns);
+ 		virtual ~SQLiteRow();
+ 
+ 		int getColumnsCount(void) const;
+ 
+-		string getColumn(int nColumn) const;
++		std::string getColumn(int nColumn) const;
+ 
+ 	protected:
+-		vector<string> m_columns;
++		std::vector<std::string> m_columns;
+ 		int m_nColumns;
+ 
+ };
+@@ -52,7 +50,7 @@
+ 
+ 		bool hasMoreRows(void) const;
+ 
+-		string getColumnName(int nColumn) const;
++		std::string getColumnName(int nColumn) const;
+ 
+ 		SQLiteRow *nextRow(void);
+ 
+@@ -74,20 +72,20 @@
+ class SQLiteBase
+ {
+ 	public:
+-		SQLiteBase(const string &database, bool onDemand = true);
++		SQLiteBase(const std::string &databaseName, bool onDemand = true);
+ 		virtual ~SQLiteBase();
+ 
+-		static bool check(const string &database);
++		static bool check(const std::string &databaseName);
+ 
+-		bool executeSimpleStatement(const string &sql);
++		bool executeSimpleStatement(const std::string &sql);
+ 		SQLiteResults *executeStatement(const char *sqlFormat, ...);
+ 
+ 	protected:
+-		string m_databaseName;
++		std::string m_databaseName;
+ 		bool m_onDemand;
+ 		sqlite3 *m_pDatabase;
+ 
+-		void open(const string &database);
++		void open(void);
+ 		void close(void);
+ 
+ 	private:
+
+Modified: trunk/SQL/ViewHistory.cpp
+===================================================================
+--- trunk/SQL/ViewHistory.cpp	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/ViewHistory.cpp	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -25,6 +25,10 @@
+ #include "Url.h"
+ #include "ViewHistory.h"
+ 
++using std::cout;
++using std::endl;
++using std::string;
++
+ ViewHistory::ViewHistory(const string &database) :
+ 	SQLiteBase(database)
+ {
+
+Modified: trunk/SQL/ViewHistory.h
+===================================================================
+--- trunk/SQL/ViewHistory.h	2008-04-03 13:07:15 UTC (rev 1228)
++++ trunk/SQL/ViewHistory.h	2008-04-11 15:40:10 UTC (rev 1229)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -24,29 +24,27 @@
+ 
+ #include "SQLiteBase.h"
+ 
+-using namespace std;
+-
+ /// Manages view history.
+ class ViewHistory : public SQLiteBase
+ {
+ 	public:
+-		ViewHistory(const string &database);
++		ViewHistory(const std::string &database);
+ 		virtual ~ViewHistory();
+ 
+ 		/// Creates the ViewHistory table in the database.
+-		static bool create(const string &database);
++		static bool create(const std::string &database);
+ 
+ 		/// Inserts an URL.
+-		bool insertItem(const string &url);
++		bool insertItem(const std::string &url);
+ 
+ 		/// Checks if an URL is in the history.
+-		bool hasItem(const string &url);
++		bool hasItem(const std::string &url);
+ 
+ 		/// Returns the number of items.
+ 		unsigned int getItemsCount(void);
+ 
+ 		/// Deletes an URL.
+-		bool deleteItem(const string &url);
++		bool deleteItem(const std::string &url);
+ 
+ 		/// Expires items older than the given date.
+ 		bool expireItems(time_t expiryDate);
+
+
+
+From fabricecolin at mail.berlios.de  Sat Apr 12 10:36:40 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Sat, 12 Apr 2008 10:36:40 +0200
+Subject: [Pinot-svn] r1230 - trunk/SQL
+Message-ID: <200804120836.m3C8adP5025776@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-12 10:36:39 +0200 (Sat, 12 Apr 2008)
+New Revision: 1230
+
+Added:
+   trunk/SQL/SQLDB.cpp
+   trunk/SQL/SQLDB.h
+Modified:
+   trunk/SQL/ActionQueue.cpp
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/Makefile.am
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/SQLiteBase.cpp
+   trunk/SQL/SQLiteBase.h
+   trunk/SQL/ViewHistory.cpp
+Log:
+Moved generic code to SQLDB. This should allow implementing support for
+other databases, if there's ever a need to.
+
+
+Modified: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/ActionQueue.cpp	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -114,12 +114,12 @@
+ 	bool update = false, success = false;
+ 
+ 	// Is there already an item for this URL ?
+-	SQLiteResults *results = executeStatement("SELECT Url FROM ActionQueue \
++	SQLResults *results = executeStatement("SELECT Url FROM ActionQueue \
+ 		WHERE QueueId='%q' AND Url='%q'",
+ 		m_queueId.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ #ifdef DEBUG
+@@ -180,7 +180,7 @@
+ #endif
+ 
+ 	// Delete from ActionQueue
+-	SQLiteResults *results = executeStatement("DELETE FROM ActionQueue \
++	SQLResults *results = executeStatement("DELETE FROM ActionQueue \
+ 		WHERE QueueId='%q' AND Url='%q';",
+ 		m_queueId.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+@@ -196,12 +196,12 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("SELECT Type, Info FROM ActionQueue \
++	SQLResults *results = executeStatement("SELECT Type, Info FROM ActionQueue \
+ 		WHERE QueueId='%q' ORDER BY Date DESC LIMIT 1",
+ 		m_queueId.c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			type = textToType(row->getColumn(0));
+@@ -224,7 +224,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM ActionQueue \
++	SQLResults *results = executeStatement("DELETE FROM ActionQueue \
+ 		WHERE QueueId='%q' AND Date<'%d';",
+ 		m_queueId.c_str(), expiryDate);
+ 	if (results != NULL)
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/CrawlHistory.cpp	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -146,10 +146,10 @@
+ {
+ 	unsigned int sourceId = 0;
+ 
+-	SQLiteResults *results = executeStatement("SELECT MAX(SourceID) FROM CrawlSources;");
++	SQLResults *results = executeStatement("SELECT MAX(SourceID) FROM CrawlSources;");
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			sourceId = atoi(row->getColumn(0).c_str());
+@@ -177,11 +177,11 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("SELECT SourceID FROM CrawlSources \
++	SQLResults *results = executeStatement("SELECT SourceID FROM CrawlSources \
+ 		WHERE Url='%q';", Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			sourceId = atoi(row->getColumn(0).c_str());
+@@ -201,12 +201,12 @@
+ {
+ 	unsigned int count = 0;
+ 
+-	SQLiteResults *results = executeStatement("SELECT SourceID, Url FROM CrawlSources;");
++	SQLResults *results = executeStatement("SELECT SourceID, Url FROM CrawlSources;");
+ 	if (results != NULL)
+ 	{
+ 		while (results->hasMoreRows() == true)
+ 		{
+-			SQLiteRow *row = results->nextRow();
++			SQLRow *row = results->nextRow();
+ 			if (row == NULL)
+ 			{
+ 				break;
+@@ -229,7 +229,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM CrawlSources \
++	SQLResults *results = executeStatement("DELETE FROM CrawlSources \
+ 		WHERE SourceID='%u';", sourceId);
+ 	if (results != NULL)
+ 	{
+@@ -246,7 +246,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("INSERT INTO CrawlHistory \
++	SQLResults *results = executeStatement("INSERT INTO CrawlHistory \
+ 		VALUES('%q', '%q', '%u', '%d', '%d');",
+ 		Url::escapeUrl(url).c_str(), statusToText(status).c_str(), sourceId,
+ 		(date == 0 ? time(NULL) : date), errNum);
+@@ -264,11 +264,11 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("SELECT Status, Date FROM CrawlHistory \
++	SQLResults *results = executeStatement("SELECT Status, Date FROM CrawlHistory \
+ 		WHERE Url='%q';", Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			status = textToStatus(row->getColumn(0));
+@@ -289,7 +289,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("UPDATE CrawlHistory \
++	SQLResults *results = executeStatement("UPDATE CrawlHistory \
+ 		SET Status='%q', Date='%d', ErrorNum='%d' WHERE Url='%q';",
+ 		statusToText(status).c_str(), (date == 0 ? time(NULL) : date), errNum,
+ 		Url::escapeUrl(url).c_str());
+@@ -311,7 +311,7 @@
+ 	for (map<string, time_t>::const_iterator updateIter = urls.begin();
+ 		updateIter != urls.end(); ++updateIter)
+ 	{
+-		SQLiteResults *results = executeStatement("UPDATE CrawlHistory \
++		SQLResults *results = executeStatement("UPDATE CrawlHistory \
+ 			SET Status='%q', Date='%d' WHERE Url='%q';",
+ 			statusText.c_str(), (updateIter->second == 0 ? time(NULL) : updateIter->second),
+ 			Url::escapeUrl(updateIter->first).c_str());
+@@ -330,7 +330,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("UPDATE CrawlHistory \
++	SQLResults *results = executeStatement("UPDATE CrawlHistory \
+ 		SET Status='%q' WHERE SourceId='%u' AND Status='%q';",
+ 		statusToText(newStatus).c_str(), sourceId,
+ 		statusToText(currentStatus).c_str());
+@@ -348,11 +348,11 @@
+ {
+ 	int errNum = 0;
+ 
+-	SQLiteResults *results = executeStatement("SELECT ErrorNum, Date FROM CrawlHistory WHERE Url='%q';",
++	SQLResults *results = executeStatement("SELECT ErrorNum, Date FROM CrawlHistory WHERE Url='%q';",
+ 		Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			errNum = atoi(row->getColumn(0).c_str());
+@@ -371,7 +371,7 @@
+ unsigned int CrawlHistory::getSourceItems(unsigned int sourceId, CrawlStatus status,
+ 	set<string> &urls, time_t minDate)
+ {
+-	SQLiteResults *results = NULL;
++	SQLResults *results = NULL;
+ 	unsigned int count = 0;
+ 
+ 	if (minDate > 0)
+@@ -392,7 +392,7 @@
+ 	{
+ 		while (results->hasMoreRows() == true)
+ 		{
+-			SQLiteRow *row = results->nextRow();
++			SQLRow *row = results->nextRow();
+ 			if (row == NULL)
+ 			{
+ 				break;
+@@ -415,11 +415,11 @@
+ {
+ 	unsigned int count = 0;
+ 
+-	SQLiteResults *results = executeStatement("SELECT COUNT(*) FROM CrawlHistory WHERE Status='%q';",
++	SQLResults *results = executeStatement("SELECT COUNT(*) FROM CrawlHistory WHERE Status='%q';",
+ 		statusToText(status).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			count = atoi(row->getColumn(0).c_str());
+@@ -438,7 +438,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM CrawlHistory \
++	SQLResults *results = executeStatement("DELETE FROM CrawlHistory \
+ 		WHERE Url='%q';", Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+@@ -454,7 +454,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM CrawlHistory \
++	SQLResults *results = executeStatement("DELETE FROM CrawlHistory \
+ 		WHERE Url LIKE '%q%%';", Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+@@ -468,7 +468,7 @@
+ /// Deletes URLs belonging to a source.
+ bool CrawlHistory::deleteItems(unsigned int sourceId, CrawlStatus status)
+ {
+-	SQLiteResults *results = NULL;
++	SQLResults *results = NULL;
+ 	bool success = false;
+ 
+ 	if (status == UNKNOWN)
+@@ -497,7 +497,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM CrawlHistory \
++	SQLResults *results = executeStatement("DELETE FROM CrawlHistory \
+ 		WHERE Date<'%d';", expiryDate);
+ 	if (results != NULL)
+ 	{
+
+Modified: trunk/SQL/Makefile.am
+===================================================================
+--- trunk/SQL/Makefile.am	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/Makefile.am	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -4,6 +4,7 @@
+ 	ActionQueue.h \
+ 	CrawlHistory.h \
+ 	QueryHistory.h \
++	SQLDB.h \
+ 	SQLiteBase.h \
+ 	ViewHistory.h
+ 
+@@ -13,6 +14,7 @@
+ 	ActionQueue.cpp \
+ 	CrawlHistory.cpp \
+ 	QueryHistory.cpp \
++	SQLDB.cpp \
+ 	SQLiteBase.cpp \
+ 	ViewHistory.cpp
+ 
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/QueryHistory.cpp	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -81,7 +81,7 @@
+ 	string hostName(urlObj.getHost());
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("INSERT INTO QueryHistory \
++	SQLResults *results = executeStatement("INSERT INTO QueryHistory \
+ 		VALUES('%q', '%q', '%q', '%q', '%q', '%q', '%q', '%f', '0.0', '%d');",
+ 		queryName.c_str(), engineName.c_str(), hostName.c_str(),
+ 		Url::escapeUrl(url).c_str(), title.c_str(), extract.c_str(), charset.c_str(),
+@@ -101,12 +101,12 @@
+ {
+ 	float score = 0;
+ 
+-	SQLiteResults *results = executeStatement("SELECT Score, PrevScore FROM QueryHistory \
++	SQLResults *results = executeStatement("SELECT Score, PrevScore FROM QueryHistory \
+ 		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';",
+ 		queryName.c_str(), engineName.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			score = (float)atof(row->getColumn(0).c_str());
+@@ -127,7 +127,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("UPDATE QueryHistory SET PrevScore=Score, \
++	SQLResults *results = executeStatement("UPDATE QueryHistory SET PrevScore=Score, \
+ 		Score=%f, Date='%d', Title='%q', Extract='%q', Language='%q' \
+ 		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';",
+ 		score, time(NULL), title.c_str(), extract.c_str(), charset.c_str(),
+@@ -146,14 +146,14 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("SELECT EngineName FROM QueryHistory \
++	SQLResults *results = executeStatement("SELECT EngineName FROM QueryHistory \
+ 		WHERE QueryName='%q' GROUP BY EngineName",
+ 		queryName.c_str());
+ 	if (results != NULL)
+ 	{
+ 		while (results->hasMoreRows() == true)
+ 		{
+-			SQLiteRow *row = results->nextRow();
++			SQLRow *row = results->nextRow();
+ 			if (row == NULL)
+ 			{
+ 				break;
+@@ -177,14 +177,14 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("SELECT Title, Url, Language, Extract, Score \
++	SQLResults *results = executeStatement("SELECT Title, Url, Language, Extract, Score \
+ 		FROM QueryHistory WHERE QueryName='%q' AND EngineName='%q' ORDER BY Score DESC \
+ 		LIMIT %u;", queryName.c_str(), engineName.c_str(), max);
+ 	if (results != NULL)
+ 	{
+ 		while (results->hasMoreRows() == true)
+ 		{
+-			SQLiteRow *row = results->nextRow();
++			SQLRow *row = results->nextRow();
+ 			if (row == NULL)
+ 			{
+ 				break;
+@@ -214,12 +214,12 @@
+ {
+ 	string extract;
+ 
+-	SQLiteResults *results = executeStatement("SELECT Extract, Language FROM QueryHistory \
++	SQLResults *results = executeStatement("SELECT Extract, Language FROM QueryHistory \
+ 		WHERE QueryName='%q' AND EngineName='%q' AND Url='%q';",
+ 		queryName.c_str(), engineName.c_str(), Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			extract = row->getColumn(0);
+@@ -244,14 +244,14 @@
+ 		return false; 
+ 	}
+ 
+-	SQLiteResults *results = executeStatement("SELECT Url FROM QueryHistory \
++	SQLResults *results = executeStatement("SELECT Url FROM QueryHistory \
+ 		WHERE Url LIKE '%q%%' ORDER BY Url LIMIT %u",
+ 		Url::escapeUrl(url).c_str(), count);
+ 	if (results != NULL)
+ 	{
+ 		while (results->hasMoreRows() == true)
+ 		{
+-			SQLiteRow *row = results->nextRow();
++			SQLRow *row = results->nextRow();
+ 			if (row == NULL)
+ 			{
+ 				break;
+@@ -272,7 +272,7 @@
+ /// Gets a query's last run time.
+ string QueryHistory::getLastRun(const string &queryName, const string &engineName)
+ {
+-	SQLiteResults *results = NULL;
++	SQLResults *results = NULL;
+ 	string lastRun;
+ 
+ 	if (queryName.empty() == true)
+@@ -294,7 +294,7 @@
+ 
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			int latestDate = atoi(row->getColumn(0).c_str());
+@@ -316,7 +316,7 @@
+ bool QueryHistory::deleteItems(const string &queryName, const string &engineName,
+ 	time_t cutOffDate)
+ {
+-	SQLiteResults *results = executeStatement("DELETE FROM QueryHistory \
++	SQLResults *results = executeStatement("DELETE FROM QueryHistory \
+ 		WHERE QueryName='%q' AND EngineName='%q' AND Date<='%d';",
+ 		queryName.c_str(), engineName.c_str(), cutOffDate);
+ 	if (results != NULL)
+@@ -332,7 +332,7 @@
+ /// Deletes items.
+ bool QueryHistory::deleteItems(const string &name, bool isQueryName)
+ {
+-	SQLiteResults *results = NULL;
++	SQLResults *results = NULL;
+ 
+ 	if (isQueryName == true)
+ 	{
+@@ -358,7 +358,7 @@
+ /// Expires items older than the given date.
+ bool QueryHistory::expireItems(time_t expiryDate)
+ {
+-	SQLiteResults *results = executeStatement("DELETE FROM QueryHistory \
++	SQLResults *results = executeStatement("DELETE FROM QueryHistory \
+ 		WHERE Date<'%d';", expiryDate);
+ 	if (results != NULL)
+ 	{
+
+Added: trunk/SQL/SQLDB.cpp
+===================================================================
+--- trunk/SQL/SQLDB.cpp	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/SQLDB.cpp	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -0,0 +1,89 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <algorithm>
++#include <iostream>
++
++#include "SQLDB.h"
++
++using std::cout;
++using std::cerr;
++using std::endl;
++using std::string;
++
++SQLRow::SQLRow(unsigned int nColumns) :
++	m_nColumns(nColumns)
++{
++}
++
++SQLRow::~SQLRow()
++{
++}
++
++unsigned int SQLRow::getColumnsCount(void) const
++{
++	return m_nColumns;
++}
++
++SQLResults::SQLResults(unsigned long nRows, unsigned int nColumns) :
++	m_nRows(nRows),
++	m_nColumns(nColumns),
++	m_nCurrentRow(0)
++{
++	// Check we actually have results
++	if (m_nRows == 0)
++	{
++		m_nRows = m_nColumns = m_nCurrentRow = 0;
++	}
++}
++
++SQLResults::~SQLResults()
++{
++}
++
++bool SQLResults::hasMoreRows(void) const
++{
++	if ((m_nRows > 0) &&
++		(m_nCurrentRow < m_nRows))
++	{
++		return true;
++	}
++
++	return false;
++}
++
++bool SQLResults::rewind(void)
++{
++	m_nCurrentRow = 0;
++
++	return true;
++}
++
++SQLDB::SQLDB(const string &databaseName) :
++	m_databaseName(databaseName)
++{
++}
++
++SQLDB::~SQLDB()
++{
++}
++
+
+Added: trunk/SQL/SQLDB.h
+===================================================================
+--- trunk/SQL/SQLDB.h	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/SQLDB.h	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -0,0 +1,91 @@
++/*
++ *  Copyright 2008 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU Library General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _SQL_DB_H
++#define _SQL_DB_H
++
++#include <string>
++
++/// A row in a table.
++class SQLRow
++{
++	public:
++		virtual ~SQLRow();
++
++		unsigned int getColumnsCount(void) const;
++
++		virtual std::string getColumn(unsigned int nColumn) const = 0;
++
++	protected:
++		unsigned int m_nColumns;
++
++		SQLRow(unsigned int nColumns);
++
++};
++
++/// Results extracted from the database.
++class SQLResults
++{
++	public:
++		virtual ~SQLResults();
++
++		bool hasMoreRows(void) const;
++
++		virtual std::string getColumnName(unsigned int nColumn) const = 0;
++
++		virtual SQLRow *nextRow(void) = 0;
++
++		virtual bool rewind(void);
++
++	protected:
++		unsigned long m_nRows;
++		unsigned int m_nColumns;
++		unsigned long int m_nCurrentRow;
++
++		SQLResults(unsigned long nRows, unsigned int nColumns);
++
++	private:
++		SQLResults(const SQLResults &other);
++		SQLResults &operator=(const SQLResults &other);
++
++};
++
++/// A SQL database.
++class SQLDB
++{
++	public:
++		virtual ~SQLDB();
++
++		virtual bool isOpen(void) const = 0;
++
++		virtual bool executeSimpleStatement(const std::string &sql) = 0;
++
++		virtual SQLResults *executeStatement(const char *sqlFormat, ...) = 0;
++
++	protected:
++		std::string m_databaseName;
++
++		SQLDB(const std::string &databaseName);
++
++	private:
++		SQLDB(const SQLDB &other);
++		SQLDB &operator=(const SQLDB &other);
++
++};
++
++#endif // _SQL_DB_H
+
+Modified: trunk/SQL/SQLiteBase.cpp
+===================================================================
+--- trunk/SQL/SQLiteBase.cpp	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/SQLiteBase.cpp	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -37,15 +37,11 @@
+ 	return 1;
+ }
+ 
+-SQLiteRow::SQLiteRow(const vector<string> &rowColumns, int nColumns) :
+-	m_nColumns(nColumns)
++SQLiteRow::SQLiteRow(const vector<string> &rowColumns, unsigned int nColumns) :
++	SQLRow(nColumns)
+ {
+-	if (rowColumns.empty() == true)
++	if (rowColumns.empty() == false)
+ 	{
+-		m_nColumns = 0;
+-	}
+-	else
+-	{
+ 		m_columns.reserve(rowColumns.size());
+ #if 0
+ 		// FIXME: why does this segfault in string::assign() ?
+@@ -63,13 +59,8 @@
+ {
+ }
+ 
+-int SQLiteRow::getColumnsCount(void) const
++string SQLiteRow::getColumn(unsigned int nColumn) const
+ {
+-	return m_nColumns;
+-}
+-
+-string SQLiteRow::getColumn(int nColumn) const
+-{
+ 	if (nColumn < m_nColumns)
+ 	{
+ 		vector<string>::const_iterator colIter = m_columns.begin();
+@@ -77,7 +68,8 @@
+ 		{
+ 			if (i == nColumn)
+ 			{
+-				string column = *colIter;
++				string column(*colIter);
++
+ 				return column;
+ 			}
+ 			++colIter;
+@@ -87,17 +79,16 @@
+ 	return "";
+ }
+ 
+-SQLiteResults::SQLiteResults(char **results, int nRows, int nColumns) :
+-	m_results(results),
+-	m_nRows(nRows),
+-	m_nColumns(nColumns),
+-	m_nCurrentRow(0)
++SQLiteResults::SQLiteResults(char **results, unsigned long nRows, unsigned int nColumns) :
++	SQLResults(nRows, nColumns),
++	m_results(results)
+ {
+ 	// Check we actually have results
+ 	if ((m_results == NULL) ||
+ 		(m_nRows <= 0))
+ 	{
+-		m_nRows = m_nColumns = m_nCurrentRow = 0;
++		m_nRows = m_nCurrentRow = 0;
++		m_nColumns = 0;
+ 	}
+ }
+ 
+@@ -106,19 +97,8 @@
+ 	sqlite3_free_table(m_results);
+ }
+ 
+-bool SQLiteResults::hasMoreRows(void) const
++string SQLiteResults::getColumnName(unsigned int nColumn) const
+ {
+-	if ((m_nCurrentRow >= 0) &&
+-		(m_nCurrentRow < m_nRows))
+-	{
+-		return true;
+-	}
+-
+-	return false;
+-}
+-
+-string SQLiteResults::getColumnName(int nColumn) const
+-{
+ 	if (nColumn < m_nColumns)
+ 	{
+ 		return m_results[nColumn];
+@@ -127,7 +107,7 @@
+ 	return "";
+ }
+ 
+-SQLiteRow *SQLiteResults::nextRow(void)
++SQLRow *SQLiteResults::nextRow(void)
+ {
+ 	if ((m_nCurrentRow < 0) ||
+ 		(m_nCurrentRow >= m_nRows))
+@@ -136,11 +116,11 @@
+ 	}
+ 
+ 	// The very first row holds the column names
+-	unsigned int firstIndex = (m_nCurrentRow  + 1) * m_nColumns;
+-	unsigned int lastIndex = firstIndex + m_nColumns - 1;
++	unsigned long firstIndex = (m_nCurrentRow  + 1) * m_nColumns;
++	unsigned long lastIndex = firstIndex + m_nColumns - 1;
+ 	vector<string> rowColumns;
+ 
+-	for (unsigned int i = firstIndex; i <= lastIndex; ++i)
++	for (unsigned long i = firstIndex; i <= lastIndex; ++i)
+ 	{
+ 		if (m_results[i] == NULL)
+ 		{
+@@ -156,15 +136,8 @@
+ 	return new SQLiteRow(rowColumns, m_nColumns);
+ }
+ 
+-bool SQLiteResults::reset(void)
+-{
+-	m_nCurrentRow = 0;
+-
+-	return true;
+-}
+-
+ SQLiteBase::SQLiteBase(const string &databaseName, bool onDemand) :
+-	m_databaseName(databaseName),
++	SQLDB(databaseName),
+ 	m_onDemand(onDemand),
+ 	m_pDatabase(NULL)
+ {
+@@ -230,6 +203,16 @@
+ 	}
+ }
+ 
++bool SQLiteBase::isOpen(void) const
++{
++	if (m_pDatabase == NULL)
++	{
++		return false;
++	}
++
++	return true;
++}
++
+ bool SQLiteBase::executeSimpleStatement(const string &sql)
+ {
+ 	char *errMsg = NULL;
+@@ -271,7 +254,7 @@
+ 	return success;
+ }
+ 
+-SQLiteResults *SQLiteBase::executeStatement(const char *sqlFormat, ...)
++SQLResults *SQLiteBase::executeStatement(const char *sqlFormat, ...)
+ {
+ 	SQLiteResults *pResults = NULL;
+ #ifdef _USE_VSNPRINTF
+@@ -354,7 +337,7 @@
+ 	}
+ 	else
+ 	{
+-		pResults = new SQLiteResults(results, nRows, nColumns);
++		pResults = new SQLiteResults(results, (unsigned long)nRows, (unsigned int)nColumns);
+ 	}
+ 	va_end(ap);
+ #ifndef _USE_VSNPRINTF
+
+Modified: trunk/SQL/SQLiteBase.h
+===================================================================
+--- trunk/SQL/SQLiteBase.h	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/SQLiteBase.h	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -24,43 +24,35 @@
+ 
+ #include <sqlite3.h>
+ 
++#include "SQLDB.h"
++
+ /// A row in a SQLite table.
+-class SQLiteRow
++class SQLiteRow : public SQLRow
+ {
+ 	public:
+-		SQLiteRow(const std::vector<std::string> &rowColumns, int nColumns);
++		SQLiteRow(const std::vector<std::string> &rowColumns, unsigned int nColumns);
+ 		virtual ~SQLiteRow();
+ 
+-		int getColumnsCount(void) const;
++		virtual std::string getColumn(unsigned int nColumn) const;
+ 
+-		std::string getColumn(int nColumn) const;
+-
+ 	protected:
+ 		std::vector<std::string> m_columns;
+-		int m_nColumns;
+ 
+ };
+ 
+-/// Results extracted from a SQLite table.
+-class SQLiteResults
++/// Results extracted from a SQLite database.
++class SQLiteResults : public SQLResults
+ {
+ 	public:
+-		SQLiteResults(char **results, int nRows, int nColumns);
++		SQLiteResults(char **results, unsigned long nRows, unsigned int nColumns);
+ 		virtual ~SQLiteResults();
+ 
+-		bool hasMoreRows(void) const;
++		virtual std::string getColumnName(unsigned int nColumn) const;
+ 
+-		std::string getColumnName(int nColumn) const;
++		virtual SQLRow *nextRow(void);
+ 
+-		SQLiteRow *nextRow(void);
+-
+-		bool reset(void);
+-
+ 	protected:
+ 		char **m_results;
+-		int m_nRows;
+-		int m_nColumns;
+-		int m_nCurrentRow;
+ 
+ 	private:
+ 		SQLiteResults(const SQLiteResults &other);
+@@ -69,7 +61,7 @@
+ };
+ 
+ /// Simple C++ wrapper around the SQLite API.
+-class SQLiteBase
++class SQLiteBase : public SQLDB
+ {
+ 	public:
+ 		SQLiteBase(const std::string &databaseName, bool onDemand = true);
+@@ -77,11 +69,13 @@
+ 
+ 		static bool check(const std::string &databaseName);
+ 
+-		bool executeSimpleStatement(const std::string &sql);
+-		SQLiteResults *executeStatement(const char *sqlFormat, ...);
++		virtual bool isOpen(void) const;
+ 
++		virtual bool executeSimpleStatement(const std::string &sql);
++
++		virtual SQLResults *executeStatement(const char *sqlFormat, ...);
++
+ 	protected:
+-		std::string m_databaseName;
+ 		bool m_onDemand;
+ 		sqlite3 *m_pDatabase;
+ 
+
+Modified: trunk/SQL/ViewHistory.cpp
+===================================================================
+--- trunk/SQL/ViewHistory.cpp	2008-04-11 15:40:10 UTC (rev 1229)
++++ trunk/SQL/ViewHistory.cpp	2008-04-12 08:36:39 UTC (rev 1230)
+@@ -93,7 +93,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("INSERT INTO ViewHistory \
++	SQLResults *results = executeStatement("INSERT INTO ViewHistory \
+ 		VALUES('%q', '1', '%d');", Url::escapeUrl(url).c_str(), time(NULL));
+ 	if (results != NULL)
+ 	{
+@@ -109,11 +109,11 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("SELECT Url FROM ViewHistory \
++	SQLResults *results = executeStatement("SELECT Url FROM ViewHistory \
+ 		WHERE Url='%q';", Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			// If this returns anything, it's the URL we are looking for
+@@ -136,10 +136,10 @@
+ {
+ 	unsigned int count = 0;
+ 
+-	SQLiteResults *results = executeStatement("SELECT COUNT(*) FROM ViewHistory;");
++	SQLResults *results = executeStatement("SELECT COUNT(*) FROM ViewHistory;");
+ 	if (results != NULL)
+ 	{
+-		SQLiteRow *row = results->nextRow();
++		SQLRow *row = results->nextRow();
+ 		if (row != NULL)
+ 		{
+ 			count = atoi(row->getColumn(0).c_str());
+@@ -158,7 +158,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM ViewHistory \
++	SQLResults *results = executeStatement("DELETE FROM ViewHistory \
+ 		WHERE Url='%q';", Url::escapeUrl(url).c_str());
+ 	if (results != NULL)
+ 	{
+@@ -174,7 +174,7 @@
+ {
+ 	bool success = false;
+ 
+-	SQLiteResults *results = executeStatement("DELETE FROM ViewHistory \
++	SQLResults *results = executeStatement("DELETE FROM ViewHistory \
+ 		WHERE Date<'%d';", expiryDate);
+ 	if (results != NULL)
+ 	{
+
+
+
+From fabricecolin at mail.berlios.de  Wed Apr 23 16:04:23 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Wed, 23 Apr 2008 16:04:23 +0200
+Subject: [Pinot-svn] r1231 - trunk/UI/GTK2/src
+Message-ID: <200804231404.m3NE4NPA016040@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-23 16:04:22 +0200 (Wed, 23 Apr 2008)
+New Revision: 1231
+
+Modified:
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+If the PID file is still there, open /proc/daemon_pid/cmdline and see whether
+the given process is pinot-dbus-daemon.
+
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-04-12 08:36:39 UTC (rev 1230)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2008-04-23 14:04:22 UTC (rev 1231)
+@@ -17,15 +17,16 @@
+  */
+ 
+ #include <stdlib.h>
+-#include <signal.h>
+ #include <libintl.h>
+ #include <getopt.h>
+ #include <sys/time.h>
+ #include <sys/resource.h>
+ #include <sys/types.h>
++#include <signal.h>
+ #include <unistd.h>
+ #include <errno.h>
+ #include <iostream>
++#include <sstream>
+ #include <fstream>
+ #include <cstring>
+ #include <sigc++/sigc++.h>
+@@ -412,6 +413,7 @@
+ 		if (pidFile.is_open() == true)
+ 		{
+ 			pid_t daemonPID = 0;
++			bool checkProcess = true, daemonDied = false;
+ 
+ 			pidFile >> daemonPID;
+ 			pidFile.close();
+@@ -419,15 +421,44 @@
+ 			// Is another daemon running ?
+ 			if (daemonPID > 0)
+ 			{
+-				if (kill(daemonPID, 0) == 0)
++				fstream cmdLineFile;
++				stringstream cmdLineFileName;
++
++				// FIXME: check for existence of /proc
++				cmdLineFileName << "/proc/" << daemonPID << "/cmdline";
++				cmdLineFile.open(cmdLineFileName.str().c_str(), std::ios::in);
++				if (cmdLineFile.is_open() == true)
+ 				{
+-					// It's still running
+-					cout << "Daemon instance " << daemonPID << " is still running" << endl;
+-					return EXIT_SUCCESS;
++					string cmdLine;
++
++					cmdLineFile >> cmdLine;
++					cmdLineFile.close();
++
++					if (cmdLine.find("pinot-dbus-daemon") == string::npos)
++					{
++						// It's another process
++						checkProcess = false;
++						daemonDied = true;
++					}
+ 				}
+-				else if (errno == ESRCH)
++
++				if (checkProcess == true)
+ 				{
+-					// This PID doesn't exist
++					if (kill(daemonPID, 0) == 0)
++					{
++						// It's still running
++						cout << "Daemon instance " << daemonPID << " is still running" << endl;
++						return EXIT_SUCCESS;
++					}
++					else if (errno == ESRCH)
++					{
++						// This PID doesn't exist
++						daemonDied = true;
++					}
++				}
++
++				if (daemonDied == true)
++				{
+ 					cerr << "Previous daemon instance " << daemonPID << " died prematurely" << endl;
+ 				}
+ 			}
+
+
+
+From fabricecolin at mail.berlios.de  Wed Apr 23 16:40:21 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Wed, 23 Apr 2008 16:40:21 +0200
+Subject: [Pinot-svn] r1232 - trunk/UI/GTK2/src
+Message-ID: <200804231440.m3NEeLN2019313@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-23 16:40:21 +0200 (Wed, 23 Apr 2008)
+New Revision: 1232
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+Log:
+In DaemonState, if new directories are queued for crawling, if there's no
+DirectoryScanner thread running, they won't be picked up. Call start_crawling()
+after an addition to the queue, this will start a new crawler if necessary.
+OnDiskHandler wasn't able to get the source label of files.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-04-23 14:04:22 UTC (rev 1231)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-04-23 14:40:21 UTC (rev 1232)
+@@ -325,12 +325,7 @@
+ #endif
+ 
+ 	// Initiate crawling
+-	if (m_crawlQueue.empty() == false)
+-	{
+-		PinotSettings::IndexableLocation firstLocation(m_crawlQueue.front());
+-
+-		crawl_location(firstLocation);
+-	}
++	start_crawling();
+ }
+ 
+ void DaemonState::reload(void)
+@@ -539,12 +534,13 @@
+ 		newLocation.m_monitor = true;
+ 		newLocation.m_name = docInfo.getLocation().substr(7);
+ 		newLocation.m_isSource = false;
+-
+-		// Queue for later crawling
+-		m_crawlQueue.push(newLocation);
+ #ifdef DEBUG
+ 		cout << "DaemonState::on_message_filefound: new directory " << newLocation.m_name << endl;
+ #endif
++
++		// Queue this directory for crawling
++		m_crawlQueue.push(newLocation);
++		start_crawling();
+ 	}
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-04-23 14:04:22 UTC (rev 1231)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2008-04-23 14:40:21 UTC (rev 1232)
+@@ -208,13 +208,13 @@
+ 	{
+ 		sourceId = sourceIter->first;
+ 
+-		if (sourceIter->second.length() < location.length())
++		if (sourceIter->second.length() > location.length())
+ 		{
+ 			// Skip
+ 			continue;
+ 		}
+ 
+-		if (sourceIter->second.substr(0, location.length()) == location)
++		if (location.substr(0, sourceIter->second.length()) == sourceIter->second)
+ 		{
+ 			stringstream labelStream;
+ 
+@@ -226,6 +226,9 @@
+ 			m_signalFileFound(docInfo, labelStream.str(), isDirectory);
+ 			return true;
+ 		}
++#ifdef DEBUG
++		else cout << "OnDiskHandler::indexFile: not " << sourceIter->second << endl;
++#endif
+ 	}
+ #ifdef DEBUG
+ 	cout << "OnDiskHandler::indexFile: no source label for " << location << endl;
+
+
+
+From fabricecolin at mail.berlios.de  Wed Apr 23 16:42:02 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Wed, 23 Apr 2008 16:42:02 +0200
+Subject: [Pinot-svn] r1233 - trunk/IndexSearch/Xapian
+Message-ID: <200804231442.m3NEg2vh019445@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-23 16:42:02 +0200 (Wed, 23 Apr 2008)
+New Revision: 1233
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+If a language is already specified, don't use it blindly but see if it has a
+stemmer. If it doesn't, then scan the document.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-04-23 14:40:21 UTC (rev 1232)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2008-04-23 14:42:02 UTC (rev 1233)
+@@ -774,20 +774,34 @@
+ 	}
+ }
+ 
+-string XapianIndex::scanDocument(const char *pData, unsigned int dataLength)
++string XapianIndex::scanDocument(const string &suggestedLanguage,
++	const char *pData, unsigned int dataLength)
+ {
++	LanguageDetector lang;
+ 	vector<string> candidates;
+ 	string language;
++	bool scannedDocument = false;
+ 
+-	// Try to determine the document's language
+-	LanguageDetector lang;
+-	lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
++	if (suggestedLanguage.empty() == false)
++	{
++		// See first if this is suitable
++		candidates.push_back(suggestedLanguage);
++	}
++	else
++	{
++		// Try to determine the document's language right away
++		lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
+ 
++		scannedDocument = true;
++	}
++
+ 	// See which of these languages is suitable for stemming
+-	for (vector<string>::iterator langIter = candidates.begin(); langIter != candidates.end(); ++langIter)
++	vector<string>::iterator langIter = candidates.begin();
++	while (langIter != candidates.end())
+ 	{
+ 		if (*langIter == "unknown")
+ 		{
++			++langIter;
+ 			continue;
+ 		}
+ 
+@@ -797,7 +811,21 @@
+ 		}
+ 		catch (const Xapian::Error &error)
+ 		{
+-			cerr << "Couldn't create stemmer: " << error.get_type() << ": " << error.get_msg() << endl;
++			cerr << "Invalid language: " << error.get_type() << ": " << error.get_msg() << endl;
++
++			if (scannedDocument == false)
++			{
++				// The suggested language is not suitable
++				candidates.clear();
++				lang.guessLanguage(pData, max(dataLength, (unsigned int)2048), candidates);
++
++				langIter = candidates.begin();
++				scannedDocument = true;
++			}
++			else
++			{
++				++langIter;
++			}
+ 			continue;
+ 		}
+ 
+@@ -1791,14 +1819,11 @@
+ 
+ 	// Don't scan the document if a language is specified
+ 	m_stemLanguage = Languages::toEnglish(docInfo.getLanguage());
+-	if (m_stemLanguage.empty() == true)
++	if ((pData != NULL) &&
++		(dataLength > 0))
+ 	{
+-		if ((pData != NULL) &&
+-			(dataLength > 0))
+-		{
+-			m_stemLanguage = scanDocument(pData, dataLength);
+-			docInfo.setLanguage(Languages::toLocale(m_stemLanguage));
+-		}
++		m_stemLanguage = scanDocument(m_stemLanguage, pData, dataLength);
++		docInfo.setLanguage(Languages::toLocale(m_stemLanguage));
+ 	}
+ 
+ 	try
+@@ -1870,14 +1895,11 @@
+ 
+ 	// Don't scan the document if a language is specified
+ 	m_stemLanguage = Languages::toEnglish(docInfo.getLanguage());
+-	if (m_stemLanguage.empty() == true)
++	if ((pData != NULL) &&
++		(dataLength > 0))
+ 	{
+-		if ((pData != NULL) &&
+-			(dataLength > 0))
+-		{
+-			m_stemLanguage = scanDocument(pData, dataLength);
+-			docInfo.setLanguage(Languages::toLocale(m_stemLanguage));
+-		}
++		m_stemLanguage = scanDocument(m_stemLanguage, pData, dataLength);
++		docInfo.setLanguage(Languages::toLocale(m_stemLanguage));
+ 	}
+ 
+ 	Xapian::WritableDatabase *pIndex = NULL;
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2008-04-23 14:40:21 UTC (rev 1232)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2008-04-23 14:42:02 UTC (rev 1233)
+@@ -179,7 +179,8 @@
+ 
+ 		void removeCommonTerms(Xapian::Document &doc, const Xapian::WritableDatabase &db);
+ 
+-		std::string scanDocument(const char *pData, unsigned int dataLength);
++		std::string scanDocument(const std::string &suggestedLanguage,
++			const char *pData, unsigned int dataLength);
+ 
+ 		void setDocumentData(const DocumentInfo &info, Xapian::Document &doc,
+ 			const std::string &language) const;
+
+
+
+From fabricecolin at mail.berlios.de  Tue Apr 29 14:57:49 2008
+From: fabricecolin at mail.berlios.de (fabricecolin at BerliOS)
+Date: Tue, 29 Apr 2008 14:57:49 +0200
+Subject: [Pinot-svn] r1234 - trunk/UI/GTK2/src
+Message-ID: <200804291257.m3TCvnpa028777@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2008-04-29 14:57:49 +0200 (Tue, 29 Apr 2008)
+New Revision: 1234
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+We don't need to keep the Glib::Thread pointer around since all threads detach.
+Therefore entries can be inserted in the threads list before the new thread
+is started, and we get rid of a possible race condition between list insertion
+and thread exit.
+In ThreadsManager::get_thread(), the list should be locked in write mode since
+entries are removed.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2008-04-23 14:42:02 UTC (rev 1233)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2008-04-29 12:57:49 UTC (rev 1234)
+@@ -111,15 +111,15 @@
+ struct StopScannerThreadFunc
+ {
+ public:
+-	void operator()(map<WorkerThread *, Thread *>::value_type &p)
++	void operator()(map<unsigned int, WorkerThread *>::value_type &p)
+ 	{
+-		string type(p.first->getType());
++		string type(p.second->getType());
+ 
+ 		if (type == "DirectoryScannerThread")
+ 		{
+-			p.first->stop();
++			p.second->stop();
+ #ifdef DEBUG
+-			cout << "StopScannerThreadFunc: stopped thread " << p.first->getId() << endl;
++			cout << "StopScannerThreadFunc: stopped thread " << p.second->getId() << endl;
+ #endif
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2008-04-23 14:42:02 UTC (rev 1233)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2008-04-29 12:57:49 UTC (rev 1234)
+@@ -58,11 +58,11 @@
+ struct StopThreadFunc
+ {
+ public:
+-	void operator()(map<WorkerThread *, Thread *>::value_type &p)
++	void operator()(map<unsigned int, WorkerThread *>::value_type &p)
+ 	{
+-		p.first->stop();
++		p.second->stop();
+ #ifdef DEBUG
+-		cout << "StopThreadFunc: stopped thread " << p.first->getId() << endl;
++		cout << "StopThreadFunc: stopped thread " << p.second->getId() << endl;
+ #endif
+ 		Thread::yield();
+ 	}
+@@ -345,14 +345,14 @@
+ 	WorkerThread *pWorkerThread = NULL;
+ 
+ 	// Get the first thread that's finished
+-	if (read_lock_threads() == true)
++	if (write_lock_threads() == true)
+ 	{
+-		for (map<WorkerThread *, Thread *>::iterator threadIter = m_threads.begin();
++		for (map<unsigned int, WorkerThread *>::iterator threadIter = m_threads.begin();
+ 			threadIter != m_threads.end(); ++threadIter)
+ 		{
+-			unsigned int threadId = threadIter->first->getId();
++			unsigned int threadId = threadIter->first;
+ 
+-			if (threadIter->first->isDone() == false)
++			if (threadIter->second->isDone() == false)
+ 			{
+ #ifdef DEBUG
+ 				cout << "ThreadsManager::get_thread: thread "
+@@ -360,11 +360,11 @@
+ #endif
+ 
+ 				// Foreground threads ought not to run very long
+-				if ((threadIter->first->isBackground() == false) &&
+-					(threadIter->first->getStartTime() + 300 < timeNow))
++				if ((threadIter->second->isBackground() == false) &&
++					(threadIter->second->getStartTime() + 300 < timeNow))
+ 				{
+ 					// This thread has been running for more than 5 minutes already !
+-					threadIter->first->stop();
++					threadIter->second->stop();
+ 
+ 					cerr << "Stopped long-running thread " << threadId << endl;
+ 				}
+@@ -372,7 +372,7 @@
+ 			else
+ 			{
+ 				// This one will do...
+-				pWorkerThread = threadIter->first;
++				pWorkerThread = threadIter->second;
+ 				// Remove it
+ 				m_threads.erase(threadIter);
+ #ifdef DEBUG
+@@ -483,6 +483,8 @@
+ 
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+ {
++	bool createdThread = false;
++
+ 	if (pWorkerThread == NULL)
+ 	{
+ 		return false;
+@@ -503,25 +505,44 @@
+ 			<< " will run in the foreground" << endl;
+ #endif
+ 
+-	// Start the thread
+-	Thread *pThread = pWorkerThread->start();
+-	if (pThread == NULL)
++	// Insert
++	pair<map<unsigned int, WorkerThread *>::iterator, bool> threadPair;
++	if (write_lock_threads() == true)
+ 	{
+-		delete pWorkerThread;
++		threadPair = m_threads.insert(pair<unsigned int, WorkerThread *>(pWorkerThread->getId(), pWorkerThread));
++		if (threadPair.second == false)
++		{
++			delete pWorkerThread;
++			pWorkerThread = NULL;
++		}
+ 
+-		return false;
++		unlock_threads();
+ 	}
+ 
+-	// Insert
+-	if (write_lock_threads() == true)
++	// Start the thread
++	if (pWorkerThread != NULL)
+ 	{
+-		m_threads[pWorkerThread] = pThread;
++		Thread *pThread = pWorkerThread->start();
++		if (pThread != NULL)
++		{
++			createdThread = true;
++		}
++		else
++		{
++			// Erase
++			if (write_lock_threads() == true)
++			{
++				m_threads.erase(threadPair.first);
+ 
+-		unlock_threads();
++				unlock_threads();
++			}
++			delete pWorkerThread;
++		}
+ 	}
++
+ 	++m_nextThreadId;
+ 
+-	return true;
++	return createdThread;
+ }
+ 
+ unsigned int ThreadsManager::get_threads_count(void)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2008-04-23 14:42:02 UTC (rev 1233)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2008-04-29 12:57:49 UTC (rev 1234)
+@@ -140,7 +140,7 @@
+ 		sigc::connection m_threadsEndConnection;
+ 		pthread_rwlock_t m_threadsLock;
+ 		pthread_rwlock_t m_listsLock;
+-		std::map<WorkerThread *, Glib::Thread *> m_threads;
++		std::map<unsigned int, WorkerThread *> m_threads;
+ 		std::string m_defaultIndexLocation;
+ 		unsigned int m_maxIndexThreads;
+ 		unsigned int m_nextThreadId;
+
+
+

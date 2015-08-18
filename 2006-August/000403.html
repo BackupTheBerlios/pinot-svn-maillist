@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r410 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r410%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608191135.k7JBZUO5018489%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000402.html">
+   <LINK REL="Next"  HREF="000404.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r410 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r410%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200608191135.k7JBZUO5018489%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r410 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 19 13:35:30 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000402.html">[Pinot-svn] r409 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000404.html">[Pinot-svn] r411 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#403">[ date ]</a>
+              <a href="thread.html#403">[ thread ]</a>
+              <a href="subject.html#403">[ subject ]</a>
+              <a href="author.html#403">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-19 13:35:25 +0200 (Sat, 19 Aug 2006)
+New Revision: 410
+
+Modified:
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+Log:
+Synced with new PinotSettings and DirectoryScannerThread.
+
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-08-19 11:33:56 UTC (rev 409)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-08-19 11:35:25 UTC (rev 410)
+@@ -27,7 +27,8 @@
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;Url.h&quot;
+-#include &quot;WritableXapianIndex.h&quot;
++#include &quot;MonitorFactory.h&quot;
++#include &quot;IndexFactory.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;importDialog.hh&quot;
+@@ -51,6 +52,7 @@
+ 
+ importDialog::importDialog(const Glib::ustring &amp;title) :
+ 	importDialog_glade(),
++	m_pMonitor(MonitorFactory::getMonitor()),
+ 	m_docsCount(0),
+ 	m_importDirectory(false),
+ 	m_pScannerThread(NULL),
+@@ -96,6 +98,10 @@
+ importDialog::~importDialog()
+ {
+ 	m_state.disconnect();
++	if (m_pMonitor != NULL)
++	{
++		delete m_pMonitor;
++	}
+ }
+ 
+ void importDialog::populate_comboboxes(bool localOnly)
+@@ -151,24 +157,25 @@
+ 	return true;
+ }
+ 
+-bool importDialog::on_import_url(const string &amp;location)
++bool importDialog::on_import_url(const string &amp;location, const string &amp;sourceLabel)
+ {
+-	WritableXapianIndex index(PinotSettings::getInstance().m_docsIndexLocation);
++	WritableIndexInterface *pIndex = PinotSettings::getInstance().getRWIndex(PinotSettings::getInstance().m_docsIndexLocation);
+ 	Url urlObj(location);
+ 	set&lt;string&gt; labels;
+ 	string title(from_utf8(m_title));
+ 
+-	if (index.isGood() == true)
++	if (pIndex != NULL)
+ 	{
+-		unsigned int docId = index.hasDocument(location);
++		unsigned int docId = pIndex-&gt;hasDocument(location);
+ 
+ 		// if the document exists, get its labels list
+ 		if (docId &gt; 0)
+ 		{
+-			index.getDocumentLabels(docId, labels);
++			pIndex-&gt;getDocumentLabels(docId, labels);
+ 		}
+ 	}
+ 	labels.insert(m_labelName);
++	labels.insert(sourceLabel);
+ 
+ 	if (m_importDirectory == true)
+ 	{
+@@ -399,15 +406,15 @@
+ 		unsigned int maxDirLevel = (unsigned int)depthSpinbutton-&gt;get_value();
+ 
+ 		// Scan the directory and import all its files
+-		m_pScannerThread = new DirectoryScannerThread(location,
+-			maxDirLevel, linksCheckbutton-&gt;get_active(),
++		m_pScannerThread = new DirectoryScannerThread(m_pMonitor,
++			location, maxDirLevel, linksCheckbutton-&gt;get_active(),
+ 			&amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
+ 		m_pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;importDialog::on_import_url));
+ 		m_state.start_thread(m_pScannerThread);
+ 	}
+ 	else
+ 	{
+-		if (on_import_url(location) == true)
++		if (on_import_url(location, &quot;&quot;) == true)
+ 		{
+ 			// It's asking for another file, so this one couldn't be indexed
+ 			m_timeoutConnection.block();
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-08-19 11:33:56 UTC (rev 409)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-08-19 11:35:25 UTC (rev 410)
+@@ -27,6 +27,7 @@
+ #include &lt;gtkmm/liststore.h&gt;
+ 
+ #include &quot;DocumentInfo.h&quot;
++#include &quot;MonitorInterface.h&quot;
+ #include &quot;ModelColumns.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ #include &quot;importDialog_glade.hh&quot;
+@@ -47,10 +48,11 @@
+ 	void signal_scanner(void);
+ 
+ 	bool on_activity_timeout(void);
+-	bool on_import_url(const std::string &amp;location);
++	bool on_import_url(const std::string &amp;location, const std::string &amp;extraLabel);
+ 	void on_thread_end(WorkerThread *pThread);
+ 
+ private:
++	MonitorInterface *m_pMonitor;
+ 	// Type
+ 	ComboModelColumns m_typeColumns;
+ 	Glib::RefPtr&lt;Gtk::ListStore&gt; m_refTypeList;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000402.html">[Pinot-svn] r409 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000404.html">[Pinot-svn] r411 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#403">[ date ]</a>
+              <a href="thread.html#403">[ thread ]</a>
+              <a href="subject.html#403">[ subject ]</a>
+              <a href="author.html#403">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

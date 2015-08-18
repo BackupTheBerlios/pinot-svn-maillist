@@ -1,0 +1,222 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r777 - in trunk: UI/GTK2/src scripts/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r777%20-%20in%20trunk%3A%20UI/GTK2/src%20scripts/python&In-Reply-To=%3C200703211715.l2LHFVHe008697%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000770.html">
+   <LINK REL="Next"  HREF="000772.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r777 - in trunk: UI/GTK2/src scripts/python</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r777%20-%20in%20trunk%3A%20UI/GTK2/src%20scripts/python&In-Reply-To=%3C200703211715.l2LHFVHe008697%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r777 - in trunk: UI/GTK2/src scripts/python">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 21 18:15:31 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000770.html">[Pinot-svn] r776 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000772.html">[Pinot-svn] r778 - in trunk: Collect UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#771">[ date ]</a>
+              <a href="thread.html#771">[ thread ]</a>
+              <a href="subject.html#771">[ subject ]</a>
+              <a href="author.html#771">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-21 18:15:31 +0100 (Wed, 21 Mar 2007)
+New Revision: 777
+
+Modified:
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/scripts/python/pinot-live.py
+Log:
+Updated deskbar handler to cope with new GetDocumentInfo. Use
+deskbar.Utils.url_show() if available. Also added license and copyright notices.
+D-Bus daemon implements org.freedesktop.DBus.Introspectable.Introspect.
+
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-03-20 11:46:40 UTC (rev 776)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-03-21 17:15:31 UTC (rev 777)
+@@ -27,6 +27,7 @@
+ #include &lt;errno.h&gt;
+ #include &lt;exception&gt;
+ #include &lt;iostream&gt;
++#include &lt;fstream&gt;
+ #include &lt;sigc++/class_slot.h&gt;
+ #include &lt;sigc++/compatibility.h&gt;
+ #include &lt;sigc++/slot.h&gt;
+@@ -64,6 +65,40 @@
+         return NULL;
+ }
+ 
++static ustring g_xmlDescription;
++
++static bool loadXMLDescription(void)
++{
++	if (g_xmlDescription.empty() == false)
++	{
++		return true;
++	}
++
++	ifstream xmlFile;
++	string xmlFileName(PREFIX);
++
++	xmlFileName += &quot;/share/doc/pinot-dbus-daemon.xml&quot;;
++	xmlFile.open(xmlFileName.c_str());
++	if (xmlFile.good() == true)
++	{
++		xmlFile.seekg(0, ios::end);
++		int length = xmlFile.tellg();
++		xmlFile.seekg(0, ios::beg);
++
++		char *pXmlBuffer = new char[length + 1];
++		xmlFile.read(pXmlBuffer, length);
++		if (xmlFile.fail() == false)
++		{
++			pXmlBuffer[length] = '\0';
++			g_xmlDescription = pXmlBuffer;
++		}
++		delete[] pXmlBuffer;
++	}
++	xmlFile.close();
++
++	return true;	
++}
++
+ MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+ 	WorkerThread(),
+ 	m_ctrlReadPipe(-1),
+@@ -1151,6 +1186,25 @@
+ 			}
+ 		}
+ 	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;org.freedesktop.DBus.Introspectable&quot;, &quot;Introspect&quot;) == TRUE)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DBusServletThread::doWork: received Introspect&quot; &lt;&lt; endl;
++#endif
++		if (loadXMLDescription() == true)
++		{
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				const char *pXmlData = g_xmlDescription.c_str();
++
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_STRING, &amp;pXmlData,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
+ 	else
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/scripts/python/pinot-live.py
+===================================================================
+--- trunk/scripts/python/pinot-live.py	2007-03-20 11:46:40 UTC (rev 776)
++++ trunk/scripts/python/pinot-live.py	2007-03-21 17:15:31 UTC (rev 777)
+@@ -1,5 +1,23 @@
++#!/usr/bin/env python
++#
++# Copyright 2005-2007 Fabrice Colin
++#
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU Library General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++#
++
+ import gnome
+-
+ import deskbar
+ import deskbar.Handler, deskbar
+ import gobject
+@@ -55,7 +73,11 @@
+ 
+ 	def action(self, text=None):
+ 		print &quot;Opening Pinot hit: &quot;, self.url
+-		gnome.url_show (self.url)
++		# Prefer deskbar's url_show is available
++		try:
++			deskbar.Utils.url_show (self.url)
++		except AttributeError:
++			gnome.url_show (self.url)
+ 
+ 	def get_category (self):
+ 		return &quot;files&quot;
+@@ -102,7 +124,23 @@
+ 		except Exception, msg:
+ 			print 'Caught exception: ', msg
+ 
+-	def __receive_hits (self, name, url, mime_type, main_language):
++	def __receive_hits (self, fields):
++		name = &quot;Unknown&quot;
++		url = &quot;&quot;
++		mime_type = &quot;application/octet-stream&quot;
++		main_language = &quot;&quot;
++
++		# Get the fields we need to build a match
++		for field in fields:
++			if field[0] == &quot;caption&quot;:
++				name = field[1]
++			elif field[0] == &quot;url&quot;:
++				url = field[1]
++			elif field[0] == &quot;type&quot;:
++				mime_type = field[1]
++			elif field[0] == &quot;language&quot;:
++				main_language = field[1]
++
+ 		self.results.append( PinotFileMatch(self, name, url, mime_type, main_language) )
+ 		print &quot;Got hit &quot;, len(self.results)
+ 		if len(self.results) == self.results_count:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000770.html">[Pinot-svn] r776 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000772.html">[Pinot-svn] r778 - in trunk: Collect UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#771">[ date ]</a>
+              <a href="thread.html#771">[ thread ]</a>
+              <a href="subject.html#771">[ subject ]</a>
+              <a href="author.html#771">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

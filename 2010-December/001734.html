@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1745 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2010-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1745%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C20101215131949.3DF1B480CA2%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001733.html">
+   <LINK REL="Next"  HREF="001735.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1745 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1745%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C20101215131949.3DF1B480CA2%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1745 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Dec 15 14:19:49 CET 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001733.html">[Pinot-svn] r1744 - trunk/Core
+</A></li>
+        <LI>Next message: <A HREF="001735.html">[Pinot-svn] r1746 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1734">[ date ]</a>
+              <a href="thread.html#1734">[ thread ]</a>
+              <a href="subject.html#1734">[ subject ]</a>
+              <a href="author.html#1734">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2010-12-15 14:19:48 +0100 (Wed, 15 Dec 2010)
+New Revision: 1745
+
+Modified:
+   trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+Log:
+Index components off terms that include dots separately, in line with how the
+QueryParser processes such terms in queries.
+When generating abstracts, we may find several terms at the same position, in
+which case the shortest is preferred.
+
+
+Modified: trunk/IndexSearch/Xapian/AbstractGenerator.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2010-12-14 14:00:43 UTC (rev 1744)
++++ trunk/IndexSearch/Xapian/AbstractGenerator.cpp	2010-12-15 13:19:48 UTC (rev 1745)
+@@ -171,7 +171,7 @@
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;AbstractGenerator::generateAbstract: position &quot; &lt;&lt; winIter-&gt;first
+-			&lt;&lt; &quot; weights &quot; &lt;&lt; winIter-&gt;second.m_backWeight 
++			&lt;&lt; &quot; weighs &quot; &lt;&lt; winIter-&gt;second.m_backWeight 
+ 			&lt;&lt; &quot;/&quot; &lt;&lt; winIter-&gt;second.m_forwardWeight &lt;&lt; endl;
+ #endif
+ 		if (bestWeight &lt; winIter-&gt;second.m_forwardWeight)
+@@ -224,7 +224,13 @@
+ 				if ((startPosition &lt;= termPos + 1) &amp;&amp;
+ 					(termPos &lt; startPosition + m_wordsCount))
+ 				{
+-					wordsBuffer[termPos] = termName;
++					// If several terms exist at this position, prefer the shortest one
++					map&lt;Xapian::termpos, string&gt;::const_iterator wordIter = wordsBuffer.find(termPos);
++					if ((wordIter == wordsBuffer.end()) ||
++						(wordIter-&gt;second.length() &gt; termName.length()))
++					{
++						wordsBuffer[termPos] = termName;
++					}
+ 				}
+ 			}
+ 		}
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2010-12-14 14:00:43 UTC (rev 1744)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2010-12-15 13:19:48 UTC (rev 1745)
+@@ -140,9 +140,7 @@
+ 							cout &lt;&lt; &quot;TokensIndexer::handle_token: trimmed to &quot; &lt;&lt; term &lt;&lt; &quot; &quot; &lt;&lt; pos + 1 &lt;&lt; endl;
+ #endif
+ 						}
+-#ifdef DEBUG
+-						else cout &lt;&lt; &quot;TokensIndexer::handle_token: keeping potential acronym &quot; &lt;&lt; term &lt;&lt; endl;
+-#endif
++						// Else, it's probably an acronym
+ 						break;
+ 					}
+ 
+@@ -193,6 +191,50 @@
+ #endif
+ 				}
+ 
++				// Does it include dots ?
++				string::size_type dotPos = term.find('.');
++				if (dotPos != string::npos)
++				{
++					string::size_type startPos = 0;
++					bool addRemainder = true;
++
++#ifdef DEBUG
++					cout &lt;&lt; &quot;TokensIndexer::handle_token: found dots in &quot; &lt;&lt; term &lt;&lt; endl;
++#endif
++					while (dotPos != string::npos)
++					{
++						string component(term.substr(startPos, dotPos - startPos));
++
++						if (component.empty() == false)
++						{
++#ifdef DEBUG
++							cout &lt;&lt; &quot;TokensIndexer::handle_token: adding posting for &quot; &lt;&lt; component &lt;&lt; endl;
++#endif
++							m_doc.add_posting(m_prefix + XapianDatabase::limitTermLength(component), m_termPos);
++							++m_termPos;
++						}
++
++						// Next
++						if (dotPos == term.length() - 1)
++						{
++							addRemainder = false;
++							break;
++						}
++						startPos = dotPos + 1;
++						dotPos = term.find('.', startPos);
++					}
++
++					if (addRemainder == true)
++					{
++						string lastComponent(term.substr(startPos));
++
++#ifdef DEBUG
++						cout &lt;&lt; &quot;TokensIndexer::handle_token: adding last posting for &quot; &lt;&lt; lastComponent &lt;&lt; endl;
++#endif
++						m_doc.add_posting(m_prefix + XapianDatabase::limitTermLength(lastComponent), m_termPos);
++					}
++				}
++
+ 				addSpelling = m_doSpelling;
+ 				++m_termPos;
+ 				m_nGramCount = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001733.html">[Pinot-svn] r1744 - trunk/Core
+</A></li>
+	<LI>Next message: <A HREF="001735.html">[Pinot-svn] r1746 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1734">[ date ]</a>
+              <a href="thread.html#1734">[ thread ]</a>
+              <a href="subject.html#1734">[ subject ]</a>
+              <a href="author.html#1734">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

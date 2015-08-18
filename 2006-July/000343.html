@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r350 - in trunk: Collect Search
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-July/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r350%20-%20in%20trunk%3A%20Collect%20Search&In-Reply-To=%3C200607141545.k6EFjvWB001761%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000342.html">
+   <LINK REL="Next"  HREF="000344.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r350 - in trunk: Collect Search</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r350%20-%20in%20trunk%3A%20Collect%20Search&In-Reply-To=%3C200607141545.k6EFjvWB001761%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r350 - in trunk: Collect Search">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 14 17:45:57 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000342.html">[Pinot-svn] r349 - in trunk: Index Search
+</A></li>
+        <LI>Next message: <A HREF="000344.html">[Pinot-svn] r351 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#343">[ date ]</a>
+              <a href="thread.html#343">[ thread ]</a>
+              <a href="subject.html#343">[ subject ]</a>
+              <a href="author.html#343">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-07-14 17:45:56 +0200 (Fri, 14 Jul 2006)
+New Revision: 350
+
+Modified:
+   trunk/Collect/pinot-collect.cpp
+   trunk/Search/pinot-search.cpp
+Log:
+In pinot-search, better call XapianDatabaseFactory::closeAll() before exiting.
+Minor cleanup.
+
+
+Modified: trunk/Collect/pinot-collect.cpp
+===================================================================
+--- trunk/Collect/pinot-collect.cpp	2006-07-14 13:56:39 UTC (rev 349)
++++ trunk/Collect/pinot-collect.cpp	2006-07-14 15:45:56 UTC (rev 350)
+@@ -90,8 +90,8 @@
+ 	cout &lt;&lt; &quot;Parameters: &quot; &lt;&lt; thisUrl.getParameters() &lt;&lt; endl;
+ 
+ 	// Which Downloader ?
+-	DownloaderInterface *myDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
+-	if (myDownloader == NULL)
++	DownloaderInterface *pDownloader = DownloaderFactory::getDownloader(thisUrl.getProtocol());
++	if (pDownloader == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain downloader for protocol &quot; &lt;&lt; thisUrl.getProtocol() &lt;&lt; endl;
+ 
+@@ -101,10 +101,8 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	unsigned int urlContentLen;
+-	string contentType;
+ 	DocumentInfo docInfo(&quot;Test&quot;, url, &quot;&quot;, &quot;&quot;);
+-	Document *pDoc = myDownloader-&gt;retrieveUrl(docInfo);
++	Document *pDoc = pDownloader-&gt;retrieveUrl(docInfo);
+ 	if (pDoc == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Download operation failed !&quot; &lt;&lt; endl;
+@@ -126,7 +124,7 @@
+ 				fileName = &quot;index.html&quot;;
+ 			}
+ 
+-			cout &lt;&lt; &quot;Saving &quot; &lt;&lt; urlContentLen &lt;&lt; &quot; bytes to &quot; &lt;&lt; fileName &lt;&lt; endl;
++			cout &lt;&lt; &quot;Saving &quot; &lt;&lt; contentLen &lt;&lt; &quot; bytes to &quot; &lt;&lt; fileName &lt;&lt; endl;
+ 
+ 			// Save the content to a file
+ 			ofstream outputFile(fileName.c_str());
+@@ -141,7 +139,7 @@
+ 		delete pDoc;
+ 	}
+ 
+-	delete myDownloader;
++	delete pDownloader;
+ 
+ 	DownloaderInterface::shutdown();
+ 	MIMEScanner::shutdown();
+
+Modified: trunk/Search/pinot-search.cpp
+===================================================================
+--- trunk/Search/pinot-search.cpp	2006-07-14 13:56:39 UTC (rev 349)
++++ trunk/Search/pinot-search.cpp	2006-07-14 15:45:56 UTC (rev 350)
+@@ -23,6 +23,7 @@
+ 
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
++#include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;XmlTokenizer.h&quot;
+ #include &quot;SearchEngineFactory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+@@ -98,8 +99,8 @@
+ 	// Which SearchEngine ?
+ 	type = argv[1];
+ 	option = argv[2];
+-	SearchEngineInterface *myEngine = SearchEngineFactory::getSearchEngine(type, option);
+-	if (myEngine == NULL)
++	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(type, option);
++	if (pEngine == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain search engine instance&quot; &lt;&lt; endl;
+ 
+@@ -111,15 +112,15 @@
+ 
+ 	// How many results ?
+ 	unsigned int count = atoi(argv[4]);
+-	myEngine-&gt;setMaxResultsCount(count);
++	pEngine-&gt;setMaxResultsCount(count);
+ 
+ 	QueryProperties queryProps(&quot;senginetest&quot;, argv[3], &quot;&quot;, &quot;&quot;, &quot;&quot;);
+-	if (myEngine-&gt;runQuery(queryProps) == true)
++	if (pEngine-&gt;runQuery(queryProps) == true)
+ 	{
+ 		string resultsPage;
+ 
+ 		// Try getting a list of links
+-		const vector&lt;Result&gt; resultsList = myEngine-&gt;getResults();
++		const vector&lt;Result&gt; resultsList = pEngine-&gt;getResults();
+ 		if (resultsList.empty() == false)
+ 		{
+ 			unsigned int count = 0;
+@@ -155,8 +156,9 @@
+ 		cerr &lt;&lt; &quot;Couldn't run query on search engine &quot; &lt;&lt; argv[1] &lt;&lt; endl;
+ 	}
+ 
+-	delete myEngine;
++	delete pEngine;
+ 
++	XapianDatabaseFactory::closeAll();
+ 	DownloaderInterface::shutdown();
+ 	MIMEScanner::shutdown();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000342.html">[Pinot-svn] r349 - in trunk: Index Search
+</A></li>
+	<LI>Next message: <A HREF="000344.html">[Pinot-svn] r351 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#343">[ date ]</a>
+              <a href="thread.html#343">[ thread ]</a>
+              <a href="subject.html#343">[ subject ]</a>
+              <a href="author.html#343">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

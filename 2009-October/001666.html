@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1676 - trunk/IndexSearch/Xapian
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1676%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200910250814.n9P8E737017485%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001665.html">
+   <LINK REL="Next"  HREF="001667.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1676 - trunk/IndexSearch/Xapian</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1676%20-%20trunk/IndexSearch/Xapian&In-Reply-To=%3C200910250814.n9P8E737017485%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1676 - trunk/IndexSearch/Xapian">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Oct 25 09:14:07 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001665.html">[Pinot-svn] r1675 - trunk/po
+</A></li>
+        <LI>Next message: <A HREF="001667.html">[Pinot-svn] r1677 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1666">[ date ]</a>
+              <a href="thread.html#1666">[ thread ]</a>
+              <a href="subject.html#1666">[ subject ]</a>
+              <a href="author.html#1666">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-10-25 09:13:51 +0100 (Sun, 25 Oct 2009)
+New Revision: 1676
+
+Modified:
+   trunk/IndexSearch/Xapian/XapianIndex.cpp
+   trunk/IndexSearch/Xapian/XapianIndex.h
+Log:
+XPATH/path is a probabilistic term prefix, and path terms should be generated
+with positional information.
+Get the tokenizer to break on spaces only. With the recent changes to the
+CJKVTokenizer, this should preserve dots, eg dots in acronyms and version
+numbers, similarly to what the QueryParser does.
+
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-10-25 04:15:01 UTC (rev 1675)
++++ trunk/IndexSearch/Xapian/XapianIndex.cpp	2009-10-25 08:13:51 UTC (rev 1676)
+@@ -388,7 +388,7 @@
+ 		doSpelling, termPos);
+ 
+ 	// Get the terms
+-	tokenizer.tokenize(text, handler);
++	tokenizer.tokenize(text, handler, true);
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;XapianIndex::addPostingsToDocument: terms to position &quot; &lt;&lt; termPos &lt;&lt; endl;
+ #endif
+@@ -422,7 +422,7 @@
+ }
+ 
+ void XapianIndex::removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+-	const Xapian::WritableDatabase &amp;db, const string &amp;prefix, const string &amp;language,
++	const Xapian::WritableDatabase &amp;db, const string &amp;prefix,
+ 	bool noStemming, bool &amp;doSpelling) const
+ {
+ 	Xapian::Document termsDoc;
+@@ -545,8 +545,6 @@
+ void XapianIndex::addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 	const Xapian::WritableDatabase &amp;db, Xapian::termcount &amp;termPos)
+ {
+-	Dijon::CJKVTokenizer pathTokenizer;
+-	vector&lt;string&gt; paths;
+ 	string title(info.getTitle());
+ 	string location(info.getLocation());
+ 	string type(removeCharsetFromType(info.getType()));
+@@ -614,12 +612,9 @@
+ 		}
+ 
+ 		// ...and all components as XPATH:
+-		pathTokenizer.tokenize(tree, paths);
+-		for (vector&lt;string&gt;::iterator pathIter = paths.begin();
+-			pathIter != paths.end(); ++pathIter)
+-		{
+-			doc.add_term(string(&quot;XPATH:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-		}
++		bool doSpellingOnPaths = false;
++		addPostingsToDocument(Xapian::Utf8Iterator(tree), doc, db, &quot;XPATH:&quot;,
++			true, doSpellingOnPaths, termPos);
+ 	}
+ 	else
+ 	{
+@@ -634,14 +629,11 @@
+ 		doc.add_term(string(&quot;P&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(fileName), true));
+ 		if (fileName.find(' ') != string::npos)
+ 		{
++			bool doSpellingOnPaths = false;
++
+ 			// Add more XPATH: terms if there's a space in the file name
+-			paths.clear();
+-			pathTokenizer.tokenize(fileName, paths);
+-			for (vector&lt;string&gt;::iterator pathIter = paths.begin();
+-				pathIter != paths.end(); ++pathIter)
+-			{
+-				doc.add_term(string(&quot;XPATH:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-			}
++			addPostingsToDocument(Xapian::Utf8Iterator(fileName), doc, db, &quot;XPATH:&quot;,
++				true, doSpellingOnPaths, termPos);
+ 		}
+ 
+ 		// Does it have an extension ?
+@@ -667,9 +659,7 @@
+ void XapianIndex::removeCommonTerms(Xapian::Document &amp;doc, const Xapian::WritableDatabase &amp;db)
+ {
+ 	DocumentInfo docInfo;
+-	Dijon::CJKVTokenizer pathTokenizer;
+ 	set&lt;string&gt; commonTerms;
+-	vector&lt;string&gt; paths;
+ 	string record(doc.get_data());
+ 
+ 	// First, remove the magic term
+@@ -691,7 +681,7 @@
+ 	if (title.empty() == false)
+ 	{
+ 		removePostingsFromDocument(Xapian::Utf8Iterator(title), doc, db, &quot;S&quot;,
+-			language, true, m_doSpelling);
++			true, m_doSpelling);
+ 	}
+ 
+ 	// Location 
+@@ -748,12 +738,9 @@
+ 		}
+ 
+ 		// ...paths
+-		pathTokenizer.tokenize(tree, paths);
+-		for (vector&lt;string&gt;::iterator pathIter = paths.begin();
+-			pathIter != paths.end(); ++pathIter)
+-		{
+-			commonTerms.insert(string(&quot;XPATH:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-		}
++		bool doSpellingOnPaths = false;
++		removePostingsFromDocument(Xapian::Utf8Iterator(tree), doc, db, &quot;XPATH:&quot;,
++			true, doSpellingOnPaths);
+ 	}
+ 	else
+ 	{
+@@ -768,13 +755,10 @@
+ 		commonTerms.insert(string(&quot;P&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(fileName), true));
+ 		if (fileName.find(' ') != string::npos)
+ 		{
+-			paths.clear();
+-			pathTokenizer.tokenize(fileName, paths);
+-			for (vector&lt;string&gt;::iterator pathIter = paths.begin();
+-				pathIter != paths.end(); ++pathIter)
+-			{
+-				commonTerms.insert(string(&quot;XPATH:&quot;) + XapianDatabase::limitTermLength(Url::escapeUrl(StringManip::toLowerCase(*pathIter)), true));
+-			}
++			bool doSpellingOnPaths = false;
++
++			removePostingsFromDocument(Xapian::Utf8Iterator(fileName), doc, db, &quot;XPATH:&quot;,
++				true, doSpellingOnPaths);
+ 		}
+ 
+ 		// Does it have an extension ?
+
+Modified: trunk/IndexSearch/Xapian/XapianIndex.h
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianIndex.h	2009-10-25 04:15:01 UTC (rev 1675)
++++ trunk/IndexSearch/Xapian/XapianIndex.h	2009-10-25 08:13:51 UTC (rev 1676)
+@@ -169,7 +169,7 @@
+ 
+ 		void removePostingsFromDocument(const Xapian::Utf8Iterator &amp;itor, Xapian::Document &amp;doc,
+ 			const Xapian::WritableDatabase &amp;db, const std::string &amp;prefix,
+-			const std::string &amp;language, bool noStemming, bool &amp;doSpelling) const;
++			bool noStemming, bool &amp;doSpelling) const;
+ 
+ 		void addCommonTerms(const DocumentInfo &amp;info, Xapian::Document &amp;doc,
+ 			const Xapian::WritableDatabase &amp;db, Xapian::termcount &amp;termPos);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001665.html">[Pinot-svn] r1675 - trunk/po
+</A></li>
+	<LI>Next message: <A HREF="001667.html">[Pinot-svn] r1677 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1666">[ date ]</a>
+              <a href="thread.html#1666">[ thread ]</a>
+              <a href="subject.html#1666">[ subject ]</a>
+              <a href="author.html#1666">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

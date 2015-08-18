@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1564 - in trunk: Core UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1564%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C200902280637.n1S6boGd029851%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001553.html">
+   <LINK REL="Next"  HREF="001555.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1564 - in trunk: Core UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1564%20-%20in%20trunk%3A%20Core%20UI/GTK2/src&In-Reply-To=%3C200902280637.n1S6boGd029851%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1564 - in trunk: Core UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb 28 07:37:50 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001553.html">[Pinot-svn] r1563 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="001555.html">[Pinot-svn] r1565 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1554">[ date ]</a>
+              <a href="thread.html#1554">[ thread ]</a>
+              <a href="subject.html#1554">[ subject ]</a>
+              <a href="author.html#1554">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-28 07:37:41 +0100 (Sat, 28 Feb 2009)
+New Revision: 1564
+
+Modified:
+   trunk/Core/PinotSettings.cpp
+   trunk/Core/pinot-dbus-daemon.cpp
+   trunk/Core/pinot-index.cpp
+   trunk/UI/GTK2/src/pinot.cc
+Log:
+PinotSettings::getInstance() will initialize libxml2.
+HtmlFilter doesn't need initializing any more.
+Don't unload filters at exit time to avoid a so far unexplained crash.
+
+
+Modified: trunk/Core/PinotSettings.cpp
+===================================================================
+--- trunk/Core/PinotSettings.cpp	2009-02-28 02:46:18 UTC (rev 1563)
++++ trunk/Core/PinotSettings.cpp	2009-02-28 06:37:41 UTC (rev 1564)
+@@ -36,6 +36,7 @@
+ 
+ #include &lt;glibmm/convert.h&gt;
+ #include &lt;glibmm/date.h&gt;
++#include &lt;libxml/parser.h&gt;
+ #include &lt;libxml++/parsers/domparser.h&gt;
+ #include &lt;libxml++/nodes/node.h&gt;
+ #include &lt;libxml++/nodes/textnode.h&gt;
+@@ -161,6 +162,9 @@
+ 
+ PinotSettings &amp;PinotSettings::getInstance(void)
+ {
++	// Initialize libxml2
++	xmlInitParser();
++
+ 	return m_instance;
+ }
+ 
+
+Modified: trunk/Core/pinot-dbus-daemon.cpp
+===================================================================
+--- trunk/Core/pinot-dbus-daemon.cpp	2009-02-28 02:46:18 UTC (rev 1563)
++++ trunk/Core/pinot-dbus-daemon.cpp	2009-02-28 06:37:41 UTC (rev 1564)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -91,8 +91,6 @@
+ 
+ 	// Close everything
+ 	ModuleFactory::unloadModules();
+-	Dijon::FilterFactory::unloadFilters();
+-	Dijon::HtmlFilter::shutdown();
+ 
+ 	// Restore the stream buffers
+ 	if (g_coutBuf != NULL)
+@@ -438,7 +436,6 @@
+ 	}
+ 	DownloaderInterface::initialize();
+ 	// Load filter libraries, if any
+-	Dijon::HtmlFilter::initialize();
+ 	Dijon::FilterFactory::loadFilters(string(LIBDIR) + &quot;/pinot/filters&quot;);
+ 	Dijon::FilterFactory::loadFilters(confDirectory + &quot;/filters&quot;);
+ 	// Load backends, if any
+
+Modified: trunk/Core/pinot-index.cpp
+===================================================================
+--- trunk/Core/pinot-index.cpp	2009-02-28 02:46:18 UTC (rev 1563)
++++ trunk/Core/pinot-index.cpp	2009-02-28 06:37:41 UTC (rev 1564)
+@@ -167,8 +167,6 @@
+ {
+ 	// Close everything
+ 	ModuleFactory::unloadModules();
+-	Dijon::FilterFactory::unloadFilters();
+-	Dijon::HtmlFilter::shutdown();
+ 	DownloaderInterface::shutdown();
+ 	MIMEScanner::shutdown();
+ }
+@@ -285,7 +283,6 @@
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+ 	DownloaderInterface::initialize();
+-	Dijon::HtmlFilter::initialize();
+ 	Dijon::FilterFactory::loadFilters(string(LIBDIR) + string(&quot;/pinot/filters&quot;));
+ 	ModuleFactory::loadModules(string(LIBDIR) + string(&quot;/pinot/backends&quot;));
+ 	ModuleFactory::loadModules(confDirectory + &quot;/backends&quot;);
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2009-02-28 02:46:18 UTC (rev 1563)
++++ trunk/UI/GTK2/src/pinot.cc	2009-02-28 06:37:41 UTC (rev 1564)
+@@ -74,8 +74,6 @@
+ 
+ 	// Close everything
+ 	ModuleFactory::unloadModules();
+-	Dijon::FilterFactory::unloadFilters();
+-	Dijon::HtmlFilter::shutdown();
+ 
+ 	// Restore the stream buffers
+ 	if (g_coutBuf != NULL)
+@@ -247,7 +245,6 @@
+ 	}
+ 	DownloaderInterface::initialize();
+ 	// Load filter libraries, if any
+-	Dijon::HtmlFilter::initialize();
+ 	Dijon::FilterFactory::loadFilters(string(LIBDIR) + &quot;/pinot/filters&quot;);
+ 	Dijon::FilterFactory::loadFilters(confDirectory + &quot;/filters&quot;);
+ 	// Load backends, if any
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001553.html">[Pinot-svn] r1563 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="001555.html">[Pinot-svn] r1565 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1554">[ date ]</a>
+              <a href="thread.html#1554">[ thread ]</a>
+              <a href="subject.html#1554">[ subject ]</a>
+              <a href="author.html#1554">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r549 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r549%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611021153.kA2BrbZ5012088%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000541.html">
+   <LINK REL="Next"  HREF="000543.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r549 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r549%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200611021153.kA2BrbZ5012088%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r549 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov  2 12:53:37 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000541.html">[Pinot-svn] r548 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000543.html">[Pinot-svn] r550 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#542">[ date ]</a>
+              <a href="thread.html#542">[ thread ]</a>
+              <a href="subject.html#542">[ subject ]</a>
+              <a href="author.html#542">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-11-02 12:53:36 +0100 (Thu, 02 Nov 2006)
+New Revision: 549
+
+Modified:
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+Log:
+If queue_index() fails, display the reason string.
+In importDialog, start pulsing the progress bar only when we know for sure that
+the document was queued for indexing.
+
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-11-02 11:48:45 UTC (rev 548)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-11-02 11:53:36 UTC (rev 549)
+@@ -105,11 +105,19 @@
+ void importDialog::import_url(const string &amp;location)
+ {
+ 	Url urlObj(location);
+-	set&lt;string&gt; labels;
+-	string title(from_utf8(m_title));
++	DocumentInfo docInfo(from_utf8(m_title), location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+ 
+-   DocumentInfo docInfo(title, location, MIMEScanner::scanUrl(urlObj), &quot;&quot;);
+-	m_state.queue_index(docInfo);
++	// Was the document queued for indexing ?
++	ustring status = m_state.queue_index(docInfo);
++	if (status.empty() == true)
++	{
++		m_timeoutConnection = Glib::signal_timeout().connect(SigC::slot(*this,
++			&amp;importDialog::on_activity_timeout), 1000);
++	}
++	else
++	{
++		importProgressbar-&gt;set_text(status);
++	}
+ }
+ 
+ void importDialog::on_thread_end(WorkerThread *pThread)
+@@ -226,9 +234,6 @@
+ 	// Disable the import button
+ 	importButton-&gt;set_sensitive(false);
+ 
+-	m_timeoutConnection = Glib::signal_timeout().connect(SigC::slot(*this,
+-		&amp;importDialog::on_activity_timeout), 1000);
+-
+ 	// Title
+ 	m_title = titleEntry-&gt;get_text();
+ 	// Label
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2006-11-02 11:48:45 UTC (rev 548)
++++ trunk/UI/GTK2/src/mainWindow.cc	2006-11-02 11:53:36 UTC (rev 549)
+@@ -1331,15 +1331,6 @@
+ }
+ 
+ //
+-// Message reception from ListenerThread
+-//
+-void mainWindow::on_message_reception(DocumentInfo docInfo)
+-{
+-	// Queue this
+-	m_state.queue_index(docInfo);
+-}
+-
+-//
+ // Message reception from IndexBrowserThread
+ //
+ void mainWindow::on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, string indexName)
+@@ -1792,7 +1783,11 @@
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;mainWindow::on_indexresults_activate: URL is &quot; &lt;&lt; resultIter-&gt;getLocation() &lt;&lt; endl;
+ #endif
+-					m_state.queue_index(*resultIter);
++					ustring status = m_state.queue_index(*resultIter);
++					if (status.empty() == false)
++					{
++						set_status(status);
++					}
+ 				}
+ 
+ 				// We can update the rows right now
+@@ -1902,7 +1897,11 @@
+ 		DocumentInfo docInfo(docIter-&gt;getTitle(), url,
+ 			docIter-&gt;getType(), docIter-&gt;getLanguage());
+ 		docInfo.setTimestamp(docIter-&gt;getTimestamp());
+-		m_state.queue_index(docInfo);
++		ustring status = m_state.queue_index(docInfo);
++		if (status.empty() == false)
++		{
++			set_status(status);
++		}
+ 	}
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2006-11-02 11:48:45 UTC (rev 548)
++++ trunk/UI/GTK2/src/mainWindow.hh	2006-11-02 11:53:36 UTC (rev 549)
+@@ -74,7 +74,6 @@
+ 	void on_close_page(Glib::ustring title, NotebookPageBox::PageType type);
+ 	void on_thread_end(WorkerThread *pThread);
+ 	void on_editindex(Glib::ustring indexName, Glib::ustring location);
+-	void on_message_reception(DocumentInfo docInfo);
+ 	void on_message_indexupdate(IndexedDocument docInfo, unsigned int docId, std::string indexName);
+ 
+ 	// Handlers inherited from the base class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000541.html">[Pinot-svn] r548 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000543.html">[Pinot-svn] r550 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#542">[ date ]</a>
+              <a href="thread.html#542">[ thread ]</a>
+              <a href="subject.html#542">[ subject ]</a>
+              <a href="author.html#542">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,226 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1470 - trunk/Tokenize
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1470%20-%20trunk/Tokenize&In-Reply-To=%3C200901100723.n0A7Nl0a019458%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001459.html">
+   <LINK REL="Next"  HREF="001461.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1470 - trunk/Tokenize</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1470%20-%20trunk/Tokenize&In-Reply-To=%3C200901100723.n0A7Nl0a019458%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1470 - trunk/Tokenize">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jan 10 08:23:47 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001459.html">[Pinot-svn] r1469 - in trunk: IndexSearch/Xapian Utils
+</A></li>
+        <LI>Next message: <A HREF="001461.html">[Pinot-svn] r1471 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1460">[ date ]</a>
+              <a href="thread.html#1460">[ thread ]</a>
+              <a href="subject.html#1460">[ subject ]</a>
+              <a href="author.html#1460">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-01-10 08:23:41 +0100 (Sat, 10 Jan 2009)
+New Revision: 1470
+
+Modified:
+   trunk/Tokenize/TextConverter.cpp
+Log:
+Protect against exceptions thrown by Glib::IConv.
+Catch Glib::Error and unknown exceptions whenever converting.
+
+
+Modified: trunk/Tokenize/TextConverter.cpp
+===================================================================
+--- trunk/Tokenize/TextConverter.cpp	2009-01-09 12:03:47 UTC (rev 1469)
++++ trunk/Tokenize/TextConverter.cpp	2009-01-10 07:23:41 UTC (rev 1470)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2008 Fabrice Colin
++ *  Copyright 2008-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -77,65 +77,82 @@
+ 		textCharset = m_localeCharset;
+ 	}
+ 
+-	IConv converter(&quot;UTF-8&quot;, textCharset);
+ 	string outputText;
+ 	gsize inputSize = (gsize)textLen;
+ 	bool invalidSequence = false;
+ 
+-	while (inputSize &gt; 0)
++	try
+ 	{
+-		char *pOutput = outputBuffer;
+-		gsize outputSize = 8192;
++		IConv converter(&quot;UTF-8&quot;, textCharset);
++ 
++		while (inputSize &gt; 0)
++		{
++			char *pOutput = outputBuffer;
++			gsize outputSize = 8192;
+ 
+-		size_t conversions = converter.iconv(&amp;pInput, &amp;inputSize, &amp;pOutput, &amp;outputSize);
+-		int errorCode = errno;
+-		if (conversions == -1)
+-		{
+-			if (errorCode == EILSEQ)
++			size_t conversions = converter.iconv(&amp;pInput, &amp;inputSize, &amp;pOutput, &amp;outputSize);
++			int errorCode = errno;
++			if (conversions == -1)
+ 			{
+-				// Conversion was only partially successful
+-				++m_conversionErrors;
++				if (errorCode == EILSEQ)
++				{
++					// Conversion was only partially successful
++					++m_conversionErrors;
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;TextConverter::toUTF8: invalid sequence at &quot; &lt;&lt; pInput - pText &lt;&lt; endl;
++					cout &lt;&lt; &quot;TextConverter::toUTF8: invalid sequence at &quot; &lt;&lt; pInput - pText &lt;&lt; endl;
+ #endif
+-				if (m_conversionErrors &gt;= m_maxErrors)
++					if (m_conversionErrors &gt;= m_maxErrors)
++					{
++						// Give up
++						return string(pText, textLen);
++					}
++					converter.reset();
++
++					outputText.append(outputBuffer, 8192 - outputSize);
++					if (invalidSequence == false)
++					{
++						outputText += &quot;?&quot;;
++						invalidSequence = true;
++					}
++
++					// Skip that
++					++pInput;
++					--inputSize;
++					continue;
++				}
++				else if (errorCode != E2BIG)
+ 				{
+-					// Give up
++#ifdef DEBUG
++					cout &lt;&lt; &quot;TextConverter::toUTF8: unknown error &quot; &lt;&lt; errorCode &lt;&lt; endl;
++#endif
+ 					return string(pText, textLen);
+ 				}
+-				converter.reset();
+-
+-				outputText.append(outputBuffer, 8192 - outputSize);
+-				if (invalidSequence == false)
+-				{
+-					outputText += &quot;?&quot;;
+-					invalidSequence = true;
+-				}
+-
+-				// Skip that
+-				++pInput;
+-				--inputSize;
+-				continue;
+ 			}
+-			else if (errorCode != E2BIG)
++			else
+ 			{
+-#ifdef DEBUG
+-				cout &lt;&lt; &quot;TextConverter::toUTF8: unknown error &quot; &lt;&lt; errorCode &lt;&lt; endl;
+-#endif
+-				return string(pText, textLen);
++				invalidSequence = false;
+ 			}
++
++			// Append what was successfully converted
++			outputText.append(outputBuffer, 8192 - outputSize);
+ 		}
+-		else
+-		{
+-			invalidSequence = false;
+-		}
+ 
+-		// Append what was successfully converted
+-		outputText.append(outputBuffer, 8192 - outputSize);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;TextConverter::toUTF8: &quot; &lt;&lt; m_conversionErrors &lt;&lt; &quot; conversion errors&quot; &lt;&lt; endl;
++#endif
+ 	}
++	catch (Error &amp;ce)
++	{
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;TextConverter::toUTF8: &quot; &lt;&lt; m_conversionErrors &lt;&lt; &quot; conversion errors&quot; &lt;&lt; endl;
++		cout &lt;&lt; &quot;TextConverter::toUTF8: &quot; &lt;&lt; ce.what() &lt;&lt; endl;
+ #endif
++	}
++	catch (...)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;TextConverter::toUTF8: unknown exception&quot; &lt;&lt; endl;
++#endif
++	}
+ 
+ 	return outputText;
+ }
+@@ -151,12 +168,18 @@
+ 	{
+ 		return locale_from_utf8(text);
+ 	}
+-	catch (ConvertError &amp;ce)
++	catch (Error &amp;ce)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;TextConverter::fromUTF8: &quot; &lt;&lt; ce.what() &lt;&lt; endl;
+ #endif
+ 	}
++	catch (...)
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;TextConverter::fromUTF8: unknown exception&quot; &lt;&lt; endl;
++#endif
++	}
+  
+        return &quot;&quot;;
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001459.html">[Pinot-svn] r1469 - in trunk: IndexSearch/Xapian Utils
+</A></li>
+	<LI>Next message: <A HREF="001461.html">[Pinot-svn] r1471 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1460">[ date ]</a>
+              <a href="thread.html#1460">[ thread ]</a>
+              <a href="subject.html#1460">[ subject ]</a>
+              <a href="author.html#1460">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

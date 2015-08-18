@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r850 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r850%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200705270734.l4R7Yww9007953%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000843.html">
+   <LINK REL="Next"  HREF="000845.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r850 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r850%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200705270734.l4R7Yww9007953%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r850 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun May 27 09:34:58 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000843.html">[Pinot-svn] r849 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="000845.html">[Pinot-svn] r851 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#844">[ date ]</a>
+              <a href="thread.html#844">[ thread ]</a>
+              <a href="subject.html#844">[ subject ]</a>
+              <a href="author.html#844">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-27 09:34:57 +0200 (Sun, 27 May 2007)
+New Revision: 850
+
+Modified:
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+Log:
+Set the index ID on results , when in listing mode, to ensure their properties
+can be shown and edited properly.
+
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-05-26 12:26:07 UTC (rev 849)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-05-27 07:34:57 UTC (rev 850)
+@@ -888,6 +888,25 @@
+ 	}
+ }
+ 
++void QueryingThread::processResults(const vector&lt;DocumentInfo&gt; &amp;resultsList,
++	unsigned int indexId)
++{
++	unsigned int zeroId = 0;
++
++	// Copy the results list
++	for (vector&lt;DocumentInfo&gt;::const_iterator resultIter = resultsList.begin();
++		resultIter != resultsList.end(); ++resultIter)
++	{
++		DocumentInfo current(*resultIter);
++
++		// The engine has no notion of index IDs
++		unsigned int docId = current.getIsIndexed(zeroId);
++		current.setIsIndexed(indexId, docId);
++
++		m_documentsList.push_back(current);
++	}
++}
++
+ void QueryingThread::doWork(void)
+ {
+ 	PinotSettings &amp;settings = PinotSettings::getInstance();
+@@ -936,14 +955,14 @@
+ #endif
+ 
+ 		m_resultsCharset = pEngine-&gt;getResultsCharset();
+-		if (m_listingIndex == true)
++		if (m_listingIndex == false)
+ 		{
+-			copy(resultsList.begin(), resultsList.end(),
+-				back_inserter(m_documentsList));
++			processResults(resultsList);
+ 		}
+ 		else
+ 		{
+-			processResults(resultsList);
++			processResults(resultsList,
++				PinotSettings::getInstance().getIndexId(m_engineDisplayableName));
+ 		}
+ 	}
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-05-26 12:26:07 UTC (rev 849)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-05-27 07:34:57 UTC (rev 850)
+@@ -227,6 +227,9 @@
+ 
+ 		virtual void processResults(const std::vector&lt;DocumentInfo&gt; &amp;resultsList);
+ 
++		virtual void processResults(const std::vector&lt;DocumentInfo&gt; &amp;resultsList,
++			unsigned int indexId);
++
+ 		virtual void doWork(void);
+ 
+ 	private:
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-05-26 12:26:07 UTC (rev 849)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-05-27 07:34:57 UTC (rev 850)
+@@ -2052,14 +2052,18 @@
+ 
+ 		// Get the document ID
+ 		docId = docIter-&gt;getIsIndexed(indexId);
+-
+-		// Get the properties from the index because they have been altered
+-		// by the tree for display purposes
+-		pIndex-&gt;getDocumentInfo(docId, docInfo);
+-		pIndex-&gt;getDocumentLabels(docId, docLabels);
+-		termsCount = pIndex-&gt;getDocumentTermsCount(docId);
+-
+-		editDocument = true;
++#ifdef DEBUG
++		cout &lt;&lt; &quot;mainWindow::on_showfromindex_activate: document &quot; &lt;&lt; docId &lt;&lt; &quot; in index &quot; &lt;&lt; indexId &lt;&lt; endl;
++#endif
++		if (docId &gt; 0)
++		{
++			// Get the properties from the index because they have been altered
++			// by the tree for display purposes
++			pIndex-&gt;getDocumentInfo(docId, docInfo);
++			pIndex-&gt;getDocumentLabels(docId, docLabels);
++			termsCount = pIndex-&gt;getDocumentTermsCount(docId);
++			editDocument = true;
++		}
+ 	}
+ 	else
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000843.html">[Pinot-svn] r849 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="000845.html">[Pinot-svn] r851 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#844">[ date ]</a>
+              <a href="thread.html#844">[ thread ]</a>
+              <a href="subject.html#844">[ subject ]</a>
+              <a href="author.html#844">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

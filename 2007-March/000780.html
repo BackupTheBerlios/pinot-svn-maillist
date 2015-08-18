@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r786 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r786%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703240413.l2O4DFvP013775%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000779.html">
+   <LINK REL="Next"  HREF="000781.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r786 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r786%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703240413.l2O4DFvP013775%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r786 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 24 05:13:15 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000779.html">[Pinot-svn] r785 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000781.html">[Pinot-svn] r787 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#780">[ date ]</a>
+              <a href="thread.html#780">[ thread ]</a>
+              <a href="subject.html#780">[ subject ]</a>
+              <a href="author.html#780">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-24 05:13:14 +0100 (Sat, 24 Mar 2007)
+New Revision: 786
+
+Modified:
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+Log:
+All worker threads are non-joinable. DaemonState doesn't delete the handlers
+when destroyed in case they are still being used. Since it's destroyed only
+when the program exits, it should be okay.
+
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-03-23 15:15:03 UTC (rev 785)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-03-24 04:13:14 UTC (rev 786)
+@@ -58,14 +58,8 @@
+ 	{
+ 		delete m_pMailMonitor;
+ 	}
+-	if (m_pDiskHandler != NULL)
+-	{
+-		delete m_pDiskHandler;
+-	}
+-	if (m_pMailHandler != NULL)
+-	{
+-		delete m_pMailHandler;
+-	}
++	// Don't delete m_pDiskHandler and m_pMailHandler, threads may need them
++	// Since DaemonState is destroyed when the program exits, it's okay
+ }
+ 
+ bool DaemonState::crawlLocation(const string &amp;locationToCrawl, bool isSource, bool doMonitoring)
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-03-23 15:15:03 UTC (rev 785)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-03-24 04:13:14 UTC (rev 786)
+@@ -68,22 +68,6 @@
+ 	}
+ };
+ 
+-// A function object to delete threads with for_each()
+-struct DeleteThreadFunc
+-{
+-public:
+-	void operator()(map&lt;WorkerThread *, Thread *&gt;::value_type &amp;p)
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;DeleteThreadFunc: waiting for thread &quot; &lt;&lt; p.first-&gt;getId() &lt;&lt; endl;
+-#endif
+-		// FIXME: the documentation says resources of the thread, including the Thread object
+-		// are released by join()
+-		p.second-&gt;join();
+-		delete p.first;
+-	}
+-};
+-
+ Dispatcher WorkerThread::m_dispatcher;
+ pthread_mutex_t WorkerThread::m_dispatcherMutex = PTHREAD_MUTEX_INITIALIZER;
+ bool WorkerThread::m_immediateFlush = true;
+@@ -99,7 +83,6 @@
+ }
+ 
+ WorkerThread::WorkerThread() :
+-	m_joinable(true),
+ 	m_id(0),
+ 	m_background(false),
+ 	m_done(false)
+@@ -140,7 +123,8 @@
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;WorkerThread::start: &quot; &lt;&lt; getType() &lt;&lt; &quot; &quot; &lt;&lt; m_id &lt;&lt; endl;
+ #endif
+-	return Thread::create(slot_class(*this, &amp;WorkerThread::threadHandler), m_joinable);
++	// Create non-joinable threads
++	return Thread::create(slot_class(*this, &amp;WorkerThread::threadHandler), false);
+ }
+ 
+ bool WorkerThread::isDone(void) const
+@@ -184,9 +168,6 @@
+ 		cout &lt;&lt; &quot;WorkerThread::emitSignal: signaling end of thread &quot; &lt;&lt; m_id &lt;&lt; endl;
+ #endif
+ 		m_dispatcher();
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;WorkerThread::emitSignal: signaled end of thread &quot; &lt;&lt; m_id &lt;&lt; endl;
+-#endif
+ 
+ 		pthread_mutex_unlock(&amp;m_dispatcherMutex);
+ 	}
+@@ -278,7 +259,6 @@
+ 			{
+ 				// This one will do...
+ 				pWorkerThread = threadIter-&gt;first;
+-				threadIter-&gt;second-&gt;join();
+ 				// Remove it
+ 				m_threads.erase(threadIter);
+ 				break;
+@@ -431,8 +411,6 @@
+ 		{
+ 			// Stop threads
+ 			for_each(m_threads.begin(), m_threads.end(), StopThreadFunc());
+-			// Join them
+-			for_each(m_threads.begin(), m_threads.end(), DeleteThreadFunc());
+ 			m_threads.clear();
+ 
+ 			unlock_threads();
+@@ -778,6 +756,8 @@
+ 
+ void QueryingThread::doWork(void)
+ {
++	PinotSettings &amp;settings = PinotSettings::getInstance();
++
+ 	// Get the SearchEngine
+ 	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(m_engineName, m_engineOption);
+ 	if (pEngine == NULL)
+@@ -791,6 +771,20 @@
+ 	// Set the maximum number of results
+ 	pEngine-&gt;setMaxResultsCount(m_queryProps.getMaximumResultsCount());
+ 
++	// Set up the proxy
++	DownloaderInterface *pDownloader = pEngine-&gt;getDownloader();
++	if ((pDownloader != NULL) &amp;&amp;
++		(settings.m_proxyEnabled == true) &amp;&amp;
++		(settings.m_proxyAddress.empty() == false))
++	{
++		char portStr[64];
++
++		pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, settings.m_proxyAddress);
++		snprintf(portStr, 64, &quot;%u&quot;, settings.m_proxyPort);
++		pDownloader-&gt;setSetting(&quot;proxyport&quot;, portStr);
++		pDownloader-&gt;setSetting(&quot;proxytype&quot;, settings.m_proxyType);
++	}
++
+ 	// Run the query
+ 	if (pEngine-&gt;runQuery(m_queryProps) == false)
+ 	{
+@@ -802,7 +796,6 @@
+ 	{
+ 		IndexInterface *pDocsIndex = NULL;
+ 		IndexInterface *pDaemonIndex = NULL;
+-		PinotSettings &amp;settings = PinotSettings::getInstance();
+ 		const vector&lt;Result&gt; &amp;resultsList = pEngine-&gt;getResults();
+ 		unsigned int indexId = 0;
+ 		bool isIndexQuery = false;
+@@ -1153,6 +1146,20 @@
+ 	}
+ 	else if (m_done == false)
+ 	{
++		PinotSettings &amp;settings = PinotSettings::getInstance();
++
++		// Set up the proxy
++		if ((settings.m_proxyEnabled == true) &amp;&amp;
++			(settings.m_proxyAddress.empty() == false))
++		{
++			char portStr[64];
++
++			m_pDownloader-&gt;setSetting(&quot;proxyaddress&quot;, settings.m_proxyAddress);
++			snprintf(portStr, 64, &quot;%u&quot;, settings.m_proxyPort);
++			m_pDownloader-&gt;setSetting(&quot;proxyport&quot;, portStr);
++			m_pDownloader-&gt;setSetting(&quot;proxytype&quot;, settings.m_proxyType);
++		}
++
+ 		m_pDoc = m_pDownloader-&gt;retrieveUrl(m_docInfo);
+ 	}
+ 
+@@ -1287,9 +1294,6 @@
+ 	if (doDownload == true)
+ 	{
+ 		DownloadingThread::doWork();
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;IndexingThread::doWork: downloaded &quot; &lt;&lt; m_docInfo.getLocation() &lt;&lt; endl;
+-#endif
+ 	}
+ 	else
+ 	{
+@@ -1444,6 +1448,9 @@
+ 			}
+ 		}
+ 	}
++#ifdef DEBUG
++	else cout &lt;&lt; &quot;IndexingThread::doWork: couldn't download &quot; &lt;&lt; m_docInfo.getLocation() &lt;&lt; endl;
++#endif
+ 
+ 	delete pIndex;
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-03-23 15:15:03 UTC (rev 785)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-03-24 04:13:14 UTC (rev 786)
+@@ -74,7 +74,6 @@
+ 		static Glib::Dispatcher m_dispatcher;
+ 		static pthread_mutex_t m_dispatcherMutex;
+ 		static bool m_immediateFlush;
+-		bool m_joinable;
+ 		unsigned int m_id;
+ 		bool m_background;
+ 		bool m_done;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000779.html">[Pinot-svn] r785 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000781.html">[Pinot-svn] r787 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#780">[ date ]</a>
+              <a href="thread.html#780">[ thread ]</a>
+              <a href="subject.html#780">[ subject ]</a>
+              <a href="author.html#780">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,286 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1409%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200811150359.mAF3xYT2011343%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001399.html">
+   <LINK REL="Next"  HREF="001401.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1409%20-%20in%20trunk%3A%20IndexSearch%20UI/GTK2/src&In-Reply-To=%3C200811150359.mAF3xYT2011343%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1409 - in trunk: IndexSearch UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Nov 15 04:59:34 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001399.html">[Pinot-svn] r1408 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001401.html">[Pinot-svn] r1410 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1400">[ date ]</a>
+              <a href="thread.html#1400">[ thread ]</a>
+              <a href="subject.html#1400">[ subject ]</a>
+              <a href="author.html#1400">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-15 04:59:05 +0100 (Sat, 15 Nov 2008)
+New Revision: 1409
+
+Modified:
+   trunk/IndexSearch/OpenSearchParser.cpp
+   trunk/IndexSearch/PluginWebEngine.cpp
+   trunk/IndexSearch/PluginWebEngine.h
+   trunk/IndexSearch/SherlockParser.cpp
+   trunk/UI/GTK2/src/EnginesTree.cpp
+   trunk/UI/GTK2/src/PinotSettings.cpp
+Log:
+Sorted out discrepancies between SearchPluginProperties ad ModuleProperties.
+
+
+Modified: trunk/IndexSearch/OpenSearchParser.cpp
+===================================================================
+--- trunk/IndexSearch/OpenSearchParser.cpp	2008-11-13 15:01:48 UTC (rev 1408)
++++ trunk/IndexSearch/OpenSearchParser.cpp	2008-11-15 03:59:05 UTC (rev 1409)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -351,7 +351,8 @@
+ 
+ 				if (nodeName == &quot;ShortName&quot;)
+ 				{
+-					properties.m_name = nodeContent;
++					// Ignore LongName, use this as long name
++					properties.m_longName = nodeContent;
+ 				}
+ 				else if (nodeName == &quot;Url&quot;)
+ 				{
+@@ -521,10 +522,6 @@
+ 					// This is supposed to be a space-delimited list, but use the whole thing as channel
+ 					properties.m_channel = nodeContent;
+ 				}
+-				else if (nodeName == &quot;LongName&quot;)
+-				{
+-					properties.m_longName = nodeContent;
+-				}
+ 				else if (nodeName == &quot;Language&quot;)
+ 				{
+ 					properties.m_languages.insert(nodeContent);
+
+Modified: trunk/IndexSearch/PluginWebEngine.cpp
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.cpp	2008-11-13 15:01:48 UTC (rev 1408)
++++ trunk/IndexSearch/PluginWebEngine.cpp	2008-11-15 03:59:05 UTC (rev 1409)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -57,7 +57,8 @@
+ 		return;
+ 	}
+ 
+-	PluginParserInterface *pParser = getPluginParser(fileName);
++	string pluginType;
++	PluginParserInterface *pParser = getPluginParser(fileName, pluginType);
+ 	if (pParser == NULL)
+ 	{
+ 		return;
+@@ -137,7 +138,8 @@
+ 	return success;
+ }
+ 
+-PluginParserInterface *PluginWebEngine::getPluginParser(const string &amp;fileName)
++PluginParserInterface *PluginWebEngine::getPluginParser(const string &amp;fileName,
++	string &amp;pluginType)
+ {
+ 	if (fileName.empty() == true)
+ 	{
+@@ -157,12 +159,14 @@
+ #ifdef HAVE_BOOST_SPIRIT_CORE_HPP
+ 	if (strncasecmp(extension.c_str(), &quot;src&quot;, 3) == 0)
+ 	{
++		pluginType = &quot;sherlock&quot;;
+ 		return new SherlockParser(fileName);
+ 	}
+ 	else
+ #endif
+ 	if (strncasecmp(extension.c_str(), &quot;xml&quot;, 3) == 0)
+ 	{
++		pluginType = &quot;opensearch&quot;;
+ 		return new OpenSearchParser(fileName);
+ 	}
+ 
+@@ -176,7 +180,8 @@
+ 		return false;
+ 	}
+ 
+-	PluginParserInterface *pParser = getPluginParser(fileName);
++	properties.m_option = fileName;
++	PluginParserInterface *pParser = getPluginParser(fileName, properties.m_name);
+ 	if (pParser == NULL)
+ 	{
+ 		return false;
+
+Modified: trunk/IndexSearch/PluginWebEngine.h
+===================================================================
+--- trunk/IndexSearch/PluginWebEngine.h	2008-11-13 15:01:48 UTC (rev 1408)
++++ trunk/IndexSearch/PluginWebEngine.h	2008-11-15 03:59:05 UTC (rev 1409)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -47,7 +47,8 @@
+ 
+ 		bool getPage(const std::string &amp;formattedQuery, unsigned int maxResultsCount);
+ 
+-		static PluginParserInterface *getPluginParser(const std::string &amp;fileName);
++		static PluginParserInterface *getPluginParser(const std::string &amp;fileName,
++			std::string &amp;pluginType);
+ 
+ 	private:
+ 		PluginWebEngine(const PluginWebEngine &amp;other);
+
+Modified: trunk/IndexSearch/SherlockParser.cpp
+===================================================================
+--- trunk/IndexSearch/SherlockParser.cpp	2008-11-13 15:01:48 UTC (rev 1408)
++++ trunk/IndexSearch/SherlockParser.cpp	2008-11-15 03:59:05 UTC (rev 1409)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -524,7 +524,7 @@
+ 		map&lt;string, string&gt;::iterator mapIter = lowSearchParams.find(&quot;name&quot;);
+ 		if (mapIter != lowSearchParams.end())
+ 		{
+-			properties.m_name = mapIter-&gt;second;
++			properties.m_longName = mapIter-&gt;second;
+ 		}
+ 
+ 		// Channel
+
+Modified: trunk/UI/GTK2/src/EnginesTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/EnginesTree.cpp	2008-11-13 15:01:48 UTC (rev 1408)
++++ trunk/UI/GTK2/src/EnginesTree.cpp	2008-11-15 03:59:05 UTC (rev 1409)
+@@ -310,16 +310,11 @@
+ 
+ 			row[m_enginesColumns.m_name] = to_utf8(engineName);
+ 			row[m_enginesColumns.m_engineName] = to_utf8(engineType);
+-			// Is this a Sherlock engine ?
+-			if (engineType == &quot;sherlock&quot;)
+-			{
+-				row[m_enginesColumns.m_option] = engineIter-&gt;m_option;
+-			}
+-			else
+-			{
+-				row[m_enginesColumns.m_option] = &quot;&quot;;
+-			}
++			row[m_enginesColumns.m_option] = engineIter-&gt;m_option;
+ 			row[m_enginesColumns.m_type] = EnginesModelColumns::WEB_ENGINE;
++#ifdef DEBUG
++			cout &lt;&lt; &quot;EnginesTree::populate: engine &quot; &lt;&lt; engineName &lt;&lt; &quot;/&quot; &lt;&lt; engineType &lt;&lt; &quot; at &quot; &lt;&lt; engineIter-&gt;m_option &lt;&lt; endl;
++#endif
+ 		}
+ 
+ 		TreeModel::Path folderPath = m_refStore-&gt;get_path(folderIter);
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-11-13 15:01:48 UTC (rev 1408)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-11-15 03:59:05 UTC (rev 1409)
+@@ -1336,14 +1336,16 @@
+ 				SearchPluginProperties properties;
+ 
+ 				if ((PluginWebEngine::getDetails(location, properties) == true) &amp;&amp;
+-					(properties.m_name.empty() == false))
++					(properties.m_name.empty() == false) &amp;&amp;
++					(properties.m_longName.empty() == false))
+ 				{
+-					m_engineIds[1 &lt;&lt; m_engines.size()] = properties.m_name;
++					m_engineIds[1 &lt;&lt; m_engines.size()] = properties.m_longName;
+ 					if (properties.m_channel.empty() == true)
+ 					{
+ 						properties.m_channel = _(&quot;Unclassified&quot;);
+ 					}
+-					m_engines.insert(ModuleProperties(&quot;sherlock&quot;, properties.m_name, location, properties.m_channel));
++					// SearchPluginProperties derives ModuleProperties
++					m_engines.insert(properties);
+ 					m_engineChannels.insert(pair&lt;string, bool&gt;(properties.m_channel, true));
+ 
+ 					// Any editable parameters in this plugin ?
+@@ -1354,6 +1356,7 @@
+ 					}
+ #ifdef DEBUG
+ 					cout &lt;&lt; &quot;PinotSettings::loadSearchEngines: &quot; &lt;&lt; properties.m_name
++						&lt;&lt; &quot;, &quot; &lt;&lt; properties.m_longName &lt;&lt; &quot;, &quot; &lt;&lt; properties.m_option
+ 						&lt;&lt; &quot; has &quot; &lt;&lt; properties.m_editableParameters.size() &lt;&lt; &quot; editable values&quot; &lt;&lt; endl;
+ #endif
+ 				}
+@@ -1751,6 +1754,7 @@
+ unsigned int PinotSettings::getEngineId(const string &amp;name)
+ {
+ 	unsigned int engineId = 0;
++
+ 	for (map&lt;unsigned int, string&gt;::iterator mapIter = m_engineIds.begin();
+ 		mapIter != m_engineIds.end(); ++mapIter)
+ 	{
+@@ -1760,6 +1764,9 @@
+ 			break;
+ 		}
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;PinotSettings::getEngineId: &quot; &lt;&lt; name &lt;&lt; &quot;, ID &quot; &lt;&lt; engineId &lt;&lt; endl;
++#endif
+ 
+ 	return engineId;
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001399.html">[Pinot-svn] r1408 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001401.html">[Pinot-svn] r1410 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1400">[ date ]</a>
+              <a href="thread.html#1400">[ thread ]</a>
+              <a href="subject.html#1400">[ subject ]</a>
+              <a href="author.html#1400">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

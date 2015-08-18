@@ -1,0 +1,570 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r836 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r836%20-%20trunk/SQL&In-Reply-To=%3C200705181345.l4IDjZgU015891%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000829.html">
+   <LINK REL="Next"  HREF="000831.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r836 - trunk/SQL</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r836%20-%20trunk/SQL&In-Reply-To=%3C200705181345.l4IDjZgU015891%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r836 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri May 18 15:45:35 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000829.html">[Pinot-svn] r835 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="000831.html">[Pinot-svn] r837 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#830">[ date ]</a>
+              <a href="thread.html#830">[ thread ]</a>
+              <a href="subject.html#830">[ subject ]</a>
+              <a href="author.html#830">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-05-18 15:45:32 +0200 (Fri, 18 May 2007)
+New Revision: 836
+
+Modified:
+   trunk/SQL/ActionQueue.cpp
+   trunk/SQL/ActionQueue.h
+   trunk/SQL/CrawlHistory.cpp
+   trunk/SQL/CrawlHistory.h
+   trunk/SQL/QueryHistory.cpp
+   trunk/SQL/QueryHistory.h
+   trunk/SQL/SQLiteBase.cpp
+   trunk/SQL/SQLiteBase.h
+   trunk/SQL/ViewHistory.cpp
+   trunk/SQL/ViewHistory.h
+Log:
+Let the sub-class decide when to open the database.
+New method CrawlHistory::updateItems().
+
+
+Modified: trunk/SQL/ActionQueue.cpp
+===================================================================
+--- trunk/SQL/ActionQueue.cpp	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/ActionQueue.cpp	2007-05-18 13:45:32 UTC (rev 836)
+@@ -211,7 +211,7 @@
+ 	return success;
+ }
+ 
+-bool ActionQueue::getOldestItem(ActionType &amp;type, DocumentInfo &amp;docInfo) const
++bool ActionQueue::getOldestItem(ActionType &amp;type, DocumentInfo &amp;docInfo)
+ {
+ 	bool success = false;
+ 
+
+Modified: trunk/SQL/ActionQueue.h
+===================================================================
+--- trunk/SQL/ActionQueue.h	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/ActionQueue.h	2007-05-18 13:45:32 UTC (rev 836)
+@@ -49,7 +49,7 @@
+         protected:
+ 		std::string m_queueId;
+ 
+-		bool getOldestItem(ActionType &amp;type, DocumentInfo &amp;docInfo) const;
++		bool getOldestItem(ActionType &amp;type, DocumentInfo &amp;docInfo);
+ 
+ 		static std::string typeToText(ActionType type);
+ 
+
+Modified: trunk/SQL/CrawlHistory.cpp
+===================================================================
+--- trunk/SQL/CrawlHistory.cpp	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/CrawlHistory.cpp	2007-05-18 13:45:32 UTC (rev 836)
+@@ -25,7 +25,7 @@
+ #include &quot;CrawlHistory.h&quot;
+ 
+ CrawlHistory::CrawlHistory(const string &amp;database) :
+-	SQLiteBase(database)
++	SQLiteBase(database, false)
+ {
+ }
+ 
+@@ -168,7 +168,7 @@
+ }
+ 
+ /// Returns sources.
+-unsigned int CrawlHistory::getSources(map&lt;unsigned int, string&gt; &amp;sources) const
++unsigned int CrawlHistory::getSources(map&lt;unsigned int, string&gt; &amp;sources)
+ {
+ 	unsigned int count = 0;
+ 
+@@ -230,7 +230,7 @@
+ }
+ 
+ /// Checks if an URL is in the history.
+-bool CrawlHistory::hasItem(const string &amp;url, CrawlStatus &amp;status, time_t &amp;date) const
++bool CrawlHistory::hasItem(const string &amp;url, CrawlStatus &amp;status, time_t &amp;date)
+ {
+ 	bool success = false;
+ 
+@@ -272,6 +272,25 @@
+ 	return success;
+ }
+ 
++/// Updates URLs.
++bool CrawlHistory::updateItems(const map&lt;string, time_t&gt; urls, CrawlStatus status)
++{
++	string statusText(statusToText(status));
++
++	for (map&lt;string, time_t&gt;::const_iterator updateIter = urls.begin();
++		updateIter != urls.end(); ++updateIter)
++	{
++		SQLiteResults *results = executeStatement(&quot;UPDATE CrawlHistory \
++			SET Status='%q', Date='%d' WHERE Url='%q';&quot;,
++			statusText.c_str(), (updateIter-&gt;second == 0 ? time(NULL) : updateIter-&gt;second),
++			Url::escapeUrl(updateIter-&gt;first).c_str());
++		if (results != NULL)
++		{
++			delete results;
++		}
++	}
++}
++
+ /// Updates the status of items en masse.
+ bool CrawlHistory::updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus)
+ {
+@@ -292,7 +311,7 @@
+ 
+ /// Returns items that belong to a source.
+ unsigned int CrawlHistory::getSourceItems(unsigned int sourceId, CrawlStatus status,
+-	set&lt;string&gt; &amp;urls, time_t minDate) const
++	set&lt;string&gt; &amp;urls, time_t minDate)
+ {
+ 	SQLiteResults *results = NULL;
+ 	unsigned int count = 0;
+@@ -334,7 +353,7 @@
+ }
+ 
+ /// Returns the number of URLs.
+-unsigned int CrawlHistory::getItemsCount(CrawlStatus status) const
++unsigned int CrawlHistory::getItemsCount(CrawlStatus status)
+ {
+ 	unsigned int count = 0;
+ 
+
+Modified: trunk/SQL/CrawlHistory.h
+===================================================================
+--- trunk/SQL/CrawlHistory.h	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/CrawlHistory.h	2007-05-18 13:45:32 UTC (rev 836)
+@@ -47,7 +47,7 @@
+ 		bool hasSource(const string &amp;url, unsigned int &amp;sourceId);
+ 
+ 		/// Returns sources.
+-		unsigned int getSources(map&lt;unsigned int, string&gt; &amp;sources) const;
++		unsigned int getSources(map&lt;unsigned int, string&gt; &amp;sources);
+ 
+ 		/// Deletes a source.
+ 		bool deleteSource(unsigned int sourceId);
+@@ -56,20 +56,23 @@
+ 		bool insertItem(const string &amp;url, CrawlStatus status, unsigned int sourceId, time_t date);
+ 
+ 		/// Checks if an URL is in the history.
+-		bool hasItem(const string &amp;url, CrawlStatus &amp;status, time_t &amp;date) const;
++		bool hasItem(const string &amp;url, CrawlStatus &amp;status, time_t &amp;date);
+ 
+ 		/// Updates an URL.
+ 		bool updateItem(const string &amp;url, CrawlStatus status, time_t date);
+ 
++		/// Updates URLs.
++		bool updateItems(const map&lt;string, time_t&gt; urls, CrawlStatus status);
++
+ 		/// Updates the status of items en masse.
+ 		bool updateItemsStatus(unsigned int sourceId, CrawlStatus currentStatus, CrawlStatus newStatus);
+ 
+ 		/// Returns items that belong to a source.
+ 		unsigned int getSourceItems(unsigned int sourceId, CrawlStatus status,
+-			set&lt;string&gt; &amp;urls, time_t minDate = 0) const;
++			set&lt;string&gt; &amp;urls, time_t minDate = 0);
+ 
+ 		/// Returns the number of URLs.
+-		unsigned int getItemsCount(CrawlStatus status) const;
++		unsigned int getItemsCount(CrawlStatus status);
+ 
+ 		/// Deletes an URL.
+ 		bool deleteItem(const string &amp;url);
+
+Modified: trunk/SQL/QueryHistory.cpp
+===================================================================
+--- trunk/SQL/QueryHistory.cpp	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/QueryHistory.cpp	2007-05-18 13:45:32 UTC (rev 836)
+@@ -91,7 +91,7 @@
+ 
+ /// Checks if an URL is in the history; returns its current score or 0 if not found.
+ float QueryHistory::hasItem(const string &amp;queryName, const string &amp;engineName, const string &amp;url,
+-	float &amp;previousScore) const
++	float &amp;previousScore)
+ {
+ 	float score = 0;
+ 
+@@ -137,7 +137,7 @@
+ 
+ /// Gets the first max items for the given query, engine pair.
+ bool QueryHistory::getItems(const string &amp;queryName, const string &amp;engineName,
+-	unsigned int max, vector&lt;DocumentInfo&gt; &amp;resultsList) const
++	unsigned int max, vector&lt;DocumentInfo&gt; &amp;resultsList)
+ {
+ 	bool success = false;
+ 
+@@ -174,7 +174,7 @@
+ 
+ /// Gets an item's extract.
+ string QueryHistory::getItemExtract(const string &amp;queryName, const string &amp;engineName,
+-	const string &amp;url, string &amp;charset) const
++	const string &amp;url, string &amp;charset)
+ {
+ 	string extract;
+ 
+@@ -199,7 +199,7 @@
+ }
+ 
+ /// Gets a query's last run time.
+-string QueryHistory::getLastRun(const string &amp;queryName, const string &amp;engineName) const
++string QueryHistory::getLastRun(const string &amp;queryName, const string &amp;engineName)
+ {
+ 	SQLiteResults *results = NULL;
+ 	string lastRun;
+
+Modified: trunk/SQL/QueryHistory.h
+===================================================================
+--- trunk/SQL/QueryHistory.h	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/QueryHistory.h	2007-05-18 13:45:32 UTC (rev 836)
+@@ -46,7 +46,7 @@
+ 		  * If it is, it returns the current and previous scores; returns 0 if not found.
+ 		  */
+ 		float hasItem(const string &amp;queryName, const string &amp;engineName, const string &amp;url,
+-			float &amp;previousScore) const;
++			float &amp;previousScore);
+ 
+ 		/// Updates an URL's details.
+ 		bool updateItem(const string &amp;queryName, const string &amp;engineName, const string &amp;url,
+@@ -54,14 +54,14 @@
+ 
+ 		/// Gets the first max items for the given query, engine pair.
+ 		bool getItems(const string &amp;queryName, const string &amp;engineName,
+-			unsigned int max, vector&lt;DocumentInfo&gt; &amp;resultsList) const;
++			unsigned int max, vector&lt;DocumentInfo&gt; &amp;resultsList);
+ 
+ 		/// Gets an item's extract.
+ 		string getItemExtract(const string &amp;queryName, const string &amp;engineName,
+-			const string &amp;url, string &amp;charset) const;
++			const string &amp;url, string &amp;charset);
+ 
+ 		/// Gets a query's last run time.
+-		string getLastRun(const string &amp;queryName, const string &amp;engineName = &quot;&quot;) const;
++		string getLastRun(const string &amp;queryName, const string &amp;engineName = &quot;&quot;);
+ 
+ 		/// Deletes items.
+ 		bool deleteItems(const string &amp;name, bool isQueryName);
+
+Modified: trunk/SQL/SQLiteBase.cpp
+===================================================================
+--- trunk/SQL/SQLiteBase.cpp	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/SQLiteBase.cpp	2007-05-18 13:45:32 UTC (rev 836)
+@@ -160,14 +160,23 @@
+ 	return true;
+ }
+ 
+-SQLiteBase::SQLiteBase(const string &amp;database) :
+-	m_databaseName(&quot;&quot;)
++SQLiteBase::SQLiteBase(const string &amp;database, bool onDemand) :
++	m_databaseName(database),
++	m_onDemand(onDemand),
++	m_pDatabase(NULL)
+ {
+-	m_databaseName = database;
++	if (m_onDemand == false)
++	{
++		open(m_databaseName);
++	}
+ }
+ 
+ SQLiteBase::~SQLiteBase()
+ {
++	if (m_onDemand == false)
++	{
++		close();
++	}
+ }
+ 
+ bool SQLiteBase::check(const string &amp;database)
+@@ -186,43 +195,39 @@
+ 	return true;
+ }
+ 
+-sqlite3 *SQLiteBase::open(const string &amp;database) const
++void SQLiteBase::open(const string &amp;database)
+ {
+-	sqlite3 *pDatabase = NULL;
+-
+ 	// Open the new database
+-	if (sqlite3_open(database.c_str(), &amp;pDatabase) != SQLITE_OK)
++	if (sqlite3_open(database.c_str(), &amp;m_pDatabase) != SQLITE_OK)
+ 	{
+ 		// An handle is returned even when an error occurs !
+-		if (pDatabase != NULL)
++		if (m_pDatabase != NULL)
+ 		{
+-			cerr &lt;&lt; &quot;SQLiteBase::open: &quot; &lt;&lt; sqlite3_errmsg(pDatabase) &lt;&lt; endl;
+-			close(pDatabase);
+-			pDatabase = NULL;
++			cerr &lt;&lt; &quot;SQLiteBase::open: &quot; &lt;&lt; sqlite3_errmsg(m_pDatabase) &lt;&lt; endl;
++			close();
++			m_pDatabase = NULL;
+ 		}
+ 	}
+-	else if (pDatabase == NULL)
++	else if (m_pDatabase == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;SQLiteBase::open: couldn't open &quot; &lt;&lt; database &lt;&lt; endl;
+ 	}
+ 	else
+ 	{
+ 		// Set up a busy handler
+-		sqlite3_busy_handler(pDatabase, busyHandler, NULL);
++		sqlite3_busy_handler(m_pDatabase, busyHandler, NULL);
+ 	}
+-
+-	return pDatabase;
+ }
+ 
+-void SQLiteBase::close(sqlite3 *pDatabase) const
++void SQLiteBase::close(void)
+ {
+-	if (pDatabase != NULL)
++	if (m_pDatabase != NULL)
+ 	{
+-		sqlite3_close(pDatabase);
++		sqlite3_close(m_pDatabase);
+ 	}
+ }
+ 
+-bool SQLiteBase::executeSimpleStatement(const string &amp;sql) const
++bool SQLiteBase::executeSimpleStatement(const string &amp;sql)
+ {
+ 	char *errMsg = NULL;
+ 	bool success = true;
+@@ -232,13 +237,16 @@
+ 		return false;
+ 	}
+ 
+-	sqlite3 *pDatabase = open(m_databaseName);
+-	if (pDatabase == NULL)
++	if (m_onDemand == true)
+ 	{
++		open(m_databaseName);
++	}
++	if (m_pDatabase == NULL)
++	{
+ 		return false;
+ 	}
+ 
+-	if (sqlite3_exec(pDatabase,
++	if (sqlite3_exec(m_pDatabase,
+ 		sql.c_str(), 
+ 		NULL, NULL, // No callback
+ 		&amp;errMsg) != SQLITE_OK)
+@@ -252,12 +260,15 @@
+ 
+ 		success = false;
+ 	}
+-	close(pDatabase);
++	if (m_onDemand == true)
++	{
++		close();
++	}
+ 
+ 	return success;
+ }
+ 
+-SQLiteResults *SQLiteBase::executeStatement(const char *sqlFormat, ...) const
++SQLiteResults *SQLiteBase::executeStatement(const char *sqlFormat, ...)
+ {
+ 	SQLiteResults *pResults = NULL;
+ #ifdef _USE_VSNPRINTF
+@@ -270,9 +281,12 @@
+ 		return NULL;
+ 	}
+ 
+-	sqlite3 *pDatabase = open(m_databaseName);
+-	if (pDatabase == NULL)
++	if (m_onDemand == true)
+ 	{
++		open(m_databaseName);
++	}
++	if (m_pDatabase == NULL)
++	{
+ 		return NULL;
+ 	}
+ 
+@@ -284,7 +298,10 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;SQLiteBase::executeStatement: couldn't format statement&quot; &lt;&lt; endl;
+ #endif
+-		close(pDatabase);
++		if (m_onDemand == true)
++		{
++			close();
++		}
+ 		return NULL;
+ 	}
+ 	if (numChars &gt;= 2048)
+@@ -293,7 +310,10 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;SQLiteBase::executeStatement: not enough space (&quot; &lt;&lt; numChars &lt;&lt; &quot;)&quot; &lt;&lt; endl;
+ #endif
+-		close(pDatabase);
++		if (m_onDemand == true)
++		{
++			close();
++		}
+ 		return NULL;
+ 	}
+ 	stringBuff[numChars] = '\0';
+@@ -304,7 +324,10 @@
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;SQLiteBase::executeStatement: couldn't format statement&quot; &lt;&lt; endl;
+ #endif
+-		close(pDatabase);
++		if (m_onDemand == true)
++		{
++			close();
++		}
+ 		return NULL;
+ 	}
+ #endif
+@@ -312,7 +335,7 @@
+ 	char **results;
+ 	char *errMsg;
+ 	int nRows, nColumns;
+-	if (sqlite3_get_table(pDatabase,
++	if (sqlite3_get_table(m_pDatabase,
+ 			stringBuff,
+ 			&amp;results,
+ 			&amp;nRows,
+@@ -334,7 +357,10 @@
+ #ifndef _USE_VSNPRINTF
+ 	sqlite3_free(stringBuff);
+ #endif
+-	close(pDatabase);
++	if (m_onDemand == true)
++	{
++		close();
++	}
+ 
+ 	return pResults;
+ }
+
+Modified: trunk/SQL/SQLiteBase.h
+===================================================================
+--- trunk/SQL/SQLiteBase.h	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/SQLiteBase.h	2007-05-18 13:45:32 UTC (rev 836)
+@@ -74,19 +74,21 @@
+ class SQLiteBase
+ {
+ 	public:
+-		SQLiteBase(const string &amp;database);
++		SQLiteBase(const string &amp;database, bool onDemand = true);
+ 		virtual ~SQLiteBase();
+ 
+ 		static bool check(const string &amp;database);
+ 
+-		bool executeSimpleStatement(const string &amp;sql) const;
+-		SQLiteResults *executeStatement(const char *sqlFormat, ...) const;
++		bool executeSimpleStatement(const string &amp;sql);
++		SQLiteResults *executeStatement(const char *sqlFormat, ...);
+ 
+ 	protected:
+ 		string m_databaseName;
++		bool m_onDemand;
++		sqlite3 *m_pDatabase;
+ 
+-		sqlite3 *open(const string &amp;database) const;
+-		void close(sqlite3 *pDatabase) const;
++		void open(const string &amp;database);
++		void close(void);
+ 
+ 	private:
+ 		SQLiteBase(const SQLiteBase &amp;other);
+
+Modified: trunk/SQL/ViewHistory.cpp
+===================================================================
+--- trunk/SQL/ViewHistory.cpp	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/ViewHistory.cpp	2007-05-18 13:45:32 UTC (rev 836)
+@@ -100,7 +100,7 @@
+ }
+ 
+ /// Checks if an URL is in the history.
+-bool ViewHistory::hasItem(const string &amp;url) const
++bool ViewHistory::hasItem(const string &amp;url)
+ {
+ 	bool success = false;
+ 
+@@ -127,7 +127,7 @@
+ }
+ 
+ /// Returns the number of items.
+-unsigned int ViewHistory::getItemsCount(void) const
++unsigned int ViewHistory::getItemsCount(void)
+ {
+ 	unsigned int count = 0;
+ 
+
+Modified: trunk/SQL/ViewHistory.h
+===================================================================
+--- trunk/SQL/ViewHistory.h	2007-05-18 13:42:48 UTC (rev 835)
++++ trunk/SQL/ViewHistory.h	2007-05-18 13:45:32 UTC (rev 836)
+@@ -40,10 +40,10 @@
+ 		bool insertItem(const string &amp;url);
+ 
+ 		/// Checks if an URL is in the history.
+-		bool hasItem(const string &amp;url) const;
++		bool hasItem(const string &amp;url);
+ 
+ 		/// Returns the number of items.
+-		unsigned int getItemsCount(void) const;
++		unsigned int getItemsCount(void);
+ 
+ 		/// Deletes an URL.
+ 		bool deleteItem(const string &amp;url);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000829.html">[Pinot-svn] r835 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="000831.html">[Pinot-svn] r837 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#830">[ date ]</a>
+              <a href="thread.html#830">[ thread ]</a>
+              <a href="subject.html#830">[ subject ]</a>
+              <a href="author.html#830">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

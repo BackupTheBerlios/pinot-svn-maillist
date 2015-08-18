@@ -1,0 +1,676 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1589 - in trunk: . Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1589%20-%20in%20trunk%3A%20.%20Utils&In-Reply-To=%3C200903210503.n2L53Owd024615%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001578.html">
+   <LINK REL="Next"  HREF="001580.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1589 - in trunk: . Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1589%20-%20in%20trunk%3A%20.%20Utils&In-Reply-To=%3C200903210503.n2L53Owd024615%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1589 - in trunk: . Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 21 06:03:24 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001578.html">[Pinot-svn] r1588 - trunk/IndexSearch/Xapian
+</A></li>
+        <LI>Next message: <A HREF="001580.html">[Pinot-svn] r1590 - in trunk: Core UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1579">[ date ]</a>
+              <a href="thread.html#1579">[ thread ]</a>
+              <a href="subject.html#1579">[ subject ]</a>
+              <a href="author.html#1579">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-21 06:03:11 +0100 (Sat, 21 Mar 2009)
+New Revision: 1589
+
+Added:
+   trunk/Utils/Memory.cpp
+   trunk/Utils/Memory.h
+Modified:
+   trunk/configure.in
+Log:
+Check for boost/pool/poolfwd.hpp, ext/malloc_allocator.h, mallinfo(),
+malloc_trim() and madvise().
+Memory wraps all this together. It provides dstring, a basic_string class
+backed by a boost::pool memory pool, and either malloc() or umem as allocators,
+functions to allocate and free buffers out of the same pool, and a function to
+let the OS reclaim memory.
+Support for umem is untested at the moment.
+
+
+Added: trunk/Utils/Memory.cpp
+===================================================================
+--- trunk/Utils/Memory.cpp	2009-03-17 14:37:13 UTC (rev 1588)
++++ trunk/Utils/Memory.cpp	2009-03-21 05:03:11 UTC (rev 1589)
+@@ -0,0 +1,116 @@
++/*
++ *  Copyright 2009 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#include &quot;config.h&quot;
++#ifdef HAVE_MALLINFO
++#include &lt;malloc.h&gt;
++#else
++#ifdef HAVE_MALLOC_TRIM
++#include &lt;malloc.h&gt;
++#endif
++#endif
++
++#include &quot;Memory.h&quot;
++
++#ifdef HAVE_BOOST_POOL_POOLFWD_HPP
++#ifdef HAVE_UMEM_H
++// Memory pool with umem
++typedef fixed_singleton_pool&lt;umem_allocator_tag,
++	sizeof(char), umem_allocator,
++	boost::details::pool::default_mutex, 131072&gt; filter_pool;
++#else
++// Memory pool with malloc (glibc's or any other implementation)
++// The tag is actually ignored
++typedef fixed_singleton_pool&lt;fixed_pool_allocator_tag,
++	sizeof(char), boost::default_user_allocator_malloc_free,
++	boost::details::pool::default_mutex, 131072&gt; filter_pool;
++#endif
++#endif
++
++using std::string;
++
++Memory::Memory()
++{
++}
++
++char *Memory::allocateBuffer(unsigned int length)
++{
++#ifdef HAVE_BOOST_POOL_POOLFWD_HPP
++	return static_cast&lt;char*&gt;(filter_pool::ordered_malloc(length));
++#else
++#ifdef HAVE_UMEM_H
++	return static_cast&lt;char*&gt;(umem_alloc(sizeof(char) * length, UMEM_DEFAULT));
++#else
++	return static_cast&lt;char*&gt;(malloc(sizeof(char) * length));
++#endif
++#endif
++}
++
++void Memory::freeBuffer(char *pBuffer, unsigned int length)
++{
++#ifdef HAVE_BOOST_POOL_POOLFWD_HPP
++	filter_pool::ordered_free(static_cast&lt;void*&gt;(pBuffer), length);
++#else
++#ifdef HAVE_UMEM_H
++	umem_free(static_cast&lt;void*&gt;(pBuffer), n * sizeof(char));
++#else
++	free(pBuffer);
++#endif
++#endif
++}
++
++void Memory::reclaim(void)
++{
++#ifdef HAVE_BOOST_POOL_POOLFWD_HPP
++#ifdef HAVE_UMEM_H
++	bool releasedMemory = fixed_singleton_pool&lt;fixed_pool_allocator_tag, sizeof(char), umem_allocator, boost::details::pool::default_mutex, 131072&gt;::release_memory();
++#ifdef DEBUG
++	std::cout &lt;&lt; &quot;Memory::reclaim: released umem allocated memory pool (&quot; &lt;&lt; releasedMemory &lt;&lt; &quot;)&quot; &lt;&lt; std::endl;
++#endif
++#else
++	bool releasedMemory = fixed_singleton_pool&lt;fixed_pool_allocator_tag, sizeof(char), boost::default_user_allocator_malloc_free, boost::details::pool::default_mutex, 131072&gt;::release_memory();
++#ifdef DEBUG
++	std::cout &lt;&lt; &quot;Memory::reclaim: released malloc allocated memory pool (&quot; &lt;&lt; releasedMemory &lt;&lt; &quot;)&quot; &lt;&lt; std::endl;
++#endif
++#endif
++#endif
++
++#ifndef HAVE_UMEM_H
++	// All this only makes sense if umem isn't in use
++#ifdef HAVE_MALLINFO
++	struct mallinfo info = mallinfo();
++	/* arena: total space allocated from the heap (that is, how much the &#8220;break&#8221; point has moved since the start of the process).
++	 * uordblks:number of bytes allocated and in use.
++	 * fordblks:number of bytes allocated but not in use.
++	 * keepcost:size of the area that can be released with a malloc_trim ().
++	 * hblks:number of chunks allocated via mmap ().
++	 * hblkhd:total number of bytes allocated via mmap ().
++	 */
++#ifdef DEBUG
++	std::cout &lt;&lt; &quot;Memory::reclaim: allocated on the heap &quot; &lt;&lt; info.arena &lt;&lt; &quot;, mmap'ed &quot; &lt;&lt; info.hblkhd
++		&lt;&lt; &quot;, in use &quot; &lt;&lt; info.uordblks &lt;&lt; &quot;, not in use &quot; &lt;&lt; info.fordblks &lt;&lt; &quot;, can be trimmed &quot; &lt;&lt; info.keepcost &lt;&lt; std::endl;
++#endif
++#endif
++#ifdef HAVE_MALLOC_TRIM
++	int trimmedMemory = malloc_trim(0);
++#ifdef DEBUG
++	std::cout &lt;&lt; &quot;Memory::reclaim: trimmed malloc allocated memory (&quot; &lt;&lt; trimmedMemory &lt;&lt; &quot;)&quot; &lt;&lt; std::endl;
++#endif
++#endif
++#endif
++}
+
+Added: trunk/Utils/Memory.h
+===================================================================
+--- trunk/Utils/Memory.h	2009-03-17 14:37:13 UTC (rev 1588)
++++ trunk/Utils/Memory.h	2009-03-21 05:03:11 UTC (rev 1589)
+@@ -0,0 +1,430 @@
++/*
++ *  Copyright 2009 Fabrice Colin
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifndef _MEMORY_H
++#define _MEMORY_H
++
++#include &lt;string&gt;
++#include &lt;iostream&gt;
++#ifdef HAVE_UMEM_H
++#include &lt;umem.h&gt;
++
++struct umem_allocator_tag
++{
++};
++
++/// Based on an example gven at <A HREF="http://www.ddj.com/cpp/184403759">http://www.ddj.com/cpp/184403759</A>
++template &lt;typename T&gt;
++class umem_allocator
++{
++	public:
++		typedef T                 value_type;
++		typedef value_type*       pointer;
++		typedef const value_type* const_pointer;
++		typedef value_type&amp;       reference;
++		typedef const value_type&amp; const_reference;
++		typedef typename std::size_t size_type;
++		typedef typename std::ptrdiff_t difference_type;
++
++		template &lt;typename U&gt;
++		struct rebind
++		{
++			typedef umem_allocator&lt;U&gt; other;
++		};
++
++		umem_allocator()
++		{
++		}
++		template &lt;typename U&gt;
++		umem_allocator(const umem_allocator&lt;U&gt; &amp;)
++		{
++		}
++		~umem_allocator()
++		{
++		}
++
++		static pointer address(reference x)
++		{
++			return &x;
++		}
++
++		static const_pointer address(const_reference x)
++		{
++			return x;
++		}
++
++		static size_type max_size()
++		{
++			return (std::numeric_limits&lt;size_type&gt;::max)();
++		}
++
++		static void construct(pointer p, const value_type &amp;t)
++		{
++			new(p) T(t);
++		}
++
++		static void destroy(pointer p)
++		{
++			p-&gt;~T();
++			// Avoid unused variable warning
++			(void)p;
++		}
++
++		bool operator==(const umem_allocator &amp;) const
++		{
++			return true;
++		}
++
++		bool operator!=(const umem_allocator &amp;) const
++		{
++			return false;
++		}
++
++		static pointer allocate(size_type n)
++		{
++#ifdef DEBUG
++			std::cout &lt;&lt; &quot;umem_allocator::allocate: allocating &quot; &lt;&lt; n &lt;&lt; std::endl;
++#endif
++			void *ret = umem_alloc(n * sizeof(T), UMEM_DEFAULT);
++			if (ret == NULL)
++			{
++				throw std::bad_alloc();
++			}
++			return static_cast&lt;pointer&gt;(ret);
++		}
++
++		static pointer allocate(const size_type n, const void *const)
++		{
++			return allocate(n);
++		}
++
++		static void deallocate(pointer p, size_type n)
++		{
++			if ((p == NULL) ||
++				(n == 0))
++			{
++				return;
++			}
++
++#ifdef DEBUG
++			std::cout &lt;&lt; &quot;umem_allocator::deallocate: freeing &quot; &lt;&lt; n &lt;&lt; std::endl;
++#endif
++			umem_free(static_cast&lt;void*&gt;(p), n * sizeof(T));
++		}
++
++};
++
++/// Specialization for void.
++template&lt;&gt;
++class umem_allocator&lt;void&gt;
++{
++	typedef void        value_type;
++	typedef void*       pointer;
++	typedef const void* const_pointer;
++
++	template &lt;class U&gt;
++	struct rebind
++	{
++		typedef umem_allocator&lt;U&gt; other;
++	};
++
++};
++#else
++#ifdef HAVE_EXT_MALLOC_ALLOCATOR_H
++#include &lt;ext/malloc_allocator.h&gt;
++#endif
++#endif
++#ifdef HAVE_BOOST_POOL_POOLFWD_HPP
++// This header should be available if poolfwd.hpp is
++#include &lt;boost/pool/pool_alloc.hpp&gt;
++
++/// Based on boost::singleton_pool, with changes to release_memory() and purge_memory()
++template &lt;typename Tag,
++	unsigned RequestedSize,
++	typename UserAllocator,
++	typename Mutex,
++	unsigned NextSize&gt;
++struct fixed_singleton_pool
++{
++	public:
++		typedef Tag           tag;
++		typedef Mutex         mutex;
++		typedef UserAllocator user_allocator;
++		typedef typename boost::pool&lt;UserAllocator&gt;::size_type size_type;
++		typedef typename boost::pool&lt;UserAllocator&gt;::difference_type difference_type;
++
++		BOOST_STATIC_CONSTANT(unsigned, requested_size = RequestedSize);
++		BOOST_STATIC_CONSTANT(unsigned, next_size = NextSize);
++
++	private:
++		struct pool_type: Mutex
++		{
++			boost::pool&lt;UserAllocator&gt; p;
++			pool_type():p(RequestedSize, NextSize)
++			{
++			}
++		};
++
++		typedef boost::details::pool::singleton_default&lt;pool_type&gt; singleton;
++
++		fixed_singleton_pool();
++
++	public:
++		static void *malloc()
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			return p.p.malloc();
++		}
++		static void *ordered_malloc()
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			return p.p.ordered_malloc();
++		}
++		static void *ordered_malloc(const size_type n)
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++#ifdef DEBUG
++			std::cout &lt;&lt; &quot;fixed_singleton_pool::ordered_malloc: allocating &quot; &lt;&lt; n &lt;&lt; std::endl;
++#endif
++			return p.p.ordered_malloc(n);
++		}
++		static bool is_from(void *const ptr)
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			return p.p.is_from(ptr);
++		}
++		static void free(void *const ptr)
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			p.p.free(ptr);
++		}
++		static void ordered_free(void *const ptr)
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			p.p.ordered_free(ptr);
++		}
++		static void free(void *const ptr, const size_type n)
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			p.p.free(ptr, n);
++		}
++		static void ordered_free(void *const ptr, const size_type n)
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++#ifdef DEBUG
++			std::cout &lt;&lt; &quot;fixed_singleton_pool::ordered_free: freeing &quot; &lt;&lt; n &lt;&lt; std::endl;
++#endif
++			p.p.ordered_free(ptr, n);
++		}
++		static bool release_memory()
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			size_type next_size_before_release = p.p.get_next_size();
++			bool has_released = p.p.release_memory();
++			size_type next_size_after_release = p.p.get_next_size();
++#ifdef DEBUG
++			std::cout &lt;&lt; &quot;fixed_singleton_pool::release_memory: next size before &quot; &lt;&lt; next_size_before_release
++				&lt;&lt; &quot; after &quot; &lt;&lt; next_size_after_release &lt;&lt; std::endl; 
++#endif
++			p.p.set_next_size(NextSize);
++			return has_released;
++		}
++		static bool purge_memory()
++		{
++			pool_type &amp;p = singleton::instance();
++			boost::details::pool::guard&lt;Mutex&gt; g(p);
++			size_type next_size_before_release = p.p.get_next_size();
++			bool has_purged = p.p.purge_memory();
++			size_type next_size_after_release = p.p.get_next_size();
++#ifdef DEBUG
++			std::cout &lt;&lt; &quot;fixed_singleton_pool::purge_memory: next size before &quot; &lt;&lt; next_size_before_release
++				&lt;&lt; &quot; after &quot; &lt;&lt; next_size_after_release &lt;&lt; std::endl; 
++#endif
++			p.p.set_next_size(NextSize);
++			return has_purged;
++		}
++
++};
++
++struct fixed_pool_allocator_tag { };
++
++/// Based on an example gven at <A HREF="http://www.ddj.com/cpp/184403759">http://www.ddj.com/cpp/184403759</A>
++template &lt;typename T,
++	typename UserAllocator,
++	typename Mutex,
++	unsigned NextSize&gt;
++class fixed_pool_allocator
++{
++	public:
++		typedef T                 value_type;
++		typedef UserAllocator     user_allocator;
++		typedef Mutex             mutex;
++		BOOST_STATIC_CONSTANT(unsigned, next_size = NextSize);
++		typedef value_type*       pointer;
++		typedef const value_type* const_pointer;
++		typedef value_type&amp;       reference;
++		typedef const value_type&amp; const_reference;
++		typedef typename boost::pool&lt;UserAllocator&gt;::size_type size_type;
++		typedef typename boost::pool&lt;UserAllocator&gt;::difference_type difference_type;
++
++		template &lt;typename U&gt;
++		struct rebind
++		{
++			typedef fixed_pool_allocator&lt;U, UserAllocator, Mutex, NextSize&gt; other;
++		};
++
++		fixed_pool_allocator()
++		{
++		}
++		template &lt;typename U&gt;
++		fixed_pool_allocator(const fixed_pool_allocator&lt;U, UserAllocator, Mutex, NextSize&gt; &amp;)
++		{
++		}
++		~fixed_pool_allocator()
++		{
++		}
++
++		static pointer address(reference x)
++		{
++			return &x;
++		}
++
++		static const_pointer address(const_reference x)
++		{
++			return x;
++		}
++
++		static size_type max_size()
++		{
++			return (std::numeric_limits&lt;size_type&gt;::max)();
++		}
++
++		static void construct(pointer p, const value_type &amp;t)
++		{
++			new(p) T(t);
++		}
++
++		static void destroy(pointer p)
++		{
++			p-&gt;~T();
++			// Avoid unused variable warning
++			(void)p;
++		}
++
++		bool operator==(const fixed_pool_allocator &amp;) const
++		{
++			return true;
++		}
++
++		bool operator!=(const fixed_pool_allocator &amp;) const
++		{
++			return false;
++		}
++
++		static pointer allocate(size_type n)
++		{
++			const pointer ret = static_cast&lt;pointer&gt;(
++					fixed_singleton_pool&lt;fixed_pool_allocator_tag, sizeof(T), UserAllocator, Mutex,
++					NextSize&gt;::ordered_malloc(n) );
++			if (ret == NULL)
++			{
++				throw std::bad_alloc();
++			}
++			return ret;
++		}
++
++		static pointer allocate(const size_type n, const void *const)
++		{
++			return allocate(n);
++		}
++
++		static void deallocate(pointer p, size_type n)
++		{
++			if ((p == NULL) ||
++				(n == 0))
++			{
++				return;
++			}
++
++			fixed_singleton_pool&lt;fixed_pool_allocator_tag, sizeof(T), UserAllocator, Mutex,
++				NextSize&gt;::ordered_free(p, n);
++		}
++
++};
++#endif
++
++#include &quot;Visibility.h&quot;
++
++#ifdef HAVE_BOOST_POOL_POOLFWD_HPP
++#ifdef HAVE_UMEM_H
++// Memory pool with umem
++typedef fixed_pool_allocator&lt;char,
++	umem_allocator&gt; filter_allocator;
++#else
++// Memory pool with malloc (glibc's or any other implementation)
++typedef fixed_pool_allocator&lt;char,
++	boost::default_user_allocator_malloc_free,
++	boost::details::pool::default_mutex, 131072&gt; filter_allocator;
++#endif
++typedef std::basic_string&lt;char, std::char_traits&lt;char&gt;, filter_allocator &gt; dstring;
++#else
++#ifdef HAVE_UMEM_H
++// No memory pool, plain umem
++typedef umem_allocator&lt;char&gt; filter_allocator;
++typedef std::basic_string&lt;char, std::char_traits&lt;char&gt;, filter_allocator &gt; dstring;
++#else
++#ifdef HAVE_EXT_MALLOC_ALLOCATOR_H
++// No memory pool, plain malloc (glibc's or any other implementation)
++typedef __gnu_cxx::malloc_allocator&lt;char&gt; filter_allocator;
++typedef std::basic_string&lt;char, std::char_traits&lt;char&gt;, filter_allocator &gt; dstring;
++#else
++// No memory pool, default STL allocator
++typedef std::allocator&lt;char&gt; filter_allocator;
++typedef std::string dstring;
++#endif
++#endif
++#endif
++
++/// Memory usage related utilities.
++class PINOT_EXPORT Memory
++{
++	public:
++		/// Allocates a buffer.
++		static char *allocateBuffer(unsigned int length);
++
++		/// Frees a buffer.
++		static void freeBuffer(char *pBuffer, unsigned int length);
++
++		/// Hints to the OS it can reclaim unused memory.
++		static void reclaim(void);
++
++	protected:
++		Memory();
++
++};
++
++#endif // _MEMORY_H
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2009-03-17 14:37:13 UTC (rev 1588)
++++ trunk/configure.in	2009-03-21 05:03:11 UTC (rev 1589)
+@@ -251,11 +251,12 @@
+    [AM_CONDITIONAL(HAVE_LINUX_INOTIFY, true)
+    ])
+ 
+-dnl boost Spirit 
++dnl boost
+ AM_CONDITIONAL(HAVE_BOOST_SPIRIT, false)
+ AC_CHECK_HEADERS([boost/spirit/core.hpp],
+    [AM_CONDITIONAL(HAVE_BOOST_SPIRIT, true)
+    ])
++AC_CHECK_HEADERS([boost/pool/poolfwd.hpp])
+ 
+ dnl TextCat
+ AC_CHECK_HEADERS([textcat.h],,
+@@ -369,7 +370,7 @@
+ MISC_LIBS=&quot;$PTHREAD_LIBS&quot;
+ AC_SUBST(MISC_CFLAGS)
+ AC_SUBST(MISC_LIBS)
+-AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h attr/xattr.h dlfcn.h regex.h fnmatch.h pwd.h])
++AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h attr/xattr.h dlfcn.h regex.h fnmatch.h pwd.h ext/malloc_allocator.h])
+ PKG_CHECK_MODULES(MIMEINFO, shared-mime-info )
+ SHARED_MIME_INFO_PREFIX=`pkg-config --variable=prefix shared-mime-info`
+ AC_SUBST(SHARED_MIME_INFO_PREFIX)
+@@ -426,6 +427,9 @@
+ AC_CHECK_FUNCS(kill)
+ AC_CHECK_FUNCS(localtime_r)
+ AC_CHECK_FUNCS(lstat)
++AC_CHECK_FUNCS(madvise)
++AC_CHECK_FUNCS(mallinfo)
++AC_CHECK_FUNCS(malloc_trim)
+ AC_CHECK_FUNCS(mkstemp)
+ AC_CHECK_FUNCS(mmap)
+ AC_CHECK_FUNCS(pipe)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001578.html">[Pinot-svn] r1588 - trunk/IndexSearch/Xapian
+</A></li>
+	<LI>Next message: <A HREF="001580.html">[Pinot-svn] r1590 - in trunk: Core UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1579">[ date ]</a>
+              <a href="thread.html#1579">[ thread ]</a>
+              <a href="subject.html#1579">[ subject ]</a>
+              <a href="author.html#1579">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

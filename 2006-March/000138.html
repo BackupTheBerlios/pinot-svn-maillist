@@ -1,0 +1,308 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r139 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r139%20-%20trunk/Index&In-Reply-To=%3C200603061546.k26FknrO013176%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000137.html">
+   <LINK REL="Next"  HREF="000139.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r139 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r139%20-%20trunk/Index&In-Reply-To=%3C200603061546.k26FknrO013176%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r139 - trunk/Index">fabricecolin at berlios.de
+       </A><BR>
+    <I>Mon Mar  6 16:46:49 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000137.html">[Pinot-svn] r138 - trunk/Tokenize
+</A></li>
+        <LI>Next message: <A HREF="000139.html">[Pinot-svn] r140 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#138">[ date ]</a>
+              <a href="thread.html#138">[ thread ]</a>
+              <a href="subject.html#138">[ subject ]</a>
+              <a href="author.html#138">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-03-06 16:46:49 +0100 (Mon, 06 Mar 2006)
+New Revision: 139
+
+Modified:
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+Method getDocumentsWithLabel() becomes listDocumentsWithLabel(), unified with
+listDocuments().
+
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2006-03-06 15:45:28 UTC (rev 138)
++++ trunk/Index/IndexInterface.h	2006-03-06 15:46:49 UTC (rev 139)
+@@ -53,9 +53,6 @@
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const = 0;
+ 
+-		/// Returns documents that have a label.
+-		virtual bool getDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds) const = 0;
+-
+ 		/// Updates the given document.
+ 		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens) = 0;
+ 
+@@ -94,6 +91,10 @@
+ 		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIDList,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
+ 
++		/// Lists documents that have a label.
++		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const = 0;
++
+ 	protected:
+ 		StemmingMode m_stemMode;
+ 		bool m_goodIndex;
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-03-06 15:45:28 UTC (rev 138)
++++ trunk/Index/XapianIndex.cpp	2006-03-06 15:46:49 UTC (rev 139)
+@@ -310,6 +310,56 @@
+ 	doc.add_value(0, timeStr);
+ }
+ 
++bool XapianIndex::listDocumentsWithTerm(const string &amp;term, set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	unsigned int docCount = 0;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return 0;
++	}
++
++	docIds.clear();
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;XapianIndex::listDocumentsWithTerm: term &quot; &lt;&lt; term &lt;&lt; endl;
++#endif
++			// Get a list of documents that have the term
++			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
++				(postingIter != pIndex-&gt;postlist_end(term)) &amp;&amp; (docIds.size() &lt; maxDocsCount);
++				++postingIter)
++			{
++				Xapian::docid docId = *postingIter;
++
++				// We cannot use postingIter-&gt;skip_to() because startDoc isn't an ID
++				if (docCount &gt;= startDoc)
++				{
++					docIds.insert(docId);
++				}
++				++docCount;
++			}
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document list: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document list, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return docIds.size();
++}
++
+ //
+ // Implementation of IndexInterface
+ //
+@@ -556,51 +606,6 @@
+ 	return gotLabels;
+ }
+ 
+-/// Returns documents that have a label.
+-bool XapianIndex::getDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds) const
+-{
+-	bool lookedForLabel = false;
+-
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return false;
+-	}
+-
+-	docIds.clear();
+-	try
+-	{
+-		Xapian::WritableDatabase *pIndex = pDatabase-&gt;writeLock();
+-		if (pIndex != NULL)
+-		{
+-			string term(&quot;XLABEL:&quot;);
+-
+-			// Get documents that have this label
+-			term += name;
+-			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+-				postingIter != pIndex-&gt;postlist_end(term); ++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				docIds.insert(docId);
+-			}
+-			lookedForLabel = true;
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get documents: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get documents, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return lookedForLabel;
+-}
+-
+ /// Updates the given document; true if success.
+ bool XapianIndex::updateDocument(unsigned int docId, Tokenizer &amp;tokens)
+ {
+@@ -1147,46 +1152,17 @@
+ unsigned int XapianIndex::listDocuments(set&lt;unsigned int&gt; &amp;docIds,
+ 	unsigned int maxDocsCount, unsigned int startDoc) const
+ {
+-	unsigned int docCount = 0;
++	// Get documents that have the magic term
++	return listDocumentsWithTerm(MAGIC_TERM, docIds, maxDocsCount, startDoc);
++}
+ 
+-	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName, false);
+-	if (pDatabase == NULL)
+-	{
+-		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
+-		return 0;
+-	}
++/// Lists documents that have a label.
++bool XapianIndex::listDocumentsWithLabel(const string &amp;name, set&lt;unsigned int&gt; &amp;docIds,
++	unsigned int maxDocsCount, unsigned int startDoc) const
++{
++	string term(&quot;XLABEL:&quot;);
+ 
+-	docIds.clear();
+-	try
+-	{
+-		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+-		if (pIndex != NULL)
+-		{
+-			// Get a list of documents that have the magic term
+-			for (Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(MAGIC_TERM);
+-				(postingIter != pIndex-&gt;postlist_end(MAGIC_TERM)) &amp;&amp; (docIds.size() &lt; maxDocsCount);
+-				++postingIter)
+-			{
+-				Xapian::docid docId = *postingIter;
+-
+-				// We cannot use postingIter-&gt;skip_to() because startDoc isn't an ID
+-				if (docCount &gt;= startDoc)
+-				{
+-					docIds.insert(docId);
+-				}
+-				++docCount;
+-			}
+-		}
+-	}
+-	catch (const Xapian::Error &amp;error)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get document list: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+-	}
+-	catch (...)
+-	{
+-		cerr &lt;&lt; &quot;Couldn't get document list, unknown exception occured&quot; &lt;&lt; endl;
+-	}
+-	pDatabase-&gt;unlock();
+-
+-	return docIds.size();
++	// Get documents that have this label
++	term += name;
++	return listDocumentsWithTerm(term, docIds, maxDocsCount, startDoc);
+ }
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2006-03-06 15:45:28 UTC (rev 138)
++++ trunk/Index/XapianIndex.h	2006-03-06 15:46:49 UTC (rev 139)
+@@ -47,9 +47,6 @@
+ 		/// Returns a document's labels.
+ 		virtual bool getDocumentLabels(unsigned int docId, std::set&lt;std::string&gt; &amp;labels) const;
+ 
+-		/// Returns documents that have a label.
+-		virtual bool getDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds) const;
+-
+ 		/// Updates the given document.
+ 		virtual bool updateDocument(unsigned int docId, Tokenizer &amp;tokens);
+ 
+@@ -88,6 +85,10 @@
+ 		virtual unsigned int listDocuments(std::set&lt;unsigned int&gt; &amp;docIds,
+ 			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
+ 
++		/// Lists documents that have a label.
++		virtual bool listDocumentsWithLabel(const std::string &amp;name, std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++
+ 	protected:
+ 		static const unsigned int m_maxTermLength;
+ 		static const std::string MAGIC_TERM;
+@@ -110,6 +111,9 @@
+ 		void setDocumentData(Xapian::Document &amp;doc, const DocumentInfo &amp;info,
+ 			const std::string &amp;language) const;
+ 
++		bool listDocumentsWithTerm(const std::string &amp;term, std::set&lt;unsigned int&gt; &amp;docIds,
++			unsigned int maxDocsCount = 0, unsigned int startDoc = 0) const;
++
+ 	private:
+ 		XapianIndex(const XapianIndex &amp;other);
+ 		XapianIndex &amp;operator=(const XapianIndex &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000137.html">[Pinot-svn] r138 - trunk/Tokenize
+</A></li>
+	<LI>Next message: <A HREF="000139.html">[Pinot-svn] r140 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#138">[ date ]</a>
+              <a href="thread.html#138">[ thread ]</a>
+              <a href="subject.html#138">[ subject ]</a>
+              <a href="author.html#138">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

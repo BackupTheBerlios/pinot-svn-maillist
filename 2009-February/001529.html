@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1539 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1539%20-%20trunk/Utils&In-Reply-To=%3C200902031314.n13DEs4o003342%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001528.html">
+   <LINK REL="Next"  HREF="001530.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1539 - trunk/Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1539%20-%20trunk/Utils&In-Reply-To=%3C200902031314.n13DEs4o003342%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1539 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb  3 14:14:54 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001528.html">[Pinot-svn] r1538 - in trunk: Core IndexSearch UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001530.html">[Pinot-svn] r1540 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1529">[ date ]</a>
+              <a href="thread.html#1529">[ thread ]</a>
+              <a href="subject.html#1529">[ subject ]</a>
+              <a href="author.html#1529">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-02-03 14:14:49 +0100 (Tue, 03 Feb 2009)
+New Revision: 1539
+
+Modified:
+   trunk/Utils/Url.cpp
+   trunk/Utils/Url.h
+Log:
+Url::resolvePath() is based on the path resolver code written for ServerThreads.
+
+
+Modified: trunk/Utils/Url.cpp
+===================================================================
+--- trunk/Utils/Url.cpp	2009-02-02 13:59:23 UTC (rev 1538)
++++ trunk/Utils/Url.cpp	2009-02-03 13:14:49 UTC (rev 1539)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,12 +16,16 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;stdio.h&gt;
++#include &lt;iostream&gt;
++#include &lt;glibmm/miscutils.h&gt;
++
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ 
+-#include &lt;stdio.h&gt;
+-
+ using std::string;
++using std::cout;
++using std::endl;
+ 
+ static const int g_rfc2396Encoded[] = {
+ 	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  /* 0x00 - 0x0f */
+@@ -444,6 +448,70 @@
+ 	return unescapedUrl;
+ }
+ 
++/// Resolves a path.
++string Url::resolvePath(const string &amp;currentDir, const string &amp;location)
++{
++	string currentLocation(currentDir);
++	string::size_type prevSlashPos = 0, slashPos = location.find('/');
++
++	if (currentDir.empty() == true)
++	{
++		return &quot;&quot;;
++	}
++
++	while (slashPos != string::npos)
++	{
++		string path(location.substr(prevSlashPos, slashPos - prevSlashPos));
++
++		if (path == &quot;..&quot;)
++		{
++			string upDir(Glib::path_get_dirname(currentLocation));
++			currentLocation = upDir;
++		}
++		else if (path != &quot;.&quot;)
++		{
++			currentLocation += &quot;/&quot;;
++			currentLocation += path;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;Url::resolvePath: partially resolved to &quot; &lt;&lt; currentLocation &lt;&lt; endl;
++#endif
++
++		if (slashPos + 1 &gt;= location.length())
++		{
++			// Nothing behind
++			prevSlashPos = string::npos;
++			break;
++		}
++
++		// Next
++		prevSlashPos = slashPos + 1;
++		slashPos = location.find('/', prevSlashPos);
++	}
++
++	// Remainder
++	if (prevSlashPos != string::npos)
++	{
++		string path(location.substr(prevSlashPos));
++
++		if (path == &quot;..&quot;)
++		{
++			string upDir(Glib::path_get_dirname(currentLocation));
++			currentLocation = upDir;
++		}
++		else if (path != &quot;.&quot;)
++		{
++			currentLocation += &quot;/&quot;;
++			currentLocation += path;
++		}
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;Url::resolvePath: resolved to &quot; &lt;&lt; currentLocation &lt;&lt; endl;
++#endif
++
++	return currentLocation;
++}
++
+ string Url::getProtocol(void) const
+ {
+ 	return m_protocol;
+
+Modified: trunk/Utils/Url.h
+===================================================================
+--- trunk/Utils/Url.h	2009-02-02 13:59:23 UTC (rev 1538)
++++ trunk/Utils/Url.h	2009-02-03 13:14:49 UTC (rev 1539)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -23,7 +23,7 @@
+ 
+ #include &quot;Visibility.h&quot;
+ 
+-/// This dissects and manipulates URLs returned by search engines.
++/// This dissects and manipulates URLs.
+ class PINOT_EXPORT Url
+ {
+ 	public:
+@@ -48,6 +48,9 @@
+ 		/// Unescapes an URL.
+ 		static std::string unescapeUrl(const std::string &amp;escapedUrl);
+ 
++		/// Resolves a path.
++		static std::string resolvePath(const std::string &amp;currentDir, const std::string &amp;location);
++
+ 		/// Returns the protocol, eg &quot;file&quot;.
+ 		std::string getProtocol(void) const;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001528.html">[Pinot-svn] r1538 - in trunk: Core IndexSearch UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001530.html">[Pinot-svn] r1540 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1529">[ date ]</a>
+              <a href="thread.html#1529">[ thread ]</a>
+              <a href="subject.html#1529">[ subject ]</a>
+              <a href="author.html#1529">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

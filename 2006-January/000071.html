@@ -1,0 +1,317 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r72 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r72%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200601220825.k0M8PJPg010256%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000070.html">
+   <LINK REL="Next"  HREF="000072.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r72 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r72%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200601220825.k0M8PJPg010256%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r72 - trunk/UI/GTK2/src">fabricecolin at berlios.de
+       </A><BR>
+    <I>Sun Jan 22 09:25:19 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000070.html">[Pinot-svn] r71 - in trunk/UI/GTK2: . src
+</A></li>
+        <LI>Next message: <A HREF="000072.html">[Pinot-svn] r73 - in trunk: Search Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#71">[ date ]</a>
+              <a href="thread.html#71">[ thread ]</a>
+              <a href="subject.html#71">[ subject ]</a>
+              <a href="author.html#71">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-22 09:25:19 +0100 (Sun, 22 Jan 2006)
+New Revision: 72
+
+Modified:
+   trunk/UI/GTK2/src/IndexTree.cpp
+   trunk/UI/GTK2/src/Makefile
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/ResultsTree.cpp
+Log:
+Scrolled windows in Index and ResultsTree had their policy set to ALWAYS.
+PinotSettings checks what the root node is and catches exceptions ! Doh ! :-)
+
+
+Modified: trunk/UI/GTK2/src/IndexTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/IndexTree.cpp	2006-01-21 08:27:21 UTC (rev 71)
++++ trunk/UI/GTK2/src/IndexTree.cpp	2006-01-22 08:25:19 UTC (rev 72)
+@@ -52,7 +52,7 @@
+ 	m_pIndexScrolledwindow-&gt;set_flags(Gtk::CAN_FOCUS);
+ 	m_pIndexScrolledwindow-&gt;set_border_width(4);
+ 	m_pIndexScrolledwindow-&gt;set_shadow_type(Gtk::SHADOW_NONE);
+-	m_pIndexScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_ALWAYS);
++	m_pIndexScrolledwindow-&gt;set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+ 	m_pIndexScrolledwindow-&gt;property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
+ 	m_pIndexScrolledwindow-&gt;add(*this);
+ 
+
+Modified: trunk/UI/GTK2/src/Makefile
+===================================================================
+--- trunk/UI/GTK2/src/Makefile	2006-01-21 08:27:21 UTC (rev 71)
++++ trunk/UI/GTK2/src/Makefile	2006-01-22 08:25:19 UTC (rev 72)
+@@ -2,9 +2,9 @@
+ ROOT_DIR = ../../..
+ include ${ROOT_DIR}/variables.mk
+ 
+-CXXFLAGS += -DHAVE_CONFIG_H -I. -I.. ${LIBXML_CXXFLAGS} ${GTKMOZ_CXXFLAGS} ${GTKMM_CXXFLAGS}
++CXXFLAGS += -DHAVE_CONFIG_H -I. -I.. ${GTKMOZ_CXXFLAGS} ${GTKMM_CXXFLAGS}
+ 
+-LIBS += ${LIBXML_LIBS} ${GTKMOZ_LIBS} ${GTKMM_LIBS} -lgthread-2.0 -lfam
++LIBS += ${GTKMOZ_LIBS} ${GTKMM_LIBS} -lgthread-2.0 -lfam
+ 
+ UI_GTK2_SRCS = importDialog.cc importDialog_glade.cc \
+ 	indexDialog.cc indexDialog_glade.cc \
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2006-01-21 08:27:21 UTC (rev 71)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2006-01-22 08:25:19 UTC (rev 72)
+@@ -229,6 +229,7 @@
+ bool PinotSettings::loadConfiguration(const std::string &amp;fileName)
+ {
+ 	struct stat fileStat;
++	bool success = true;
+ 
+ 	if ((stat(fileName.c_str(), &amp;fileStat) != 0) ||
+ 		(!S_ISREG(fileStat.st_mode)))
+@@ -236,100 +237,115 @@
+ 		return false;
+ 	}
+ 
+-	// Parse the configuration file
+-	DomParser parser;
+-	parser.parse_file(fileName);
+-	xmlpp::Document *pDocument = parser.get_document();
+-	if (pDocument == NULL)
++	try
+ 	{
+-		return false;
+-	}
++		// Parse the configuration file
++		DomParser parser;
++		parser.set_substitute_entities(true);
++		parser.parse_file(fileName);
++		xmlpp::Document *pDocument = parser.get_document();
++		if (pDocument == NULL)
++		{
++			return false;
++		}
+ 
+-	Element *pRootElem = pDocument-&gt;get_root_node();
+-	if (pRootElem == NULL)
+-	{
+-		return false;
+-	}
+-	string rootNodeName = getElementContent(pRootElem);
+-	// FIXME: check the top-level element is okay
++		Element *pRootElem = pDocument-&gt;get_root_node();
++		if (pRootElem == NULL)
++		{
++			return false;
++		}
+ 
+-	// Go through the subnodes
+-	const Node::NodeList childNodes = pRootElem-&gt;get_children();
+-	if (childNodes.empty() == false)
+-	{
+-		for (Node::NodeList::const_iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
++		// Check the top-level element is what we expect
++		ustring rootNodeName = pRootElem-&gt;get_name();
++		if (rootNodeName != &quot;pinot&quot;)
+ 		{
+-			Node *pNode = (*iter);
+-			// All nodes should be elements
+-			Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
+-			if (pElem == NULL)
+-			{
+-				continue;
+-			}
++			return false;
++		}
+ 
+-			string nodeName = pElem-&gt;get_name();
+-			string nodeContent = getElementContent(pElem);
+-			if (nodeName == &quot;googleapikey&quot;)
++		// Go through the subnodes
++		const Node::NodeList childNodes = pRootElem-&gt;get_children();
++		if (childNodes.empty() == false)
++		{
++			for (Node::NodeList::const_iterator iter = childNodes.begin(); iter != childNodes.end(); ++iter)
+ 			{
+-				m_googleAPIKey = nodeContent;
+-			}
+-			else if (nodeName == &quot;ui&quot;)
+-			{
+-				if (loadUi(pElem) == false)
++				Node *pNode = (*iter);
++				// All nodes should be elements
++				Element *pElem = dynamic_cast&lt;Element*&gt;(pNode);
++				if (pElem == NULL)
+ 				{
+-					cerr &lt;&lt; _(&quot;Couldn't load ui block&quot;) &lt;&lt; endl;
++					continue;
+ 				}
+-			}
+-			else if (nodeName == &quot;extraindex&quot;)
+-			{
+-				if (loadIndexes(pElem) == false)
++
++				string nodeName = pElem-&gt;get_name();
++				string nodeContent = getElementContent(pElem);
++				if (nodeName == &quot;googleapikey&quot;)
+ 				{
+-					cerr &lt;&lt; _(&quot;Couldn't load extraindex block&quot;) &lt;&lt; endl;
++					m_googleAPIKey = nodeContent;
+ 				}
+-			}
+-			else if (nodeName == &quot;storedquery&quot;)
+-			{
+-				if (loadQueries(pElem) == false)
++				else if (nodeName == &quot;ui&quot;)
+ 				{
+-					cerr &lt;&lt; _(&quot;Couldn't load storedquery block&quot;) &lt;&lt; endl;
++					if (loadUi(pElem) == false)
++					{
++						cerr &lt;&lt; _(&quot;Couldn't load ui block&quot;) &lt;&lt; endl;
++					}
+ 				}
+-			}
+-			else if (nodeName == &quot;results&quot;)
+-			{
+-				if (loadResults(pElem) == false)
++				else if (nodeName == &quot;extraindex&quot;)
+ 				{
+-					cerr &lt;&lt; _(&quot;Couldn't load results block&quot;) &lt;&lt; endl;
++					if (loadIndexes(pElem) == false)
++					{
++						cerr &lt;&lt; _(&quot;Couldn't load extraindex block&quot;) &lt;&lt; endl;
++					}
+ 				}
+-			}
+-			else if (nodeName == &quot;label&quot;)
+-			{
+-				if (loadLabels(pElem) == false)
++				else if (nodeName == &quot;storedquery&quot;)
+ 				{
+-					cerr &lt;&lt; _(&quot;Couldn't load label block&quot;) &lt;&lt; endl;
++					if (loadQueries(pElem) == false)
++					{
++						cerr &lt;&lt; _(&quot;Couldn't load storedquery block&quot;) &lt;&lt; endl;
++					}
+ 				}
+-			}
+-			else if (nodeName == &quot;robots&quot;)
+-			{
+-				if (nodeContent == &quot;IGNORE&quot;)
++				else if (nodeName == &quot;results&quot;)
+ 				{
+-					m_ignoreRobotsDirectives = true;
++					if (loadResults(pElem) == false)
++					{
++						cerr &lt;&lt; _(&quot;Couldn't load results block&quot;) &lt;&lt; endl;
++					}
+ 				}
+-				else
++				else if (nodeName == &quot;label&quot;)
+ 				{
+-					m_ignoreRobotsDirectives = false;
++					if (loadLabels(pElem) == false)
++					{
++						cerr &lt;&lt; _(&quot;Couldn't load label block&quot;) &lt;&lt; endl;
++					}
+ 				}
+-			}
+-			else if (nodeName == &quot;mailaccount&quot;)
+-			{
+-				if (loadMailAccounts(pElem) == false)
++				else if (nodeName == &quot;robots&quot;)
+ 				{
+-					cerr &lt;&lt; _(&quot;Couldn't load mailaccount block&quot;) &lt;&lt; endl;
++					if (nodeContent == &quot;IGNORE&quot;)
++					{
++						m_ignoreRobotsDirectives = true;
++					}
++					else
++					{
++						m_ignoreRobotsDirectives = false;
++					}
+ 				}
++				else if (nodeName == &quot;mailaccount&quot;)
++				{
++					if (loadMailAccounts(pElem) == false)
++					{
++						cerr &lt;&lt; _(&quot;Couldn't load mailaccount block&quot;) &lt;&lt; endl;
++					}
++				}
+ 			}
+ 		}
+ 	}
++	catch (const std::exception&amp; ex)
++	{
++		cerr &lt;&lt; _(&quot;Couldn't parse configuration file&quot;) &lt;&lt; &quot;: &quot;
++			&lt;&lt; ex.what() &lt;&lt; endl;
++		success = false;
++	}
+ 
+-	return true;
++	return success;
+ }
+ 
+ bool PinotSettings::loadUi(const Element *pElem)
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2006-01-21 08:27:21 UTC (rev 71)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2006-01-22 08:25:19 UTC (rev 72)
+@@ -65,7 +65,7 @@
+ 	m_pResultsScrolledwindow-&gt;set_flags(CAN_FOCUS);
+ 	m_pResultsScrolledwindow-&gt;set_border_width(4);
+ 	m_pResultsScrolledwindow-&gt;set_shadow_type(SHADOW_NONE);
+-	m_pResultsScrolledwindow-&gt;set_policy(POLICY_AUTOMATIC, POLICY_ALWAYS);
++	m_pResultsScrolledwindow-&gt;set_policy(POLICY_AUTOMATIC, POLICY_AUTOMATIC);
+ 	m_pResultsScrolledwindow-&gt;property_window_placement().set_value(CORNER_TOP_LEFT);
+ 	m_pResultsScrolledwindow-&gt;add(*this);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000070.html">[Pinot-svn] r71 - in trunk/UI/GTK2: . src
+</A></li>
+	<LI>Next message: <A HREF="000072.html">[Pinot-svn] r73 - in trunk: Search Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#71">[ date ]</a>
+              <a href="thread.html#71">[ thread ]</a>
+              <a href="subject.html#71">[ subject ]</a>
+              <a href="author.html#71">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

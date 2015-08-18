@@ -1,0 +1,988 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r980 - in trunk: UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r980%20-%20in%20trunk%3A%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709211641.l8LGfCYP022628%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000973.html">
+   <LINK REL="Next"  HREF="000975.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r980 - in trunk: UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r980%20-%20in%20trunk%3A%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709211641.l8LGfCYP022628%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r980 - in trunk: UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Fri Sep 21 18:41:12 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000973.html">[Pinot-svn] r979 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000975.html">[Pinot-svn] r981 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#974">[ date ]</a>
+              <a href="thread.html#974">[ thread ]</a>
+              <a href="subject.html#974">[ subject ]</a>
+              <a href="author.html#974">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-21 18:41:09 +0200 (Fri, 21 Sep 2007)
+New Revision: 980
+
+Modified:
+   trunk/UI/GTK2/src/OnDiskHandler.cpp
+   trunk/UI/GTK2/src/OnDiskHandler.h
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/ServerThreads.h
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/mainWindow.cc
+   trunk/UI/GTK2/src/mainWindow.hh
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot.cc
+   trunk/Utils/MIMEScanner.cpp
+   trunk/Utils/MIMEScanner.h
+Log:
+MIMEScanner::initialize() takes prefixes (eg /usr /home/bozo/.local) instead of
+directories. Method listConfigurationFiles() returns files to monitor for
+modifications. Those are monitored by the UI and modifications trigger a
+re-initialization of MIMEScanner.
+Moved MonitorThread from ServerThreads to WorkerThreads.
+
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.cpp
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/OnDiskHandler.cpp	2007-09-21 16:41:09 UTC (rev 980)
+@@ -35,7 +35,6 @@
+ #include &quot;OnDiskHandler.h&quot;
+ 
+ using namespace std;
+-using namespace SigC;
+ 
+ OnDiskHandler::OnDiskHandler() :
+ 	MonitorHandler(),
+
+Modified: trunk/UI/GTK2/src/OnDiskHandler.h
+===================================================================
+--- trunk/UI/GTK2/src/OnDiskHandler.h	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/OnDiskHandler.h	2007-09-21 16:41:09 UTC (rev 980)
+@@ -23,7 +23,6 @@
+ #include &lt;pthread.h&gt;
+ #include &lt;string&gt;
+ #include &lt;map&gt;
+-#include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;MonitorHandler.h&quot;
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-09-21 16:41:09 UTC (rev 980)
+@@ -108,250 +108,6 @@
+ 	return readFile;
+ }
+ 
+-MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+-	WorkerThread(),
+-	m_ctrlReadPipe(-1),
+-	m_ctrlWritePipe(-1),
+-	m_pMonitor(pMonitor),
+-	m_pHandler(pHandler)
+-{
+-	int pipeFds[2];
+-
+-	if (pipe(pipeFds) == 0)
+-	{
+-		// This pipe will allow to stop select()
+-		m_ctrlReadPipe = pipeFds[0];
+-		m_ctrlWritePipe = pipeFds[1];
+-	}
+-}
+-
+-MonitorThread::~MonitorThread()
+-{
+-	close(m_ctrlReadPipe);
+-	close(m_ctrlWritePipe);
+-}
+-
+-string MonitorThread::getType(void) const
+-{
+-	return &quot;MonitorThread&quot;;
+-}
+-
+-bool MonitorThread::stop(void)
+-{
+-	// Disconnect the signal
+-	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalDirectoryFound.slots();
+-	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
+-	if (slotIter != slotsList.end())
+-	{
+-		if (slotIter-&gt;empty() == false)
+-		{
+-			slotIter-&gt;block();
+-			slotIter-&gt;disconnect();
+-		}
+-	}
+-	m_done = true;
+-	write(m_ctrlWritePipe, &quot;X&quot;, 1);
+-
+-	return true;
+-}
+-
+-Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; MonitorThread::getDirectoryFoundSignal(void)
+-{
+-	return m_signalDirectoryFound;
+-}
+-
+-void MonitorThread::processEvents(void)
+-{
+-	CrawlHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
+-	queue&lt;MonitorEvent&gt; events;
+-
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MonitorThread::processEvents: checking for events&quot; &lt;&lt; endl;
+-#endif
+-	if ((m_pMonitor == NULL) ||
+-		(m_pMonitor-&gt;retrievePendingEvents(events) == false))
+-	{
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MonitorThread::processEvents: failed to retrieve pending events&quot; &lt;&lt; endl;
+-#endif
+-		return;
+-	}
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;MonitorThread::processEvents: retrieved &quot; &lt;&lt; events.size() &lt;&lt; &quot; events&quot; &lt;&lt; endl;
+-#endif
+-
+-	while ((events.empty() == false) &amp;&amp;
+-		(m_done == false))
+-	{
+-		MonitorEvent &amp;event = events.front();
+-
+-		if ((event.m_location.empty() == true) ||
+-			(event.m_type == MonitorEvent::UNKNOWN))
+-		{
+-			// Next
+-			events.pop();
+-			continue;
+-		}
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MonitorThread::processEvents: event &quot; &lt;&lt; event.m_type &lt;&lt; &quot; on &quot;
+-			&lt;&lt; event.m_location &lt;&lt; &quot; &quot; &lt;&lt; event.m_isDirectory &lt;&lt; endl;
+-#endif
+-
+-		// Skip dotfiles and blacklisted files
+-		Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + event.m_location);
+-		if ((urlObj.getFile()[0] == '.') ||
+-			(PinotSettings::getInstance().isBlackListed(event.m_location) == true))
+-		{
+-			// Next
+-			events.pop();
+-			continue;
+-		}
+-
+-		// What's the event code ?
+-		if (event.m_type == MonitorEvent::EXISTS)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileExists(event.m_location);
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::CREATED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileCreated(event.m_location);
+-			}
+-			else
+-			{
+-				DocumentInfo docInfo(&quot;&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + event.m_location, &quot;&quot;, &quot;&quot;);
+-
+-				// Report this directory so that it is crawled
+-				m_signalDirectoryFound(docInfo, &quot;&quot;, true);
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::WRITE_CLOSED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
+-				struct stat fileStat;
+-				time_t itemDate;
+-
+-				if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + event.m_location, status, itemDate) == true)
+-				{
+-					// Was the file actually modified ?
+-					if ((stat(event.m_location.c_str(), &amp;fileStat) == 0) &amp;&amp;
+-						(itemDate &lt; fileStat.st_mtime))
+-					{
+-						m_pHandler-&gt;fileModified(event.m_location);
+-					}
+-#ifdef DEBUG
+-					else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't modified&quot; &lt;&lt; endl;
+-#endif
+-				}
+-#ifdef DEBUG
+-				else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't crawled&quot; &lt;&lt; endl;
+-#endif
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::MOVED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
+-			}
+-			else
+-			{
+-				// We should receive this only if the destination directory is monitored too
+-				m_pHandler-&gt;directoryMoved(event.m_location, event.m_previousLocation);
+-			}
+-		}
+-		else if (event.m_type == MonitorEvent::DELETED)
+-		{
+-			if (event.m_isDirectory == false)
+-			{
+-				m_pHandler-&gt;fileDeleted(event.m_location);
+-			}
+-			else
+-			{
+-				// The monitor should have stopped monitoring this
+-				// In practice, events for the files in this directory will already have been received 
+-				m_pHandler-&gt;directoryDeleted(event.m_location);
+-			}
+-		}
+-
+-		// Next
+-		events.pop();
+-	}
+-}
+-
+-void MonitorThread::doWork(void)
+-{
+-	if ((m_pHandler == NULL) ||
+-		(m_pMonitor == NULL))
+-	{
+-		m_status = _(&quot;No monitoring handler&quot;);
+-		return;
+-	}
+-
+-	// Initialize the handler
+-	m_pHandler-&gt;initialize();
+-
+-	// Get the list of files to monitor
+-	const set&lt;string&gt; &amp;fileNames = m_pHandler-&gt;getFileNames();
+-	for (set&lt;string&gt;::const_iterator fileIter = fileNames.begin();
+-		fileIter != fileNames.end(); ++fileIter)
+-	{
+-		m_pMonitor-&gt;addLocation(*fileIter, false);
+-	}
+-	// Directories, if any, are set elsewhere
+-	// In the case of OnDiskHandler, they are set by DirectoryScannerThread
+-
+-	// There might already be events that need processing
+-	processEvents();
+-
+-	// Wait for something to happen
+-	while (m_done == false)
+-	{
+-		struct timeval selectTimeout;
+-		fd_set listenSet;
+-
+-		selectTimeout.tv_sec = 60;
+-		selectTimeout.tv_usec = 0;
+-
+-		FD_ZERO(&amp;listenSet);
+-		if (m_ctrlReadPipe &gt;= 0)
+-		{
+-			FD_SET(m_ctrlReadPipe, &amp;listenSet);
+-		}
+-
+-		m_pHandler-&gt;flushIndex();
+-
+-		// The file descriptor may change over time
+-		int monitorFd = m_pMonitor-&gt;getFileDescriptor();
+-		FD_SET(monitorFd, &amp;listenSet);
+-		if (monitorFd &lt; 0)
+-		{
+-			m_status = _(&quot;Couldn't initialize file monitor&quot;);
+-			return;
+-		}
+-
+-		int fdCount = select(max(monitorFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
+-		if ((fdCount &lt; 0) &amp;&amp;
+-			(errno != EINTR))
+-		{
+-#ifdef DEBUG
+-			cout &lt;&lt; &quot;MonitorThread::doWork: select() failed&quot; &lt;&lt; endl;
+-#endif
+-			break;
+-		}
+-		else if (FD_ISSET(monitorFd, &amp;listenSet))
+-		{
+-			processEvents();
+-		}
+-	}
+-}
+-
+ DirectoryScannerThread::DirectoryScannerThread(const string &amp;dirName, bool isSource,
+ 	bool fullScan, MonitorInterface *pMonitor, MonitorHandler *pHandler,
+ 	unsigned int maxLevel, bool followSymLinks) :
+
+Modified: trunk/UI/GTK2/src/ServerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.h	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/ServerThreads.h	2007-09-21 16:41:09 UTC (rev 980)
+@@ -43,34 +43,6 @@
+ #include &quot;DaemonState.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+ 
+-class MonitorThread : public WorkerThread
+-{
+-	public:
+-		MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler);
+-		virtual ~MonitorThread();
+-
+-		virtual std::string getType(void) const;
+-
+-		virtual bool stop(void);
+-
+-		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getDirectoryFoundSignal(void);
+-
+-	protected:
+-		int m_ctrlReadPipe;
+-		int m_ctrlWritePipe;
+-		MonitorInterface *m_pMonitor;
+-		MonitorHandler *m_pHandler;
+-		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalDirectoryFound;
+-
+-		void processEvents(void);
+-		virtual void doWork(void);
+-
+-	private:
+-		MonitorThread(const MonitorThread &amp;other);
+-		MonitorThread &amp;operator=(const MonitorThread &amp;other);
+-
+-};
+-
+ class DirectoryScannerThread : public WorkerThread
+ {
+ 	public:
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-09-21 16:41:09 UTC (rev 980)
+@@ -22,6 +22,7 @@
+ #include &lt;fcntl.h&gt;
+ #include &lt;string.h&gt;
+ #include &lt;signal.h&gt;
++#include &lt;errno.h&gt;
+ #include &lt;exception&gt;
+ #include &lt;iostream&gt;
+ #include &lt;fstream&gt;
+@@ -1789,3 +1790,253 @@
+ 	}
+ }
+ 
++MonitorThread::MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler,
++	bool checkHistory) :
++	WorkerThread(),
++	m_ctrlReadPipe(-1),
++	m_ctrlWritePipe(-1),
++	m_pMonitor(pMonitor),
++	m_pHandler(pHandler),
++	m_checkHistory(checkHistory)
++{
++	int pipeFds[2];
++
++	if (pipe(pipeFds) == 0)
++	{
++		// This pipe will allow to stop select()
++		m_ctrlReadPipe = pipeFds[0];
++		m_ctrlWritePipe = pipeFds[1];
++	}
++}
++
++MonitorThread::~MonitorThread()
++{
++	close(m_ctrlReadPipe);
++	close(m_ctrlWritePipe);
++}
++
++string MonitorThread::getType(void) const
++{
++	return &quot;MonitorThread&quot;;
++}
++
++bool MonitorThread::stop(void)
++{
++	// Disconnect the signal
++	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type slotsList = m_signalDirectoryFound.slots();
++	Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;::slot_list_type::iterator slotIter = slotsList.begin();
++	if (slotIter != slotsList.end())
++	{
++		if (slotIter-&gt;empty() == false)
++		{
++			slotIter-&gt;block();
++			slotIter-&gt;disconnect();
++		}
++	}
++	m_done = true;
++	write(m_ctrlWritePipe, &quot;X&quot;, 1);
++
++	return true;
++}
++
++Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; MonitorThread::getDirectoryFoundSignal(void)
++{
++	return m_signalDirectoryFound;
++}
++
++void MonitorThread::processEvents(void)
++{
++	CrawlHistory history(PinotSettings::getInstance().getHistoryDatabaseName());
++	queue&lt;MonitorEvent&gt; events;
++
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MonitorThread::processEvents: checking for events&quot; &lt;&lt; endl;
++#endif
++	if ((m_pMonitor == NULL) ||
++		(m_pMonitor-&gt;retrievePendingEvents(events) == false))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MonitorThread::processEvents: failed to retrieve pending events&quot; &lt;&lt; endl;
++#endif
++		return;
++	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;MonitorThread::processEvents: retrieved &quot; &lt;&lt; events.size() &lt;&lt; &quot; events&quot; &lt;&lt; endl;
++#endif
++
++	while ((events.empty() == false) &amp;&amp;
++		(m_done == false))
++	{
++		MonitorEvent &amp;event = events.front();
++
++		if ((event.m_location.empty() == true) ||
++			(event.m_type == MonitorEvent::UNKNOWN))
++		{
++			// Next
++			events.pop();
++			continue;
++		}
++#ifdef DEBUG
++		cout &lt;&lt; &quot;MonitorThread::processEvents: event &quot; &lt;&lt; event.m_type &lt;&lt; &quot; on &quot;
++			&lt;&lt; event.m_location &lt;&lt; &quot; &quot; &lt;&lt; event.m_isDirectory &lt;&lt; endl;
++#endif
++
++		// Skip dotfiles and blacklisted files
++		Url urlObj(&quot;<A HREF="file://">file://</A>&quot; + event.m_location);
++		if ((urlObj.getFile()[0] == '.') ||
++			(PinotSettings::getInstance().isBlackListed(event.m_location) == true))
++		{
++			// Next
++			events.pop();
++			continue;
++		}
++
++		// What's the event code ?
++		if (event.m_type == MonitorEvent::EXISTS)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileExists(event.m_location);
++			}
++		}
++		else if (event.m_type == MonitorEvent::CREATED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileCreated(event.m_location);
++			}
++			else
++			{
++				DocumentInfo docInfo(&quot;&quot;, string(&quot;<A HREF="file://">file://</A>&quot;) + event.m_location, &quot;&quot;, &quot;&quot;);
++
++				// Report this directory so that it is crawled
++				m_signalDirectoryFound(docInfo, &quot;&quot;, true);
++			}
++		}
++		else if (event.m_type == MonitorEvent::WRITE_CLOSED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				CrawlHistory::CrawlStatus status = CrawlHistory::UNKNOWN;
++				struct stat fileStat;
++				time_t itemDate = 0;
++
++				if (m_checkHistory == false)
++				{
++					m_pHandler-&gt;fileModified(event.m_location);
++				}
++				else if (history.hasItem(&quot;<A HREF="file://">file://</A>&quot; + event.m_location, status, itemDate) == true)
++				{
++					// Was the file actually modified ?
++					if ((stat(event.m_location.c_str(), &amp;fileStat) == 0) &amp;&amp;
++						(itemDate &lt; fileStat.st_mtime))
++					{
++						m_pHandler-&gt;fileModified(event.m_location);
++					}
++#ifdef DEBUG
++					else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't modified&quot; &lt;&lt; endl;
++#endif
++				}
++#ifdef DEBUG
++				else cout &lt;&lt; &quot;MonitorThread::processEvents: file wasn't crawled&quot; &lt;&lt; endl;
++#endif
++			}
++		}
++		else if (event.m_type == MonitorEvent::MOVED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileMoved(event.m_location, event.m_previousLocation);
++			}
++			else
++			{
++				// We should receive this only if the destination directory is monitored too
++				m_pHandler-&gt;directoryMoved(event.m_location, event.m_previousLocation);
++			}
++		}
++		else if (event.m_type == MonitorEvent::DELETED)
++		{
++			if (event.m_isDirectory == false)
++			{
++				m_pHandler-&gt;fileDeleted(event.m_location);
++			}
++			else
++			{
++				// The monitor should have stopped monitoring this
++				// In practice, events for the files in this directory will already have been received 
++				m_pHandler-&gt;directoryDeleted(event.m_location);
++			}
++		}
++
++		// Next
++		events.pop();
++	}
++}
++
++void MonitorThread::doWork(void)
++{
++	if ((m_pHandler == NULL) ||
++		(m_pMonitor == NULL))
++	{
++		m_status = _(&quot;No monitoring handler&quot;);
++		return;
++	}
++
++	// Initialize the handler
++	m_pHandler-&gt;initialize();
++
++	// Get the list of files to monitor
++	const set&lt;string&gt; &amp;fileNames = m_pHandler-&gt;getFileNames();
++	for (set&lt;string&gt;::const_iterator fileIter = fileNames.begin();
++		fileIter != fileNames.end(); ++fileIter)
++	{
++		m_pMonitor-&gt;addLocation(*fileIter, false);
++	}
++	// Directories, if any, are set elsewhere
++	// In the case of OnDiskHandler, they are set by DirectoryScannerThread
++
++	// There might already be events that need processing
++	processEvents();
++
++	// Wait for something to happen
++	while (m_done == false)
++	{
++		struct timeval selectTimeout;
++		fd_set listenSet;
++
++		selectTimeout.tv_sec = 60;
++		selectTimeout.tv_usec = 0;
++
++		FD_ZERO(&amp;listenSet);
++		if (m_ctrlReadPipe &gt;= 0)
++		{
++			FD_SET(m_ctrlReadPipe, &amp;listenSet);
++		}
++
++		m_pHandler-&gt;flushIndex();
++
++		// The file descriptor may change over time
++		int monitorFd = m_pMonitor-&gt;getFileDescriptor();
++		FD_SET(monitorFd, &amp;listenSet);
++		if (monitorFd &lt; 0)
++		{
++			m_status = _(&quot;Couldn't initialize file monitor&quot;);
++			return;
++		}
++
++		int fdCount = select(max(monitorFd, m_ctrlReadPipe) + 1, &amp;listenSet, NULL, NULL, &amp;selectTimeout);
++		if ((fdCount &lt; 0) &amp;&amp;
++			(errno != EINTR))
++		{
++#ifdef DEBUG
++			cout &lt;&lt; &quot;MonitorThread::doWork: select() failed&quot; &lt;&lt; endl;
++#endif
++			break;
++		}
++		else if (FD_ISSET(monitorFd, &amp;listenSet))
++		{
++			processEvents();
++		}
++	}
++}
++
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-09-21 16:41:09 UTC (rev 980)
+@@ -35,6 +35,8 @@
+ 
+ #include &quot;Document.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
++#include &quot;MonitorInterface.h&quot;
++#include &quot;MonitorHandler.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ class WorkerThread
+@@ -440,4 +442,34 @@
+ 
+ };
+ 
++class MonitorThread : public WorkerThread
++{
++	public:
++		MonitorThread(MonitorInterface *pMonitor, MonitorHandler *pHandler,
++			bool checkHistory = true);
++		virtual ~MonitorThread();
++
++		virtual std::string getType(void) const;
++
++		virtual bool stop(void);
++
++		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt;&amp; getDirectoryFoundSignal(void);
++
++	protected:
++		int m_ctrlReadPipe;
++		int m_ctrlWritePipe;
++		MonitorInterface *m_pMonitor;
++		MonitorHandler *m_pHandler;
++		bool m_checkHistory;
++		SigC::Signal3&lt;void, const DocumentInfo&amp;, const std::string&amp;, bool&gt; m_signalDirectoryFound;
++
++		void processEvents(void);
++		virtual void doWork(void);
++
++	private:
++		MonitorThread(const MonitorThread &amp;other);
++		MonitorThread &amp;operator=(const MonitorThread &amp;other);
++
++};
++
+ #endif // _WORKERTHREADS_HH
+
+Modified: trunk/UI/GTK2/src/mainWindow.cc
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.cc	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/mainWindow.cc	2007-09-21 16:41:09 UTC (rev 980)
+@@ -41,6 +41,7 @@
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;XapianDatabase.h&quot;
++#include &quot;MonitorFactory.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderFactory.h&quot;
+@@ -62,6 +63,76 @@
+ using namespace Gdk;
+ using namespace Gtk;
+ 
++class ReloadHandler : public MonitorHandler
++{
++	public:
++		ReloadHandler() : MonitorHandler() {}
++		virtual ~ReloadHandler() {}
++
++		/// Initializes things before starting monitoring.
++		virtual void initialize(void) {}
++
++		/// Handles flushing the index.
++		virtual void flushIndex(void) {}
++
++		/// Handles file existence events.
++		virtual bool fileExists(const std::string &amp;fileName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
++		/// Handles file creation events.
++		virtual bool fileCreated(const std::string &amp;fileName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
++		/// Handles file modified events.
++		virtual bool fileModified(const std::string &amp;fileName)
++		{
++			// Re-initialize the MIME sub-system
++			return MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local&quot;,
++				string(SHARED_MIME_INFO_PREFIX));
++		}
++
++		/// Handles file moved events.
++		virtual bool fileMoved(const std::string &amp;fileName,
++			const std::string &amp;previousFileName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
++		/// Handles directory moved events.
++		virtual bool directoryMoved(const std::string &amp;dirName,
++			const std::string &amp;previousDirName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
++		/// Handles file deleted events.
++		virtual bool fileDeleted(const std::string &amp;fileName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
++		/// Handles directory deleted events.
++		virtual bool directoryDeleted(const std::string &amp;dirName)
++		{
++			// Nothing to do here
++			return true; 
++		}
++
++	private:
++		ReloadHandler(const ReloadHandler &amp;other);
++		ReloadHandler &amp;operator=(const ReloadHandler &amp;other);
++
++};
++
+ // FIXME: this ought to be configurable
+ unsigned int mainWindow::m_maxDocsCount = 100;
+ unsigned int mainWindow::m_maxIndexThreads = 2;
+@@ -89,6 +160,8 @@
+ 	m_pNotebook(NULL),
+ 	m_pIndexMenu(NULL),
+ 	m_pCacheMenu(NULL),
++	m_pSettingsMonitor(MonitorFactory::getMonitor()),
++	m_pSettingsHandler(NULL),
+ 	m_state(m_maxIndexThreads, this)
+ {
+ 	// Reposition and resize the window
+@@ -186,6 +259,19 @@
+ 	// Connect to threads' finished signal
+ 	m_state.connect();
+ 
++	// Monitor MIME settings files for changes in the background
++	set&lt;string&gt; mimeFiles;
++	MIMEScanner::listConfigurationFiles(PinotSettings::getHomeDirectory() + &quot;/.local&quot;, mimeFiles);
++	MIMEScanner::listConfigurationFiles(string(SHARED_MIME_INFO_PREFIX), mimeFiles);
++	for (set&lt;string&gt;::const_iterator fileIter = mimeFiles.begin();
++		fileIter != mimeFiles.end(); ++fileIter)
++	{
++		m_pSettingsMonitor-&gt;addLocation(*fileIter, false);
++	}
++	m_pSettingsHandler = new ReloadHandler();
++	MonitorThread *pSettingsMonitorThread = new MonitorThread(m_pSettingsMonitor, m_pSettingsHandler, false);
++	start_thread(pSettingsMonitorThread, true);
++
+ 	// Now we are ready
+ 	set_status(_(&quot;Ready&quot;));
+ 	m_pNotebook-&gt;show();
+@@ -206,6 +292,15 @@
+ {
+ 	// FIXME: delete all &quot;ignored&quot; threads when exiting !!!
+ 
++	if (m_pSettingsMonitor != NULL)
++	{
++		delete m_pSettingsMonitor;
++	}
++	if (m_pSettingsHandler != NULL)
++	{
++		delete m_pSettingsHandler;
++	}
++
+ 	// Save engines
+ 	m_pEnginesTree-&gt;save();
+ 
+
+Modified: trunk/UI/GTK2/src/mainWindow.hh
+===================================================================
+--- trunk/UI/GTK2/src/mainWindow.hh	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/mainWindow.hh	2007-09-21 16:41:09 UTC (rev 980)
+@@ -37,6 +37,8 @@
+ 
+ #include &quot;DocumentInfo.h&quot;
+ #include &quot;QueryProperties.h&quot;
++#include &quot;MonitorInterface.h&quot;
++#include &quot;MonitorHandler.h&quot;
+ #include &quot;EnginesTree.h&quot;
+ #include &quot;IndexPage.h&quot;
+ #include &quot;ModelColumns.h&quot;
+@@ -164,6 +166,9 @@
+ 	SigC::Connection m_pageSwitchConnection;
+ 	// Activity timeout
+ 	SigC::Connection m_timeoutConnection;
++	// Monitoring
++	MonitorInterface *m_pSettingsMonitor;
++	MonitorHandler *m_pSettingsHandler;
+ 	// Internal state
+ 	class InternalState : public ThreadsManager
+ 	{
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-09-21 16:41:09 UTC (rev 980)
+@@ -313,8 +313,8 @@
+ 	}
+ 
+ 	// Initialize utility classes
+-	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local/share/applications/&quot;,
+-		string(SHARED_MIME_INFO_PREFIX) + &quot;/share/applications/&quot;) == false)
++	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local&quot;,
++		string(SHARED_MIME_INFO_PREFIX)) == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+
+Modified: trunk/UI/GTK2/src/pinot.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot.cc	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/UI/GTK2/src/pinot.cc	2007-09-21 16:41:09 UTC (rev 980)
+@@ -238,8 +238,8 @@
+ 	}
+ 
+ 	// Initialize utility classes
+-	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local/share/applications/&quot;,
+-		string(SHARED_MIME_INFO_PREFIX) + &quot;/share/applications/&quot;) == false)
++	if (MIMEScanner::initialize(PinotSettings::getHomeDirectory() + &quot;/.local&quot;,
++		string(SHARED_MIME_INFO_PREFIX)) == false)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't load MIME settings&quot; &lt;&lt; endl;
+ 	}
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/Utils/MIMEScanner.cpp	2007-09-21 16:41:09 UTC (rev 980)
+@@ -27,6 +27,7 @@
+ #include &quot;StringManip.h&quot;
+ #include &quot;Url.h&quot;
+ 
++#define APPLICATIONS_DIRECTORY	&quot;/share/applications/&quot;
+ #define MIME_DEFAULTS_LIST	&quot;defaults.list&quot;
+ #define MIME_DEFAULTS_SECTION	&quot;Default Applications&quot;
+ #define MIME_CACHE		&quot;mimeinfo.cache&quot;
+@@ -237,9 +238,6 @@
+ 	{
+ 		// Yes, it was so just copy it
+ 		m_defaultActions.insert(pair&lt;string, MIMEAction&gt;(mimeType, actionIter-&gt;second));
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;MIMECache::findDesktopFile: copied &quot; &lt;&lt; desktopFile &lt;&lt; endl;
+-#endif
+ 
+ 		return true;
+ 	}
+@@ -368,9 +366,11 @@
+ {
+ }
+ 
+-bool MIMEScanner::initialize(const string &amp;userDirectory, const string &amp;systemDirectory)
++bool MIMEScanner::initialize(const string &amp;userPrefix, const string &amp;systemPrefix)
+ {
+ 	list&lt;string&gt; desktopFilesPaths;
++	string userDirectory(userPrefix + APPLICATIONS_DIRECTORY);
++	string systemDirectory(systemPrefix + APPLICATIONS_DIRECTORY);
+ 	bool foundActions = false;
+ 
+ 	// This may be a re-initialize
+@@ -444,6 +444,15 @@
+ 	xdg_mime_shutdown();
+ }
+ 
++void MIMEScanner::listConfigurationFiles(const string &amp;prefix, set&lt;string&gt; &amp;files)
++{
++	if (prefix.empty() == false)
++	{
++		files.insert(prefix + APPLICATIONS_DIRECTORY + MIME_DEFAULTS_LIST);
++		files.insert(prefix + APPLICATIONS_DIRECTORY + MIME_CACHE);
++	}
++}
++
+ string MIMEScanner::scanFileType(const string &amp;fileName)
+ {
+ 	const char *pType = NULL;
+
+Modified: trunk/Utils/MIMEScanner.h
+===================================================================
+--- trunk/Utils/MIMEScanner.h	2007-09-19 15:36:45 UTC (rev 979)
++++ trunk/Utils/MIMEScanner.h	2007-09-21 16:41:09 UTC (rev 980)
+@@ -95,11 +95,14 @@
+ 		~MIMEScanner();
+ 
+ 		/// Initializes the MIME system.
+-		static bool initialize(const std::string &amp;userDirectory, const std::string &amp;systemDirectory);
++		static bool initialize(const std::string &amp;userPrefix, const std::string &amp;systemPrefix);
+   
+ 		/// Shutdowns the MIME system.
+ 		static void shutdown(void);
+ 
++		/// Lists MIME configuration files under the given prefix.
++		static void listConfigurationFiles(const std::string &amp;prefix, std::set&lt;std::string&gt; &amp;files);
++
+ 		/// Finds out the given file's MIME type.
+ 		static std::string scanFile(const std::string &amp;fileName);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000973.html">[Pinot-svn] r979 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000975.html">[Pinot-svn] r981 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#974">[ date ]</a>
+              <a href="thread.html#974">[ thread ]</a>
+              <a href="subject.html#974">[ subject ]</a>
+              <a href="author.html#974">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

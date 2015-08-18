@@ -1,0 +1,304 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r395 - trunk/Monitor
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r395%20-%20trunk/Monitor&In-Reply-To=%3C200608161409.k7GE9P4j023571%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000387.html">
+   <LINK REL="Next"  HREF="000389.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r395 - trunk/Monitor</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r395%20-%20trunk/Monitor&In-Reply-To=%3C200608161409.k7GE9P4j023571%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r395 - trunk/Monitor">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug 16 16:09:25 CEST 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000387.html">[Pinot-svn] r394 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000389.html">[Pinot-svn] r396 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#388">[ date ]</a>
+              <a href="thread.html#388">[ thread ]</a>
+              <a href="subject.html#388">[ subject ]</a>
+              <a href="author.html#388">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-08-16 16:09:24 +0200 (Wed, 16 Aug 2006)
+New Revision: 395
+
+Modified:
+   trunk/Monitor/INotifyMonitor.cpp
+   trunk/Monitor/MonitorEvent.cpp
+   trunk/Monitor/MonitorEvent.h
+   trunk/Monitor/MonitorHandler.h
+Log:
+Modified MonitorHandler::getLocations(), added initialize() and m_isWatchi to
+MonitorEvent.
+Fixed events checking in INotifyMonitor.
+
+
+Modified: trunk/Monitor/INotifyMonitor.cpp
+===================================================================
+--- trunk/Monitor/INotifyMonitor.cpp	2006-08-12 07:47:23 UTC (rev 394)
++++ trunk/Monitor/INotifyMonitor.cpp	2006-08-16 14:09:24 UTC (rev 395)
+@@ -149,7 +149,6 @@
+ 	{
+ 		struct inotify_event *pEvent = (struct inotify_event *)&amp;buffer[offset];
+ 		size_t eventSize = sizeof(struct inotify_event) + pEvent-&gt;len;
+-		bool isOnWatch = true;
+ 
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: read &quot;
+@@ -169,6 +168,7 @@
+ 
+ 		MonitorEvent monEvent;
+ 
++		monEvent.m_isWatch = true;
+ 		if (pEvent-&gt;mask &amp; IN_ISDIR)
+ 		{
+ 			monEvent.m_isDirectory = true;
+@@ -180,7 +180,7 @@
+ 		{
+ 			monEvent.m_location += &quot;/&quot;;
+ 			monEvent.m_location += pEvent-&gt;name;
+-			isOnWatch = false;
++			monEvent.m_isWatch = false;
+ 		}
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: event on &quot;
+@@ -190,63 +190,73 @@
+ 		map&lt;uint32_t, string&gt;::iterator movedIter = m_movedFrom.end();
+ 
+ 		// What type of event ?
+-		switch (pEvent-&gt;mask)
++		if (pEvent-&gt;mask &amp; IN_CREATE)
+ 		{
+-			case IN_CREATE:
+-				// Skip regular files
+-				if (monEvent.m_isDirectory == true)
+-				{
+-					monEvent.m_type = MonitorEvent::CREATED;
+-				}
+-				break;
+-			case IN_CLOSE_WRITE:
+-				monEvent.m_type = MonitorEvent::WRITE_CLOSED;
+-				break;
+-			case IN_MOVED_FROM:
+-				// Store this until we receive a IN_MOVED_TO event
+-				m_movedFrom.insert(pair&lt;uint32_t, string&gt;(pEvent-&gt;cookie, monEvent.m_location));
+-				break;
+-			case IN_MOVED_TO:
+-				// What was the previous location ?
+-				movedIter = m_movedFrom.find(pEvent-&gt;cookie);
+-				if (movedIter != m_movedFrom.end())
+-				{
+-					monEvent.m_previousLocation = movedIter-&gt;second;
+-					monEvent.m_type = MonitorEvent::MOVED;
++			// Skip regular files
++			if (monEvent.m_isDirectory == true)
++			{
++				monEvent.m_type = MonitorEvent::CREATED;
++			}
++		}
++		else if (pEvent-&gt;mask &amp; IN_CLOSE_WRITE)
++		{
++			monEvent.m_type = MonitorEvent::WRITE_CLOSED;
++		}
++		else if (pEvent-&gt;mask &amp; IN_MOVED_FROM)
++		{
++			// Store this until we receive a IN_MOVED_TO event
++			m_movedFrom.insert(pair&lt;uint32_t, string&gt;(pEvent-&gt;cookie, monEvent.m_location));
++		}
++		else if (pEvent-&gt;mask &amp; IN_MOVED_TO)
++		{
++			// What was the previous location ?
++			movedIter = m_movedFrom.find(pEvent-&gt;cookie);
++			if (movedIter != m_movedFrom.end())
++			{
++				monEvent.m_previousLocation = movedIter-&gt;second;
++				monEvent.m_type = MonitorEvent::MOVED;
+ #ifdef DEBUG
+-					cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved from &quot;
+-						&lt;&lt; monEvent.m_previousLocation &lt;&lt; endl;
++				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: moved from &quot;
++					&lt;&lt; monEvent.m_previousLocation &lt;&lt; endl;
+ #endif
+-					m_movedFrom.erase(movedIter);
+-				}
++				m_movedFrom.erase(movedIter);
++			}
+ #ifdef DEBUG
+-				else cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: don't know where file was moved from&quot; &lt;&lt; endl;
++			else cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: don't know where file was moved from&quot; &lt;&lt; endl;
+ #endif
+-				break;
+-			case IN_DELETE:
+-				monEvent.m_type = MonitorEvent::DELETED;
+-				break;
+-			case IN_MOVE_SELF:
+-				// FIXME: how do we find out where the watched location was moved to ?
+-			case IN_DELETE_SELF:
++		}
++		else if (pEvent-&gt;mask &amp; IN_DELETE)
++		{
++			monEvent.m_type = MonitorEvent::DELETED;
++		}
++		else if (pEvent-&gt;mask &amp; IN_MOVE_SELF)
++		{
++			// FIXME: how do we find out where the watched location was moved to ?
++		}
++		else if (pEvent-&gt;mask &amp; IN_DELETE_SELF)
++		{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: watch moved or deleted itself&quot; &lt;&lt; endl;
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: watch moved or deleted itself&quot; &lt;&lt; endl;
+ #endif
++			if (monEvent.m_isWatch == true)
++			{
+ 				removeLocation(monEvent.m_location);
+-				break;
+-			case IN_UNMOUNT:
+-				if (isOnWatch == true)
+-				{
+-					// Watches are removed if the backing filesystem is unmounted
+-					removeLocation(monEvent.m_location);
+-				}
+-				break;
+-			default:
++			}
++		}
++		else if (pEvent-&gt;mask &amp; IN_UNMOUNT)
++		{
++			if (monEvent.m_isWatch == true)
++			{
++				// Watches are removed silently if the backing filesystem is unmounted
++				removeLocation(monEvent.m_location);
++			}
++		}
++		else
++		{
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: ignoring event &quot;
+-					&lt;&lt; pEvent-&gt;mask &lt;&lt; endl;
++			cout &lt;&lt; &quot;INotifyMonitor::retrievePendingEvents: ignoring event &quot;
++				&lt;&lt; pEvent-&gt;mask &lt;&lt; endl;
+ #endif
+-				break;
+ 		}
+ 
+ 		// Return event ?
+
+Modified: trunk/Monitor/MonitorEvent.cpp
+===================================================================
+--- trunk/Monitor/MonitorEvent.cpp	2006-08-12 07:47:23 UTC (rev 394)
++++ trunk/Monitor/MonitorEvent.cpp	2006-08-16 14:09:24 UTC (rev 395)
+@@ -20,6 +20,7 @@
+ using std::string;
+ 
+ MonitorEvent::MonitorEvent() :
++	m_isWatch(false),
+ 	m_type(UNKNOWN),
+ 	m_isDirectory(false)
+ {
+@@ -29,6 +30,7 @@
+ {
+ 	m_location = other.m_location;
+ 	m_previousLocation = other.m_previousLocation;
++	m_isWatch = other.m_isWatch;
+ 	m_type = other.m_type;
+ 	m_isDirectory = other.m_isDirectory;
+ }
+@@ -41,6 +43,7 @@
+ {
+ 	m_location = other.m_location;
+ 	m_previousLocation = other.m_previousLocation;
++	m_isWatch = other.m_isWatch;
+ 	m_type = other.m_type;
+ 	m_isDirectory = other.m_isDirectory;
+ 
+
+Modified: trunk/Monitor/MonitorEvent.h
+===================================================================
+--- trunk/Monitor/MonitorEvent.h	2006-08-12 07:47:23 UTC (rev 394)
++++ trunk/Monitor/MonitorEvent.h	2006-08-16 14:09:24 UTC (rev 395)
+@@ -34,6 +34,7 @@
+ 
+ 		std::string m_location;
+ 		std::string m_previousLocation;
++		bool m_isWatch;
+ 		EventType m_type;
+ 		bool m_isDirectory;
+ 
+
+Modified: trunk/Monitor/MonitorHandler.h
+===================================================================
+--- trunk/Monitor/MonitorHandler.h	2006-08-12 07:47:23 UTC (rev 394)
++++ trunk/Monitor/MonitorHandler.h	2006-08-16 14:09:24 UTC (rev 395)
+@@ -24,6 +24,7 @@
+ #include &lt;sigc++/slot.h&gt;
+ 
+ #include &quot;IndexedDocument.h&quot;
++#include &quot;MonitorInterface.h&quot;
+ 
+ class MonitorHandler
+ {
+@@ -31,9 +32,11 @@
+ 		MonitorHandler();
+ 		virtual ~MonitorHandler();
+ 
++		/// Initializes things before starting monitoring.
++		virtual void initialize(void) = 0;
++
+ 		/// Returns locations.
+-		virtual bool getLocations(std::set&lt;std::string&gt; &amp;newLocations,
+-			std::set&lt;std::string&gt; &amp;locationsToRemove) = 0;
++		virtual const std::set&lt;std::string&gt; &amp;getLocations(void) const = 0;
+ 
+ 		/// Handles file existence events.
+ 		virtual bool fileExists(const std::string &amp;fileName) = 0;
+@@ -54,6 +57,7 @@
+ 		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt;&amp; getUpdateSignal(void);
+ 
+ 	protected:
++		std::set&lt;std::string&gt; m_locations;
+ 		SigC::Signal3&lt;void, IndexedDocument, unsigned int, std::string&gt; m_signalUpdate;
+ 
+ 	private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000387.html">[Pinot-svn] r394 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000389.html">[Pinot-svn] r396 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#388">[ date ]</a>
+              <a href="thread.html#388">[ thread ]</a>
+              <a href="subject.html#388">[ subject ]</a>
+              <a href="author.html#388">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

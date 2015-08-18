@@ -1,0 +1,495 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r896 - in trunk: Index UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r896%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200708011351.l71Dp3HU018639%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000891.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r896 - in trunk: Index UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r896%20-%20in%20trunk%3A%20Index%20UI/GTK2/src&In-Reply-To=%3C200708011351.l71Dp3HU018639%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r896 - in trunk: Index UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  1 15:51:03 CEST 2007</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000891.html">[Pinot-svn] r897 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#890">[ date ]</a>
+              <a href="thread.html#890">[ thread ]</a>
+              <a href="subject.html#890">[ subject ]</a>
+              <a href="author.html#890">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-08-01 15:51:01 +0200 (Wed, 01 Aug 2007)
+New Revision: 896
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/UI/GTK2/src/DaemonState.cpp
+   trunk/UI/GTK2/src/DaemonState.h
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/WorkerThreads.h
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+   trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+Log:
+New D-Bus method Reload asks the daemon to reload its configuration and restart
+crawling and monitoring. The UI now uses this method instead of GetStatistics
+when the Preferences box' OK button is pressed.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/Index/DBusXapianIndex.cpp	2007-08-01 13:51:01 UTC (rev 896)
+@@ -299,10 +299,10 @@
+ 	return true;
+ }
+ 
+-/// Asks the D-Bus service for statistics.
+-bool DBusXapianIndex::getStatistics(unsigned int &amp;crawledCount, unsigned int &amp;docsCount)
++/// Asks the D-Bus service to reload its configuration.
++bool DBusXapianIndex::reload(void)
+ {
+-	bool gotStats = false;
++	bool reloading = false;
+ 
+ 	DBusGConnection *pBus = getBusConnection();
+ 	if (pBus == NULL)
+@@ -313,24 +313,19 @@
+ 	DBusGProxy *pBusProxy = getBusProxy(pBus);
+ 	if (pBusProxy == NULL)
+ 	{
+-		cerr &lt;&lt; &quot;DBusXapianIndex::getStatistics: couldn't get bus proxy&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;DBusXapianIndex::reload: couldn't get bus proxy&quot; &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
+ 	GError *pError = NULL;
+-	if (dbus_g_proxy_call(pBusProxy, &quot;GetStatistics&quot;, &amp;pError,
++	if (dbus_g_proxy_call(pBusProxy, &quot;Reload&quot;, &amp;pError,
+ 		G_TYPE_INVALID,
+-		G_TYPE_UINT, &amp;crawledCount,
+-		G_TYPE_UINT, &amp;docsCount,
+-		G_TYPE_INVALID) == TRUE)
++		G_TYPE_BOOLEAN, &amp;reloading,
++		G_TYPE_INVALID) == FALSE)
+ 	{
+-		gotStats = true;
+-	}
+-	else
+-	{
+ 		if (pError != NULL)
+ 		{
+-			cerr &lt;&lt; &quot;DBusXapianIndex::getStatistics: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
++			cerr &lt;&lt; &quot;DBusXapianIndex::reload: &quot; &lt;&lt; pError-&gt;message &lt;&lt; endl;
+ 			g_error_free(pError);
+ 		}
+ 	}
+@@ -338,7 +333,7 @@
+ 	g_object_unref(pBusProxy);
+ 	// FIXME: don't we have to call dbus_g_connection_unref(pBus); ?
+ 
+-	return gotStats;
++	return reloading;
+ }
+ 
+ 
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/Index/DBusXapianIndex.h	2007-08-01 13:51:01 UTC (rev 896)
+@@ -49,8 +49,8 @@
+ 		static bool documentInfoToDBus(DBusMessageIter *iter, unsigned int docId,
+ 			const DocumentInfo &amp;docInfo);
+ 
+-		/// Asks the D-Bus service for statistics.
+-		static bool getStatistics(unsigned int &amp;crawledCount, unsigned int &amp;docsCount);
++		/// Asks the D-Bus service to reload its configuration.
++		static bool reload(void);
+ 
+ 		/// Sets the version number.
+ 		virtual bool setVersion(double version) const;
+
+Modified: trunk/UI/GTK2/src/DaemonState.cpp
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.cpp	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/DaemonState.cpp	2007-08-01 13:51:01 UTC (rev 896)
+@@ -27,6 +27,7 @@
+ #include &lt;glibmm/thread.h&gt;
+ #include &lt;glibmm/random.h&gt;
+ 
++#include &quot;config.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;MonitorFactory.h&quot;
+ #include &quot;XapianIndex.h&quot;
+@@ -42,6 +43,7 @@
+ DaemonState::DaemonState() :
+ 	ThreadsManager(PinotSettings::getInstance().m_daemonIndexLocation, 20),
+ 	m_fullScan(false),
++	m_reload(false),
+ 	m_pDiskMonitor(MonitorFactory::getMonitor()),
+ 	m_pDiskHandler(NULL)
+ {
+@@ -118,7 +120,10 @@
+ 	}
+ 
+ 	// Fire up the disk monitor thread
+-	m_pDiskHandler = new OnDiskHandler();
++	if (m_pDiskHandler == NULL)
++	{
++		m_pDiskHandler = new OnDiskHandler();
++	}
+ 	MonitorThread *pDiskMonitorThread = new MonitorThread(m_pDiskMonitor, m_pDiskHandler);
+ 	pDiskMonitorThread-&gt;getDirectoryFoundSignal().connect(SigC::slot(*this, &amp;DaemonState::on_message_filefound));
+ 	start_thread(pDiskMonitorThread, true);
+@@ -131,6 +136,12 @@
+ 	}
+ }
+ 
++void DaemonState::reload(void)
++{
++	// Reload whenever possible
++	m_reload = true;
++}
++
+ void DaemonState::on_thread_end(WorkerThread *pThread)
+ {
+ 	string indexedUrl;
+@@ -225,6 +236,34 @@
+ 	// Delete the thread
+ 	delete pThread;
+ 
++	// Are we supposed to reload the configuration ?
++	// Wait until there are no threads running (except background ones)
++	if ((m_reload == true) &amp;&amp;
++		(get_threads_count() == 0))
++	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DaemonState::on_thread_end: stopping all threads&quot; &lt;&lt; endl;
++#endif
++		// Stop background threads
++		stop_threads();
++		// ...clear the queues
++		clear_queues();
++
++		// Reload
++		PinotSettings &amp;settings = PinotSettings::getInstance();
++		settings.clear();
++		settings.loadGlobal(string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;);
++		settings.load();
++
++		// ...and restart everything 
++		start(false);
++#ifdef DEBUG
++		cout &lt;&lt; &quot;DaemonState::on_thread_end: reloaded&quot; &lt;&lt; endl;
++#endif
++
++		m_reload = false;
++	}
++
+ 	// We might be able to run a queued action
+ 	pop_queue(indexedUrl);
+ }
+
+Modified: trunk/UI/GTK2/src/DaemonState.h
+===================================================================
+--- trunk/UI/GTK2/src/DaemonState.h	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/DaemonState.h	2007-08-01 13:51:01 UTC (rev 896)
+@@ -35,7 +35,7 @@
+ 
+ 		void start(bool forceFullScan);
+ 
+-		void signal_scanner(void);
++		void reload(void);
+ 
+ 		void on_thread_end(WorkerThread *pThread);
+ 
+@@ -46,6 +46,7 @@
+ 
+ 	protected:
+ 		bool m_fullScan;
++		bool m_reload;
+ 		MonitorInterface *m_pDiskMonitor;
+ 		MonitorHandler *m_pDiskHandler;
+ 		std::string m_locationBeingCrawled;
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-08-01 13:51:01 UTC (rev 896)
+@@ -246,16 +246,38 @@
+ 
+ void PinotSettings::clear(void)
+ {
+-	// Clear lists
++	m_version.clear();
++	m_googleAPIKey.clear();
++	m_xPos = 0;
++	m_yPos = 0;
++	m_width = 0;
++	m_height = 0;
++	m_panePos = -1;
++	m_showEngines = false;
++	m_expandQueries = false;
++	m_ignoreRobotsDirectives = false;
++	m_suggestQueryTerms = true;
++	m_newResultsColourRed = 65535;
++	m_newResultsColourGreen = 0;
++	m_newResultsColourBlue = 0;
++	m_proxyAddress.clear();
++	m_proxyPort = 8080;
++	m_proxyType.clear();
++	m_proxyEnabled = false;
++	m_indexableLocations.clear();
++	m_filePatternsList.clear();
++	m_isBlackList = false;
++	m_cacheProviders.clear();
++	m_cacheProtocols.clear();
++
++	m_firstRun = false;
+ 	m_indexNames.clear();
+ 	m_indexIds.clear();
+ 	m_engines.clear();
+ 	m_engineIds.clear();
++	m_engineChannels.clear();
+ 	m_queries.clear();
+ 	m_labels.clear();
+-	m_indexableLocations.clear();
+-	m_filePatternsList.clear();
+-	m_cacheProviders.clear();
+ }
+ 
+ bool PinotSettings::loadGlobal(const string &amp;fileName)
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-08-01 13:51:01 UTC (rev 896)
+@@ -1212,6 +1212,28 @@
+ 			}
+ 		}
+ 	}
++	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Reload&quot;) == TRUE)
++	{
++		if (dbus_message_get_args(m_pRequest, &amp;error,
++			DBUS_TYPE_INVALID) == TRUE)
++		{
++			gboolean reloaded = TRUE;
++
++#ifdef DEBUG
++			cout &lt;&lt; &quot;DBusServletThread::doWork: received Reload&quot; &lt;&lt; endl;
++#endif
++			m_pServer-&gt;reload();
++
++			// Prepare the reply
++			m_pReply = newDBusReply(m_pRequest);
++			if (m_pReply != NULL)
++			{
++				dbus_message_append_args(m_pReply,
++					DBUS_TYPE_INT32, &amp;reloaded,
++					DBUS_TYPE_INVALID);
++			}
++		}
++	}
+ 	else if (dbus_message_is_method_call(m_pRequest, &quot;de.berlios.Pinot&quot;, &quot;Stop&quot;) == TRUE)
+ 	{
+ 		if (dbus_message_get_args(m_pRequest, &amp;error,
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2007-08-01 13:51:01 UTC (rev 896)
+@@ -280,6 +280,10 @@
+ 
+ 	if (pWorkerThread-&gt;isBackground() == true)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::get_thread: thread &quot; &lt;&lt; pWorkerThread-&gt;getId()
++			&lt;&lt; &quot; was running in the background&quot; &lt;&lt; endl;
++#endif
+ 		--m_backgroundThreadsCount;
+ 	}
+ 
+@@ -340,6 +344,22 @@
+ 	return &quot;&quot;;
+ }
+ 
++void ThreadsManager::clear_queues(void)
++{
++	if (write_lock_lists() == true)
++	{
++		m_beingIndexed.clear();
++
++		unlock_lists();
++
++		ActionQueue actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
++
++		actionQueue.expireItems(time(NULL));
++
++		m_backgroundThreadsCount = 0;
++	}
++}
++
+ bool ThreadsManager::start_thread(WorkerThread *pWorkerThread, bool inBackground)
+ {
+ 	if (pWorkerThread == NULL)
+@@ -350,6 +370,10 @@
+ 	pWorkerThread-&gt;setId(m_nextThreadId);
+ 	if (inBackground == true)
+ 	{
++#ifdef DEBUG
++		cout &lt;&lt; &quot;ThreadsManager::start_thread: thread &quot; &lt;&lt; pWorkerThread-&gt;getId()
++			&lt;&lt; &quot; will run in the background&quot; &lt;&lt; endl;
++#endif
+ 		pWorkerThread-&gt;inBackground();
+ 		++m_backgroundThreadsCount;
+ 	}
+@@ -492,9 +516,9 @@
+ 
+ 	if (addToQueue == true)
+ 	{
+-		ActionQueue queue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
++		ActionQueue actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
+ 
+-		queue.pushItem(ActionQueue::INDEX, docInfo);
++		actionQueue.pushItem(ActionQueue::INDEX, docInfo);
+ 
+ 		return &quot;&quot;;
+ 	}
+@@ -535,12 +559,12 @@
+ 		// Get an item ?
+ 		if (getItem == true)
+ 		{
+-			ActionQueue queue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
++			ActionQueue actionQueue(PinotSettings::getInstance().getHistoryDatabaseName(), get_application_name());
+ 			ActionQueue::ActionType type;
+ 			DocumentInfo docInfo;
+ 			string previousLocation;
+ 
+-			while (queue.popItem(type, docInfo) == true)
++			while (actionQueue.popItem(type, docInfo) == true)
+ 			{
+ 				ustring status;
+ 
+@@ -1748,18 +1772,11 @@
+ 
+ void StartDaemonThread::doWork(void)
+ {
+-	unsigned int crawledCount = 0, docsCount = 0;
+-
+ 	if (m_done == false)
+         {
+-		// ... and let D-Bus activate the service if necessary
+-		// If it was already running, changes will take effect when it's restarted
+-		DBusXapianIndex::getStatistics(crawledCount, docsCount);
+-
+-#ifdef DEBUG
+-		cout &lt;&lt; &quot;StartDaemonThread::doWork: crawled &quot; &lt;&lt; crawledCount
+-			&lt;&lt; &quot;, indexed &quot; &lt;&lt; docsCount &lt;&lt; endl;
+-#endif
++		// Ask the daemon to reload its configuration
++		// Let D-Bus activate the service if necessary
++		DBusXapianIndex::reload();
+ 	}
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.h
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.h	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/WorkerThreads.h	2007-08-01 13:51:01 UTC (rev 896)
+@@ -136,11 +136,17 @@
+ 		std::set&lt;std::string&gt; m_beingIndexed;
+ 
+ 		bool read_lock_threads(void);
++
+ 		bool write_lock_threads(void);
++
+ 		void unlock_threads(void);
++
+ 		WorkerThread *get_thread(void);
++
+ 		Glib::ustring index_document(const DocumentInfo &amp;docInfo);
+ 
++		void clear_queues(void);
++
+ 	private:
+ 		ThreadsManager(const ThreadsManager &amp;other);
+ 		ThreadsManager &amp;operator=(const ThreadsManager &amp;other);
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-08-01 13:51:01 UTC (rev 896)
+@@ -190,7 +190,7 @@
+ 				cout &lt;&lt; &quot;pinot-dbus-daemon - D-Bus search and index daemon\n\n&quot;
+ 					&lt;&lt; &quot;Usage: pinot-dbus-daemon [OPTIONS]\n\n&quot;
+ 					&lt;&lt; &quot;Options:\n&quot;
+-					&lt;&lt; &quot;  -f, --fullscan		force a full scan\n&quot;
++					&lt;&lt; &quot;  -f, --fullscan	force a full scan\n&quot;
+ 					&lt;&lt; &quot;  -h, --help		display this help and exit\n&quot;
+ 					&lt;&lt; &quot;  -p, --priority	set the daemon's priority (default 15)\n&quot;
+ 					&lt;&lt; &quot;  -v, --version		output version information and exit\n&quot;
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.xml
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2007-07-28 03:30:36 UTC (rev 895)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.xml	2007-08-01 13:51:01 UTC (rev 896)
+@@ -45,6 +45,14 @@
+       &lt;arg type=&quot;as&quot; name=&quot;labels&quot; direction=&quot;out&quot;/&gt;
+     &lt;/method&gt;
+     &lt;!--
++	Instructs the daemon program to reload the configuration file.
++	 loadStatus: TRUE if the configuration is being reloaded
++	--&gt;
++    &lt;method name=&quot;Reload&quot;&gt;
++      &lt;annotation name=&quot;de.berlios.Pinot.Reload&quot; value=&quot;pinotDBus&quot;/&gt;
++      &lt;arg type=&quot;b&quot; name=&quot;reloaded&quot; direction=&quot;out&quot; /&gt;
++    &lt;/method&gt;
++    &lt;!--
+ 	Sets a document's labels.
+ 	 docId: the document's ID
+ 	 labels: array of labels to apply to the document
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000891.html">[Pinot-svn] r897 - trunk/Index
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#890">[ date ]</a>
+              <a href="thread.html#890">[ thread ]</a>
+              <a href="subject.html#890">[ subject ]</a>
+              <a href="author.html#890">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

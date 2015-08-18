@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r979 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r979%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200709191536.l8JFaj1K002939%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000972.html">
+   <LINK REL="Next"  HREF="000974.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r979 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r979%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200709191536.l8JFaj1K002939%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r979 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 19 17:36:45 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000972.html">[Pinot-svn] r978 - in trunk: Tokenize UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000974.html">[Pinot-svn] r980 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#973">[ date ]</a>
+              <a href="thread.html#973">[ thread ]</a>
+              <a href="subject.html#973">[ subject ]</a>
+              <a href="author.html#973">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-19 17:36:45 +0200 (Wed, 19 Sep 2007)
+New Revision: 979
+
+Modified:
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+Log:
+Don't refer to XapianEngine directly.
+
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-09-19 15:34:50 UTC (rev 978)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-09-19 15:36:45 UTC (rev 979)
+@@ -40,7 +40,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;DBusXapianIndex.h&quot;
+ #include &quot;XapianIndex.h&quot;
+-#include &quot;XapianEngine.h&quot;
++#include &quot;SearchEngineFactory.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;DaemonState.h&quot;
+@@ -816,27 +816,36 @@
+ 
+ bool DBusServletThread::runQuery(QueryProperties &amp;queryProps, vector&lt;string&gt; &amp;docIds)
+ {
+-	XapianEngine engine(PinotSettings::getInstance().m_daemonIndexLocation);
+-
+ 	docIds.clear();
+ 
++	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(&quot;xapian&quot;,
++		PinotSettings::getInstance().m_daemonIndexLocation);
++	if (pEngine == NULL)
++	{
++		return false;
++	}
++
+ 	// Run the query
+-	engine.setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
+-	if (engine.runQuery(queryProps) == false)
++	pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_AND);
++	if (pEngine-&gt;runQuery(queryProps) == false)
+ 	{
++		delete pEngine;
++
+ 		return false;
+ 	}
+ 
+-	const vector&lt;DocumentInfo&gt; &amp;resultsList = engine.getResults();
++	const vector&lt;DocumentInfo&gt; &amp;resultsList = pEngine-&gt;getResults();
+ 	if (resultsList.empty() == true)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DBusServletThread::runQuery: trying again&quot; &lt;&lt; endl;
+ #endif
+ 		// Try again, this time with OR as default operator
+-		engine.setDefaultOperator(SearchEngineInterface::DEFAULT_OP_OR);
+-		if (engine.runQuery(queryProps) == false)
++		pEngine-&gt;setDefaultOperator(SearchEngineInterface::DEFAULT_OP_OR);
++		if (pEngine-&gt;runQuery(queryProps) == false)
+ 		{
++			delete pEngine;
++
+ 			return false;
+ 		}
+ 	}
+@@ -857,6 +866,8 @@
+ 		}
+ 	}
+ 
++	delete pEngine;
++
+ 	return true;
+ }
+ 
+
+Modified: trunk/UI/GTK2/src/pinot-dbus-daemon.cc
+===================================================================
+--- trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-09-19 15:34:50 UTC (rev 978)
++++ trunk/UI/GTK2/src/pinot-dbus-daemon.cc	2007-09-19 15:36:45 UTC (rev 979)
+@@ -45,7 +45,6 @@
+ #include &quot;ViewHistory.h&quot;
+ #include &quot;DownloaderInterface.h&quot;
+ #include &quot;XapianIndex.h&quot;
+-#include &quot;XapianEngine.h&quot;
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+ #include &quot;DaemonState.h&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000972.html">[Pinot-svn] r978 - in trunk: Tokenize UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000974.html">[Pinot-svn] r980 - in trunk: UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#973">[ date ]</a>
+              <a href="thread.html#973">[ thread ]</a>
+              <a href="subject.html#973">[ subject ]</a>
+              <a href="author.html#973">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1151 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1151%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200712221723.lBMHNK0U014344%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001144.html">
+   <LINK REL="Next"  HREF="001146.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1151 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1151%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200712221723.lBMHNK0U014344%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1151 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Dec 22 18:23:20 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001144.html">[Pinot-svn] r1150 - trunk/IndexSearch
+</A></li>
+        <LI>Next message: <A HREF="001146.html">[Pinot-svn] r1152 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1145">[ date ]</a>
+              <a href="thread.html#1145">[ thread ]</a>
+              <a href="subject.html#1145">[ subject ]</a>
+              <a href="author.html#1145">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-12-22 18:23:20 +0100 (Sat, 22 Dec 2007)
+New Revision: 1151
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/ServerThreads.cpp
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+Log:
+Save and load queries' modified flag.
+The status window now shows which engines are available. Some other minor mod.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2007-12-22 17:21:14 UTC (rev 1150)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2007-12-22 17:23:20 UTC (rev 1151)
+@@ -873,6 +873,13 @@
+ 		{
+ 			queryProps.setLabelName(nodeContent);
+ 		}
++		else if (nodeName == &quot;modified&quot;)
++		{
++			if (nodeContent == &quot;YES&quot;)
++			{
++				queryProps.setModified(true);
++			}
++		}
+ 	}
+ 
+ 	// Are pre-0.80 dates specified ?
+@@ -1360,6 +1367,7 @@
+ 			addChildElement(pElem, &quot;maxresults&quot;, numStr);
+ 			addChildElement(pElem, &quot;index&quot;, (queryIter-&gt;second.getIndexResults() ? &quot;ALL&quot; : &quot;NONE&quot;));
+ 			addChildElement(pElem, &quot;label&quot;, queryIter-&gt;second.getLabelName());
++			addChildElement(pElem, &quot;modified&quot;, (queryIter-&gt;second.getModified() ? &quot;YES&quot; : &quot;NO&quot;));
+ 		}
+ 		// Labels
+ 		for (set&lt;string&gt;::iterator labelIter = m_labels.begin(); labelIter != m_labels.end(); ++labelIter)
+
+Modified: trunk/UI/GTK2/src/ServerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ServerThreads.cpp	2007-12-22 17:21:14 UTC (rev 1150)
++++ trunk/UI/GTK2/src/ServerThreads.cpp	2007-12-22 17:23:20 UTC (rev 1151)
+@@ -269,11 +269,11 @@
+ 
+ 	if (entryStatus == -1)
+ 	{
++		entryStatus = errno;
++		scanSuccess = false;
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: stat failed with error &quot; &lt;&lt; errno &lt;&lt; endl;
++		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: stat failed with error &quot; &lt;&lt; entryStatus &lt;&lt; endl;
+ #endif
+-		entryStatus = errno;
+-		scanSuccess = false;
+ 	}
+ 	// Is it a file or a directory ?
+ 	else if (S_ISLNK(fileStat.st_mode))
+@@ -364,11 +364,11 @@
+ 			}
+ 			else
+ 			{
++				entryStatus = errno;
++				scanSuccess = false;
+ #ifdef DEBUG
+-				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: opendir failed with error &quot; &lt;&lt; errno &lt;&lt; endl;
++				cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: opendir failed with error &quot; &lt;&lt; entryStatus &lt;&lt; endl;
+ #endif
+-				entryStatus = errno;
+-				scanSuccess = false;
+ 			}
+ 		}
+ 	}
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2007-12-22 17:21:14 UTC (rev 1150)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2007-12-22 17:23:20 UTC (rev 1151)
+@@ -29,6 +29,7 @@
+ #include &quot;Url.h&quot;
+ #include &quot;CrawlHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
++#include &quot;ModuleFactory.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;WorkerThreads.h&quot;
+@@ -69,33 +70,50 @@
+ {
+ 	TreeModel::iterator folderIter = m_refStore-&gt;append();
+ 	TreeModel::Row row = *folderIter;
++	set&lt;string&gt; engines;
++
++	// Indexes
++	statisticsTreeview-&gt;get_selection()-&gt;select(folderIter);
+ 	row[m_statsColumns.m_name] = _(&quot;Indexes&quot;);
+-	statisticsTreeview-&gt;get_selection()-&gt;select(folderIter);
+-
+ 	TreeModel::iterator statIter = m_refStore-&gt;append(folderIter-&gt;children());
+ 	row = *statIter;
+ 	row[m_statsColumns.m_name] = _(&quot;My Web Pages&quot;);
+ 	m_myWebPagesIter = m_refStore-&gt;append(statIter-&gt;children());
+-
+ 	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+ 	row = *statIter;
+ 	row[m_statsColumns.m_name] = _(&quot;My Documents&quot;);
+ 	m_myDocumentsIter = m_refStore-&gt;append(statIter-&gt;children());
+ 
++	// Search engines
++	TreeModel::iterator enginesIter = m_refStore-&gt;append();
++	row = *enginesIter;
++	row[m_statsColumns.m_name] = _(&quot;Search Engines&quot;);
++	ModuleFactory::getSupportedEngines(engines);
++	for (set&lt;string&gt;::const_iterator engineIter = engines.begin();
++		engineIter != engines.end(); ++engineIter)
++	{
++		TreeModel::iterator statIter = m_refStore-&gt;append(enginesIter-&gt;children());
++		row = *statIter;
++		row[m_statsColumns.m_name] = *engineIter;
++	}
++
++	// History
+ 	folderIter = m_refStore-&gt;append();
+ 	row = *folderIter;
+ 	row[m_statsColumns.m_name] = _(&quot;History&quot;);
+ 	m_viewStatIter = m_refStore-&gt;append(folderIter-&gt;children());
++	m_crawledStatIter = m_refStore-&gt;append(folderIter-&gt;children());
+ 
++	// Daemon
+ 	m_daemonIter = m_refStore-&gt;append();
+ 	row = *m_daemonIter;
+ 	row[m_statsColumns.m_name] = _(&quot;Daemon&quot;);
+-	m_daemonStatIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
++	m_daemonProcIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
+ 
+-	m_crawledStatIter = m_refStore-&gt;append(folderIter-&gt;children());
+-
+ 	// Expand everything
+ 	statisticsTreeview-&gt;expand_all();
++	TreeModel::Path enginesPath = m_refStore-&gt;get_path(enginesIter);
++	statisticsTreeview-&gt;collapse_row(enginesPath);
+ 
+ 	Adjustment *pAdjustement = statisticsScrolledwindow-&gt;get_hadjustment();
+ #ifdef DEBUG
+@@ -155,6 +173,12 @@
+ 	row = *m_viewStatIter;
+ 	row[m_statsColumns.m_name] = ustring(_(&quot;Viewed&quot;)) + &quot; &quot; + countStr + &quot; &quot; + _(&quot;results&quot;);
+ 
++	// Show crawler statistics
++	unsigned int crawledFilesCount = crawlerHistory.getItemsCount(CrawlHistory::CRAWLED);
++	snprintf(countStr, 64, &quot;%u&quot;, crawledFilesCount);
++	row = *m_crawledStatIter;
++	row[m_statsColumns.m_name] = ustring(_(&quot;Crawled&quot;)) + &quot; &quot; + countStr + &quot; &quot; + _(&quot;files&quot;);
++
+ 	// Is the daemon still running ?
+ 	string pidFileName(PinotSettings::getInstance().getConfigurationDirectory() + &quot;/pinot-dbus-daemon.pid&quot;);
+ 	pid_t daemonPID = 0;
+@@ -166,7 +190,7 @@
+ 		pidFile.close();
+ 	}
+ 	snprintf(countStr, 64, &quot;%u&quot;, daemonPID);
+-	row = *m_daemonStatIter;
++	row = *m_daemonProcIter;
+ 	if (daemonPID &gt; 0)
+ 	{
+ 		// FIXME: check whether it's actually running !
+@@ -177,12 +201,6 @@
+ 		row[m_statsColumns.m_name] = ustring(_(&quot;Currently not running&quot;));
+ 	}
+ 
+-	// Show crawler statistics
+-	unsigned int crawledFilesCount = crawlerHistory.getItemsCount(CrawlHistory::CRAWLED);
+-	snprintf(countStr, 64, &quot;%u&quot;, crawledFilesCount);
+-	row = *m_crawledStatIter;
+-	row[m_statsColumns.m_name] = ustring(_(&quot;Crawled&quot;)) + &quot; &quot; + countStr + &quot; &quot; + _(&quot;files&quot;);
+-
+ 	// Show errors
+ 	crawlerHistory.getSources(sources);
+ 	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2007-12-22 17:21:14 UTC (rev 1150)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2007-12-22 17:23:20 UTC (rev 1151)
+@@ -41,7 +41,7 @@
+ 	Gtk::TreeModel::iterator m_myDocumentsIter;
+ 	Gtk::TreeModel::iterator m_viewStatIter;
+ 	Gtk::TreeModel::iterator m_daemonIter;
+-	Gtk::TreeModel::iterator m_daemonStatIter;
++	Gtk::TreeModel::iterator m_daemonProcIter;
+ 	Gtk::TreeModel::iterator m_crawledStatIter;
+ 	Gtk::TreeModel::iterator m_errorsTopIter;
+ 	std::map&lt;int, Gtk::TreeModel::iterator&gt; m_errorsIters;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001144.html">[Pinot-svn] r1150 - trunk/IndexSearch
+</A></li>
+	<LI>Next message: <A HREF="001146.html">[Pinot-svn] r1152 - trunk/IndexSearch/Xapian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1145">[ date ]</a>
+              <a href="thread.html#1145">[ thread ]</a>
+              <a href="subject.html#1145">[ subject ]</a>
+              <a href="author.html#1145">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

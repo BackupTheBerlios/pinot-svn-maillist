@@ -1,0 +1,380 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1017 - trunk/Index
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1017%20-%20trunk/Index&In-Reply-To=%3C200710071026.l97AQ8Fp025467%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001010.html">
+   <LINK REL="Next"  HREF="001012.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1017 - trunk/Index</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1017%20-%20trunk/Index&In-Reply-To=%3C200710071026.l97AQ8Fp025467%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1017 - trunk/Index">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Oct  7 12:26:08 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001010.html">[Pinot-svn] r1016 - trunk/Index
+</A></li>
+        <LI>Next message: <A HREF="001012.html">[Pinot-svn] r1018 - in trunk: Index UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1011">[ date ]</a>
+              <a href="thread.html#1011">[ thread ]</a>
+              <a href="subject.html#1011">[ subject ]</a>
+              <a href="author.html#1011">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-07 12:26:07 +0200 (Sun, 07 Oct 2007)
+New Revision: 1017
+
+Modified:
+   trunk/Index/DBusXapianIndex.cpp
+   trunk/Index/DBusXapianIndex.h
+   trunk/Index/IndexInterface.h
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/XapianIndex.h
+Log:
+New method getDocumentTerms().
+In XapianIndex, revert to using the version file if metadata isn't supported
+by the index backend (eg Quartz). Make sure setVersion() always creates the
+CACHEDIR.TAG file.
+
+
+Modified: trunk/Index/DBusXapianIndex.cpp
+===================================================================
+--- trunk/Index/DBusXapianIndex.cpp	2007-10-07 10:22:37 UTC (rev 1016)
++++ trunk/Index/DBusXapianIndex.cpp	2007-10-07 10:26:07 UTC (rev 1017)
+@@ -27,6 +27,7 @@
+ using std::endl;
+ using std::string;
+ using std::set;
++using std::map;
+ using std::min;
+ 
+ const char *g_fieldNames[] = { &quot;caption&quot;, &quot;url&quot;, &quot;type&quot;, &quot;language&quot;, &quot;modtime&quot;, &quot;size&quot;, NULL };
+@@ -352,6 +353,23 @@
+ 	return XapianIndex::getDocumentInfo(docId, docInfo);
+ }
+ 
++/// Returns a document's terms count.
++unsigned int DBusXapianIndex::getDocumentTermsCount(unsigned int docId) const
++{
++	reopen();
++
++	return XapianIndex::getDocumentTermsCount(docId);
++}
++
++/// Returns a document's terms.
++bool DBusXapianIndex::getDocumentTerms(unsigned int docId,
++	map&lt;unsigned int, string&gt; &amp;wordsBuffer) const
++{
++	reopen();
++
++	return XapianIndex::getDocumentTerms(docId, wordsBuffer);
++}
++
+ /// Sets the list of known labels.
+ bool DBusXapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
+ {
+
+Modified: trunk/Index/DBusXapianIndex.h
+===================================================================
+--- trunk/Index/DBusXapianIndex.h	2007-10-07 10:22:37 UTC (rev 1016)
++++ trunk/Index/DBusXapianIndex.h	2007-10-07 10:26:07 UTC (rev 1017)
+@@ -21,6 +21,7 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;set&gt;
++#include &lt;map&gt;
+ #include &quot;config.h&quot;
+ extern &quot;C&quot;
+ {
+@@ -61,6 +62,13 @@
+ 		/// Returns a document's properties.
+ 		virtual bool getDocumentInfo(unsigned int docId, DocumentInfo &amp;docInfo) const;
+ 
++		/// Returns a document's terms count.
++		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
++
++		/// Returns a document's terms.
++		virtual bool getDocumentTerms(unsigned int docId,
++			std::map&lt;unsigned int, std::string&gt; &amp;wordsBuffer) const;
++
+ 		/// Sets the list of known labels.
+ 		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels);
+ 
+
+Modified: trunk/Index/IndexInterface.h
+===================================================================
+--- trunk/Index/IndexInterface.h	2007-10-07 10:22:37 UTC (rev 1016)
++++ trunk/Index/IndexInterface.h	2007-10-07 10:26:07 UTC (rev 1017)
+@@ -21,6 +21,7 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;set&gt;
++#include &lt;map&gt;
+ 
+ #include &quot;Document.h&quot;
+ 
+@@ -51,6 +52,10 @@
+ 		/// Returns a document's terms count.
+ 		virtual unsigned int getDocumentTermsCount(unsigned int docId) const = 0;
+ 
++		/// Returns a document's terms.
++		virtual bool getDocumentTerms(unsigned int docId,
++			std::map&lt;unsigned int, std::string&gt; &amp;wordsBuffer) const = 0;
++
+ 		/// Sets the list of known labels.
+ 		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels) = 0;
+ 
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-10-07 10:22:37 UTC (rev 1016)
++++ trunk/Index/XapianIndex.cpp	2007-10-07 10:26:07 UTC (rev 1017)
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include &lt;fcntl.h&gt;
++#include &lt;ctype.h&gt;
+ #include &lt;unistd.h&gt;
+ #include &lt;stdio.h&gt;
+ #include &lt;stdlib.h&gt;
+@@ -47,9 +48,43 @@
+ using std::string;
+ using std::vector;
+ using std::set;
++using std::map;
+ using std::min;
+ using std::max;
+ 
++static bool setVersionFile(const string &amp;databaseName, const string &amp;version)
++{
++	ofstream verFile;
++	string verFileName(databaseName + &quot;/version&quot;);
++	bool setVer = false;
++
++	verFile.open(verFileName.c_str(), ios::trunc);
++	if (verFile.good() == true)
++	{
++		verFile &lt;&lt; version;
++		setVer = true;
++	}
++	verFile.close();
++
++	return setVer;
++}
++
++static string getVersionFromFile(const string &amp;databaseName)
++{
++	ifstream verFile;
++	string verFileName(databaseName + &quot;/version&quot;);
++	string version;
++
++	verFile.open(verFileName.c_str());
++	if (verFile.good() == true)
++	{
++		verFile &gt;&gt; version;
++	}
++	verFile.close();
++
++	return version;
++}
++
+ const string XapianIndex::MAGIC_TERM = &quot;X-MetaSE-Doc&quot;;
+ 
+ XapianIndex::XapianIndex(const string &amp;indexName) :
+@@ -704,6 +739,11 @@
+ 			}
+ 		}
+ 	}
++	catch (const Xapian::UnimplementedError &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get database version, no support for metadata: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		version = getVersionFromFile(m_databaseName);
++	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't get database version: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+@@ -714,15 +754,7 @@
+ 	}
+ 	pDatabase-&gt;unlock();
+ #else
+-	ifstream verFile;
+-	string verFileName(m_databaseName + &quot;/version&quot;);
+-
+-	verFile.open(verFileName.c_str());
+-	if (verFile.good() == true)
+-	{
+-		verFile &gt;&gt; version;
+-	}
+-	verFile.close();
++	version = getVersionFromFile(m_databaseName);
+ #endif
+ 
+ 	return version;
+@@ -750,6 +782,11 @@
+ 			setVer = true;
+ 		}
+ 	}
++	catch (const Xapian::UnimplementedError &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't set database version, no support for metadata: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		setVer = setVersionFile(m_databaseName, version);
++	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't set database version: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+@@ -760,20 +797,13 @@
+ 	}
+ 	pDatabase-&gt;unlock();
+ #else
+-	ofstream verFile, cacheDirFile;
+-	string verFileName(m_databaseName + &quot;/version&quot;);
+-	string cacheDirFileName(m_databaseName + &quot;/CACHEDIR.TAG&quot;);
++	setVer = setVersionFile(m_databaseName, version);
++#endif
+ 
+-	verFile.open(verFileName.c_str(), ios::trunc);
+-	if (verFile.good() == true)
+-	{
+-		verFile &lt;&lt; version;
+-		setVer = true;
+-	}
+-	verFile.close();
+-
+ 	// While we are at it, create a CACHEDIR.TAG file
+ 	// See the spec at <A HREF="http://www.brynosaurus.com/cachedir/">http://www.brynosaurus.com/cachedir/</A>
++	string cacheDirFileName(m_databaseName + &quot;/CACHEDIR.TAG&quot;);
++	ofstream cacheDirFile;
+ 	cacheDirFile.open(cacheDirFileName.c_str(), ios::trunc);
+ 	if (cacheDirFile.good() == true)
+ 	{
+@@ -783,7 +813,6 @@
+ 		cacheDirFile &lt;&lt; &quot;# <A HREF="http://www.brynosaurus.com/cachedir/">http://www.brynosaurus.com/cachedir/</A>&quot; &lt;&lt; endl;
+ 	}
+ 	cacheDirFile.close();
+-#endif
+ 
+ 	return setVer;
+ }
+@@ -901,6 +930,58 @@
+ 	return termsCount;
+ }
+ 
++/// Returns a document's terms.
++bool XapianIndex::getDocumentTerms(unsigned int docId, map&lt;unsigned int, string&gt; &amp;wordsBuffer) const
++{
++	bool gotTerms = false;
++
++	XapianDatabase *pDatabase = XapianDatabaseFactory::getDatabase(m_databaseName);
++	if (pDatabase == NULL)
++	{
++		cerr &lt;&lt; &quot;Bad index &quot; &lt;&lt; m_databaseName &lt;&lt; endl;
++		return false;
++	}
++
++	try
++	{
++		Xapian::Database *pIndex = pDatabase-&gt;readLock();
++		if (pIndex != NULL)
++		{
++			// Go through the position list of each term
++			for (Xapian::TermIterator termIter = pIndex-&gt;termlist_begin(docId);
++				termIter != pIndex-&gt;termlist_end(docId); ++termIter)
++			{
++				string termName(*termIter);
++
++				// Skip prefixed terms
++				if (isupper((int)termName[0]) != 0)
++				{
++					continue;
++				}
++
++				for (Xapian::PositionIterator positionIter = pIndex-&gt;positionlist_begin(docId, termName);
++					positionIter != pIndex-&gt;positionlist_end(docId, termName); ++positionIter)
++				{
++					wordsBuffer[*positionIter] = termName;
++				}
++
++				gotTerms = true;
++			}
++		}
++	}
++	catch (const Xapian::Error &amp;error)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document terms: &quot; &lt;&lt; error.get_type() &lt;&lt; &quot;: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++	}
++	catch (...)
++	{
++		cerr &lt;&lt; &quot;Couldn't get document terms, unknown exception occured&quot; &lt;&lt; endl;
++	}
++	pDatabase-&gt;unlock();
++
++	return gotTerms;
++}
++
+ /// Sets the list of known labels.
+ bool XapianIndex::setLabels(const set&lt;string&gt; &amp;labels)
+ {
+
+Modified: trunk/Index/XapianIndex.h
+===================================================================
+--- trunk/Index/XapianIndex.h	2007-10-07 10:22:37 UTC (rev 1016)
++++ trunk/Index/XapianIndex.h	2007-10-07 10:26:07 UTC (rev 1017)
+@@ -21,6 +21,7 @@
+ 
+ #include &lt;string&gt;
+ #include &lt;set&gt;
++#include &lt;map&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;XapianDatabase.h&quot;
+@@ -63,6 +64,10 @@
+ 		/// Returns a document's terms count.
+ 		virtual unsigned int getDocumentTermsCount(unsigned int docId) const;
+ 
++		/// Returns a document's terms.
++		virtual bool getDocumentTerms(unsigned int docId,
++			std::map&lt;unsigned int, std::string&gt; &amp;wordsBuffer) const;
++
+ 		/// Sets the list of known labels.
+ 		virtual bool setLabels(const std::set&lt;std::string&gt; &amp;labels);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001010.html">[Pinot-svn] r1016 - trunk/Index
+</A></li>
+	<LI>Next message: <A HREF="001012.html">[Pinot-svn] r1018 - in trunk: Index UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1011">[ date ]</a>
+              <a href="thread.html#1011">[ thread ]</a>
+              <a href="subject.html#1011">[ subject ]</a>
+              <a href="author.html#1011">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

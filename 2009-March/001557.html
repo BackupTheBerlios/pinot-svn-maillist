@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1567 - in trunk: . Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1567%20-%20in%20trunk%3A%20.%20Core&In-Reply-To=%3C200903010236.n212a3cK000340%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001558.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1567 - in trunk: . Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1567%20-%20in%20trunk%3A%20.%20Core&In-Reply-To=%3C200903010236.n212a3cK000340%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1567 - in trunk: . Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Mar  1 03:36:03 CET 2009</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001558.html">[Pinot-svn] r1568 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1557">[ date ]</a>
+              <a href="thread.html#1557">[ thread ]</a>
+              <a href="subject.html#1557">[ subject ]</a>
+              <a href="author.html#1557">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-03-01 03:35:42 +0100 (Sun, 01 Mar 2009)
+New Revision: 1567
+
+Modified:
+   trunk/Core/UniqueApplication.cpp
+   trunk/Core/WorkerThreads.cpp
+   trunk/configure.in
+Log:
+Functions kill() and lstat() may not be available.
+
+
+Modified: trunk/Core/UniqueApplication.cpp
+===================================================================
+--- trunk/Core/UniqueApplication.cpp	2009-02-28 12:44:09 UTC (rev 1566)
++++ trunk/Core/UniqueApplication.cpp	2009-03-01 02:35:42 UTC (rev 1567)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2008 Fabrice Colin
++ *  Copyright 2008-2009 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -24,6 +24,7 @@
+ #include &lt;fstream&gt;
+ #include &lt;sstream&gt;
+ 
++#include &quot;config.h&quot;
+ #include &quot;UniqueApplication.h&quot;
+ 
+ using std::cout;
+@@ -136,6 +137,7 @@
+ 				}
+ 			}
+ 
++#ifdef HAVE_KILL
+ 			if (checkProcess == true)
+ 			{
+ 				if (kill(processID, 0) == 0)
+@@ -150,6 +152,7 @@
+ 				}
+ 			}
+ #endif
++#endif
+ 
+ 			if (stillRunning == true)
+ 			{
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2009-02-28 12:44:09 UTC (rev 1566)
++++ trunk/Core/WorkerThreads.cpp	2009-03-01 02:35:42 UTC (rev 1567)
+@@ -2098,6 +2098,7 @@
+ 	cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: checking &quot; &lt;&lt; entryName &lt;&lt; endl;
+ #endif
+ 
++#ifdef HAVE_LSTAT
+ 	// Stat links, or the stuff it refers to ?
+ 	if (statLinks == true)
+ 	{
+@@ -2105,8 +2106,11 @@
+ 	}
+ 	else
+ 	{
++#endif
+ 		entryStatus = stat(entryName.c_str(), &amp;fileStat);
++#ifdef HAVE_LSTAT
+ 	}
++#endif
+ 
+ 	if (entryStatus == -1)
+ 	{
+@@ -2116,6 +2120,7 @@
+ 		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: stat failed with error &quot; &lt;&lt; entryStatus &lt;&lt; endl;
+ #endif
+ 	}
++#ifdef HAVE_LSTAT
+ 	// Special processing applies if it's a symlink
+ 	else if (S_ISLNK(fileStat.st_mode))
+ 	{
+@@ -2210,6 +2215,7 @@
+ 			reportFile = true;
+ 		}
+ 	}
++#endif
+ 
+ 	// Is this item in the database already ?
+ 	itemExists = wasCrawled(location, itemDate);
+@@ -2301,8 +2307,11 @@
+ 		}
+ 	}
+ 	// Is it some unknown type ?
+-	else if ((entryStatus == 0) &amp;&amp;
+-		(!S_ISLNK(fileStat.st_mode)))
++	else if ((entryStatus == 0)
++#ifdef HAVE_LSTAT
++		&amp;&amp; (!S_ISLNK(fileStat.st_mode))
++#endif
++		)
+ 	{
+ #ifdef DEBUG
+ 		cout &lt;&lt; &quot;DirectoryScannerThread::scanEntry: unknown entry type&quot; &lt;&lt; endl;
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2009-02-28 12:44:09 UTC (rev 1566)
++++ trunk/configure.in	2009-03-01 02:35:42 UTC (rev 1567)
+@@ -438,6 +438,7 @@
+ AC_CHECK_FUNCS(sysconf)
+ AC_CHECK_FUNCS(getloadavg)
+ AC_CHECK_FUNCS(pipe)
++AC_CHECK_FUNCS(kill)
+ 
+ AC_OUTPUT( pinot.spec Core/de.berlios.Pinot.service Makefile \
+ 	Utils/Makefile Tokenize/Makefile SQL/Makefile po/Makefile.in Collect/Makefile \
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001558.html">[Pinot-svn] r1568 - trunk/Core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1557">[ date ]</a>
+              <a href="thread.html#1557">[ thread ]</a>
+              <a href="subject.html#1557">[ subject ]</a>
+              <a href="author.html#1557">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

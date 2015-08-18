@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1257 - trunk/SQL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1257%20-%20trunk/SQL&In-Reply-To=%3C200805190330.m4J3UXdl020361%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001250.html">
+   <LINK REL="Next"  HREF="001252.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1257 - trunk/SQL</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1257%20-%20trunk/SQL&In-Reply-To=%3C200805190330.m4J3UXdl020361%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1257 - trunk/SQL">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon May 19 05:30:33 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001250.html">[Pinot-svn] r1256 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001252.html">[Pinot-svn] r1258 - trunk/scripts/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1251">[ date ]</a>
+              <a href="thread.html#1251">[ thread ]</a>
+              <a href="subject.html#1251">[ subject ]</a>
+              <a href="author.html#1251">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-05-19 05:30:29 +0200 (Mon, 19 May 2008)
+New Revision: 1257
+
+Modified:
+   trunk/SQL/SQLDB.h
+   trunk/SQL/SQLiteBase.cpp
+   trunk/SQL/SQLiteBase.h
+Log:
+Utility method alterTable() to work-around SQLite's limited implementation of
+ALTER TABLE.
+
+
+Modified: trunk/SQL/SQLDB.h
+===================================================================
+--- trunk/SQL/SQLDB.h	2008-05-16 15:22:46 UTC (rev 1256)
++++ trunk/SQL/SQLDB.h	2008-05-19 03:30:29 UTC (rev 1257)
+@@ -73,6 +73,10 @@
+ 
+ 		virtual bool isOpen(void) const = 0;
+ 
++		virtual bool alterTable(const std::string &amp;tableName,
++			const std::string &amp;columns,
++			const std::string &amp;newDefinition) = 0;
++
+ 		virtual bool executeSimpleStatement(const std::string &amp;sql) = 0;
+ 
+ 		virtual SQLResults *executeStatement(const char *sqlFormat, ...) = 0;
+
+Modified: trunk/SQL/SQLiteBase.cpp
+===================================================================
+--- trunk/SQL/SQLiteBase.cpp	2008-05-16 15:22:46 UTC (rev 1256)
++++ trunk/SQL/SQLiteBase.cpp	2008-05-19 03:30:29 UTC (rev 1257)
+@@ -213,6 +213,48 @@
+ 	return true;
+ }
+ 
++bool SQLiteBase::alterTable(const string &amp;tableName,
++	const string &amp;columns, const string &amp;newDefinition)
++{
++	if ((tableName.empty() == true) ||
++		(columns.empty() == true) ||
++		(newDefinition.empty() == true))
++	{
++		return false;
++	}
++
++	string sql(&quot;BEGIN TRANSACTION; CREATE TEMPORARY TABLE &quot;);
++	sql += tableName;
++	sql += &quot;_backup (&quot;;
++	sql += columns;
++	sql += &quot;); INSERT INTO &quot;;
++	sql += tableName;
++	sql += &quot;_backup SELECT &quot;;
++	sql += columns;
++	sql += &quot; FROM &quot;;
++	sql += tableName;
++	sql += &quot;; DROP TABLE &quot;;
++	sql += tableName;
++	sql += &quot;; CREATE TABLE &quot;;
++	sql += tableName;
++	sql += &quot; (&quot;;
++	sql += newDefinition;
++	sql += &quot;); INSERT INTO &quot;;
++	sql += tableName;
++	sql += &quot; SELECT &quot;;
++	sql += columns;
++	sql += &quot; FROM &quot;;
++	sql += tableName;
++	sql += &quot;_backup; DROP TABLE &quot;;
++	sql += tableName;
++	sql += &quot;_backup; COMMIT;&quot;;
++#ifdef DEBUG
++	cout &lt;&lt; &quot;SQLiteBase::alterTable: &quot; &lt;&lt; sql &lt;&lt; endl;
++#endif
++
++	return executeSimpleStatement(sql);
++}
++
+ bool SQLiteBase::executeSimpleStatement(const string &amp;sql)
+ {
+ 	char *errMsg = NULL;
+
+Modified: trunk/SQL/SQLiteBase.h
+===================================================================
+--- trunk/SQL/SQLiteBase.h	2008-05-16 15:22:46 UTC (rev 1256)
++++ trunk/SQL/SQLiteBase.h	2008-05-19 03:30:29 UTC (rev 1257)
+@@ -71,6 +71,10 @@
+ 
+ 		virtual bool isOpen(void) const;
+ 
++		virtual bool alterTable(const std::string &amp;tableName,
++			const std::string &amp;columns,
++			const std::string &amp;newDefinition);
++
+ 		virtual bool executeSimpleStatement(const std::string &amp;sql);
+ 
+ 		virtual SQLResults *executeStatement(const char *sqlFormat, ...);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001250.html">[Pinot-svn] r1256 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001252.html">[Pinot-svn] r1258 - trunk/scripts/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1251">[ date ]</a>
+              <a href="thread.html#1251">[ thread ]</a>
+              <a href="subject.html#1251">[ subject ]</a>
+              <a href="author.html#1251">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

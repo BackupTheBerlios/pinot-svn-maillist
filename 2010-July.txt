@@ -1,0 +1,4497 @@
+From fabricecolin at mail.berlios.de  Thu Jul  1 12:26:40 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Thu,  1 Jul 2010 12:26:40 +0200
+Subject: [Pinot-svn] r1717 - trunk/Core
+Message-ID: <20100701102640.368F34809A2@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-01 12:26:40 +0200 (Thu, 01 Jul 2010)
+New Revision: 1717
+
+Modified:
+   trunk/Core/DaemonState.cpp
+Log:
+FreeBSD build patch by Thierry Thomas.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2010-06-29 14:06:52 UTC (rev 1716)
++++ trunk/Core/DaemonState.cpp	2010-07-01 10:26:40 UTC (rev 1717)
+@@ -37,7 +37,7 @@
+       #define CHECK_DISK_SPACE 1
+     #else
+       #ifdef HAVE_SYS_MOUNT_H
+-        #if defined(__OpenBSD__)
++        #if defined(__OpenBSD__) || (defined(__FreeBSD__) && (_FreeBSD_version < 700000))
+           #include <sys/param.h>
+         #endif
+         #include <sys/mount.h>
+
+
+
+From fabricecolin at mail.berlios.de  Thu Jul  1 12:28:57 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Thu,  1 Jul 2010 12:28:57 +0200
+Subject: [Pinot-svn] r1718 - trunk
+Message-ID: <20100701102857.9C1D54809A2@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-01 12:28:57 +0200 (Thu, 01 Jul 2010)
+New Revision: 1718
+
+Modified:
+   trunk/configure.in
+Log:
+Dropped option --enable-xesam-glib, don't build IndexSearch/XesamGLib.
+Look for dlopen() in libc if not found in libdl (helps with build on BSD).
+
+
+Modified: trunk/configure.in
+===================================================================
+--- trunk/configure.in	2010-07-01 10:26:40 UTC (rev 1717)
++++ trunk/configure.in	2010-07-01 10:28:57 UTC (rev 1718)
+@@ -120,25 +120,6 @@
+ AC_SUBST(SOAP_CFLAGS)
+ AC_SUBST(SOAP_LIBS)
+ 
+-dnl Xesam GLib
+-AC_MSG_CHECKING(whether to enable Xesam GLib support)
+-AC_ARG_ENABLE(xesam-glib,
+-   [AS_HELP_STRING([--enable-xesam-glib], [enable Xesam GLib support [default=no]])],
+-   ,[enable_xesam_glib=no])
+-if test "x$enable_xesam_glib" != "xyes"; then
+-   XESAMGLIB_CFLAGS=""
+-   XESAMGLIB_LIBS=""
+-   enable_xesam_glib=no
+-fi
+-AC_MSG_RESULT($enable_xesam_glib)
+-AM_CONDITIONAL(HAVE_XESAM_GLIB, false)
+-if test "x$enable_xesam_glib" = "xyes"; then
+-   PKG_CHECK_MODULES(XESAMGLIB, xesam-glib)
+-   AM_CONDITIONAL(HAVE_XESAM_GLIB, true)
+-fi
+-AC_SUBST(XESAMGLIB_CFLAGS)
+-AC_SUBST(XESAMGLIB_LIBS)
+-
+ dnl DBus
+ AC_MSG_CHECKING(whether to enable DBus support)
+ AC_ARG_ENABLE(dbus,
+@@ -328,6 +309,16 @@
+    fi
+ fi
+ 
++dnl dlopen() in libdl or libc ?
++AC_SUBST(DL_LIBS)
++AC_CHECK_LIB(dl, dlopen,
++   [DL_LIBS="-ldl"],
++   [AC_CHECK_LIB(c, dlopen,
++      [DL_LIBS=""],
++      [AC_MSG_ERROR([Can't find the library providing dlopen])]
++   ])
++)
++
+ dnl Check whether we can use GIO instead of xdgmime
+ AM_CONDITIONAL(HAVE_GIO_MIME, false)
+ AC_MSG_CHECKING([if gio can sniff png])
+@@ -393,7 +384,7 @@
+ 
+ dnl Other libraries
+ MISC_CFLAGS="$PTHREAD_CFLAGS $VISIB_CFLAGS -D_FILE_OFFSET_BITS=64"
+-MISC_LIBS="$PTHREAD_LIBS -ldl"
++MISC_LIBS="$PTHREAD_LIBS $DL_LIBS"
+ AC_SUBST(MISC_CFLAGS)
+ AC_SUBST(MISC_LIBS)
+ AC_CHECK_HEADERS([sys/vfs.h sys/statfs.h sys/mount.h sys/statvfs.h attr/xattr.h dlfcn.h regex.h fnmatch.h pwd.h ext/malloc_allocator.h])
+@@ -473,6 +464,6 @@
+ 
+ AC_OUTPUT( pinot.spec Core/de.berlios.Pinot.service Makefile \
+ 	Utils/Makefile Tokenize/Makefile SQL/Makefile po/Makefile.in Collect/Makefile \
+-	IndexSearch/Google/Makefile IndexSearch/Xapian/Makefile IndexSearch/XesamGLib/Makefile \
++	IndexSearch/Google/Makefile IndexSearch/Xapian/Makefile \
+ 	IndexSearch/Makefile Monitor/Makefile Core/Makefile UI/GTK2/src/Makefile )
+ 
+
+
+
+From fabricecolin at mail.berlios.de  Thu Jul  1 12:32:32 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Thu,  1 Jul 2010 12:32:32 +0200
+Subject: [Pinot-svn] r1719 - in trunk: . Core IndexSearch IndexSearch/Xapian
+Message-ID: <20100701103233.0807F480A13@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-01 12:32:32 +0200 (Thu, 01 Jul 2010)
+New Revision: 1719
+
+Modified:
+   trunk/Core/pinot-search.1
+   trunk/Core/pinot-search.cpp
+   trunk/IndexSearch/Makefile.am
+   trunk/IndexSearch/QueryProperties.cpp
+   trunk/IndexSearch/QueryProperties.h
+   trunk/IndexSearch/Xapian/Makefile.am
+   trunk/IndexSearch/Xapian/XapianEngine.cpp
+   trunk/Makefile.am
+   trunk/pinot.spec.in
+Log:
+Dropped Xesam support.
+
+
+Modified: trunk/Core/pinot-search.1
+===================================================================
+--- trunk/Core/pinot-search.1	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/Core/pinot-search.1	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -35,12 +35,6 @@
+ .TP
+ \fB\-v\fR, \fB\-\-version\fR
+ output version information and exit
+-.TP
+-\fB\-q\fR, \fB\-\-xesamql\fR
+-query input is a file containing Xesam QL
+-.TP
+-\fB\-u\fR, \fB\-\-xesamul\fR
+-query input is a file containing Xesam UL
+ .PP
+ Supported search engine types are : 'opensearch' 'sherlock' 'xapian'
+ .SH EXAMPLES
+@@ -53,10 +47,6 @@
+ pinot\-search xapian ~/.pinot/index "label:Clowns"
+ .PP
+ pinot\-search \fB\-\-stemming\fR english xapian somehostname:12345 "clowning"
+-.PP
+-pinot\-search \fB\-\-xesamul\fR xapian ~/.pinot/index some_xesamul_query.txt
+-.PP
+-pinot\-search \fB\-\-xesamql\fR xesam \- some_xesamql_query.xml
+ .SH "REPORTING BUGS"
+ Report bugs to fabricecolin at users.berlios.de
+ .PP
+
+Modified: trunk/Core/pinot-search.cpp
+===================================================================
+--- trunk/Core/pinot-search.cpp	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/Core/pinot-search.cpp	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -46,39 +46,9 @@
+ 	{"tocsv", 1, 0, 'c'},
+ 	{"toxml", 1, 0, 'x'},
+ 	{"version", 0, 0, 'v'},
+-	{"xesamql", 0, 0, 'q'},
+-	{"xesamul", 0, 0, 'u'},
+ 	{0, 0, 0, 0}
+ };
+ 
+-static bool loadFile(const string &xesamFile, string &fileContents)
+-{
+-	ifstream inputFile;
+-	bool readFile = false;
+-
+-	inputFile.open(xesamFile.c_str());
+-	if (inputFile.good() == true)
+-	{
+-		inputFile.seekg(0, ios::end);
+-		int length = inputFile.tellg();
+-		inputFile.seekg(0, ios::beg);
+-
+-		char *pFileBuffer = new char[length + 1];
+-		inputFile.read(pFileBuffer, length);
+-		if (inputFile.fail() == false)
+-		{
+-			pFileBuffer[length] = '\0';
+-
+-			fileContents = string(pFileBuffer, length);
+-			readFile = true;
+-		}
+-		delete[] pFileBuffer;
+-	}
+-	inputFile.close();
+-
+-	return readFile;
+-}
+-
+ static void printHelp(void)
+ {
+ 	map<ModuleProperties, bool> engines;
+@@ -99,8 +69,6 @@
+ 		<< "  -c, --tocsv               file to export results in CSV format to\n"
+ 		<< "  -x, --toxml               file to export results in XML format to\n"
+ 		<< "  -v, --version             output version information and exit\n"
+-		<< "  -q, --xesamql             query input is a file containing Xesam QL\n"
+-		<< "  -u, --xesamul             query input is a file containing Xesam UL\n\n"
+ 		<< "Supported search engine types are :";
+ 	for (map<ModuleProperties, bool>::const_iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 	{
+@@ -112,8 +80,6 @@
+ 		<< "pinot-search googleapi mygoogleapikey \"clowns\"\n\n"
+ 		<< "pinot-search xapian ~/.pinot/index \"label:Clowns\"\n\n"
+ 		<< "pinot-search --stemming english xapian somehostname:12345 \"clowning\"\n\n"
+-		<< "pinot-search --xesamul xapian ~/.pinot/index some_xesamul_query.txt\n\n"
+-		<< "pinot-search --xesamql xesam - some_xesamql_query.xml\n\n"
+ 		<< "Report bugs to " << PACKAGE_BUGREPORT << endl;
+ }
+ 
+@@ -129,7 +95,7 @@
+ 	bool isStoredQuery = false;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, "c:dhlm:qrs:uvx:", g_longOptions, &longOptionIndex);
++	int optionChar = getopt_long(argc, argv, "c:dhlm:rs:vx:", g_longOptions, &longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -156,9 +122,6 @@
+ 					maxResultsCount = (unsigned int )atoi(optarg);
+ 				}
+ 				break;
+-			case 'q':
+-				queryType = QueryProperties::XESAM_QL;
+-				break;
+ 			case 'r':
+ 				isStoredQuery = true;
+ 				break;
+@@ -168,9 +131,6 @@
+ 					stemLanguage = optarg;
+ 				}
+ 				break;
+-			case 'u':
+-				queryType = QueryProperties::XESAM_UL;
+-				break;
+ 			case 'v':
+ 				cout << "pinot-search - " << PACKAGE_STRING << "\n\n"
+ 					<< "This is free software.  You may redistribute copies of it under the terms of\n"
+@@ -189,7 +149,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, "c:dhlm:qrs:uvx:", g_longOptions, &longOptionIndex);
++		optionChar = getopt_long(argc, argv, "c:dhlm:rs:vx:", g_longOptions, &longOptionIndex);
+ 	}
+ 
+ #if defined(ENABLE_NLS)
+@@ -276,32 +236,6 @@
+ 			queryProps.setFreeQuery(pQueryInput);
+ 		}
+ 	}
+-	else if (isStoredQuery == true)
+-	{
+-		cerr << "Options -r and -q/-u are incompatible" << endl;
+-
+-		DownloaderInterface::shutdown();
+-		MIMEScanner::shutdown();
+-
+-		return EXIT_FAILURE;
+-	}
+-	else
+-	{
+-		string fileContents;
+-
+-		// Load the query from file
+-		if (loadFile(pQueryInput, fileContents) == false)
+-		{
+-			cerr << "Couldn't load query from file " << pQueryInput << endl;
+-
+-			DownloaderInterface::shutdown();
+-			MIMEScanner::shutdown();
+-
+-			return EXIT_FAILURE;
+-		}
+-
+-		queryProps.setFreeQuery(fileContents);
+-	}
+ 	queryProps.setStemmingLanguage(stemLanguage);
+ 	queryProps.setMaximumResultsCount(maxResultsCount);
+ 	if (sortByDate == true)
+
+Modified: trunk/IndexSearch/Makefile.am
+===================================================================
+--- trunk/IndexSearch/Makefile.am	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/Makefile.am	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -14,8 +14,7 @@
+ 	SearchEngineInterface.h \
+ 	SearchPluginProperties.h \
+ 	SherlockParser.h \
+-	WebEngine.h \
+-	XesamLog.h
++	WebEngine.h
+ 
+ if HAVE_DBUS
+ noinst_LTLIBRARIES = libIndex.la libIndexSearch.la
+@@ -70,7 +69,6 @@
+ 	-I$(top_srcdir)/Collect \
+ 	-I$(top_srcdir)/IndexSearch/cjkv \
+ 	-I$(top_srcdir)/IndexSearch/Google \
+-	-I$(top_srcdir)/IndexSearch/xesam \
+ 	@HTTP_CFLAGS@ @XML_CFLAGS@ @DBUS_CFLAGS@ \
+ 	@INDEX_CFLAGS@ @GLIBMM_CFLAGS@
+ 
+
+Modified: trunk/IndexSearch/QueryProperties.cpp
+===================================================================
+--- trunk/IndexSearch/QueryProperties.cpp	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/QueryProperties.cpp	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+
+Modified: trunk/IndexSearch/QueryProperties.h
+===================================================================
+--- trunk/IndexSearch/QueryProperties.h	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/QueryProperties.h	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2008 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -30,7 +30,7 @@
+ class PINOT_EXPORT QueryProperties
+ {
+ 	public:
+-		typedef enum { XAPIAN_QP = 0, XESAM_QL, XESAM_UL } QueryType;
++		typedef enum { XAPIAN_QP = 0 } QueryType;
+ 		typedef enum { RELEVANCE = 0, DATE } SortOrder;
+ 		typedef enum { NOTHING = 0, ALL_RESULTS, NEW_RESULTS } IndexWhat;
+ 
+
+Modified: trunk/IndexSearch/Xapian/Makefile.am
+===================================================================
+--- trunk/IndexSearch/Xapian/Makefile.am	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/Xapian/Makefile.am	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -6,12 +6,7 @@
+ 	XapianDatabase.h \
+ 	XapianDatabaseFactory.h \
+ 	XapianIndex.h \
+-	XapianEngine.h \
+-	$(top_srcdir)/IndexSearch/xesam/XapianQueryBuilder.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamParser.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQLParser.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQueryBuilder.h \
+-	$(top_srcdir)/IndexSearch/xesam/XesamULParser.h
++	XapianEngine.h
+ 
+ lib_LTLIBRARIES = libxapianbackend.la
+ 
+@@ -22,15 +17,8 @@
+ 	XapianDatabase.cpp \
+ 	XapianDatabaseFactory.cpp \
+ 	XapianIndex.cpp \
+-	XapianEngine.cpp \
+-	$(top_srcdir)/IndexSearch/xesam/XapianQueryBuilder.cc \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQLParser.cc \
+-	$(top_srcdir)/IndexSearch/xesam/XesamQueryBuilder.cc
++	XapianEngine.cpp
+ 
+-if HAVE_BOOST_SPIRIT
+-libxapianbackend_la_SOURCES += $(top_srcdir)/IndexSearch/xesam/XesamULParser.cc
+-endif
+-
+ libxapianbackend_la_LDFLAGS = -module -avoid-version -shared -nostartfiles
+ 
+ libxapianbackend_la_LIBADD = \
+@@ -46,7 +34,6 @@
+ 	-I$(top_srcdir)/Tokenize/filters \
+ 	-I$(top_srcdir)/IndexSearch \
+ 	-I$(top_srcdir)/IndexSearch/cjkv \
+-	-I$(top_srcdir)/IndexSearch/xesam \
+ 	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @GLIBMM_CFLAGS@
+ 
+ if HAVE_BOOST_SPIRIT
+
+Modified: trunk/IndexSearch/Xapian/XapianEngine.cpp
+===================================================================
+--- trunk/IndexSearch/Xapian/XapianEngine.cpp	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/IndexSearch/Xapian/XapianEngine.cpp	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005-2009 Fabrice Colin
++ *  Copyright 2005-2010 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -37,11 +37,6 @@
+ #include "XapianDatabaseFactory.h"
+ #include "AbstractGenerator.h"
+ #include "XapianEngine.h"
+-#include "xesam/XapianQueryBuilder.h"
+-#include "xesam/XesamQLParser.h"
+-#ifdef HAVE_BOOST_SPIRIT
+-#include "xesam/XesamULParser.h"
+-#endif
+ 
+ using std::string;
+ using std::multimap;
+@@ -725,39 +720,7 @@
+ 	QueryProperties::QueryType type = queryProps.getType();
+ 	if (type != QueryProperties::XAPIAN_QP)
+ 	{
+-		map<string, string> fieldMapping;
+-
+-		// Bare minimum mapping between Xesam fields and our prefixes 
+-		fieldMapping["dc:title"] = "S";
+-
+-		XapianQueryBuilder builder(parser, fieldMapping);
+-		XesamParser *pParser = NULL;
+-		bool parsedQuery = false;
+-
+-		// Get a Xesam parser
+-		if (type == QueryProperties::XESAM_QL)
+-		{
+-			pParser = new XesamQLParser();
+-		}
+-#ifdef HAVE_BOOST_SPIRIT_CORE_HPP
+-		else if (type == QueryProperties::XESAM_UL)
+-		{
+-			pParser = new XesamULParser();
+-		}
+-#endif
+-
+-		if (pParser != NULL)
+-		{
+-			parsedQuery = pParser->parse(freeQuery, builder);
+-
+-			delete pParser;
+-		}
+-
+-		if (parsedQuery == true)
+-		{
+-			return builder.get_query();
+-		}
+-
++		// This isn't supported
+ 		return Xapian::Query();
+ 	}
+ 
+
+Modified: trunk/Makefile.am
+===================================================================
+--- trunk/Makefile.am	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/Makefile.am	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -1,5 +1,5 @@
+ 
+-SUBDIRS = po Utils Tokenize SQL Collect IndexSearch/Google IndexSearch IndexSearch/Xapian IndexSearch/XesamGLib Monitor Core UI/GTK2/src
++SUBDIRS = po Utils Tokenize SQL Collect IndexSearch/Google IndexSearch IndexSearch/Xapian Monitor Core UI/GTK2/src
+ 
+ # TODO: Fix that when cleaning up for distcheck! - crazy -
+ EXTRA_DIST = AUTHORS ChangeLog ChangeLog-dijon FAQ NEWS README TODO \
+
+Modified: trunk/pinot.spec.in
+===================================================================
+--- trunk/pinot.spec.in	2010-07-01 10:28:57 UTC (rev 1718)
++++ trunk/pinot.spec.in	2010-07-01 10:32:32 UTC (rev 1719)
+@@ -35,9 +35,6 @@
+ %if 0%{?_with_soap:1}
+ BuildRequires: gsoap >= 2.7.9e
+ %endif
+-%if 0%{?_with_xesam_glib:1}
+-BuildRequires: xesam-glib >= 0.3.0
+-%endif
+ %if 0%{?_with_libarchive:1}
+ Requires: libarchive >= 2.6.2
+ BuildRequires: libarchive-devel >= 2.6.2
+@@ -65,7 +62,7 @@
+ %setup -q
+ 
+ %build
+-%configure %{?_with_soap:--enable-soap=yes} %{?_with_xesam_glib:--enable-xesam-glib=yes} %{?_with_libarchive:--enable-libarchive=yes} %{?_with_debug:--enable-debug=yes}
++%configure %{?_with_soap:--enable-soap=yes} %{?_with_libarchive:--enable-libarchive=yes} %{?_with_debug:--enable-debug=yes}
+ make %{?_smp_mflags}
+ 
+ %install
+
+
+
+From fabricecolin at mail.berlios.de  Thu Jul  1 12:34:37 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Thu,  1 Jul 2010 12:34:37 +0200
+Subject: [Pinot-svn] r1720 - trunk/po
+Message-ID: <20100701103437.BE61F4809A2@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-01 12:34:37 +0200 (Thu, 01 Jul 2010)
+New Revision: 1720
+
+Modified:
+   trunk/po/fr.po
+   trunk/po/he.po
+Log:
+Completed fr.po, added missing accents etc...
+Updated he.po by Yaron.
+
+
+Modified: trunk/po/fr.po
+===================================================================
+--- trunk/po/fr.po	2010-07-01 10:32:32 UTC (rev 1719)
++++ trunk/po/fr.po	2010-07-01 10:34:37 UTC (rev 1720)
+@@ -7,94 +7,92 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
+-"PO-Revision-Date: 2010-06-20 08:46+0000\n"
+-"Last-Translator: verdy_p <Unknown>\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"PO-Revision-Date: 2010-07-01 12:45+0000\n"
++"Last-Translator: Fabrice Colin <fabricecolin at users.berlios.de>\n"
+ "Language-Team: fr <fabricecolin at users.berlios.de>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=utf-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+-msgstr ""
++msgstr "N'a pas pu commencer une transaction"
+ 
+ #: SQL/SQLiteBase.cpp:455
+ msgid "failed to rollback transaction"
+-msgstr ""
++msgstr "N'a pas pu annuler une transaction"
+ 
+ #: SQL/SQLiteBase.cpp:491
+ msgid "failed to end transaction"
+-msgstr ""
++msgstr "N'a pas pu terminer une transaction"
+ 
+ #: SQL/SQLiteBase.cpp:553
+ msgid "couldn't format SQL statement"
+-msgstr ""
++msgstr "n'a pas pu mettre en format la commande SQL"
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Inconnu"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Danois"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Hollandais"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Anglais"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Finlandais"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+-msgstr "Francais"
++msgstr "Fran?ais"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Allemand"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "Hongrois"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italien"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+-msgstr "Norvegien"
++msgstr "Norv?gien"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugais"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Roumain"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Russe"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Espagnol"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Su?dois"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turc"
+ 
+@@ -139,7 +137,7 @@
+ 
+ #: Core/PinotSettings.cpp:474
+ msgid "Latest First"
+-msgstr "Plus Recents"
++msgstr "Plus R?cents"
+ 
+ #: Core/PinotSettings.cpp:477
+ msgid "Home Stuff"
+@@ -147,7 +145,7 @@
+ 
+ #: Core/PinotSettings.cpp:478
+ msgid "With Label New"
+-msgstr "Avec L'Etiquette Nouveau"
++msgstr "Avec L'?tiquette Nouveau"
+ 
+ #: Core/PinotSettings.cpp:479
+ msgid "Have CJKV"
+@@ -175,11 +173,11 @@
+ 
+ #: Core/WorkerThreads.cpp:100
+ msgid "Couldn't update document"
+-msgstr "N'a pas pu mettre a jour le document"
++msgstr "N'a pas pu mettre ? jour le document"
+ 
+ #: Core/WorkerThreads.cpp:102
+ msgid "Couldn't unindex document(s)"
+-msgstr "N'a pas pu desindexer le(s) document(s)"
++msgstr "N'a pas pu d?sindexer le(s) document(s)"
+ 
+ #: Core/WorkerThreads.cpp:104
+ msgid "Couldn't run query on search engine"
+@@ -191,7 +189,7 @@
+ 
+ #: Core/WorkerThreads.cpp:108
+ msgid "Couldn't retrieve document"
+-msgstr "N'a pas pu telecharger le document"
++msgstr "N'a pas pu t?l?-charger le document"
+ 
+ #: Core/WorkerThreads.cpp:110
+ msgid "File monitor error"
+@@ -199,7 +197,7 @@
+ 
+ #: Core/WorkerThreads.cpp:112
+ msgid "Couldn't open directory"
+-msgstr "N'a pas pu ouvrir le repertoire"
++msgstr "N'a pas pu ouvrir le r?pertoire"
+ 
+ #: Core/WorkerThreads.cpp:114
+ msgid "Index doesn't exist"
+@@ -207,7 +205,7 @@
+ 
+ #: Core/WorkerThreads.cpp:116
+ msgid "Couldn't create search engine"
+-msgstr "N'a pas pu creer le moteur"
++msgstr "N'a pas pu cr?er le moteur"
+ 
+ #: Core/WorkerThreads.cpp:118
+ msgid "Cannot index document type"
+@@ -215,7 +213,7 @@
+ 
+ #: Core/WorkerThreads.cpp:120
+ msgid "No downloader for this protocol"
+-msgstr "Pas de brouteur pour ce protocole"
++msgstr "Pas de navigateur pour ce protocole"
+ 
+ #: Core/WorkerThreads.cpp:122
+ msgid "Robots META tag forbids indexing"
+@@ -232,7 +230,7 @@
+ 
+ #: Core/WorkerThreads.cpp:439
+ msgid "Indexing was stopped"
+-msgstr "Indexation est arretee"
++msgstr "L'indexation est arr?t?e"
+ 
+ #: Core/WorkerThreads.cpp:452
+ msgid "Can't index mail here"
+@@ -240,7 +238,7 @@
+ 
+ #: Core/WorkerThreads.cpp:473 Core/WorkerThreads.cpp:764
+ msgid "is already being indexed"
+-msgstr "est deja indexe"
++msgstr "est d?j? index?"
+ 
+ #: Core/WorkerThreads.cpp:483
+ msgid "is blacklisted"
+@@ -292,7 +290,7 @@
+ 
+ #: UI/GTK2/src/indexDialog_glade.cc:78 UI/GTK2/src/prefsWindow_glade.cc:125
+ msgid "Address:"
+-msgstr "Addresse:"
++msgstr "Adresse:"
+ 
+ #: UI/GTK2/src/indexDialog_glade.cc:182
+ msgid "External index"
+@@ -312,7 +310,7 @@
+ 
+ #: UI/GTK2/src/importDialog_glade.cc:69
+ msgid "Apply label:"
+-msgstr "Appliquer l'etiquette:"
++msgstr "Appliquer l'?tiquette:"
+ 
+ #: UI/GTK2/src/importDialog_glade.cc:132 UI/GTK2/src/mainWindow_glade.cc:240
+ msgid "Import URL"
+@@ -320,7 +318,7 @@
+ 
+ #: UI/GTK2/src/IndexPage.cc:48
+ msgid "Show Previous"
+-msgstr "Precedents"
++msgstr "Pr?c?dents"
+ 
+ #: UI/GTK2/src/IndexPage.cc:54
+ msgid "Show Next"
+@@ -335,8 +333,8 @@
+ "There is no helper application defined for this document's type.\n"
+ "Please enter the command to open this document."
+ msgstr ""
+-"Il n'y a pas d'application definie pour les documents de ce type.\n"
+-"Veuillez entrer la commande a utiliser pour ouvrir ce document."
++"Il n'y a pas d'application d?finie pour les documents de ce type.\n"
++"Veuillez entrer la commande ? utiliser pour ouvrir ce document."
+ 
+ #: UI/GTK2/src/launcherDialog_glade.cc:66
+ msgid "Use this command for other documents of the same type."
+@@ -352,7 +350,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:205
+ msgid "Last Run"
+-msgstr "Derniere Utilisation"
++msgstr "Derni?re Utilisation"
+ 
+ #: UI/GTK2/src/mainWindow.cc:210
+ msgid "Summary"
+@@ -389,25 +387,24 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:262
+ msgid "Show the query's previous results"
+-msgstr "Montrer les resultats precedents"
++msgstr "Montrer les r?sultats pr?c?dents"
+ 
+ #. Now we are ready
+ #: UI/GTK2/src/mainWindow.cc:282
+ msgid "Ready"
+-msgstr "Pret"
++msgstr "Pr?t"
+ 
+ #: UI/GTK2/src/mainWindow.cc:294
+ msgid "Updating all documents in My Web Pages is recommended"
+-msgstr ""
+-"Il est recommende de mettre a jour tous les documents de Mes Pages Web"
++msgstr "Il est recommand? de mettre ? jour tous les documents de Mes Pages Web"
+ 
+ #: UI/GTK2/src/mainWindow.cc:302
+ msgid "Don't warn me again"
+-msgstr ""
++msgstr "Ne plus me pr?venir"
+ 
+ #: UI/GTK2/src/mainWindow.cc:310 UI/GTK2/src/mainWindow_glade.cc:177
+ msgid "Update"
+-msgstr "Mettre a Jour"
++msgstr "Mettre ? Jour"
+ 
+ #: UI/GTK2/src/mainWindow.cc:371
+ msgid "N/A"
+@@ -415,7 +412,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:389
+ msgid "Undefined"
+-msgstr "Indefini"
++msgstr "Ind?fini"
+ 
+ #. Find this query
+ #: UI/GTK2/src/mainWindow.cc:628 UI/GTK2/src/mainWindow.cc:2833
+@@ -425,15 +422,15 @@
+ #. Show the URL of the first document in the status bar
+ #: UI/GTK2/src/mainWindow.cc:901
+ msgid "Document location is"
+-msgstr "Le chemin du document is"
++msgstr "Le chemin du document est"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1120
+ msgid "Couldn't search in results"
+-msgstr ""
++msgstr "N'a pas pu chercher dans les r?sultats"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1130
+ msgid "In Results"
+-msgstr "Dans Les Resultats"
++msgstr "Dans Les R?sultats"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1303
+ msgid "Showing"
+@@ -453,7 +450,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:1361
+ msgid "ended"
+-msgstr "est terminee"
++msgstr "est termin?e"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1516
+ msgid "More Like"
+@@ -461,12 +458,12 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:1583
+ msgid "Updated label(s)"
+-msgstr "Mis a jour l(es) etiquette(s)"
++msgstr "Mis ? jour l(es) ?tiquette(s)"
+ 
+ #. Yes, it did
+ #: UI/GTK2/src/mainWindow.cc:1679 UI/GTK2/src/mainWindow.cc:1769
+ msgid "Updated document"
+-msgstr "Mis a jour le document"
++msgstr "Mis ? jour le document"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1692
+ msgid "Indexed"
+@@ -474,7 +471,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:1729
+ msgid "Unindexed document(s)"
+-msgstr "Desindexe le(s) document(s)"
++msgstr "D?sindexe le(s) document(s)"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1824
+ msgid "Couldn't rename index, name"
+@@ -483,7 +480,7 @@
+ #: UI/GTK2/src/mainWindow.cc:1828 UI/GTK2/src/mainWindow.cc:2637
+ #: UI/GTK2/src/mainWindow.cc:3184
+ msgid "is already in use"
+-msgstr "est deja utilise"
++msgstr "est d?j? utilis?"
+ 
+ #: UI/GTK2/src/mainWindow.cc:1840
+ msgid "Couldn't rename index"
+@@ -491,15 +488,15 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:1855
+ msgid "Edited index"
+-msgstr "Edite l'index"
++msgstr "?dit? l'index"
+ 
+ #: UI/GTK2/src/mainWindow.cc:2165
+ msgid "Export"
+-msgstr ""
++msgstr "Exporter"
+ 
+ #: UI/GTK2/src/mainWindow.cc:2210
+ msgid "Couldn't find similar documents"
+-msgstr ""
++msgstr "N'a pas pu trouver des documents similaires"
+ 
+ #: UI/GTK2/src/mainWindow.cc:2453
+ msgid "Index"
+@@ -519,7 +516,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:2548 UI/GTK2/src/mainWindow_glade.cc:180
+ msgid "Unindex"
+-msgstr "Desindexer"
++msgstr "D?sindexer"
+ 
+ #: UI/GTK2/src/mainWindow.cc:2587
+ msgid "A metasearch tool for the Free Desktop"
+@@ -551,7 +548,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:2994 UI/GTK2/src/prefsWindow.cc:960
+ msgid "At least one task hasn't completed yet. Quit now ?"
+-msgstr "Au moins une tache n'est pas terminee. Quitter maintenant ?"
++msgstr "Au moins une tache n'est pas termin?e. Quitter maintenant ?"
+ 
+ #: UI/GTK2/src/mainWindow.cc:2996 UI/GTK2/src/prefsWindow.cc:962
+ msgid "Quit"
+@@ -563,11 +560,11 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:3207
+ msgid "Couldn't update query"
+-msgstr "N'a pas pu mettre a jour la recherche"
++msgstr "N'a pas pu mettre ? jour la recherche"
+ 
+ #: UI/GTK2/src/mainWindow.cc:3218
+ msgid "Edited query"
+-msgstr "Edite la recherche"
++msgstr "?dit? la recherche"
+ 
+ #: UI/GTK2/src/mainWindow.cc:3225
+ msgid "Couldn't add query"
+@@ -579,11 +576,11 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:3267
+ msgid "Query is not set"
+-msgstr "Recherche indefinie"
++msgstr "Recherche ind?finie"
+ 
+ #: UI/GTK2/src/mainWindow.cc:3278
+ msgid "No search engine selected"
+-msgstr "Pas de moteur selectionne"
++msgstr "Pas de moteur s?lectionn?"
+ 
+ #: UI/GTK2/src/mainWindow.cc:3365
+ msgid "Please set the Google API key first"
+@@ -595,7 +592,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:3581
+ msgid "No default application defined for type"
+-msgstr "Pas d'application definie pour le type"
++msgstr "Pas d'application d?finie pour le type"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:129
+ msgid "Query:"
+@@ -607,19 +604,19 @@
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:145
+ msgid "Stored queries"
+-msgstr "Recherches sauvegardees"
++msgstr "Recherches sauvegard?es"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:165
+ msgid "Open Cache"
+-msgstr ""
++msgstr "Ouvrir Le Cache"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:168
+ msgid "Open Parent"
+-msgstr ""
++msgstr "Ouvrir Le Parent"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:174
+ msgid "_Add To Index"
+-msgstr ""
++msgstr "_Ajouter A L'Index"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:186
+ msgid "More Like This"
+@@ -643,15 +640,15 @@
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:231
+ msgid "Group Results By"
+-msgstr ""
++msgstr "Grouper Les R?sultats Par"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:234
+ msgid "Show Extracts"
+-msgstr ""
++msgstr "Montrer Un Extrait"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:243
+ msgid "Export List"
+-msgstr ""
++msgstr "Exporter La Liste"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:249 UI/GTK2/src/statisticsDialog.cc:121
+ #: UI/GTK2/src/statisticsDialog_glade.cc:86
+@@ -664,11 +661,11 @@
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:258
+ msgid "_Edit"
+-msgstr "Editer"
++msgstr "?diter"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:261
+ msgid "_Options"
+-msgstr ""
++msgstr "_Options"
+ 
+ #: UI/GTK2/src/mainWindow_glade.cc:264
+ msgid "_Help"
+@@ -680,27 +677,27 @@
+ 
+ #: UI/GTK2/src/Notebook.cc:84
+ msgid "Did you mean ?"
+-msgstr ""
++msgstr "Vouliez vous dire ?"
+ 
+ #: UI/GTK2/src/Notebook.cc:95 UI/GTK2/src/Notebook.cc:236
+ msgid "Close"
+ msgstr "Fermer"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "N'a pas pu ouvrir l'index"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+-msgstr "N'a pas pu creer la base d'historiques"
++msgstr "N'a pas pu cr?er la base d'historiques"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:149
+ msgid "File Indexing and Search"
+-msgstr ""
++msgstr "Indexation et Recherche de Fichiers"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:150
+ msgid "Configure Pinot to index your files"
+-msgstr ""
++msgstr "Configure Pinot pour indexer vos fichiers"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:208
+ msgid "Name"
+@@ -728,16 +725,15 @@
+ 
+ #: UI/GTK2/src/prefsWindow.cc:772
+ msgid "Directory to index"
+-msgstr "Repertoire a indexer"
++msgstr "R?pertoire ? indexer"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:912
+ msgid "New Label"
+-msgstr "Nouvelle Etiquette"
++msgstr "Nouvelle ?tiquette"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
+-msgstr "Ces repertoires seront indexes automatiquement:"
++msgid "These directories will be indexed and optionally monitored for changes:"
++msgstr "Ces r?pertoires seront index?s automatiquement:"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+ #: UI/GTK2/src/prefsWindow_glade.cc:106
+@@ -758,7 +754,7 @@
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:101
+ msgid "Labels are used to classify indexed documents:"
+-msgstr "Les etiquettes servent a classer les documents:"
++msgstr "Les ?tiquettes servent ? classer les documents:"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:112
+ msgid "Remove"
+@@ -766,11 +762,11 @@
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:120 UI/GTK2/src/propertiesDialog.cc:56
+ msgid "Labels"
+-msgstr "Etiquettes"
++msgstr "?tiquettes"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:122
+ msgid "Direct connection to the Internet"
+-msgstr "Connection directe a l'Internet"
++msgstr "Connexion directe ? l'Internet"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:123
+ msgid "Manual proxy configuration:"
+@@ -778,7 +774,7 @@
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:136
+ msgid "Network"
+-msgstr "Reseau"
++msgstr "R?seau"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:137
+ msgid "Google API key:"
+@@ -790,7 +786,7 @@
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:141
+ msgid "Enable search terms suggestion"
+-msgstr "Suggerer des termes"
++msgstr "Sugg?rer des termes"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:143
+ msgid "Ignore robots.txt and Robots META tag"
+@@ -802,15 +798,15 @@
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:146
+ msgid "New results:"
+-msgstr "Nouveaux resultats:"
++msgstr "Nouveaux r?sultats:"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:149
+ msgid "Miscellaneous"
+-msgstr ""
++msgstr "Divers"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:523
+ msgid "Pinot Preferences"
+-msgstr ""
++msgstr "Pr?f?rences Pinot"
+ 
+ #: UI/GTK2/src/propertiesDialog.cc:105
+ msgid "Per document"
+@@ -842,7 +838,7 @@
+ 
+ #: UI/GTK2/src/propertiesDialog_glade.cc:224
+ msgid "Properties"
+-msgstr "Proprietes"
++msgstr "Propri?t?s"
+ 
+ #: UI/GTK2/src/queryDialog.cc:110
+ msgid "Host name"
+@@ -868,15 +864,15 @@
+ 
+ #: UI/GTK2/src/queryDialog.cc:115
+ msgid "Directory"
+-msgstr "Repertoire"
++msgstr "R?pertoire"
+ 
+ #: UI/GTK2/src/queryDialog.cc:116
+ msgid "In URL"
+-msgstr ""
++msgstr "Dans l'URL"
+ 
+ #: UI/GTK2/src/queryDialog.cc:117
+ msgid "Path"
+-msgstr ""
++msgstr "Chemin"
+ 
+ #: UI/GTK2/src/queryDialog.cc:118
+ msgid "Language code"
+@@ -892,7 +888,7 @@
+ 
+ #: UI/GTK2/src/queryDialog.cc:121
+ msgid "Label"
+-msgstr "Etiquette"
++msgstr "?tiquette"
+ 
+ #. The last column is for the timestamp
+ #: UI/GTK2/src/queryDialog.cc:124 UI/GTK2/src/ResultsTree.cc:159
+@@ -910,7 +906,7 @@
+ #. Sort order
+ #: UI/GTK2/src/queryDialog.cc:130
+ msgid "By relevance"
+-msgstr ""
++msgstr "Par pertinence"
+ 
+ #: UI/GTK2/src/queryDialog.cc:131
+ msgid "By date"
+@@ -926,11 +922,11 @@
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:82
+ msgid "Index results with label"
+-msgstr "Indexer tous les resultats avec l'etiquette"
++msgstr "Indexer tous les r?sultats avec l'?tiquette"
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:85
+ msgid "Number of results:"
+-msgstr "Nombre de resultats:"
++msgstr "Nombre de r?sultats:"
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:89
+ msgid "Sort order:"
+@@ -938,15 +934,15 @@
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:93
+ msgid "Stemming:"
+-msgstr ""
++msgstr "Lex?misation:"
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:94
+ msgid "Only index new results"
+-msgstr "Nouveaux resultats seulement"
++msgstr "Nouveaux r?sultats seulement"
+ 
+ #: UI/GTK2/src/queryDialog_glade.cc:208
+ msgid "Query parameters"
+-msgstr "Parametres de la recherche"
++msgstr "Param?tres de la recherche"
+ 
+ #. This is the score column
+ #: UI/GTK2/src/ResultsTree.cc:130
+@@ -955,7 +951,7 @@
+ 
+ #: UI/GTK2/src/ResultsTree.cc:1555
+ msgid "No results"
+-msgstr ""
++msgstr "Pas de r?sultats"
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:154
+ msgid "Indexes"
+@@ -964,7 +960,7 @@
+ #: UI/GTK2/src/statisticsDialog.cc:160 UI/GTK2/src/statisticsDialog.cc:166
+ #: UI/GTK2/src/statisticsDialog.cc:197
+ msgid "Checking"
+-msgstr ""
++msgstr "V?rification en cours"
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:194
+ msgid "Daemon"
+@@ -976,7 +972,7 @@
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:216
+ msgid "results"
+-msgstr "resultats"
++msgstr "r?sultats"
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:222
+ msgid "Crawled"
+@@ -1005,7 +1001,7 @@
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:314
+ msgid "Currently not running"
+-msgstr "Arrete"
++msgstr "Arr?t?"
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:328
+ msgid "Low disk space"
+@@ -1013,7 +1009,7 @@
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:345
+ msgid "System on battery"
+-msgstr "Syst?me sur batterie"
++msgstr "Syst?me sur batterie"
+ 
+ #: UI/GTK2/src/statisticsDialog.cc:363
+ msgid "Crawling"
+
+Modified: trunk/po/he.po
+===================================================================
+--- trunk/po/he.po	2010-07-01 10:32:32 UTC (rev 1719)
++++ trunk/po/he.po	2010-07-01 10:34:37 UTC (rev 1720)
+@@ -7,94 +7,92 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
+-"PO-Revision-Date: 2010-06-20 08:46+0000\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"PO-Revision-Date: 2010-06-29 08:45+0000\n"
+ "Last-Translator: Yaron <sh.yaron at gmail.com>\n"
+ "Language-Team: Hebrew <he at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+-msgstr ""
++msgstr "??? ??? ?????? ??????"
+ 
+ #: SQL/SQLiteBase.cpp:455
+ msgid "failed to rollback transaction"
+-msgstr ""
++msgstr "??? ??? ?????? ??????"
+ 
+ #: SQL/SQLiteBase.cpp:491
+ msgid "failed to end transaction"
+-msgstr ""
++msgstr "??? ??? ????? ??????"
+ 
+ #: SQL/SQLiteBase.cpp:553
+ msgid "couldn't format SQL statement"
+-msgstr ""
++msgstr "?? ???? ????? ?? ?????? ??SQL"
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "?? ????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "?????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "??????"
+ 
+@@ -685,11 +683,11 @@
+ msgid "Close"
+ msgstr "????"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "?? ???? ????? ?? ???????"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "?? ???? ????? ?? ??? ??????? ?? ?????????"
+ 
+@@ -699,7 +697,7 @@
+ 
+ #: UI/GTK2/src/prefsWindow.cc:150
+ msgid "Configure Pinot to index your files"
+-msgstr ""
++msgstr "????? Pinot ???????? ?????? ???"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:208
+ msgid "Name"
+@@ -734,8 +732,7 @@
+ msgstr "????? ????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr "?????? ??? ??????? ??????? ????? ???? ???? ?????? ???? ??? ???????:"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+
+
+
+From fabricecolin at mail.berlios.de  Sun Jul 11 09:57:41 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Sun, 11 Jul 2010 09:57:41 +0200
+Subject: [Pinot-svn] r1721 - in trunk: . po
+Message-ID: <20100711075741.C4CF6480ABB@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-11 09:57:41 +0200 (Sun, 11 Jul 2010)
+New Revision: 1721
+
+Modified:
+   trunk/ChangeLog-dijon
+   trunk/README
+   trunk/TODO
+   trunk/po/de.po
+   trunk/po/es.po
+   trunk/po/it.po
+   trunk/po/ja.po
+   trunk/po/nl.po
+   trunk/po/pt.po
+   trunk/po/pt_BR.po
+   trunk/po/ru.po
+   trunk/po/sv.po
+   trunk/po/zh_CN.po
+   trunk/po/zh_TW.po
+Log:
+Current po's and misc files.
+
+
+Modified: trunk/ChangeLog-dijon
+===================================================================
+--- trunk/ChangeLog-dijon	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/ChangeLog-dijon	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -1,4 +1,12 @@
+ ------------------------------------------------------------------------
++r168 | fabricecolin | 2010-07-05 21:04:27 +0800 (Mon, 05 Jul 2010) | 2 lines
++Changed paths:
++   M /trunk/filters/GMimeMboxFilter.cc
++   M /trunk/filters/GMimeMboxFilter.h
++
++Support for messages of type message/external-body.
++
++------------------------------------------------------------------------
+ r166 | fabricecolin | 2009-10-25 13:05:41 +0800 (Sun, 25 Oct 2009) | 3 lines
+ Changed paths:
+    M /trunk/cjkv/CJKVTokenizer.cc
+
+Modified: trunk/README
+===================================================================
+--- trunk/README	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/README	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -230,22 +230,9 @@
+       "HHMMSS..HHMMSS" for time ranges, eg "090000..180000"
+       "size0..size1b" for size in bytes, eg "0..10240b"
+ 
+-  Pinot also has support for the Xesam desktop search specifications. As of
+-  v0.87, provided that the xesam-glib library is found at compilation time,
+-  users can query a search engine that implements the Xesam interface. Note
+-  that the daemon doesn't itself implement that interface just yet.
++  Support for the Xesam desktop search specifications was introduced in v0.87
++  and dropped in v0.96.
+ 
+-  The following rules of thumb apply :
+-    * when querying a Web engine, queries should be entered in a format
+-      understood by the engine.
+-    * when querying the Xesam engine using the UI, queries should be entered
+-      in the Xesam User Language format.
+-    * when querying the Xesam engine using pinot-search with the -q/--xesamql
+-      option, queries should be entered in the Xesam Query Language format;
+-      otherwise, in the Xesam User Language format.
+-    * when querying an internal index using pinot-search, the -q/--xesamql
+-      and -u/--xesamul options determine the format of the query.
+-
+   See the manual page for pinot-search(1) for examples.
+ 
+ 
+
+Modified: trunk/TODO
+===================================================================
+--- trunk/TODO	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/TODO	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -67,7 +67,7 @@
+ - Indexes have no knowledge of indexId's
+ - Be ready to catch DatabaseModifiedError exceptions and reopen the index
+ - Think about security issues, especially when indexes are shared, based on http://plg.uwaterloo.ca/~claclark/fast2005.pdf
+-- Split "compound_word", index separately and as whole
++- Index "compound_word" separately and as a whole
+ 
+ Mail
+ - Find out what kind of locking scheme Mozilla uses (POSIX lock ?) and use that
+@@ -84,7 +84,6 @@
+ - Clean up method names
+ - Prefer ustring to string whenever possible
+ - Queue unindexing too
+-- Follow updates to Xesam specs
+ - The daemon should ask for permission before reindexing, especially if the corpus is large
+ - What does a first run mean for the daemon ? ie no configuration file
+ - Daemon should use worker threads' doWork() instead of duplicating code
+@@ -125,4 +124,6 @@
+ - HtmlParser should use CJKVTokenizer's Unicode conversion function
+ - Status dialog to show time of latest update 
+ - Send a signal when preferences are modified so that the UI and the daemon can reload them
++- The first non-empty line of plain text output to be used as title
++- When removing a location to index, delete queued actions for this location
+ 
+
+Modified: trunk/po/de.po
+===================================================================
+--- trunk/po/de.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/de.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:45+0000\n"
+ "Last-Translator: marco.jahn <Unknown>\n"
+ "Language-Team: German <de at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Unbekannt"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "D?nisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Niederl?nisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Englisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Finnisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "Franz?sisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Deutsch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "Ungarisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italienisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Norwegisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugiesisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Rum?nisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Russisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Spanisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Schwedisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "T?rkisch"
+ 
+@@ -686,11 +684,11 @@
+ msgid "Close"
+ msgstr "Schliessen"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "Konnte Index nicht ?ffnen"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "Konnte Verlaufsdatenbank nicht anlegen"
+ 
+@@ -720,8 +718,7 @@
+ 
+ #: UI/GTK2/src/prefsWindow.cc:572
+ msgid "Exclude these patterns from indexing"
+-msgstr ""
+-"Dateien mit folgenden Dateiendungen von der Indizierungs ausschliessen"
++msgstr "Dateien mit folgenden Dateiendungen von der Indizierungs ausschliessen"
+ 
+ #: UI/GTK2/src/prefsWindow.cc:573
+ msgid "Only index these patterns"
+@@ -736,8 +733,7 @@
+ msgstr "Neue Kategorie"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Diese Verzeichnisse werden indiziert und optional auf ?nderungen ?berwacht:"
+ 
+
+Modified: trunk/po/es.po
+===================================================================
+--- trunk/po/es.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/es.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -7,15 +7,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:46+0000\n"
+ "Last-Translator: DiegoJ <diegojromerolopez at gmail.com>\n"
+ "Language-Team: es <fabricecolin at users.berlios.de>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=utf-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -34,67 +32,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Desconocido"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Dan?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Holand?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Ingl?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Finland?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "Franc?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Alem?n"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "H?ngaro"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italiano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Noruego"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Rumano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Ruso"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Espa?ol"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Sueco"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turco"
+ 
+@@ -685,11 +683,11 @@
+ msgid "Close"
+ msgstr "Cerrar"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "No se pudo abrir el ?ndice"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "No se pudo crear la base de datos del hist?rico"
+ 
+@@ -734,8 +732,7 @@
+ msgstr "Nueva etiqueta"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr "Estas carpetas van a estar indexar autom?ticamente"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+
+Modified: trunk/po/it.po
+===================================================================
+--- trunk/po/it.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/it.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:46+0000\n"
+ "Last-Translator: MarcoBazzani <alfred.einstein at gmail.com>\n"
+ "Language-Team: Italian <it at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Sconosciuto"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Danese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Olandese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Inglese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Finlandese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "Francese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Tedesco"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "Ungherese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italiano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Norvegese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portoghese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Romeno"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Russo"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Spagnolo"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Svedese"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turco"
+ 
+@@ -686,11 +684,11 @@
+ msgid "Close"
+ msgstr "Chiudi"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "Impossibile aprire l'indice"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "Impossibile creare una cronologia del database"
+ 
+@@ -735,8 +733,7 @@
+ msgstr "Nuova descrizione"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Queste directory devono essere indicizzate e opzionalmente monitorate per "
+ "cambiamenti:"
+
+Modified: trunk/po/ja.po
+===================================================================
+--- trunk/po/ja.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/ja.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -7,15 +7,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Takeo Mizuki <Unknown>\n"
+ "Language-Team: Japanese <ja at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -34,67 +32,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "??????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "????"
+ 
+@@ -550,7 +548,8 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:2994 UI/GTK2/src/prefsWindow.cc:960
+ msgid "At least one task hasn't completed yet. Quit now ?"
+-msgstr "?????????????????????????????????????"
++msgstr ""
++"?????????????????????????????????????"
+ 
+ #: UI/GTK2/src/mainWindow.cc:2996 UI/GTK2/src/prefsWindow.cc:962
+ msgid "Quit"
+@@ -685,11 +684,11 @@
+ msgid "Close"
+ msgstr "???"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "????????????"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "????????????????"
+ 
+@@ -734,9 +733,9 @@
+ msgstr "?????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
+-msgstr "????????????????????????????????????"
++msgid "These directories will be indexed and optionally monitored for changes:"
++msgstr ""
++"????????????????????????????????????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+ #: UI/GTK2/src/prefsWindow_glade.cc:106
+
+Modified: trunk/po/nl.po
+===================================================================
+--- trunk/po/nl.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/nl.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: JW <jw00000 at gmail.com>\n"
+ "Language-Team: Dutch <nl at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Niet bekend"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Deens"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Nederlands"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Engels"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Fins"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "Frans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Duits"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "Hongaars"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italiaans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Noors"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugees"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Roemeens"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Russisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Spaans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Zweeds"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turks"
+ 
+@@ -685,11 +683,11 @@
+ msgid "Close"
+ msgstr "Sluiten"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "Kan index niet openen"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "Kon historische database niet maken"
+ 
+@@ -734,8 +732,7 @@
+ msgstr "Nieuwe naam"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Deze directories zullen geindexeerd worden en optioneel bijgewerkt worden "
+ "bij veranderingen:"
+
+Modified: trunk/po/pt.po
+===================================================================
+--- trunk/po/pt.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/pt.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Bernardo Lopes <Unknown>\n"
+ "Language-Team: Portuguese <pt at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Desconhecido"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Dinamarqu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Holand?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Ingl?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Finl?ndes"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "Franc?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Alem?o"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "H?ngaro"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italiano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Noruegu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Romeno"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Russo"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Espanhol"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Sueco"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turco"
+ 
+@@ -397,8 +395,7 @@
+ 
+ #: UI/GTK2/src/mainWindow.cc:294
+ msgid "Updating all documents in My Web Pages is recommended"
+-msgstr ""
+-"A actualizar todos os documentos nas Minhas P?ginas Web ? recomendado"
++msgstr "A actualizar todos os documentos nas Minhas P?ginas Web ? recomendado"
+ 
+ #: UI/GTK2/src/mainWindow.cc:302
+ msgid "Don't warn me again"
+@@ -685,11 +682,11 @@
+ msgid "Close"
+ msgstr "Fechar"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "N?o foi poss?vel abrir o ?ndice"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "N?o foi poss?vel criar base de dados do hist?rico"
+ 
+@@ -734,8 +731,7 @@
+ msgstr "Novo t?tulo"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Direct?rios que ser?o indexados e opcionalmente ser?o monitorizadas as "
+ "altera??es:"
+
+Modified: trunk/po/pt_BR.po
+===================================================================
+--- trunk/po/pt_BR.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/pt_BR.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: andbelo <Unknown>\n"
+ "Language-Team: Portuguese (Brazil) <pt_BR at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Desconhecido"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Danish"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Dutch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "English"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Terminar"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "French"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "German"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "H?ngaro"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italiano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Noruegu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Romeno"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Russian"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Spanish"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Swedish"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turco"
+ 
+@@ -684,11 +682,11 @@
+ msgid "Close"
+ msgstr "Fechar"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "N?o foi poss?vel abrir ?ndice"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "N?o foi poss?vel criar base de hist?rico"
+ 
+@@ -733,8 +731,7 @@
+ msgstr "Novo t?tulo"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Estes diret?rios ter?o ?ndices e ter?o suas mudan?as opcionalmente "
+ "monitoradas:"
+
+Modified: trunk/po/ru.po
+===================================================================
+--- trunk/po/ru.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/ru.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2008-08-23 16:14+0000\n"
+ "Last-Translator: Sergey Vostrikov <s.vostrikov at gmail.com>\n"
+ "Language-Team: Russian <ru at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "???????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "???????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "??????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "???????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr ""
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "???????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "??????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "?????????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr ""
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "???????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "?????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "????????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr ""
+ 
+@@ -682,11 +680,11 @@
+ msgid "Close"
+ msgstr ""
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "?????????? ??????? ??????"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "?? ??????? ??????? ???? ?????? ???????"
+ 
+@@ -731,8 +729,7 @@
+ msgstr "????? ?????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "??? ???????? ????? ??????????????? ? ????????????? ??? ???????? ?????????:"
+ 
+
+Modified: trunk/po/sv.po
+===================================================================
+--- trunk/po/sv.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/sv.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -7,15 +7,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Daniel Nylander <yeager at ubuntu.com>\n"
+ "Language-Team: Swedish <tp-sv at listor.tp-sv.se>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -34,67 +32,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr "Ok?nd"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "Danska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "Nederl?ndska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "Engelska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "Finska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "Franska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "Tyska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "Ungerska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "Italienska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "Norska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "Portugisiska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "Rum?nska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "Ryska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "Spanska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "Svenska"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "Turkiska"
+ 
+@@ -685,11 +683,11 @@
+ msgid "Close"
+ msgstr "St?ng"
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "Kunde inte ?ppna index"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "Kunde inte skapa historikdatabas"
+ 
+@@ -734,8 +732,7 @@
+ msgstr "Ny etikett"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Dessa kataloger kommer att bli indexerade och ?vervakade f?r ?ndringar "
+ "(valfritt):"
+
+Modified: trunk/po/zh_CN.po
+===================================================================
+--- trunk/po/zh_CN.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/zh_CN.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -6,15 +6,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Eleanor Chen <chenyueg at gmail.com>\n"
+ "Language-Team: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -33,67 +31,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr ""
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "????"
+ 
+@@ -682,11 +680,11 @@
+ msgid "Close"
+ msgstr ""
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "??????"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "?????????"
+ 
+@@ -731,8 +729,7 @@
+ msgstr "????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr "??????????????????????????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+
+Modified: trunk/po/zh_TW.po
+===================================================================
+--- trunk/po/zh_TW.po	2010-07-01 10:34:37 UTC (rev 1720)
++++ trunk/po/zh_TW.po	2010-07-11 07:57:41 UTC (rev 1721)
+@@ -7,15 +7,13 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"POT-Creation-Date: 2010-07-01 18:29+0800\n"
+ "PO-Revision-Date: 2008-08-23 16:15+0000\n"
+ "Last-Translator: Yung-chung Lin <henearkrxern at gmail.com>\n"
+ "Language-Team: Traditional Chinese <zh_TW at li.org>\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+-"X-Launchpad-Export-Date: 2010-06-24 07:48+0000\n"
+-"X-Generator: Launchpad (build Unknown)\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+@@ -34,67 +32,67 @@
+ msgstr ""
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
+ msgid "Unknown"
+ msgstr ""
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
+ msgid "Danish"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
+ msgid "Dutch"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
+ msgid "English"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
+ msgid "Finnish"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
+ msgid "French"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
+ msgid "German"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
+ msgid "Hungarian"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
+ msgid "Italian"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
+ msgid "Norwegian"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
+ msgid "Portuguese"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
+ msgid "Romanian"
+ msgstr "?????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
+ msgid "Russian"
+ msgstr "??"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
+ msgid "Spanish"
+ msgstr "????"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
+ msgid "Swedish"
+ msgstr "???"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
+ msgid "Turkish"
+ msgstr "????"
+ 
+@@ -683,11 +681,11 @@
+ msgid "Close"
+ msgstr ""
+ 
+-#: UI/GTK2/src/pinot.cc:350
++#: UI/GTK2/src/pinot.cc:349
+ msgid "Couldn't open index"
+ msgstr "??????"
+ 
+-#: UI/GTK2/src/pinot.cc:371
++#: UI/GTK2/src/pinot.cc:370
+ msgid "Couldn't create history database"
+ msgstr "?????????"
+ 
+@@ -732,8 +730,7 @@
+ msgstr "????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid ""
+-"These directories will be indexed and optionally monitored for changes:"
++msgid "These directories will be indexed and optionally monitored for changes:"
+ msgstr "??????????????????????????"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+
+
+
+From fabricecolin at mail.berlios.de  Mon Jul 12 15:55:31 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 12 Jul 2010 15:55:31 +0200
+Subject: [Pinot-svn] r1722 - trunk/Core
+Message-ID: <20100712135531.727574805B1@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-12 15:55:31 +0200 (Mon, 12 Jul 2010)
+New Revision: 1722
+
+Modified:
+   trunk/Core/PinotSettings.cpp
+Log:
+Removed unused variable.
+
+
+Modified: trunk/Core/PinotSettings.cpp
+===================================================================
+--- trunk/Core/PinotSettings.cpp	2010-07-11 07:57:41 UTC (rev 1721)
++++ trunk/Core/PinotSettings.cpp	2010-07-12 13:55:31 UTC (rev 1722)
+@@ -1716,8 +1716,6 @@
+ /// Returns properties of the given index.
+ PinotSettings::IndexProperties PinotSettings::getIndexPropertiesByName(const string &name) const
+ {
+-	unsigned int indexId = 0;
+-
+ 	for (set<IndexProperties>::const_iterator propsIter = m_indexes.begin();
+ 		propsIter != m_indexes.end(); ++propsIter)
+ 	{
+
+
+
+From fabricecolin at mail.berlios.de  Mon Jul 12 16:09:00 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 12 Jul 2010 16:09:00 +0200
+Subject: [Pinot-svn] r1723 - in trunk: . po
+Message-ID: <20100712140900.2DD714805B1@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-12 16:08:59 +0200 (Mon, 12 Jul 2010)
+New Revision: 1723
+
+Modified:
+   trunk/ChangeLog-dijon
+   trunk/NEWS
+   trunk/po/de.po
+   trunk/po/es.po
+   trunk/po/fr.po
+   trunk/po/he.po
+   trunk/po/it.po
+   trunk/po/ja.po
+   trunk/po/nl.po
+   trunk/po/pt.po
+   trunk/po/pt_BR.po
+   trunk/po/ru.po
+   trunk/po/sv.po
+   trunk/po/zh_CN.po
+   trunk/po/zh_TW.po
+Log:
+News for 0.96.
+
+
+Modified: trunk/ChangeLog-dijon
+===================================================================
+--- trunk/ChangeLog-dijon	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/ChangeLog-dijon	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -1,4 +1,12 @@
+ ------------------------------------------------------------------------
++r169 | fabricecolin | 2010-07-12 21:59:08 +0800 (Mon, 12 Jul 2010) | 3 lines
++Changed paths:
++   M /trunk/filters/GMimeMboxFilter.cc
++
++Fixed bug that would stop parsing when not being able to get the last part.
++External parts of unknown access types are assigned application/octet-stream.
++
++------------------------------------------------------------------------
+ r168 | fabricecolin | 2010-07-05 21:04:27 +0800 (Mon, 05 Jul 2010) | 2 lines
+ Changed paths:
+    M /trunk/filters/GMimeMboxFilter.cc
+
+Modified: trunk/NEWS
+===================================================================
+--- trunk/NEWS	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/NEWS	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -1,3 +1,32 @@
++2010/07/12 version_0_9_6
++General :
++ - fixed "GIO can sniff PNG" program used at configure time
++ - README clarifies that operators should be upper-case
++ - builds with gmime-2.4 or 2.6
++ - link with the library that has dlopen() and fix Debian bug #556062
++ - merged Debian's patch for --as-needed support
++ - merged FreeBSD build patch
++ - dropped support for Xesam
++SQL :
++ - fixed prepared statements interface to work with insertion and deletion
++ - sleep then retry operations if the database is busy
++ - better transaction support
++Tokenize :
++ - the mbox filter now supports messages of type "message/external-body"
++IndexSearch :
++ - fixed possible crash at exit time when the textcat configuration file
++  points to non-existing model files
++Xapian :
++ - prefer the Chert back-end if available. Applicable to Xapian >= 1.2.0.
++Daemon :
++ - check symlinks against black-list
++ - the battery status can now be obtained from DeviceKit-power or upower
++UI :
++ - updated Simplified Chinese translation by Eleanor Chen
++ - updated French translation by verdy_p and Fabrice Colin
++ - updated Hebrew translation by Yaron
++ - updated Brazilian Portuguese translation by andbelo
++
+ 2009/11/14 version_0_9_5
+ General :
+  - OpenBSD support, thanks to the work of Antoine Jacoutot
+
+Modified: trunk/po/de.po
+===================================================================
+--- trunk/po/de.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/de.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2010-06-20 08:45+0000\n"
+ "Last-Translator: marco.jahn <Unknown>\n"
+ "Language-Team: German <de at li.org>\n"
++"Language: de\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/es.po
+===================================================================
+--- trunk/po/es.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/es.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -11,6 +11,7 @@
+ "PO-Revision-Date: 2010-06-20 08:46+0000\n"
+ "Last-Translator: DiegoJ <diegojromerolopez at gmail.com>\n"
+ "Language-Team: es <fabricecolin at users.berlios.de>\n"
++"Language: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=utf-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/fr.po
+===================================================================
+--- trunk/po/fr.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/fr.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -11,6 +11,7 @@
+ "PO-Revision-Date: 2010-07-01 12:45+0000\n"
+ "Last-Translator: Fabrice Colin <fabricecolin at users.berlios.de>\n"
+ "Language-Team: fr <fabricecolin at users.berlios.de>\n"
++"Language: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=utf-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/he.po
+===================================================================
+--- trunk/po/he.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/he.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -11,6 +11,7 @@
+ "PO-Revision-Date: 2010-06-29 08:45+0000\n"
+ "Last-Translator: Yaron <sh.yaron at gmail.com>\n"
+ "Language-Team: Hebrew <he at li.org>\n"
++"Language: he\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/it.po
+===================================================================
+--- trunk/po/it.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/it.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2010-06-20 08:46+0000\n"
+ "Last-Translator: MarcoBazzani <alfred.einstein at gmail.com>\n"
+ "Language-Team: Italian <it at li.org>\n"
++"Language: it\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/ja.po
+===================================================================
+--- trunk/po/ja.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/ja.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -11,6 +11,7 @@
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Takeo Mizuki <Unknown>\n"
+ "Language-Team: Japanese <ja at li.org>\n"
++"Language: ja\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/nl.po
+===================================================================
+--- trunk/po/nl.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/nl.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: JW <jw00000 at gmail.com>\n"
+ "Language-Team: Dutch <nl at li.org>\n"
++"Language: nl\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/pt.po
+===================================================================
+--- trunk/po/pt.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/pt.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Bernardo Lopes <Unknown>\n"
+ "Language-Team: Portuguese <pt at li.org>\n"
++"Language: pt\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/pt_BR.po
+===================================================================
+--- trunk/po/pt_BR.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/pt_BR.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: andbelo <Unknown>\n"
+ "Language-Team: Portuguese (Brazil) <pt_BR at li.org>\n"
++"Language: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/ru.po
+===================================================================
+--- trunk/po/ru.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/ru.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2008-08-23 16:14+0000\n"
+ "Last-Translator: Sergey Vostrikov <s.vostrikov at gmail.com>\n"
+ "Language-Team: Russian <ru at li.org>\n"
++"Language: ru\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/sv.po
+===================================================================
+--- trunk/po/sv.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/sv.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -11,6 +11,7 @@
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Daniel Nylander <yeager at ubuntu.com>\n"
+ "Language-Team: Swedish <tp-sv at listor.tp-sv.se>\n"
++"Language: sv\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/zh_CN.po
+===================================================================
+--- trunk/po/zh_CN.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/zh_CN.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -10,6 +10,7 @@
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Eleanor Chen <chenyueg at gmail.com>\n"
+ "Language-Team: \n"
++"Language: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+Modified: trunk/po/zh_TW.po
+===================================================================
+--- trunk/po/zh_TW.po	2010-07-12 13:55:31 UTC (rev 1722)
++++ trunk/po/zh_TW.po	2010-07-12 14:08:59 UTC (rev 1723)
+@@ -11,6 +11,7 @@
+ "PO-Revision-Date: 2008-08-23 16:15+0000\n"
+ "Last-Translator: Yung-chung Lin <henearkrxern at gmail.com>\n"
+ "Language-Team: Traditional Chinese <zh_TW at li.org>\n"
++"Language: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+
+
+
+From fabricecolin at mail.berlios.de  Mon Jul 12 16:23:52 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 12 Jul 2010 16:23:52 +0200
+Subject: [Pinot-svn] r1724 - in trunk: . po
+Message-ID: <20100712142352.6C1384805B1@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-12 16:23:52 +0200 (Mon, 12 Jul 2010)
+New Revision: 1724
+
+Modified:
+   trunk/ChangeLog
+   trunk/po/de.po
+   trunk/po/es.po
+   trunk/po/fr.po
+   trunk/po/he.po
+   trunk/po/it.po
+   trunk/po/ja.po
+   trunk/po/nl.po
+   trunk/po/pt.po
+   trunk/po/pt_BR.po
+   trunk/po/ru.po
+   trunk/po/sv.po
+   trunk/po/zh_CN.po
+   trunk/po/zh_TW.po
+Log:
+Change log and yet another update for the po's...
+
+
+Modified: trunk/ChangeLog
+===================================================================
+--- trunk/ChangeLog	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/ChangeLog	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -1,4 +1,614 @@
+ ------------------------------------------------------------------------
++r1723 | fabricecolin | 2010-07-12 22:08:59 +0800 (Mon, 12 Jul 2010) | 2 lines
++Changed paths:
++   M /trunk/ChangeLog-dijon
++   M /trunk/NEWS
++   M /trunk/po/de.po
++   M /trunk/po/es.po
++   M /trunk/po/fr.po
++   M /trunk/po/he.po
++   M /trunk/po/it.po
++   M /trunk/po/ja.po
++   M /trunk/po/nl.po
++   M /trunk/po/pt.po
++   M /trunk/po/pt_BR.po
++   M /trunk/po/ru.po
++   M /trunk/po/sv.po
++   M /trunk/po/zh_CN.po
++   M /trunk/po/zh_TW.po
++
++News for 0.96.
++
++------------------------------------------------------------------------
++r1722 | fabricecolin | 2010-07-12 21:55:31 +0800 (Mon, 12 Jul 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/PinotSettings.cpp
++
++Removed unused variable.
++
++------------------------------------------------------------------------
++r1721 | fabricecolin | 2010-07-11 15:57:41 +0800 (Sun, 11 Jul 2010) | 2 lines
++Changed paths:
++   M /trunk/ChangeLog-dijon
++   M /trunk/README
++   M /trunk/TODO
++   M /trunk/po/de.po
++   M /trunk/po/es.po
++   M /trunk/po/it.po
++   M /trunk/po/ja.po
++   M /trunk/po/nl.po
++   M /trunk/po/pt.po
++   M /trunk/po/pt_BR.po
++   M /trunk/po/ru.po
++   M /trunk/po/sv.po
++   M /trunk/po/zh_CN.po
++   M /trunk/po/zh_TW.po
++
++Current po's and misc files.
++
++------------------------------------------------------------------------
++r1720 | fabricecolin | 2010-07-01 18:34:37 +0800 (Thu, 01 Jul 2010) | 3 lines
++Changed paths:
++   M /trunk/po/fr.po
++   M /trunk/po/he.po
++
++Completed fr.po, added missing accents etc...
++Updated he.po by Yaron.
++
++------------------------------------------------------------------------
++r1719 | fabricecolin | 2010-07-01 18:32:32 +0800 (Thu, 01 Jul 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/pinot-search.1
++   M /trunk/Core/pinot-search.cpp
++   M /trunk/IndexSearch/Makefile.am
++   M /trunk/IndexSearch/QueryProperties.cpp
++   M /trunk/IndexSearch/QueryProperties.h
++   M /trunk/IndexSearch/Xapian/Makefile.am
++   M /trunk/IndexSearch/Xapian/XapianEngine.cpp
++   M /trunk/Makefile.am
++   M /trunk/pinot.spec.in
++
++Dropped Xesam support.
++
++------------------------------------------------------------------------
++r1718 | fabricecolin | 2010-07-01 18:28:57 +0800 (Thu, 01 Jul 2010) | 3 lines
++Changed paths:
++   M /trunk/configure.in
++
++Dropped option --enable-xesam-glib, don't build IndexSearch/XesamGLib.
++Look for dlopen() in libc if not found in libdl (helps with build on BSD).
++
++------------------------------------------------------------------------
++r1717 | fabricecolin | 2010-07-01 18:26:40 +0800 (Thu, 01 Jul 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/DaemonState.cpp
++
++FreeBSD build patch by Thierry Thomas.
++
++------------------------------------------------------------------------
++r1716 | fabricecolin | 2010-06-29 22:06:52 +0800 (Tue, 29 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/UI/GTK2/src/importDialog.cc
++   M /trunk/UI/GTK2/src/mainWindow.cc
++   M /trunk/UI/GTK2/src/pinot.cc
++
++Minor fixes.
++
++------------------------------------------------------------------------
++r1715 | fabricecolin | 2010-06-28 04:47:21 +0800 (Mon, 28 Jun 2010) | 3 lines
++Changed paths:
++   M /trunk/README
++   M /trunk/configure.in
++
++Be smart, check for gmime 2.4 first then 2.5.
++This partially undoes SVN r1705.
++
++------------------------------------------------------------------------
++r1714 | fabricecolin | 2010-06-27 20:01:01 +0800 (Sun, 27 Jun 2010) | 3 lines
++Changed paths:
++   M /trunk/SQL/ActionQueue.cpp
++   M /trunk/SQL/ActionQueue.h
++
++Prepare more statements.
++New method ActionQueue::deleteItems().
++
++------------------------------------------------------------------------
++r1713 | fabricecolin | 2010-06-27 19:11:56 +0800 (Sun, 27 Jun 2010) | 4 lines
++Changed paths:
++   M /trunk/AUTHORS
++   A /trunk/ltmain.sh
++
++Added ltmain.sh to SVN so that everybody can enjoy the changes for --as-needed
++as used in the Debian package, contributed by Jonas Smedegaard.
++Also mention Jens Wilhelm Wulf's feedback.
++
++------------------------------------------------------------------------
++r1712 | fabricecolin | 2010-06-24 17:08:05 +0800 (Thu, 24 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/AUTHORS
++   M /trunk/po/de.po
++   M /trunk/po/es.po
++   M /trunk/po/fr.po
++   M /trunk/po/he.po
++   M /trunk/po/it.po
++   M /trunk/po/ja.po
++   M /trunk/po/nl.po
++   M /trunk/po/pt.po
++   M /trunk/po/pt_BR.po
++   M /trunk/po/ru.po
++   M /trunk/po/sv.po
++   M /trunk/po/zh_CN.po
++   M /trunk/po/zh_TW.po
++
++Current translations.
++
++------------------------------------------------------------------------
++r1711 | fabricecolin | 2010-06-24 15:46:06 +0800 (Thu, 24 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/pinot-dbus-daemon.1
++   M /trunk/Core/pinot-index.1
++   M /trunk/Core/pinot-search.1
++   M /trunk/IndexSearch/pinot-label.1
++   M /trunk/UI/GTK2/src/pinot.1
++   M /trunk/configure.in
++
++Bumped version number to 0.96.
++
++------------------------------------------------------------------------
++r1710 | fabricecolin | 2010-06-20 16:13:58 +0800 (Sun, 20 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/pinot-dbus-daemon.cpp
++
++Support for upower.
++
++------------------------------------------------------------------------
++r1709 | fabricecolin | 2010-06-20 16:11:12 +0800 (Sun, 20 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/SQL/SQLiteBase.cpp
++
++Fixed executeSimpleStatement().
++
++------------------------------------------------------------------------
++r1708 | fabricecolin | 2010-06-19 17:31:00 +0800 (Sat, 19 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/po/fr.po
++   M /trunk/po/he.po
++   M /trunk/po/pt_BR.po
++   M /trunk/po/zh_CN.po
++
++Updates from verdy_p, Yaron, andbelo and Eleanor Chen respectively. 
++
++------------------------------------------------------------------------
++r1707 | fabricecolin | 2010-06-19 17:30:07 +0800 (Sat, 19 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/WorkerThreads.cpp
++
++Check symlinks against the blacklist.
++
++------------------------------------------------------------------------
++r1706 | fabricecolin | 2010-06-19 17:18:46 +0800 (Sat, 19 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/po/POTFILES.in
++
++Added SQLiteBase.cpp to the list.
++
++------------------------------------------------------------------------
++r1705 | fabricecolin | 2010-06-19 16:59:58 +0800 (Sat, 19 Jun 2010) | 4 lines
++Changed paths:
++   M /trunk/README
++   M /trunk/configure.in
++
++Added call to g_type_init() in the test program for GIO sniffing.
++Set gmime dependency to "gmime-2.6 >= 2.5".
++Link with -ldl.
++
++------------------------------------------------------------------------
++r1704 | fabricecolin | 2010-06-19 16:53:48 +0800 (Sat, 19 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/SQL/CrawlHistory.cpp
++   M /trunk/SQL/CrawlHistory.h
++
++Prepare a lot more statements.
++
++------------------------------------------------------------------------
++r1703 | fabricecolin | 2010-06-19 16:53:13 +0800 (Sat, 19 Jun 2010) | 3 lines
++Changed paths:
++   M /trunk/UI/GTK2/src/mainWindow.cc
++
++Extended about box copyright to 2010.
++Launch preferences with pinot -p in case the pinot-prefs symlink doesn't exist.
++
++------------------------------------------------------------------------
++r1702 | fabricecolin | 2010-06-16 00:12:17 +0800 (Wed, 16 Jun 2010) | 4 lines
++Changed paths:
++   M /trunk/SQL/SQLiteBase.cpp
++   M /trunk/SQL/SQLiteBase.h
++
++Slightly better transaction support, error reporting.
++Clear compiled statements on close().
++Removed _USE_VSNPRINTF conditioned code.
++
++------------------------------------------------------------------------
++r1701 | fabricecolin | 2010-06-12 12:37:51 +0800 (Sat, 12 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/Core/pinot-dbus-daemon.cpp
++   M /trunk/Core/pinot-index.cpp
++   M /trunk/UI/GTK2/src/pinot.cc
++
++Prefer Chert to Flint.
++
++------------------------------------------------------------------------
++r1700 | fabricecolin | 2010-06-12 12:06:41 +0800 (Sat, 12 Jun 2010) | 3 lines
++Changed paths:
++   M /trunk/README
++
++Make it clear operators should be upper-case.
++"hu", "ro" and "tr" were missing from the list of language codes.
++
++------------------------------------------------------------------------
++r1699 | fabricecolin | 2010-06-07 23:40:23 +0800 (Mon, 07 Jun 2010) | 2 lines
++Changed paths:
++   M /trunk/IndexSearch/Xapian/LanguageDetector.cpp
++
++Check the handle before attempting to close it.
++
++------------------------------------------------------------------------
++r1698 | fabricecolin | 2010-03-30 21:05:52 +0800 (Tue, 30 Mar 2010) | 3 lines
++Changed paths:
++   M /trunk/SQL/SQLiteBase.cpp
++   M /trunk/SQL/SQLiteBase.h
++
++Fix for INSERT, UPDATE and DELETE as prepared statements.
++Don't be greedy, if the database is busy, sleep for a short while!
++
++------------------------------------------------------------------------
++r1697 | fabricecolin | 2010-03-21 21:22:53 +0800 (Sun, 21 Mar 2010) | 2 lines
++Changed paths:
++   M /trunk/Monitor/INotifyMonitor.cpp
++   M /trunk/SQL/SQLiteBase.cpp
++   M /trunk/Utils/MIMEScanner.cpp
++   M /trunk/Utils/MIMEScanner.h
++
++Tweaks and missing headers.
++
++------------------------------------------------------------------------
++r1696 | fabricecolin | 2010-03-21 21:20:43 +0800 (Sun, 21 Mar 2010) | 2 lines
++Changed paths:
++   M /trunk/AUTHORS
++   M /trunk/po/fr.po
++   M /trunk/po/pt_BR.po
++
++fr and pt_BR updates by verdy_p and andbelo.
++
++------------------------------------------------------------------------
++r1695 | fabricecolin | 2009-12-06 16:50:38 +0800 (Sun, 06 Dec 2009) | 2 lines
++Changed paths:
++   M /trunk/SQL/SQLiteBase.cpp
++
++Less DEBUG.
++
++------------------------------------------------------------------------
++r1694 | fabricecolin | 2009-12-06 16:50:05 +0800 (Sun, 06 Dec 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/ServerThreads.cpp
++   M /trunk/Core/ServerThreads.h
++   M /trunk/Core/pinot-dbus-daemon.cpp
++
++Battery status can now be obtained from DeviceKit-power.
++
++------------------------------------------------------------------------
++r1692 | fabricecolin | 2009-11-14 12:10:40 +0800 (Sat, 14 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/ChangeLog-dijon
++   M /trunk/NEWS
++   M /trunk/po/es.po
++   M /trunk/po/pt.po
++
++Releasing 0.95 today.
++
++------------------------------------------------------------------------
++r1691 | fabricecolin | 2009-11-10 21:44:54 +0800 (Tue, 10 Nov 2009) | 4 lines
++Changed paths:
++   M /trunk/AUTHORS
++   M /trunk/configure.in
++   M /trunk/po/de.po
++   M /trunk/po/es.po
++   M /trunk/po/fr.po
++   M /trunk/po/he.po
++   M /trunk/po/it.po
++   M /trunk/po/ja.po
++   M /trunk/po/nl.po
++   M /trunk/po/pt.po
++   M /trunk/po/pt_BR.po
++   M /trunk/po/ru.po
++   M /trunk/po/sv.po
++   M /trunk/po/zh_CN.po
++   M /trunk/po/zh_TW.po
++
++Bumped version number to 0.95.
++Included language updates from Fabian Affolter and Marco Jahn (German), Ddorda
++(Hebrew), Bernardo Lopes (Portuguese) and DiegoJ (Spanish).
++
++------------------------------------------------------------------------
++r1690 | fabricecolin | 2009-11-09 21:24:41 +0800 (Mon, 09 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/Makefile.am
++
++Build the daemon as pinot-daemon if D-Bus support is turned off.
++
++------------------------------------------------------------------------
++r1689 | fabricecolin | 2009-11-05 21:36:39 +0800 (Thu, 05 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/configure.in
++
++Last chunk of the OpenBSD patches, confirmed not to affect other ports.
++
++------------------------------------------------------------------------
++r1688 | fabricecolin | 2009-11-04 20:11:54 +0800 (Wed, 04 Nov 2009) | 2 lines
++Changed paths:
++   D /trunk/IndexSearch/Plugins/Exalead.src
++   D /trunk/IndexSearch/Plugins/IOIDescription.xml
++
++These engines have fallen off the face of the Earth :-)
++
++------------------------------------------------------------------------
++r1687 | fabricecolin | 2009-11-04 20:11:05 +0800 (Wed, 04 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/IndexSearch/Plugins/Bing.src
++
++Fixed results parsing for Bing.
++
++------------------------------------------------------------------------
++r1686 | fabricecolin | 2009-11-02 22:25:09 +0800 (Mon, 02 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/pinot-dbus-daemon.cpp
++
++Cosmetic edit.
++
++------------------------------------------------------------------------
++r1685 | fabricecolin | 2009-11-02 22:24:12 +0800 (Mon, 02 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/po/POTFILES.in
++
++PinotUtils was moved.
++
++------------------------------------------------------------------------
++r1684 | fabricecolin | 2009-11-02 22:22:26 +0800 (Mon, 02 Nov 2009) | 4 lines
++Changed paths:
++   M /trunk/Core/DaemonState.cpp
++   M /trunk/Core/DaemonState.h
++   M /trunk/Core/ServerThreads.cpp
++   M /trunk/Core/ServerThreads.h
++   M /trunk/Core/WorkerThreads.cpp
++   M /trunk/Core/WorkerThreads.h
++
++DaemonState and MonitorThread use one CrawlHistory object from start to finish,
++ThreadsManager one ActionQueue object.
++CrawlerThread's cache applies to all updates.
++
++------------------------------------------------------------------------
++r1683 | fabricecolin | 2009-11-02 22:17:41 +0800 (Mon, 02 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/SQL/ActionQueue.cpp
++   M /trunk/SQL/CrawlHistory.cpp
++   M /trunk/SQL/CrawlHistory.h
++
++Use prepared statements for common queries, transactions for masse updates.
++
++------------------------------------------------------------------------
++r1682 | fabricecolin | 2009-11-02 09:35:55 +0800 (Mon, 02 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/Makefile.am
++
++PinotUtils was moved out.
++
++------------------------------------------------------------------------
++r1681 | fabricecolin | 2009-11-02 09:35:26 +0800 (Mon, 02 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/Makefile.am
++
++Install D-Bus related stuff if HAVE_DBUS is set.
++
++------------------------------------------------------------------------
++r1680 | fabricecolin | 2009-11-01 22:48:44 +0800 (Sun, 01 Nov 2009) | 2 lines
++Changed paths:
++   M /trunk/SQL/SQLDB.h
++   M /trunk/SQL/SQLiteBase.cpp
++   M /trunk/SQL/SQLiteBase.h
++
++Support for prepared statements, transactions.
++
++------------------------------------------------------------------------
++r1679 | fabricecolin | 2009-10-25 16:33:44 +0800 (Sun, 25 Oct 2009) | 2 lines
++Changed paths:
++   M /trunk/FAQ
++
++Summarize all environment variables that can be tuned to lower memeory usage.
++
++------------------------------------------------------------------------
++r1678 | fabricecolin | 2009-10-25 16:31:57 +0800 (Sun, 25 Oct 2009) | 2 lines
++Changed paths:
++   M /trunk/po/de.po
++
++Update from Fabian Affolter.
++
++------------------------------------------------------------------------
++r1677 | fabricecolin | 2009-10-25 16:14:47 +0800 (Sun, 25 Oct 2009) | 2 lines
++Changed paths:
++   M /trunk/IndexSearch/Xapian/XapianDatabase.cpp
++   M /trunk/IndexSearch/Xapian/XapianDatabase.h
++
++Removed error checking on mutex.
++
++------------------------------------------------------------------------
++r1676 | fabricecolin | 2009-10-25 16:13:51 +0800 (Sun, 25 Oct 2009) | 6 lines
++Changed paths:
++   M /trunk/IndexSearch/Xapian/XapianIndex.cpp
++   M /trunk/IndexSearch/Xapian/XapianIndex.h
++
++XPATH/path is a probabilistic term prefix, and path terms should be generated
++with positional information.
++Get the tokenizer to break on spaces only. With the recent changes to the
++CJKVTokenizer, this should preserve dots, eg dots in acronyms and version
++numbers, similarly to what the QueryParser does.
++
++------------------------------------------------------------------------
++r1675 | fabricecolin | 2009-10-25 12:15:01 +0800 (Sun, 25 Oct 2009) | 2 lines
++Changed paths:
++   M /trunk/po/nl.po
++
++Update from JW.
++
++------------------------------------------------------------------------
++r1674 | fabricecolin | 2009-10-21 22:06:19 +0800 (Wed, 21 Oct 2009) | 2 lines
++Changed paths:
++   M /trunk/pinot-dbus-daemon.desktop
++
++Added Encoding and Version.
++
++------------------------------------------------------------------------
++r1673 | fabricecolin | 2009-10-21 21:22:04 +0800 (Wed, 21 Oct 2009) | 4 lines
++Changed paths:
++   M /trunk/IndexSearch/Xapian/XapianEngine.cpp
++   M /trunk/IndexSearch/Xapian/XapianEngine.h
++
++Use the Query API to limit the query to a set of documents (Search This For)
++instead of mangling the query string.
++Escape and hash terms with prefix "path".
++
++------------------------------------------------------------------------
++r1672 | fabricecolin | 2009-10-10 19:52:09 +0800 (Sat, 10 Oct 2009) | 2 lines
++Changed paths:
++   M /trunk/UI/GTK2/metase-gtk2.glade
++   M /trunk/UI/GTK2/src/mainWindow.cc
++   M /trunk/UI/GTK2/src/mainWindow.hh
++   M /trunk/UI/GTK2/src/mainWindow_glade.cc
++
++If gtkmm >= 2.16 is available, replace the find button with a QueryEntry icon.
++
++------------------------------------------------------------------------
++r1671 | fabricecolin | 2009-09-19 12:45:58 +0800 (Sat, 19 Sep 2009) | 2 lines
++Changed paths:
++   D /trunk/Core/PinotUtils.cpp
++   D /trunk/Core/PinotUtils.h
++   M /trunk/UI/GTK2/src/EnginesTree.cc
++   M /trunk/UI/GTK2/src/IndexPage.cc
++   M /trunk/UI/GTK2/src/Makefile.am
++   M /trunk/UI/GTK2/src/Notebook.cc
++   A /trunk/UI/GTK2/src/PinotUtils.cc (from /trunk/Core/PinotUtils.cpp:1665)
++   A /trunk/UI/GTK2/src/PinotUtils.hh (from /trunk/Core/PinotUtils.h:1665)
++   M /trunk/UI/GTK2/src/ResultsTree.cc
++   M /trunk/UI/GTK2/src/importDialog.cc
++   M /trunk/UI/GTK2/src/indexDialog.cc
++   M /trunk/UI/GTK2/src/launcherDialog.cc
++   M /trunk/UI/GTK2/src/mainWindow.cc
++   M /trunk/UI/GTK2/src/prefsWindow.cc
++   M /trunk/UI/GTK2/src/propertiesDialog.cc
++   M /trunk/UI/GTK2/src/queryDialog.cc
++   M /trunk/UI/GTK2/src/statisticsDialog.cc
++
++Moved PinotUtils out of Core.
++
++------------------------------------------------------------------------
++r1670 | fabricecolin | 2009-08-30 09:07:46 +0800 (Sun, 30 Aug 2009) | 2 lines
++Changed paths:
++   M /trunk/SQL/SQLiteBase.cpp
++
++Show the name of the database when a statement fails.
++
++------------------------------------------------------------------------
++r1669 | fabricecolin | 2009-08-30 09:07:01 +0800 (Sun, 30 Aug 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/DaemonState.cpp
++   M /trunk/Core/pinot-dbus-daemon.cpp
++   M /trunk/UI/GTK2/src/pinot.cc
++
++Build those when HAVE_DBUS isn't set.
++
++------------------------------------------------------------------------
++r1668 | fabricecolin | 2009-08-30 09:04:33 +0800 (Sun, 30 Aug 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/UniqueApplication.cpp
++
++Cleanup.
++
++------------------------------------------------------------------------
++r1667 | fabricecolin | 2009-08-29 13:33:42 +0800 (Sat, 29 Aug 2009) | 3 lines
++Changed paths:
++   M /trunk/AUTHORS
++   M /trunk/Core/DaemonState.cpp
++   M /trunk/Core/Makefile.am
++   M /trunk/Core/WorkerThreads.cpp
++   M /trunk/IndexSearch/Makefile.am
++   M /trunk/IndexSearch/Xapian/Makefile.am
++   M /trunk/README
++   M /trunk/Tokenize/Makefile.am
++   M /trunk/UI/GTK2/src/Makefile.am
++
++OpenBSD port patches, from Antoine Jacoutot.
++See http://www.openbsd.org/cgi-bin/cvsweb/ports/x11/pinot/patches/
++
++------------------------------------------------------------------------
++r1666 | fabricecolin | 2009-08-29 13:23:09 +0800 (Sat, 29 Aug 2009) | 2 lines
++Changed paths:
++   M /trunk/Core/pinot-dbus-daemon.cpp
++   M /trunk/UI/GTK2/src/pinot.cc
++
++Redirect clog too.
++
++------------------------------------------------------------------------
++r1665 | fabricecolin | 2009-08-15 18:11:22 +0800 (Sat, 15 Aug 2009) | 2 lines
++Changed paths:
++   M /trunk/SQL/ActionQueue.cpp
++   M /trunk/SQL/CrawlHistory.cpp
++   M /trunk/SQL/MetaDataBackup.cpp
++   M /trunk/SQL/QueryHistory.cpp
++   M /trunk/SQL/SQLDB.cpp
++   M /trunk/SQL/SQLiteBase.cpp
++   M /trunk/SQL/ViewHistory.cpp
++   M /trunk/Utils/CommandLine.cpp
++   M /trunk/Utils/Document.cpp
++   M /trunk/Utils/MIMEScanner.cpp
++   M /trunk/Utils/Memory.cpp
++   M /trunk/Utils/TimeConverter.cpp
++   M /trunk/Utils/Url.cpp
++
++Prefer clog to cout and cerr.
++
++------------------------------------------------------------------------
++r1664 | fabricecolin | 2009-07-02 21:37:20 +0800 (Thu, 02 Jul 2009) | 2 lines
++Changed paths:
++   M /trunk/SQL/CrawlHistory.cpp
++   M /trunk/SQL/SQLDB.cpp
++   M /trunk/SQL/SQLDB.h
++   M /trunk/SQL/SQLiteBase.cpp
++   M /trunk/SQL/SQLiteBase.h
++
++Allow opening databases in read-only mode.
++
++------------------------------------------------------------------------
++r1663 | fabricecolin | 2009-07-01 23:22:38 +0800 (Wed, 01 Jul 2009) | 2 lines
++Changed paths:
++   M /trunk/Utils/TimeConverter.cpp
++
++When requesting GM time, the timezone should be GMT !
++
++------------------------------------------------------------------------
++r1662 | fabricecolin | 2009-06-29 23:08:05 +0800 (Mon, 29 Jun 2009) | 2 lines
++Changed paths:
++   M /trunk/po/fr.po
++
++Translation update by Thierry Thomas.
++
++------------------------------------------------------------------------
++r1660 | fabricecolin | 2009-06-27 11:36:22 +0800 (Sat, 27 Jun 2009) | 2 lines
++Changed paths:
++   M /trunk/ChangeLog
++   M /trunk/ChangeLog-dijon
++
++Current logs.
++
++------------------------------------------------------------------------
+ r1659 | fabricecolin | 2009-06-27 11:31:13 +0800 (Sat, 27 Jun 2009) | 2 lines
+ Changed paths:
+    M /trunk/po/de.po
+
+Modified: trunk/po/de.po
+===================================================================
+--- trunk/po/de.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/de.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:45+0000\n"
+ "Last-Translator: marco.jahn <Unknown>\n"
+ "Language-Team: German <de at li.org>\n"
+
+Modified: trunk/po/es.po
+===================================================================
+--- trunk/po/es.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/es.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -7,7 +7,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:46+0000\n"
+ "Last-Translator: DiegoJ <diegojromerolopez at gmail.com>\n"
+ "Language-Team: es <fabricecolin at users.berlios.de>\n"
+
+Modified: trunk/po/fr.po
+===================================================================
+--- trunk/po/fr.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/fr.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -7,7 +7,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-07-01 12:45+0000\n"
+ "Last-Translator: Fabrice Colin <fabricecolin at users.berlios.de>\n"
+ "Language-Team: fr <fabricecolin at users.berlios.de>\n"
+
+Modified: trunk/po/he.po
+===================================================================
+--- trunk/po/he.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/he.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -7,7 +7,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-29 08:45+0000\n"
+ "Last-Translator: Yaron <sh.yaron at gmail.com>\n"
+ "Language-Team: Hebrew <he at li.org>\n"
+
+Modified: trunk/po/it.po
+===================================================================
+--- trunk/po/it.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/it.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:46+0000\n"
+ "Last-Translator: MarcoBazzani <alfred.einstein at gmail.com>\n"
+ "Language-Team: Italian <it at li.org>\n"
+
+Modified: trunk/po/ja.po
+===================================================================
+--- trunk/po/ja.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/ja.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -7,7 +7,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Takeo Mizuki <Unknown>\n"
+ "Language-Team: Japanese <ja at li.org>\n"
+
+Modified: trunk/po/nl.po
+===================================================================
+--- trunk/po/nl.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/nl.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: JW <jw00000 at gmail.com>\n"
+ "Language-Team: Dutch <nl at li.org>\n"
+
+Modified: trunk/po/pt.po
+===================================================================
+--- trunk/po/pt.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/pt.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Bernardo Lopes <Unknown>\n"
+ "Language-Team: Portuguese <pt at li.org>\n"
+
+Modified: trunk/po/pt_BR.po
+===================================================================
+--- trunk/po/pt_BR.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/pt_BR.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: andbelo <Unknown>\n"
+ "Language-Team: Portuguese (Brazil) <pt_BR at li.org>\n"
+
+Modified: trunk/po/ru.po
+===================================================================
+--- trunk/po/ru.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/ru.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2008-08-23 16:14+0000\n"
+ "Last-Translator: Sergey Vostrikov <s.vostrikov at gmail.com>\n"
+ "Language-Team: Russian <ru at li.org>\n"
+
+Modified: trunk/po/sv.po
+===================================================================
+--- trunk/po/sv.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/sv.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -7,7 +7,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Daniel Nylander <yeager at ubuntu.com>\n"
+ "Language-Team: Swedish <tp-sv at listor.tp-sv.se>\n"
+
+Modified: trunk/po/zh_CN.po
+===================================================================
+--- trunk/po/zh_CN.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/zh_CN.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -6,7 +6,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2010-06-20 08:47+0000\n"
+ "Last-Translator: Eleanor Chen <chenyueg at gmail.com>\n"
+ "Language-Team: \n"
+
+Modified: trunk/po/zh_TW.po
+===================================================================
+--- trunk/po/zh_TW.po	2010-07-12 14:08:59 UTC (rev 1723)
++++ trunk/po/zh_TW.po	2010-07-12 14:23:52 UTC (rev 1724)
+@@ -7,7 +7,7 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-01 18:29+0800\n"
++"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+ "PO-Revision-Date: 2008-08-23 16:15+0000\n"
+ "Last-Translator: Yung-chung Lin <henearkrxern at gmail.com>\n"
+ "Language-Team: Traditional Chinese <zh_TW at li.org>\n"
+
+
+
+From fabricecolin at mail.berlios.de  Mon Jul 12 16:26:42 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Mon, 12 Jul 2010 16:26:42 +0200
+Subject: [Pinot-svn] r1725 - tags
+Message-ID: <20100712142642.7C84E4805B1@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-12 16:26:42 +0200 (Mon, 12 Jul 2010)
+New Revision: 1725
+
+Added:
+   tags/version_0_9_6/
+Log:
+Releasing v0.96.
+
+
+
+
+From fabricecolin at mail.berlios.de  Thu Jul 15 15:04:57 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Thu, 15 Jul 2010 15:04:57 +0200
+Subject: [Pinot-svn] r1726 - trunk/Core
+Message-ID: <20100715130457.5164E480C94@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-15 15:04:57 +0200 (Thu, 15 Jul 2010)
+New Revision: 1726
+
+Modified:
+   trunk/Core/WorkerThreads.cpp
+Log:
+Skip symlinks if they are blacklisted, not if they aren't !!!
+
+
+Modified: trunk/Core/WorkerThreads.cpp
+===================================================================
+--- trunk/Core/WorkerThreads.cpp	2010-07-12 14:26:42 UTC (rev 1725)
++++ trunk/Core/WorkerThreads.cpp	2010-07-15 13:04:57 UTC (rev 1726)
+@@ -2149,7 +2149,7 @@
+ 
+ 		// If symlinks are followed, check if this symlink is blacklisted
+ 		if ((m_followSymLinks == false) ||
+-			(PinotSettings::getInstance().isBlackListed(entryName) == false))
++			(PinotSettings::getInstance().isBlackListed(entryName) == true))
+ 		{
+ #ifdef DEBUG
+ 			cout << "DirectoryScannerThread::scanEntry: skipped symlink " << entryName << endl;
+
+
+
+From fabricecolin at mail.berlios.de  Wed Jul 28 16:09:50 2010
+From: fabricecolin at mail.berlios.de (fabricecolin at mail.berlios.de)
+Date: Wed, 28 Jul 2010 16:09:50 +0200
+Subject: [Pinot-svn] r1727 - in trunk: . po
+Message-ID: <20100728140950.3F85048089E@sheep.berlios.de>
+
+Author: fabricecolin
+Date: 2010-07-28 16:09:50 +0200 (Wed, 28 Jul 2010)
+New Revision: 1727
+
+Modified:
+   trunk/AUTHORS
+   trunk/po/es.po
+   trunk/po/nl.po
+Log:
+Spanish translation by Juan Miguel Boyero Corral.
+Dutch translation by Dirk Roos.
+
+
+Modified: trunk/AUTHORS
+===================================================================
+--- trunk/AUTHORS	2010-07-15 13:04:57 UTC (rev 1726)
++++ trunk/AUTHORS	2010-07-28 14:09:50 UTC (rev 1727)
+@@ -59,6 +59,7 @@
+ 	Dutch - Tikkel <???>
+ 		& JW <jw00000 at gmail dot com>
+ 		& Balaam's Miracle <balaam at balaamsmiracle dot com>
++		& Dirk Roos <???>
+ 	French - Nicolas Velin <nsv at fr dot st>
+ 		& Fr?d?ric Grosshans <frederic dot grosshans at gmail dot com>
+ 		& Thierry Thomas <thierry at freebsd dot org>
+@@ -86,6 +87,7 @@
+ 	Spanish - Jes?s Tramullas <jesus at tramullas dot com>
+ 		& Garbage <garbage at openfutura dot com>
+ 		& DiegoJ <diegojromerolopez at gmail dot com>
++		& Juan Miguel Boyero Corral <???>
+ 	Swedish - Daniel Nylander <po at danielnylander dot se>
+ 		& Zirro <???>
+ 
+
+Modified: trunk/po/es.po
+===================================================================
+--- trunk/po/es.po	2010-07-15 13:04:57 UTC (rev 1726)
++++ trunk/po/es.po	2010-07-28 14:09:50 UTC (rev 1727)
+@@ -5,95 +5,94 @@
+ #
+ msgid ""
+ msgstr ""
+-"Project-Id-Version: pinot 0.96\n"
++"Project-Id-Version: pinot 0.95\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+-"PO-Revision-Date: 2010-06-20 08:46+0000\n"
+-"Last-Translator: DiegoJ <diegojromerolopez at gmail.com>\n"
++"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"PO-Revision-Date: 2010-07-26 18:15+0000\n"
++"Last-Translator: Juan Miguel Boyero Corral <Unknown>\n"
+ "Language-Team: es <fabricecolin at users.berlios.de>\n"
+-"Language: \n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=utf-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+-msgstr ""
++msgstr "No se pudo iniciar la transacci?n"
+ 
+ #: SQL/SQLiteBase.cpp:455
+ msgid "failed to rollback transaction"
+-msgstr ""
++msgstr "No se pudo deshacer la transacci?n"
+ 
+ #: SQL/SQLiteBase.cpp:491
+ msgid "failed to end transaction"
+-msgstr ""
++msgstr "No se pudo finalizar la transacci?n"
+ 
+ #: SQL/SQLiteBase.cpp:553
+ msgid "couldn't format SQL statement"
+-msgstr ""
++msgstr "No se pudo formatear la sentencia SQL"
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
+ msgid "Unknown"
+ msgstr "Desconocido"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
+ msgid "Danish"
+ msgstr "Dan?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
+ msgid "Dutch"
+ msgstr "Holand?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
+ msgid "English"
+ msgstr "Ingl?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
+ msgid "Finnish"
+ msgstr "Finland?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
+ msgid "French"
+ msgstr "Franc?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
+ msgid "German"
+ msgstr "Alem?n"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
+ msgid "Hungarian"
+ msgstr "H?ngaro"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
+ msgid "Italian"
+ msgstr "Italiano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
+ msgid "Norwegian"
+ msgstr "Noruego"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
+ msgid "Portuguese"
+ msgstr "Portugu?s"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
+ msgid "Romanian"
+ msgstr "Rumano"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
+ msgid "Russian"
+ msgstr "Ruso"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
+ msgid "Spanish"
+ msgstr "Espa?ol"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
+ msgid "Swedish"
+ msgstr "Sueco"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
+ msgid "Turkish"
+ msgstr "Turco"
+ 
+@@ -684,11 +683,11 @@
+ msgid "Close"
+ msgstr "Cerrar"
+ 
+-#: UI/GTK2/src/pinot.cc:349
++#: UI/GTK2/src/pinot.cc:350
+ msgid "Couldn't open index"
+ msgstr "No se pudo abrir el ?ndice"
+ 
+-#: UI/GTK2/src/pinot.cc:370
++#: UI/GTK2/src/pinot.cc:371
+ msgid "Couldn't create history database"
+ msgstr "No se pudo crear la base de datos del hist?rico"
+ 
+@@ -733,7 +732,8 @@
+ msgstr "Nueva etiqueta"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid "These directories will be indexed and optionally monitored for changes:"
++msgid ""
++"These directories will be indexed and optionally monitored for changes:"
+ msgstr "Estas carpetas van a estar indexar autom?ticamente"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:74 UI/GTK2/src/prefsWindow_glade.cc:90
+
+Modified: trunk/po/nl.po
+===================================================================
+--- trunk/po/nl.po	2010-07-15 13:04:57 UTC (rev 1726)
++++ trunk/po/nl.po	2010-07-28 14:09:50 UTC (rev 1727)
+@@ -6,93 +6,92 @@
+ msgstr ""
+ "Project-Id-Version: pinot 0.96\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2010-07-12 22:14+0800\n"
+-"PO-Revision-Date: 2010-06-20 08:47+0000\n"
+-"Last-Translator: JW <jw00000 at gmail.com>\n"
++"POT-Creation-Date: 2010-06-20 16:10+0800\n"
++"PO-Revision-Date: 2010-07-08 11:41+0000\n"
++"Last-Translator: Dirk Roos <Unknown>\n"
+ "Language-Team: Dutch <nl at li.org>\n"
+-"Language: nl\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+ #: SQL/SQLiteBase.cpp:419
+ msgid "failed to begin transaction"
+-msgstr ""
++msgstr "starten van transactie heeft gefaald"
+ 
+ #: SQL/SQLiteBase.cpp:455
+ msgid "failed to rollback transaction"
+-msgstr ""
++msgstr "terugdraaien van transactie heeft gefaald"
+ 
+ #: SQL/SQLiteBase.cpp:491
+ msgid "failed to end transaction"
+-msgstr ""
++msgstr "be?indigen van transactie heeft gefaald"
+ 
+ #: SQL/SQLiteBase.cpp:553
+ msgid "couldn't format SQL statement"
+-msgstr ""
++msgstr "kon het SQL statement niet formatteren"
+ 
+ #. Localize language names
+-#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:308
++#: Core/pinot-dbus-daemon.cpp:543 UI/GTK2/src/pinot.cc:309
+ msgid "Unknown"
+ msgstr "Niet bekend"
+ 
+-#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:309
++#: Core/pinot-dbus-daemon.cpp:544 UI/GTK2/src/pinot.cc:310
+ msgid "Danish"
+ msgstr "Deens"
+ 
+-#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:310
++#: Core/pinot-dbus-daemon.cpp:545 UI/GTK2/src/pinot.cc:311
+ msgid "Dutch"
+ msgstr "Nederlands"
+ 
+-#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:311
++#: Core/pinot-dbus-daemon.cpp:546 UI/GTK2/src/pinot.cc:312
+ msgid "English"
+ msgstr "Engels"
+ 
+-#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:312
++#: Core/pinot-dbus-daemon.cpp:547 UI/GTK2/src/pinot.cc:313
+ msgid "Finnish"
+ msgstr "Fins"
+ 
+-#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:313
++#: Core/pinot-dbus-daemon.cpp:548 UI/GTK2/src/pinot.cc:314
+ msgid "French"
+ msgstr "Frans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:314
++#: Core/pinot-dbus-daemon.cpp:549 UI/GTK2/src/pinot.cc:315
+ msgid "German"
+ msgstr "Duits"
+ 
+-#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:315
++#: Core/pinot-dbus-daemon.cpp:550 UI/GTK2/src/pinot.cc:316
+ msgid "Hungarian"
+ msgstr "Hongaars"
+ 
+-#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:316
++#: Core/pinot-dbus-daemon.cpp:551 UI/GTK2/src/pinot.cc:317
+ msgid "Italian"
+ msgstr "Italiaans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:317
++#: Core/pinot-dbus-daemon.cpp:552 UI/GTK2/src/pinot.cc:318
+ msgid "Norwegian"
+ msgstr "Noors"
+ 
+-#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:318
++#: Core/pinot-dbus-daemon.cpp:553 UI/GTK2/src/pinot.cc:319
+ msgid "Portuguese"
+ msgstr "Portugees"
+ 
+-#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:319
++#: Core/pinot-dbus-daemon.cpp:554 UI/GTK2/src/pinot.cc:320
+ msgid "Romanian"
+ msgstr "Roemeens"
+ 
+-#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:320
++#: Core/pinot-dbus-daemon.cpp:555 UI/GTK2/src/pinot.cc:321
+ msgid "Russian"
+ msgstr "Russisch"
+ 
+-#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:321
++#: Core/pinot-dbus-daemon.cpp:556 UI/GTK2/src/pinot.cc:322
+ msgid "Spanish"
+ msgstr "Spaans"
+ 
+-#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:322
++#: Core/pinot-dbus-daemon.cpp:557 UI/GTK2/src/pinot.cc:323
+ msgid "Swedish"
+ msgstr "Zweeds"
+ 
+-#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:323
++#: Core/pinot-dbus-daemon.cpp:558 UI/GTK2/src/pinot.cc:324
+ msgid "Turkish"
+ msgstr "Turks"
+ 
+@@ -684,11 +683,11 @@
+ msgid "Close"
+ msgstr "Sluiten"
+ 
+-#: UI/GTK2/src/pinot.cc:349
++#: UI/GTK2/src/pinot.cc:350
+ msgid "Couldn't open index"
+ msgstr "Kan index niet openen"
+ 
+-#: UI/GTK2/src/pinot.cc:370
++#: UI/GTK2/src/pinot.cc:371
+ msgid "Couldn't create history database"
+ msgstr "Kon historische database niet maken"
+ 
+@@ -733,7 +732,8 @@
+ msgstr "Nieuwe naam"
+ 
+ #: UI/GTK2/src/prefsWindow_glade.cc:69
+-msgid "These directories will be indexed and optionally monitored for changes:"
++msgid ""
++"These directories will be indexed and optionally monitored for changes:"
+ msgstr ""
+ "Deze directories zullen geindexeerd worden en optioneel bijgewerkt worden "
+ "bij veranderingen:"
+
+
+

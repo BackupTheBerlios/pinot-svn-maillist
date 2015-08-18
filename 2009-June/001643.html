@@ -1,0 +1,393 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1653 - trunk/Core
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2009-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1653%20-%20trunk/Core&In-Reply-To=%3C200906270150.n5R1otpB004839%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001642.html">
+   <LINK REL="Next"  HREF="001644.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1653 - trunk/Core</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1653%20-%20trunk/Core&In-Reply-To=%3C200906270150.n5R1otpB004839%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1653 - trunk/Core">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Jun 27 03:50:55 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001642.html">[Pinot-svn] r1652 - trunk/SQL
+</A></li>
+        <LI>Next message: <A HREF="001644.html">[Pinot-svn] r1654 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1643">[ date ]</a>
+              <a href="thread.html#1643">[ thread ]</a>
+              <a href="subject.html#1643">[ subject ]</a>
+              <a href="author.html#1643">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2009-06-27 03:50:47 +0200 (Sat, 27 Jun 2009)
+New Revision: 1653
+
+Modified:
+   trunk/Core/DaemonState.cpp
+   trunk/Core/DaemonState.h
+   trunk/Core/ServerThreads.cpp
+   trunk/Core/ServerThreads.h
+Log:
+Metadata needs to be restored en-bloc at the end of indexing (no queued actions,
+no threads) and crawling (empty crawl queue). Previously it was restored after
+crawling a directory but potentially before all documents to restore have been
+indexed.
+
+
+Modified: trunk/Core/DaemonState.cpp
+===================================================================
+--- trunk/Core/DaemonState.cpp	2009-06-23 12:04:00 UTC (rev 1652)
++++ trunk/Core/DaemonState.cpp	2009-06-27 01:50:47 UTC (rev 1653)
+@@ -462,12 +462,12 @@
+ 		// Monitoring is not necessary, but we still have to pass the handler
+ 		// so that we can act on documents that have been deleted
+ 		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+-			m_isReindex, NULL, m_pDiskHandler);
++			NULL, m_pDiskHandler);
+ 	}
+ 	else
+ 	{
+ 		pCrawlerThread = new CrawlerThread(locationToCrawl, isSource,
+-			m_isReindex, m_pDiskMonitor, m_pDiskHandler);
++			m_pDiskMonitor, m_pDiskHandler);
+ 	}
+ 	pCrawlerThread-&gt;getFileFoundSignal().connect(sigc::mem_fun(*this, &amp;DaemonState::on_message_filefound));
+ 
+@@ -482,6 +482,20 @@
+ 	return false;
+ }
+ 
++void DaemonState::flush_and_reclaim(void)
++{
++	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
++	if (pIndex != NULL)
++	{
++		DBusServletThread::flushIndexAndSignal(pIndex);
++
++		delete pIndex;
++	}
++
++	int inUse = Memory::getUsage();
++	Memory::reclaim();
++}
++
+ void DaemonState::start(bool isReindex)
+ {
+ 	// Disable implicit flushing after a change
+@@ -625,6 +639,7 @@
+ 		{
+ 			// Pop the queue
+ 			m_crawlQueue.pop();
++
+ 			m_flush = true;
+ 		}
+ 		// Else, the directory wasn't fully crawled so better leave it in the queue
+@@ -740,6 +755,11 @@
+ 		}
+ #endif
+ 	}
++	else if (type == &quot;RestoreMetaDataThread&quot;)
++	{
++		// Do the actual flush here
++		flush_and_reclaim();
++	}
+ 
+ 	// Delete the thread
+ 	delete pThread;
+@@ -781,16 +801,18 @@
+ 	{
+ 		m_flush = false;
+ 
+-		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+-		if (pIndex != NULL)
++		if ((m_isReindex == true) &amp;&amp;
++			(m_crawlQueue.empty() == true))
+ 		{
+-			DBusServletThread::flushIndexAndSignal(pIndex);
+-
+-			delete pIndex;
++			// Restore metadata on documents and flush when the tread returns
++			RestoreMetaDataThread *pRestoreThread = new RestoreMetaDataThread();
++			start_thread(pRestoreThread);
+ 		}
+-
+-		int inUse = Memory::getUsage();
+-		Memory::reclaim();
++		else
++		{
++			// Flush now
++			flush_and_reclaim();
++		}
+ 	}
+ }
+ 
+
+Modified: trunk/Core/DaemonState.h
+===================================================================
+--- trunk/Core/DaemonState.h	2009-06-23 12:04:00 UTC (rev 1652)
++++ trunk/Core/DaemonState.h	2009-06-27 01:50:47 UTC (rev 1653)
+@@ -113,6 +113,8 @@
+ 
+ 		bool crawl_location(const PinotSettings::IndexableLocation &amp;location);
+ 
++		void flush_and_reclaim(void);
++
+ };
+ 
+ #endif // _DAEMONSTATE_HH
+
+Modified: trunk/Core/ServerThreads.cpp
+===================================================================
+--- trunk/Core/ServerThreads.cpp	2009-06-23 12:04:00 UTC (rev 1652)
++++ trunk/Core/ServerThreads.cpp	2009-06-27 01:50:47 UTC (rev 1653)
+@@ -112,13 +112,11 @@
+ 	return readFile;
+ }
+ 
+-CrawlerThread::CrawlerThread(const string &amp;dirName,
+-	bool isSource, bool isReindex,
++CrawlerThread::CrawlerThread(const string &amp;dirName, bool isSource,
+ 	MonitorInterface *pMonitor, MonitorHandler *pHandler) :
+ 	DirectoryScannerThread(dirName,
+ 		PinotSettings::getInstance().m_daemonIndexLocation,
+ 		0, false, true),
+-	m_isReindex(isReindex),
+ 	m_sourceId(0),
+ 	m_pMonitor(pMonitor),
+ 	m_pHandler(pHandler),
+@@ -342,56 +340,6 @@
+ 
+ 	cout &lt;&lt; &quot;Cleaned up &quot; &lt;&lt; currentOffset + urls.size()
+ 		&lt;&lt; &quot; history entries in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+-
+-	if (m_isReindex == true)
+-	{
+-		urls.clear();
+-		currentOffset = 0;
+-		scanTimer.start();
+-
+-		IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+-		if (pIndex == NULL)
+-		{
+-			return;
+-		}
+-
+-		// Restore user-set metadata, if any
+-		while ((pIndex-&gt;isGood() == true) &amp;&amp;
+-			(metaData.getItems(string(&quot;<A HREF="file://">file://</A>&quot;) + m_dirName, urls,
+-				currentOffset, currentOffset + 100) == true))
+-		{
+-			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
+-				urlIter != urls.end(); ++urlIter)
+-			{
+-				unsigned int docId = pIndex-&gt;hasDocument(*urlIter);
+-				if (docId == 0)
+-				{
+-					continue;
+-				}
+-
+-				DocumentInfo docInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;);
+-				if (metaData.getItem(docInfo, DocumentInfo::SERIAL_FIELDS) == true)
+-				{
+-					pIndex-&gt;updateDocumentInfo(docId, docInfo);
+-				}
+-				if (metaData.getItem(docInfo, DocumentInfo::SERIAL_LABELS) == true)
+-				{
+-					pIndex-&gt;setDocumentLabels(docId, docInfo.getLabels(), true);
+-				}
+-			}
+-
+-			// Next
+-			if (urls.size() &lt; 100)
+-			{
+-				break;
+-			}
+-			currentOffset += 100;
+-		}
+-		cout &lt;&lt; &quot;Restored user-set metadata for &quot; &lt;&lt; currentOffset + urls.size()
+-			&lt;&lt; &quot; documents in &quot; &lt;&lt; scanTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
+-
+-		delete pIndex;
+-	}
+ }
+ 
+ #ifdef HAVE_DBUS
+@@ -1142,3 +1090,92 @@
+ }
+ #endif
+ 
++RestoreMetaDataThread::RestoreMetaDataThread() :
++	WorkerThread()
++{
++}
++
++RestoreMetaDataThread::~RestoreMetaDataThread()
++{
++}
++
++string RestoreMetaDataThread::getType(void) const
++{
++	return &quot;RestoreMetaDataThread&quot;;
++}
++
++void RestoreMetaDataThread::doWork(void)
++{
++	PinotSettings &amp;settings = PinotSettings::getInstance();
++	MetaDataBackup metaData(settings.getHistoryDatabaseName());
++	Timer restoreTimer;
++	set&lt;string&gt; urls;
++	unsigned int currentOffset = 0, totalCount = 0;
++
++	IndexInterface *pIndex = settings.getIndex(settings.m_daemonIndexLocation);
++	if (pIndex == NULL)
++	{
++		return;
++	}
++	if (pIndex-&gt;isGood() == false)
++	{
++		delete pIndex;
++		return;
++	}
++
++	// Restore user-set metadata on all documents 
++	for (set&lt;PinotSettings::IndexableLocation&gt;::const_iterator locationIter = settings.m_indexableLocations.begin();
++		locationIter != settings.m_indexableLocations.end(); ++locationIter)
++	{
++		string dirName(locationIter-&gt;m_name);
++
++		restoreTimer.start();
++
++		while (metaData.getItems(string(&quot;<A HREF="file://">file://</A>&quot;) + dirName, urls,
++			currentOffset, currentOffset + 100) == true)
++		{
++			for (set&lt;string&gt;::const_iterator urlIter = urls.begin();
++				urlIter != urls.end(); ++urlIter)
++			{
++				unsigned int docId = pIndex-&gt;hasDocument(*urlIter);
++				if (docId == 0)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;RestoreMetaDataThread::doWork: &quot; &lt;&lt; *urlIter &lt;&lt; &quot; is not indexed, can't be restored&quot; &lt;&lt; endl;
++#endif
++					continue;
++				}
++
++				DocumentInfo docInfo(&quot;&quot;, *urlIter, &quot;&quot;, &quot;&quot;);
++				if (metaData.getItem(docInfo, DocumentInfo::SERIAL_FIELDS) == true)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;RestoreMetaDataThread::doWork: restored fields on &quot; &lt;&lt; *urlIter &lt;&lt; endl;
++#endif
++					pIndex-&gt;updateDocumentInfo(docId, docInfo);
++				}
++				if (metaData.getItem(docInfo, DocumentInfo::SERIAL_LABELS) == true)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;RestoreMetaDataThread::doWork: restored &quot; &lt;&lt; docInfo.getLabels().size() &lt;&lt; &quot; labels on &quot; &lt;&lt; *urlIter &lt;&lt; endl;
++#endif
++					pIndex-&gt;setDocumentLabels(docId, docInfo.getLabels(), true);
++				}
++			}
++
++			// Next
++			totalCount += urls.size();
++			if (urls.size() &lt; 100)
++			{
++				break;
++			}
++			currentOffset += 100;
++			urls.clear();
++		}
++		cout &lt;&lt; &quot;Restored user-set metadata for &quot; &lt;&lt; totalCount &lt;&lt; &quot; documents in &quot;
++			&lt;&lt; dirName &lt;&lt; &quot;, in &quot; &lt;&lt; restoreTimer.stop() &lt;&lt; &quot; ms&quot; &lt;&lt; endl;
++	}
++
++	delete pIndex;
++}
++
+
+Modified: trunk/Core/ServerThreads.h
+===================================================================
+--- trunk/Core/ServerThreads.h	2009-06-23 12:04:00 UTC (rev 1652)
++++ trunk/Core/ServerThreads.h	2009-06-27 01:50:47 UTC (rev 1653)
+@@ -40,15 +40,13 @@
+ class CrawlerThread : public DirectoryScannerThread
+ {
+ 	public:
+-		CrawlerThread(const std::string &amp;dirName,
+-			bool isSource, bool isReindex,
++		CrawlerThread(const std::string &amp;dirName, bool isSource,
+ 			MonitorInterface *pMonitor, MonitorHandler *pHandler);
+ 		virtual ~CrawlerThread();
+ 
+ 		virtual std::string getType(void) const;
+ 
+ 	protected:
+-		bool m_isReindex;
+ 		unsigned int m_sourceId;
+ 		MonitorInterface *m_pMonitor;
+ 		MonitorHandler *m_pHandler;
+@@ -106,4 +104,21 @@
+ };
+ #endif
+ 
++class RestoreMetaDataThread : public WorkerThread
++{
++	public:
++		RestoreMetaDataThread();
++		virtual ~RestoreMetaDataThread();
++
++		virtual std::string getType(void) const;
++
++	protected:
++		virtual void doWork(void);
++
++	private:
++		RestoreMetaDataThread(const RestoreMetaDataThread &amp;other);
++		RestoreMetaDataThread &amp;operator=(const RestoreMetaDataThread &amp;other);
++
++};
++
+ #endif // _SERVERTHREADS_HH
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001642.html">[Pinot-svn] r1652 - trunk/SQL
+</A></li>
+	<LI>Next message: <A HREF="001644.html">[Pinot-svn] r1654 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1643">[ date ]</a>
+              <a href="thread.html#1643">[ thread ]</a>
+              <a href="subject.html#1643">[ subject ]</a>
+              <a href="author.html#1643">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

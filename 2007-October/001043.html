@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1049 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1049%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710161403.l9GE3RJh003679%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001042.html">
+   <LINK REL="Next"  HREF="001044.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1049 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1049%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200710161403.l9GE3RJh003679%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1049 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 16 16:03:27 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001042.html">[Pinot-svn] r1048 - trunk/Search
+</A></li>
+        <LI>Next message: <A HREF="001044.html">[Pinot-svn] r1050 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1043">[ date ]</a>
+              <a href="thread.html#1043">[ thread ]</a>
+              <a href="subject.html#1043">[ subject ]</a>
+              <a href="author.html#1043">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-10-16 16:03:27 +0200 (Tue, 16 Oct 2007)
+New Revision: 1049
+
+Modified:
+   trunk/UI/GTK2/src/propertiesDialog.cc
+Log:
+Don't show Unknown for size 0, it's fine. Several labels may be applied, so
+use the plural Labels in the list. Pass an empty string for language Unknown.
+
+
+Modified: trunk/UI/GTK2/src/propertiesDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-16 13:55:04 UTC (rev 1048)
++++ trunk/UI/GTK2/src/propertiesDialog.cc	2007-10-16 14:03:27 UTC (rev 1049)
+@@ -50,7 +50,7 @@
+ 	m_refLabelsTree = ListStore::create(m_labelsColumns);
+ 	labelsTreeview-&gt;set_model(m_refLabelsTree);
+ 	labelsTreeview-&gt;append_column_editable(&quot; &quot;, m_labelsColumns.m_enabled);
+-	labelsTreeview-&gt;append_column(_(&quot;Label&quot;), m_labelsColumns.m_name);
++	labelsTreeview-&gt;append_column(_(&quot;Labels&quot;), m_labelsColumns.m_name);
+ 	// Allow only single selection
+ 	labelsTreeview-&gt;get_selection()-&gt;set_mode(SELECTION_SINGLE);
+ 
+@@ -86,15 +86,8 @@
+ 			titleEntry-&gt;set_text(to_utf8(docInfo.getTitle()));
+ 			typeEntry-&gt;set_text(to_utf8(docInfo.getType()));
+ 			unsigned int size = docInfo.getSize();
+-			if (size == 0)
+-			{
+-				sizeEntry-&gt;set_text(_(&quot;Unknown&quot;));
+-			}
+-			else
+-			{
+-				snprintf(numStr, 128, &quot;%u&quot;, size);
+-				sizeEntry-&gt;set_text(numStr);
+-			}
++			snprintf(numStr, 128, &quot;%u&quot;, size);
++			sizeEntry-&gt;set_text(numStr);
+ 			if (termsCount == 0)
+ 			{
+ 				termsEntry-&gt;set_text(_(&quot;Unknown&quot;));
+@@ -254,7 +247,8 @@
+ 
+ void propertiesDialog::on_labelOkButton_clicked()
+ {
+-	unsigned int languageStart = 0;
++	string languageName(from_utf8(languageCombobox-&gt;get_active_text()));
++	int unknownLanguagePos = 0;
+ 
+ 	// If only one document was edited, set its title
+ 	if (m_editDocument == true)
+@@ -267,11 +261,15 @@
+ 	// Did we add an extra string to the languages list ?
+ 	if (m_notALanguageName == true)
+ 	{
+-		languageStart = 1;
++		unknownLanguagePos = 1;
+ 	}
+-	int chosenLanguage = languageCombobox-&gt;get_active_row_number();
++	int chosenLanguagePos = languageCombobox-&gt;get_active_row_number();
++	if (chosenLanguagePos == unknownLanguagePos)
++	{
++		languageName.clear();
++	}
+ #ifdef DEBUG
+-	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen language &quot; &lt;&lt; languageCombobox-&gt;get_active_text() &lt;&lt; endl;
++	cout &lt;&lt; &quot;propertiesDialog::on_labelOkButton_clicked: chosen language &quot; &lt;&lt; languageName &lt;&lt; endl;
+ #endif
+ 
+ 	// Go through the labels tree
+@@ -299,9 +297,9 @@
+ 		docIter != m_documentsList.end(); ++docIter)
+ 	{
+ 		// Apply the new language if necessary
+-		if (chosenLanguage &gt;= languageStart)
++		if (chosenLanguagePos &gt;= unknownLanguagePos)
+ 		{
+-			docIter-&gt;setLanguage(from_utf8(languageCombobox-&gt;get_active_text()));
++			docIter-&gt;setLanguage(from_utf8(languageName));
+ 		}
+ 
+ 		// Apply labels
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001042.html">[Pinot-svn] r1048 - trunk/Search
+</A></li>
+	<LI>Next message: <A HREF="001044.html">[Pinot-svn] r1050 - trunk/Tokenize
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1043">[ date ]</a>
+              <a href="thread.html#1043">[ thread ]</a>
+              <a href="subject.html#1043">[ subject ]</a>
+              <a href="author.html#1043">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

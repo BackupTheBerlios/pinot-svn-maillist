@@ -1,0 +1,384 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r984 - in trunk: Index Search UI/GTK2 UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r984%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709231030.l8NAUYH2009773%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000977.html">
+   <LINK REL="Next"  HREF="000979.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r984 - in trunk: Index Search UI/GTK2 UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r984%20-%20in%20trunk%3A%20Index%20Search%20UI/GTK2%20UI/GTK2/src%20Utils&In-Reply-To=%3C200709231030.l8NAUYH2009773%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r984 - in trunk: Index Search UI/GTK2 UI/GTK2/src Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Sep 23 12:30:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000977.html">[Pinot-svn] r983 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="000979.html">[Pinot-svn] r985 - in trunk: Search Search/Google Tokenize	UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#978">[ date ]</a>
+              <a href="thread.html#978">[ thread ]</a>
+              <a href="subject.html#978">[ subject ]</a>
+              <a href="author.html#978">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-09-23 12:30:25 +0200 (Sun, 23 Sep 2007)
+New Revision: 984
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/UI/GTK2/metase-gtk2.glade
+   trunk/UI/GTK2/src/queryDialog.cc
+   trunk/UI/GTK2/src/queryDialog_glade.cc
+   trunk/Utils/TimeConverter.cpp
+   trunk/Utils/TimeConverter.h
+Log:
+Support for time ranges (value 3). Tweaked the query properties dialog.
+In XapianEngine, get Enquire::get_mset() to check at least maxResultsCount + 1
+so that the total results estimate is determined correctly if between 0 to
+maxResultsCount.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/Index/XapianIndex.cpp	2007-09-23 10:30:25 UTC (rev 984)
+@@ -608,12 +608,15 @@
+ 	time_t timeT = TimeConverter::fromTimestamp(info.getTimestamp());
+ 	struct tm *tm = localtime(&amp;timeT);
+ 	string yyyymmdd(TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday));
++	string hhmmss(TimeConverter::toHHMMSSString(tm-&gt;tm_hour, tm-&gt;tm_min, tm-&gt;tm_sec));
+ 
+ 	// Add this value to allow sorting by date
+ 	doc.add_value(0, yyyymmdd);
+ 	// FIXME: checksum in value 1
+ 	// Size goes in value 2
+ 	doc.add_value(2, Xapian::sortable_serialise((double )info.getSize()));
++	// Time goes in value 3
++	doc.add_value(3, hhmmss);
+ 
+ 	DocumentInfo docCopy(info);
+ 	docCopy.setLanguage(language);
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/Search/XapianEngine.cpp	2007-09-23 10:30:25 UTC (rev 984)
+@@ -45,21 +45,6 @@
+ using std::inserter;
+ using namespace Dijon;
+ 
+-// The following function was lifted from Xapian's xapian-applications/omega/date.cc
+-// where it's called last_day(), and prettified slightly
+-static int lastDay(int year, int month)
+-{
+-	static const int lastDays[13] = { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+-
+-	if (month != 2)
+-	{
+-		return lastDays[month];
+-	}
+-
+-	// Good until 2100
+-	return 28 + (year % 4 == 0);
+-}
+-
+ static void checkFilter(const string &amp;freeQuery, string::size_type filterValueStart,
+ 	bool &amp;escapeValue, bool &amp;hashValue)
+ {
+@@ -94,6 +79,48 @@
+ 	}
+ }
+ 
++class TimeValueRangeProcessor : public Xapian::ValueRangeProcessor
++{
++	public:
++		TimeValueRangeProcessor(Xapian::valueno valno) : Xapian::ValueRangeProcessor(), m_valueNumber(valno) { }
++
++		Xapian::valueno operator()(string &amp;begin, string &amp;end)
++		{
++			if ((begin.size() == 6) &amp;&amp;
++					(end.size() == 6))
++			{
++				// HHMMSS
++#ifdef DEBUG
++				cout &lt;&lt; &quot;TimeValueRangeProcessor::operator: accepting &quot; &lt;&lt; begin &lt;&lt; &quot;..&quot; &lt;&lt; end &lt;&lt; endl;
++#endif
++				return m_valueNumber;
++			}
++			if ((begin.size() == 8) &amp;&amp; (end.size() == 8) &amp;&amp;
++					(begin[2] == begin[5]) &amp;&amp; (end[2] == end[5]) &amp;&amp; (begin[2] == end[2]) &amp;&amp;
++					(end[4] == ':'))
++			{
++				// HH:MM:SS
++				begin.erase(2, 1);
++				begin.erase(5, 1);
++				end.erase(2, 1);
++				end.erase(5, 1);
++#ifdef DEBUG
++				cout &lt;&lt; &quot;TimeValueRangeProcessor::operator: accepting &quot; &lt;&lt; begin &lt;&lt; &quot;..&quot; &lt;&lt; end &lt;&lt; endl;
++#endif
++				return m_valueNumber;
++			}
++#ifdef DEBUG
++			cout &lt;&lt; &quot;TimeValueRangeProcessor::operator: rejecting &quot; &lt;&lt; begin &lt;&lt; &quot;..&quot; &lt;&lt; end &lt;&lt; endl;
++#endif
++
++			return Xapian::BAD_VALUENO;
++		}
++
++	protected:
++		Xapian::valueno m_valueNumber;
++
++};
++
+ XapianEngine::XapianEngine(const string &amp;database) :
+ 	SearchEngineInterface()
+ {
+@@ -287,6 +314,10 @@
+ 	parser.add_valuerangeprocessor(&amp;sizeProcessor);
+ #endif
+ 
++	// Time range
++	TimeValueRangeProcessor timeProcessor(3);
++	parser.add_valuerangeprocessor(&amp;timeProcessor);
++
+ 	// Parse the query string
+ 	Xapian::Query parsedQuery = parser.parse_query(freeQuery, flags);
+ 	if (minimal == true)
+@@ -364,7 +395,7 @@
+ 		enquire.set_query(query);
+ 
+ 		// Get the top results of the query
+-		Xapian::MSet matches = enquire.get_mset(startDoc, maxResultsCount);
++		Xapian::MSet matches = enquire.get_mset(startDoc, maxResultsCount, maxResultsCount + 1);
+ 		if (matches.empty() == false)
+ 		{
+ 			m_resultsCountEstimate = matches.get_matches_estimated();
+
+Modified: trunk/UI/GTK2/metase-gtk2.glade
+===================================================================
+--- trunk/UI/GTK2/metase-gtk2.glade	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/UI/GTK2/metase-gtk2.glade	2007-09-23 10:30:25 UTC (rev 984)
+@@ -2384,7 +2384,7 @@
+ 	      &lt;child&gt;
+ 		&lt;widget class=&quot;GtkLabel&quot; id=&quot;filterLabel&quot;&gt;
+ 		  &lt;property name=&quot;visible&quot;&gt;True&lt;/property&gt;
+-		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;New filter:&lt;/property&gt;
++		  &lt;property name=&quot;label&quot; translatable=&quot;yes&quot;&gt;New filter or range:&lt;/property&gt;
+ 		  &lt;property name=&quot;use_underline&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;use_markup&quot;&gt;False&lt;/property&gt;
+ 		  &lt;property name=&quot;justify&quot;&gt;GTK_JUSTIFY_LEFT&lt;/property&gt;
+
+Modified: trunk/UI/GTK2/src/queryDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog.cc	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/UI/GTK2/src/queryDialog.cc	2007-09-23 10:30:25 UTC (rev 984)
+@@ -79,7 +79,7 @@
+ 
+ 		// FIXME: this is extremely hacky !
+ 		if ((sscanf(rowPath.c_str(), &quot;%u&quot;, &amp;rowPos) == 1) &amp;&amp;
+-			(rowPos == 2))
++			((rowPos == 2) || (rowPos == 10)))
+ 		{
+ 			return true;
+ 		}
+@@ -122,7 +122,10 @@
+ 	filterCombobox-&gt;append_text(_(&quot;Language code&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;MIME type&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;Label&quot;));
+-	filterCombobox-&gt;append_text(_(&quot;Date range&quot;));
++	// And separate numerical ranges
++	filterCombobox-&gt;append_text(&quot;===&quot;);
++	filterCombobox-&gt;append_text(_(&quot;Date&quot;));
++	filterCombobox-&gt;append_text(_(&quot;Time&quot;));
+ 	filterCombobox-&gt;append_text(_(&quot;Size&quot;));
+ 	filterCombobox-&gt;set_active(0);
+ }
+@@ -231,11 +234,19 @@
+ 			filter = &quot;label&quot;;
+ 			break;
+ 		case 10:
++			// Separator
++			break;
++		case 11:
+ 			filter = TimeConverter::toYYYYMMDDString(tm-&gt;tm_year + 1900, tm-&gt;tm_mon + 1, tm-&gt;tm_mday);
+ 			filter += &quot;..20991231&quot;;
+ 			hasValue = false;
+ 			break;
+-		case 11:
++		case 12:
++			filter = TimeConverter::toHHMMSSString(tm-&gt;tm_hour, tm-&gt;tm_min, tm-&gt;tm_sec);
++			filter += &quot;..235959&quot;;
++			hasValue = false;
++			break;
++		case 13:
+ 			filter += &quot;0..10240b&quot;;
+ 			hasValue = false;
+ 			break;
+
+Modified: trunk/UI/GTK2/src/queryDialog_glade.cc
+===================================================================
+--- trunk/UI/GTK2/src/queryDialog_glade.cc	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/UI/GTK2/src/queryDialog_glade.cc	2007-09-23 10:30:25 UTC (rev 984)
+@@ -69,7 +69,7 @@
+    nameEntry = Gtk::manage(new class Gtk::Entry());
+    
+    Gtk::Table *nameTable = Gtk::manage(new class Gtk::Table(2, 2, false));
+-   Gtk::Label *filterLabel = Gtk::manage(new class Gtk::Label(_(&quot;New filter:&quot;)));
++   Gtk::Label *filterLabel = Gtk::manage(new class Gtk::Label(_(&quot;New filter or range:&quot;)));
+    filterCombobox = Gtk::manage(new class Gtk::ComboBoxText());
+    
+    Gtk::Button *addFilterButton = Gtk::manage(new class Gtk::Button(Gtk::StockID(&quot;gtk-add&quot;)));
+
+Modified: trunk/Utils/TimeConverter.cpp
+===================================================================
+--- trunk/Utils/TimeConverter.cpp	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/Utils/TimeConverter.cpp	2007-09-23 10:30:25 UTC (rev 984)
+@@ -243,7 +243,7 @@
+ /// Converts to a YYYYMMDD-formatted string.
+ string TimeConverter::toYYYYMMDDString(int year, int month, int day)
+ {
+-	char timeStr[64];
++	char dateStr[64];
+ 
+ 	if (year &lt; 0)
+ 	{
+@@ -270,9 +270,9 @@
+ 		day = 31;
+ 	}
+ 
+-	if (snprintf(timeStr, 63, &quot;%04d%02d%02d&quot;, year, month, day) &gt; 0)
++	if (snprintf(dateStr, 63, &quot;%04d%02d%02d&quot;, year, month, day) &gt; 0)
+ 	{
+-		return timeStr;
++		return dateStr;
+ 	}
+ 
+ 	return &quot;&quot;;
+@@ -304,3 +304,67 @@
+ 	return gmTime;
+ }
+ 
++/// Converts to a HHMMSS-formatted string.
++string TimeConverter::toHHMMSSString(int hours, int minutes, int seconds)
++{
++	char timeStr[64];
++
++	if (hours &lt; 0)
++	{
++		hours = 0;
++	}
++	else if (hours &gt; 23)
++	{
++		hours = 23;
++	}
++	if (minutes &lt; 0)
++	{
++		minutes = 0;
++	}
++	else if (minutes &gt; 59)
++	{
++		minutes = 59;
++	}
++	if (seconds &lt; 0)
++	{
++		seconds = 0;
++	}
++	else if (seconds &gt; 59)
++	{
++		seconds = 59;
++	}
++
++	if (snprintf(timeStr, 63, &quot;%02d%02d%02d&quot;, hours, minutes, seconds) &gt; 0)
++	{
++		return timeStr;
++	}
++
++	return &quot;&quot;;
++}
++
++/// Converts from a HHMMSS-formatted string.
++time_t TimeConverter::fromHHMMSSString(const string &amp;hhmmss, bool inGMTime)
++{
++	struct tm timeTm;
++	time_t gmTime = 0;
++
++	// Initialize the structure
++	timeTm.tm_sec = timeTm.tm_min = timeTm.tm_hour = timeTm.tm_mday = 0;
++	timeTm.tm_mon = timeTm.tm_year = timeTm.tm_wday = timeTm.tm_yday = timeTm.tm_isdst = 0;
++
++	strptime(hhmmss.c_str(), &quot;%H%M%S&quot;, &amp;timeTm);
++#ifdef DEBUG
++	cout &lt;&lt; &quot;TimeConverter::fromHHMMSSString: &quot; &lt;&lt; timeTm.tm_hour &lt;&lt; &quot; &quot; &lt;&lt; timeTm.tm_min &lt;&lt; &quot; &quot; &lt;&lt; timeTm.tm_sec &lt;&lt; endl;
++#endif
++	if (inGMTime == true)
++	{
++		gmTime = timegm(&amp;timeTm);
++	}
++	else
++	{
++		gmTime = mktime(&amp;timeTm);
++	}
++
++	return gmTime;
++}
++
+
+Modified: trunk/Utils/TimeConverter.h
+===================================================================
+--- trunk/Utils/TimeConverter.h	2007-09-23 10:22:50 UTC (rev 983)
++++ trunk/Utils/TimeConverter.h	2007-09-23 10:30:25 UTC (rev 984)
+@@ -37,6 +37,12 @@
+ 		/// Converts from a YYYYMMDD-formatted string.
+ 		static time_t fromYYYYMMDDString(const std::string &amp;yyyymmdd, bool inGMTime = false);
+ 
++		/// Converts to a HHMMSS-formatted string.
++		static std::string toHHMMSSString(int hours, int minutes, int seconds);
++
++		/// Converts from a HHMMSS-formatted string.
++		static time_t fromHHMMSSString(const std::string &amp;hhmmss, bool inGMTime = false);
++
+ 	protected:
+ 		TimeConverter();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000977.html">[Pinot-svn] r983 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="000979.html">[Pinot-svn] r985 - in trunk: Search Search/Google Tokenize	UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#978">[ date ]</a>
+              <a href="thread.html#978">[ thread ]</a>
+              <a href="subject.html#978">[ subject ]</a>
+              <a href="author.html#978">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

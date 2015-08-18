@@ -1,0 +1,620 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r860 - in trunk/Search: . Google
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r860%20-%20in%20trunk/Search%3A%20.%20Google&In-Reply-To=%3C200706191409.l5JE9xoj024562%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000853.html">
+   <LINK REL="Next"  HREF="000855.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r860 - in trunk/Search: . Google</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r860%20-%20in%20trunk/Search%3A%20.%20Google&In-Reply-To=%3C200706191409.l5JE9xoj024562%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r860 - in trunk/Search: . Google">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 19 16:09:59 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000853.html">[Pinot-svn] r859 - in trunk/Search: . xesam
+</A></li>
+        <LI>Next message: <A HREF="000855.html">[Pinot-svn] r861 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#854">[ date ]</a>
+              <a href="thread.html#854">[ thread ]</a>
+              <a href="subject.html#854">[ subject ]</a>
+              <a href="author.html#854">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-06-19 16:09:58 +0200 (Tue, 19 Jun 2007)
+New Revision: 860
+
+Modified:
+   trunk/Search/Google/GoogleAPIEngine.cpp
+   trunk/Search/Makefile.am
+   trunk/Search/PluginWebEngine.cpp
+   trunk/Search/QueryProperties.cpp
+   trunk/Search/QueryProperties.h
+   trunk/Search/SearchEngineInterface.h
+   trunk/Search/SherlockParser.cpp
+   trunk/Search/XapianEngine.cpp
+   trunk/Search/pinot-search.cpp
+Log:
+Initial support for the Xesam Query and User Languages. Both only apply to
+index queries.
+
+
+Modified: trunk/Search/Google/GoogleAPIEngine.cpp
+===================================================================
+--- trunk/Search/Google/GoogleAPIEngine.cpp	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/Google/GoogleAPIEngine.cpp	2007-06-19 14:09:58 UTC (rev 860)
+@@ -91,6 +91,12 @@
+ 	m_resultsList.clear();
+ 	m_resultsCountEstimate = 0;
+ 
++	if (queryProps.getType() != QueryProperties::XAPIAN_QP)
++	{
++		cerr &lt;&lt; &quot;GoogleAPIEngine::runQuery: query type not supported&quot; &lt;&lt; endl;
++		return false;
++	}
++
+ 	setHostNameFilter(queryProps.getHostFilter());
+ 	setFileNameFilter(queryProps.getFileFilter());
+ 	setQuery(queryProps);
+
+Modified: trunk/Search/Makefile.am
+===================================================================
+--- trunk/Search/Makefile.am	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/Makefile.am	2007-06-19 14:09:58 UTC (rev 860)
+@@ -15,12 +15,19 @@
+ 	SOAPEnvH.h \
+ 	SOAPEnvStub.h \
+ 	WebEngine.h \
+-	XapianEngine.h
++	XapianEngine.h \
++	xesam/XapianQueryBuilder.h \
++	xesam/XesamParser.h \
++	xesam/XesamQLParser.h \
++	xesam/XesamQueryBuilder.h \
++	xesam/XesamULParser.h
+ 
+-EXTRA_LTLIBRARIES = libSearch.la libSearchSOAP.la
++if HAVE_SOAP
++noinst_LTLIBRARIES = libSearch.la libSearchSOAP.la
++else
++noinst_LTLIBRARIES = libSearch.la
++endif
+ 
+-noinst_LTLIBRARIES = @SEARCH_LTLIBRARIES@
+-
+ bin_PROGRAMS = pinot-search
+ 
+ libSearch_la_SOURCES = \
+@@ -33,19 +40,25 @@
+ 	SearchEngineInterface.cpp \
+ 	SearchPluginProperties.cpp \
+ 	WebEngine.cpp \
+-	XapianEngine.cpp
++	XapianEngine.cpp \
++	xesam/XapianQueryBuilder.cc \
++	xesam/XesamQLParser.cc \
++	xesam/XesamQueryBuilder.cc \
++	xesam/XesamULParser.cc
+ if HAVE_BOOST_SPIRIT
+ libSearch_la_SOURCES += SherlockParser.cpp
+ endif
+ 
++if HAVE_SOAP
+ libSearchSOAP_la_SOURCES = \
+ 	SOAPEnvC.cpp \
+ 	SOAPEnvNS.cpp
++endif
+ 
+ pinot_search_SOURCES = \
+ 	pinot-search.cpp
+ 
+-pinot_search_LDADD = -L../Utils -L../Tokenize -L../Collect -L../Index -LGoogle \
++pinot_search_LDADD = -L../Utils -L../Tokenize -L../Collect -L../Index -LGoogle -Lxesam \
+ 	@SEARCH_LIBS@ -lIndex -lCollect -lTokenize -lUtils -lBasicUtils \
+ 	@GLIBMM_LIBS@ @INDEX_LIBS@ @SOAP_LIBS@ @XML_LIBS@ @GMIME_LIBS@ @HTTP_LIBS@ @MISC_LIBS@
+ 
+@@ -53,7 +66,7 @@
+ 	soapcpp2 -pSOAPEnv SOAPEnv.h
+ 
+ AM_CXXFLAGS = -I$(srcdir)/../Utils -I$(srcdir)/../Tokenize -I$(srcdir)/../Tokenize/filters \
+-	-I$(srcdir)/../Collect -I$(srcdir)/../Index -IGoogle \
++	-I$(srcdir)/../Collect -I$(srcdir)/../Index -IGoogle -Ixesam \
+ 	@HTTP_CFLAGS@ @XML_CFLAGS@ @INDEX_CFLAGS@ @SOAP_CFLAGS@ @GMIME_CFLAGS@ @GLIBMM_CFLAGS@
+ if HAVE_BOOST_SPIRIT
+ AM_CXXFLAGS += -DHAVE_BOOST_SPIRIT
+
+Modified: trunk/Search/PluginWebEngine.cpp
+===================================================================
+--- trunk/Search/PluginWebEngine.cpp	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/PluginWebEngine.cpp	2007-06-19 14:09:58 UTC (rev 860)
+@@ -221,6 +221,12 @@
+ 	m_resultsList.clear();
+ 	m_resultsCountEstimate = 0;
+ 
++	if (queryProps.getType() != QueryProperties::XAPIAN_QP)
++	{
++		cerr &lt;&lt; &quot;PluginWebEngine::runQuery: query type not supported&quot; &lt;&lt; endl;
++		return false;
++	}
++
+ 	if (queryString.empty() == true)
+ 	{
+ #ifdef DEBUG
+
+Modified: trunk/Search/QueryProperties.cpp
+===================================================================
+--- trunk/Search/QueryProperties.cpp	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/QueryProperties.cpp	2007-06-19 14:09:58 UTC (rev 860)
+@@ -20,12 +20,14 @@
+ #include &lt;set&gt;
+ #include &lt;iostream&gt;
+ #include &lt;algorithm&gt;
++#include &lt;utility&gt;
+ 
+ #include &quot;Tokenizer.h&quot;
+ #include &quot;XapianEngine.h&quot;
+ #include &quot;QueryProperties.h&quot;
+ 
+ QueryProperties::QueryProperties() :
++	m_type(XAPIAN_QP),
+ 	m_resultsCount(10),
+ 	m_enableMinDate(false),
+ 	m_minDay(0),
+@@ -39,8 +41,10 @@
+ {
+ }
+ 
+-QueryProperties::QueryProperties(const string &amp;name, const string &amp;freeQuery) :
++QueryProperties::QueryProperties(const string &amp;name, const string &amp;freeQuery,
++	QueryType type) :
+ 	m_name(name),
++	m_type(type),
+ 	m_freeQuery(freeQuery),
+ 	m_resultsCount(10),
+ 	m_enableMinDate(false),
+@@ -58,6 +62,7 @@
+ 
+ QueryProperties::QueryProperties(const QueryProperties &amp;other) :
+ 	m_name(other.m_name),
++	m_type(other.m_type),
+ 	m_freeQuery(other.m_freeQuery),
+ 	m_freeQueryWithoutFilters(other.m_freeQueryWithoutFilters),
+ 	m_language(other.m_language),
+@@ -86,6 +91,7 @@
+ 	if (this != &amp;other)
+ 	{
+ 		m_name = other.m_name;
++		m_type = other.m_type;
+ 		m_freeQuery = other.m_freeQuery;
+ 		m_freeQueryWithoutFilters = other.m_freeQueryWithoutFilters;
+ 		m_language = other.m_language;
+@@ -139,6 +145,11 @@
+ 		return;
+ 	}
+ 
++	if (m_type != XAPIAN_QP)
++	{
++		m_freeQueryWithoutFilters = m_freeQuery.substr(0, min(20, (int)m_freeQuery.length()));
++	}
++
+ 	vector&lt;string&gt; terms;
+ 	if (XapianEngine::validateQuery(*this, true, terms) == true)
+ 	{
+@@ -196,6 +207,18 @@
+ 	return m_name;
+ }
+ 
++/// Sets the type.
++void QueryProperties::setType(QueryType type)
++{
++	m_type = type;
++}
++
++/// Gets the type.
++QueryProperties::QueryType QueryProperties::getType(void) const
++{
++	return m_type;
++}
++
+ /// Sets the query string.
+ void QueryProperties::setFreeQuery(const string &amp;freeQuery)
+ {
+
+Modified: trunk/Search/QueryProperties.h
+===================================================================
+--- trunk/Search/QueryProperties.h	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/QueryProperties.h	2007-06-19 14:09:58 UTC (rev 860)
+@@ -28,9 +28,11 @@
+ class QueryProperties
+ {
+ 	public:
++		typedef enum { XAPIAN_QP = 0, XESAM_QL, XESAM_UL } QueryType;
++
+ 		QueryProperties();
+-		QueryProperties(const string &amp;name, const string &amp;freeQuery);
+-		QueryProperties(const string &amp;name, const string &amp;andWords, const string &amp;phrase, const string &amp;anyWords, const string &amp;notWords);
++		QueryProperties(const string &amp;name, const string &amp;freeQuery,
++			QueryType type = XAPIAN_QP);
+ 		QueryProperties(const QueryProperties &amp;other);
+ 		~QueryProperties();
+ 
+@@ -43,6 +45,11 @@
+ 		/// Gets the name.
+ 		string getName(void) const;
+ 
++		/// Sets the type.
++		void setType(QueryType type);
++		/// Gets the type.
++		QueryType getType(void) const;
++
+ 		/// Sets the query string.
+ 		void setFreeQuery(const string &amp;freeQuery);
+ 		/// Gets the query string.
+@@ -87,6 +94,7 @@
+ 
+ 	protected:
+ 		string m_name;
++		QueryType m_type;
+ 		string m_freeQuery;
+ 		string m_freeQueryWithoutFilters;
+ 		string m_language;
+
+Modified: trunk/Search/SearchEngineInterface.h
+===================================================================
+--- trunk/Search/SearchEngineInterface.h	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/SearchEngineInterface.h	2007-06-19 14:09:58 UTC (rev 860)
+@@ -76,6 +76,10 @@
+ 
+ 		SearchEngineInterface();
+ 
++	private:
++		SearchEngineInterface(const SearchEngineInterface &amp;other);
++		SearchEngineInterface &amp;operator=(const SearchEngineInterface &amp;other);
++
+ };
+ 
+ #endif // _SEARCH_ENGINE_INTERFACE_H
+
+Modified: trunk/Search/SherlockParser.cpp
+===================================================================
+--- trunk/Search/SherlockParser.cpp	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/SherlockParser.cpp	2007-06-19 14:09:58 UTC (rev 860)
+@@ -61,12 +61,12 @@
+ 
+ };
+ 
+-struct skip_grammar : public grammar&lt;skip_grammar&gt;
++struct plugin_skip_grammar : public grammar&lt;plugin_skip_grammar&gt;
+ {
+ 	template &lt;typename ScannerT&gt;
+ 	struct definition
+ 	{
+-		definition(skip_grammar const &amp;self)
++		definition(plugin_skip_grammar const &amp;self)
+ 		{
+ 			// Skip all spaces and comments, starting with a #
+ 			// FIXME: make sure comments start at the beginning of the line !
+@@ -530,7 +530,7 @@
+ 		{
+ 			if (extractSearchParams == false)
+ 			{
+-				skip_grammar skip;
++				plugin_skip_grammar skip;
+ 				plugin_grammar plugin(searchParams, interpretParams, inputItems,
+ 					userInput, nextInput, nextFactor, nextValue);
+ 
+@@ -539,7 +539,7 @@
+ 			}
+ 			else
+ 			{
+-				skip_grammar skip;
++				plugin_skip_grammar skip;
+ 				plugin_min_grammar plugin(searchParams);
+ 
+ 				parse_info&lt;&gt; parseInfo = boost::spirit::parse(pData, plugin, skip);
+
+Modified: trunk/Search/XapianEngine.cpp
+===================================================================
+--- trunk/Search/XapianEngine.cpp	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/XapianEngine.cpp	2007-06-19 14:09:58 UTC (rev 860)
+@@ -32,6 +32,9 @@
+ #include &quot;XapianDatabaseFactory.h&quot;
+ #include &quot;AbstractGenerator.h&quot;
+ #include &quot;XapianEngine.h&quot;
++#include &quot;XapianQueryBuilder.h&quot;
++#include &quot;XesamQLParser.h&quot;
++#include &quot;XesamULParser.h&quot;
+ 
+ using std::string;
+ using std::multimap;
+@@ -40,6 +43,7 @@
+ using std::cerr;
+ using std::endl;
+ using std::inserter;
++using namespace Dijon;
+ 
+ // The following function was lifted from Xapian's xapian-applications/omega/date.cc
+ // where it's called last_day(), and prettified slightly
+@@ -190,7 +194,6 @@
+ Xapian::Query XapianEngine::parseQuery(Xapian::Database *pIndex, const QueryProperties &amp;queryProps,
+ 	const string &amp;stemLanguage, bool followOperators)
+ {
+-	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 	Xapian::QueryParser parser;
+ 	Xapian::Stem stemmer;
+ 	unsigned int minDay, minMonth, minYear = 0;
+@@ -239,7 +242,40 @@
+ 	parser.add_boolean_prefix(&quot;type&quot;, &quot;T&quot;);
+ 	parser.add_boolean_prefix(&quot;label&quot;, &quot;XLABEL:&quot;);
+ 
++	// What type of query is this ?
++	QueryProperties::QueryType type = queryProps.getType();
++	if (type != QueryProperties::XAPIAN_QP)
++	{
++		XapianQueryBuilder builder(parser);
++		XesamParser *pParser = NULL;
++
++		// Get a Xesam parser
++		if (type == QueryProperties::XESAM_QL)
++		{
++			pParser = new XesamQLParser();
++		}
++		else if (type == QueryProperties::XESAM_UL)
++		{
++			pParser = new XesamULParser();
++		}
++
++		if (pParser != NULL)
++		{
++			bool parsedQuery = pParser-&gt;parse(queryProps.getFreeQuery(), builder);
++
++			delete pParser;
++
++			if (parsedQuery == true)
++			{
++				return builder.get_query();
++			}
++		}
++
++		return Xapian::Query();
++	}
++
+ 	// Do some pre-processing : look for filters with quoted values
++	string freeQuery(StringManip::replaceSubString(queryProps.getFreeQuery(), &quot;\n&quot;, &quot; &quot;));
+ 	string::size_type escapedFilterEnd = 0;
+ 	string::size_type escapedFilterStart = freeQuery.find(&quot;:\&quot;&quot;);
+ 	while ((escapedFilterStart != string::npos) &amp;&amp;
+
+Modified: trunk/Search/pinot-search.cpp
+===================================================================
+--- trunk/Search/pinot-search.cpp	2007-06-14 13:28:11 UTC (rev 859)
++++ trunk/Search/pinot-search.cpp	2007-06-19 14:09:58 UTC (rev 860)
+@@ -20,8 +20,8 @@
+ #include &lt;stdio.h&gt;
+ #include &lt;getopt.h&gt;
+ #include &lt;iostream&gt;
++#include &lt;fstream&gt;
+ #include &lt;string&gt;
+-#include &lt;fstream&gt;
+ 
+ #include &quot;MIMEScanner.h&quot;
+ #include &quot;Url.h&quot;
+@@ -33,6 +33,7 @@
+ #include &quot;config.h&quot;
+ 
+ using namespace std;
++using namespace Dijon;
+ 
+ static struct option g_longOptions[] = {
+ 	{&quot;help&quot;, 0, 0, 'h'},
+@@ -43,9 +44,39 @@
+ 	{&quot;tocsv&quot;, 1, 0, 'c'},
+ 	{&quot;toxml&quot;, 1, 0, 'x'},
+ 	{&quot;version&quot;, 0, 0, 'v'},
++	{&quot;xesamql&quot;, 0, 0, 'q'},
++	{&quot;xesamul&quot;, 0, 0, 'u'},
+ 	{0, 0, 0, 0}
+ };
+ 
++static bool loadFile(const string &amp;xesamFile, string &amp;fileContents)
++{
++	ifstream inputFile;
++	bool readFile = false;
++
++	inputFile.open(xesamFile.c_str());
++	if (inputFile.good() == true)
++	{
++		inputFile.seekg(0, ios::end);
++		int length = inputFile.tellg();
++		inputFile.seekg(0, ios::beg);
++
++		char *pFileBuffer = new char[length + 1];
++		inputFile.read(pFileBuffer, length);
++		if (inputFile.fail() == false)
++		{
++			pFileBuffer[length] = '\0';
++
++			fileContents = string(pFileBuffer, length);
++			readFile = true;
++		}
++		delete[] pFileBuffer;
++	}
++	inputFile.close();
++
++	return readFile;
++}
++
+ static void printHelp(void)
+ {
+ 	set&lt;string&gt; engines;
+@@ -53,7 +84,7 @@
+ 	// Help
+ 	SearchEngineFactory::getSupportedEngines(engines);
+ 	cout &lt;&lt; &quot;pinot-search - Query search engines from the command-line\n\n&quot;
+-		&lt;&lt; &quot;Usage: pinot-search [OPTIONS] SEARCHENGINETYPE SEARCHENGINENAME|SEARCHENGINEOPTION QUERYSTRING\n\n&quot;
++		&lt;&lt; &quot;Usage: pinot-search [OPTIONS] SEARCHENGINETYPE SEARCHENGINENAME|SEARCHENGINEOPTION QUERYINPUT\n\n&quot;
+ 		&lt;&lt; &quot;Options:\n&quot;
+ 		&lt;&lt; &quot;  -h, --help                display this help and exit\n&quot;
+ 		&lt;&lt; &quot;  -m, --max                 maximum number of results (default 10)\n&quot;
+@@ -62,7 +93,9 @@
+ 		&lt;&lt; &quot;  -t, --proxytype           proxy type (default HTTP, SOCKS4, SOCKS5)\n&quot;
+ 		&lt;&lt; &quot;  -c, --tocsv               file to export results in CSV format to\n&quot;
+ 		&lt;&lt; &quot;  -x, --toxml               file to export results in XML format to\n&quot;
+-		&lt;&lt; &quot;  -v, --version             output version information and exit\n\n&quot;
++		&lt;&lt; &quot;  -v, --version             output version information and exit\n&quot;
++		&lt;&lt; &quot;  -q, --xesamql             query input is a file containing Xesam QL\n&quot;
++		&lt;&lt; &quot;  -u, --xesamul             query input is a file containing Xesam UL\n\n&quot;
+ 		&lt;&lt; &quot;Supported search engine types are&quot;;
+ 	for (set&lt;string&gt;::iterator engineIter = engines.begin(); engineIter != engines.end(); ++engineIter)
+ 	{
+@@ -81,13 +114,14 @@
+ 
+ int main(int argc, char **argv)
+ {
+-	string type, option, csvExport, xmlExport, proxyAddress, proxyPort, proxyType;
++	QueryProperties::QueryType queryType = QueryProperties::XAPIAN_QP;
++	string engineType, option, csvExport, xmlExport, proxyAddress, proxyPort, proxyType;
+ 	unsigned int maxResultsCount = 10; 
+ 	int longOptionIndex = 0;
+ 	bool printResults = true;
+ 
+ 	// Look at the options
+-	int optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:t:vx:&quot;, g_longOptions, &amp;longOptionIndex);
++	int optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:qt:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	while (optionChar != -1)
+ 	{
+ 		switch (optionChar)
+@@ -120,12 +154,18 @@
+ 					proxyPort = optarg;
+ 				}
+ 				break;
++			case 'q':
++				queryType = QueryProperties::XESAM_QL;
++				break;
+ 			case 't':
+ 				if (optarg != NULL)
+ 				{
+ 					proxyType = optarg;
+ 				}
+ 				break;
++			case 'u':
++				queryType = QueryProperties::XESAM_UL;
++				break;
+ 			case 'v':
+ 				cout &lt;&lt; &quot;pinot-search - &quot; &lt;&lt; PACKAGE_STRING &lt;&lt; &quot;\n\n&quot;
+ 					&lt;&lt; &quot;This is free software.  You may redistribute copies of it under the terms of\n&quot;
+@@ -144,7 +184,7 @@
+ 		}
+ 
+ 		// Next option
+-		optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:t:vx:&quot;, g_longOptions, &amp;longOptionIndex);
++		optionChar = getopt_long(argc, argv, &quot;c:hm:a:p:qt:uvx:&quot;, g_longOptions, &amp;longOptionIndex);
+ 	}
+ 
+ 	if (argc == 1)
+@@ -163,12 +203,12 @@
+ 	MIMEScanner::initialize();
+ 	DownloaderInterface::initialize();
+ 
+-	type = argv[optind];
++	engineType = argv[optind];
+ 	option = argv[optind + 1];
+-	char *pQuery = argv[optind + 2];
++	char *pQueryInput = argv[optind + 2];
+ 
+ 	// Which SearchEngine ?
+-	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(type, option);
++	SearchEngineInterface *pEngine = SearchEngineFactory::getSearchEngine(engineType, option);
+ 	if (pEngine == NULL)
+ 	{
+ 		cerr &lt;&lt; &quot;Couldn't obtain search engine instance&quot; &lt;&lt; endl;
+@@ -190,8 +230,30 @@
+ 		pDownloader-&gt;setSetting(&quot;proxytype&quot;, proxyType);
+ 	}
+ 
+-	QueryProperties queryProps(&quot;pinot-search&quot;, pQuery);
++	// Set the query
++	QueryProperties queryProps(&quot;pinot-search&quot;, &quot;&quot;, queryType);
++	if (queryType == QueryProperties::XAPIAN_QP)
++	{
++		queryProps.setFreeQuery(pQueryInput);
++	}
++	else
++	{
++		string fileContents;
+ 
++		// Load the query from file
++		if (loadFile(pQueryInput, fileContents) == false)
++		{
++			cerr &lt;&lt; &quot;Couldn't load query from file &quot; &lt;&lt; pQueryInput &lt;&lt; endl;
++
++			DownloaderInterface::shutdown();
++			MIMEScanner::shutdown();
++
++			return EXIT_FAILURE;
++		}
++
++		queryProps.setFreeQuery(fileContents);
++	}
++
+ 	queryProps.setMaximumResultsCount(maxResultsCount);
+ 	if (pEngine-&gt;runQuery(queryProps) == true)
+ 	{
+@@ -228,7 +290,7 @@
+ 			}
+ 			else
+ 			{
+-				string engineName(SearchEngineFactory::getSearchEngineName(type, option));
++				string engineName(SearchEngineFactory::getSearchEngineName(engineType, option));
+ 
+ 				if (csvExport.empty() == false)
+ 				{
+@@ -252,7 +314,7 @@
+ 	}
+ 	else
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't run query on search engine &quot; &lt;&lt; type &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't run query on search engine &quot; &lt;&lt; engineType &lt;&lt; endl;
+ 	}
+ 
+ 	delete pEngine;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000853.html">[Pinot-svn] r859 - in trunk/Search: . xesam
+</A></li>
+	<LI>Next message: <A HREF="000855.html">[Pinot-svn] r861 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#854">[ date ]</a>
+              <a href="thread.html#854">[ thread ]</a>
+              <a href="subject.html#854">[ subject ]</a>
+              <a href="author.html#854">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

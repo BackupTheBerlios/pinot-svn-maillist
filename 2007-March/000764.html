@@ -1,0 +1,367 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r770 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r770%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703180850.l2I8o1kf024341%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000763.html">
+   <LINK REL="Next"  HREF="000765.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r770 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r770%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200703180850.l2I8o1kf024341%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r770 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Mar 18 09:50:01 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000763.html">[Pinot-svn] r769 - in trunk: . UI UI/GTK2 UI/icons UI/icons/16x16	UI/icons/22x22 UI/icons/24x24 UI/icons/32x32 UI/icons/48x48
+</A></li>
+        <LI>Next message: <A HREF="000765.html">[Pinot-svn] r771 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#764">[ date ]</a>
+              <a href="thread.html#764">[ thread ]</a>
+              <a href="subject.html#764">[ subject ]</a>
+              <a href="author.html#764">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2007-03-18 09:50:01 +0100 (Sun, 18 Mar 2007)
+New Revision: 770
+
+Modified:
+   trunk/UI/GTK2/src/statisticsDialog.cc
+   trunk/UI/GTK2/src/statisticsDialog.hh
+Log:
+Status window is refreshed every 5 seconds.
+
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.cc	2007-03-17 13:08:04 UTC (rev 769)
++++ trunk/UI/GTK2/src/statisticsDialog.cc	2007-03-18 08:50:01 UTC (rev 770)
+@@ -16,12 +16,14 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &lt;string&gt;
+ #include &lt;fstream&gt;
+-#include &lt;iostream&gt;
+-#include &lt;string&gt;
+ #include &lt;map&gt;
+ #include &lt;set&gt;
+-#include &lt;sigc++/slot.h&gt;
++#include &lt;iostream&gt;
++#include &lt;sigc++/class_slot.h&gt;
++#include &lt;glibmm/convert.h&gt;
++#include &lt;gtkmm/stock.h&gt;
+ 
+ #include &quot;config.h&quot;
+ #include &quot;NLS.h&quot;
+@@ -37,7 +39,9 @@
+ using namespace Gtk;
+ 
+ statisticsDialog::statisticsDialog() :
+-	statisticsDialog_glade()
++	statisticsDialog_glade(),
++	m_hasErrors(false),
++	m_lastErrorDate(0)
+ {
+ 	// Associate the columns model to the engines tree
+ 	m_refStore = TreeStore::create(m_statsColumns);
+@@ -49,21 +53,20 @@
+ 		statisticsTreeview-&gt;append_column(*manage(pColumn));
+ 	}
+ 
++	// Populate
+ 	populate();
++	// ...and update regularly
++	m_idleConnection = Glib::signal_timeout().connect(SigC::slot(*this,
++		&amp;statisticsDialog::on_activity_timeout), 5000);
+ }
+ 
+ statisticsDialog::~statisticsDialog()
+ {
++	m_idleConnection.disconnect();
+ }
+ 
+ void statisticsDialog::populate(void)
+ {
+-	CrawlHistory crawlerHistory(PinotSettings::getInstance().m_historyDatabase);
+-	ViewHistory viewHistory(PinotSettings::getInstance().m_historyDatabase);
+-	std::map&lt;unsigned int, string&gt; sources;
+-	char countStr[64];
+-	bool hasErrors = false;
+-
+ 	TreeModel::iterator folderIter = m_refStore-&gt;append();
+ 	TreeModel::Row row = *folderIter;
+ 	row[m_statsColumns.m_name] = _(&quot;Indexes&quot;);
+@@ -72,46 +75,84 @@
+ 	TreeModel::iterator statIter = m_refStore-&gt;append(folderIter-&gt;children());
+ 	row = *statIter;
+ 	row[m_statsColumns.m_name] = _(&quot;My Web Pages&quot;);
++	m_myWebPagesIter = m_refStore-&gt;append(statIter-&gt;children());
++
++	statIter = m_refStore-&gt;append(folderIter-&gt;children());
++	row = *statIter;
++	row[m_statsColumns.m_name] = _(&quot;My Documents&quot;);
++	m_myDocumentsIter = m_refStore-&gt;append(statIter-&gt;children());
++
++	folderIter = m_refStore-&gt;append();
++	row = *folderIter;
++	row[m_statsColumns.m_name] = _(&quot;History&quot;);
++	m_viewStatIter = m_refStore-&gt;append(folderIter-&gt;children());
++
++	m_daemonIter = m_refStore-&gt;append();
++	row = *m_daemonIter;
++	row[m_statsColumns.m_name] = _(&quot;Daemon&quot;);
++	m_daemonStatIter = m_refStore-&gt;append(m_daemonIter-&gt;children());
++
++	m_crawledStatIter = m_refStore-&gt;append(folderIter-&gt;children());
++
++	// Expand everything
++	statisticsTreeview-&gt;expand_all();
++
++	Adjustment *pAdjustement = statisticsScrolledwindow-&gt;get_hadjustment();
++#ifdef DEBUG
++	cout &lt;&lt; &quot;statisticsDialog: &quot; &lt;&lt; pAdjustement-&gt;get_value() &lt;&lt; &quot; &quot;
++		&lt;&lt; pAdjustement-&gt;get_lower() &lt;&lt; &quot; &quot; &lt;&lt; pAdjustement-&gt;get_upper() &lt;&lt; endl;
++#endif
++	pAdjustement-&gt;set_value(pAdjustement-&gt;get_upper());
++	statisticsScrolledwindow-&gt;set_hadjustment(pAdjustement);
++	resize((int )pAdjustement-&gt;get_upper() * 2, get_height());
++
++	on_activity_timeout();
++}
++
++bool statisticsDialog::on_activity_timeout(void)
++{
++	CrawlHistory crawlerHistory(PinotSettings::getInstance().m_historyDatabase);
++	ViewHistory viewHistory(PinotSettings::getInstance().m_historyDatabase);
++	TreeModel::Row row;
++	std::map&lt;unsigned int, string&gt; sources;
++	char countStr[64];
++
++	row = *m_myWebPagesIter;
+ 	IndexInterface *pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_docsIndexLocation);
+ 	if ((pIndex != NULL) &amp;&amp;
+ 		(pIndex-&gt;isGood() == true))
+ 	{
+ 		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
++
+ 		snprintf(countStr, 64, &quot;%u&quot;, docsCount);
+-		TreeModel::iterator docsIter = m_refStore-&gt;append(statIter-&gt;children());
+-		row = *docsIter;
+ 		row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;documents&quot;);
+ 	}
++	else
++	{
++		row[m_statsColumns.m_name] = _(&quot;Unknown error&quot;);
++	}
+ 
+-	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+-	row = *statIter;
+-	row[m_statsColumns.m_name] = _(&quot;My Documents&quot;);
++	row = *m_myDocumentsIter;
+ 	pIndex = PinotSettings::getInstance().getIndex(PinotSettings::getInstance().m_daemonIndexLocation);
+ 	if ((pIndex != NULL) &amp;&amp;
+ 		(pIndex-&gt;isGood() == true))
+ 	{
+ 		unsigned int docsCount = pIndex-&gt;getDocumentsCount();
++
+ 		snprintf(countStr, 64, &quot;%u&quot;, docsCount);
+-		TreeModel::iterator docsIter = m_refStore-&gt;append(statIter-&gt;children());
+-		row = *docsIter;
+ 		row[m_statsColumns.m_name] = ustring(countStr) + &quot; &quot; + _(&quot;documents&quot;);
+ 	}
++	else
++	{
++		row[m_statsColumns.m_name] = _(&quot;Unknown error&quot;);
++	}
+ 
+-	folderIter = m_refStore-&gt;append();
+-	row = *folderIter;
+-	row[m_statsColumns.m_name] = _(&quot;History&quot;);
+-
+ 	// Show view statistics
+ 	unsigned int viewCount = viewHistory.getItemsCount();
+ 	snprintf(countStr, 64, &quot;%u&quot;, viewCount);
+-	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+-	row = *statIter;
++	row = *m_viewStatIter;
+ 	row[m_statsColumns.m_name] = ustring(_(&quot;Viewed&quot;)) + &quot; &quot; + countStr + &quot; &quot; + _(&quot;results&quot;);
+ 
+-	folderIter = m_refStore-&gt;append();
+-	row = *folderIter;
+-	row[m_statsColumns.m_name] = _(&quot;Daemon&quot;);
+-
+ 	// Is the daemon still running ?
+ 	string pidFileName(PinotSettings::getInstance().getConfigurationDirectory() + &quot;/pinot-dbus-daemon.pid&quot;);
+ 	pid_t daemonPID = 0;
+@@ -123,8 +164,7 @@
+ 		pidFile.close();
+ 	}
+ 	snprintf(countStr, 64, &quot;%u&quot;, daemonPID);
+-	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+-	row = *statIter;
++	row = *m_daemonStatIter;
+ 	if (daemonPID &gt; 0)
+ 	{
+ 		// FIXME: check whether it's actually running !
+@@ -138,12 +178,10 @@
+ 	// Show crawler statistics
+ 	unsigned int crawledFilesCount = crawlerHistory.getItemsCount(CrawlHistory::CRAWLED);
+ 	snprintf(countStr, 64, &quot;%u&quot;, crawledFilesCount);
+-	statIter = m_refStore-&gt;append(folderIter-&gt;children());
+-	row = *statIter;
++	row = *m_crawledStatIter;
+ 	row[m_statsColumns.m_name] = ustring(_(&quot;Crawled&quot;)) + &quot; &quot; + countStr + &quot; &quot; + _(&quot;files&quot;);
+ 
+-	TreeModel::iterator errIter;
+-
++	// Show errors
+ 	crawlerHistory.getSources(sources);
+ 	for (std::map&lt;unsigned int, string&gt;::iterator sourceIter = sources.begin();
+ 		sourceIter != sources.end(); ++sourceIter)
+@@ -151,25 +189,30 @@
+ 		set&lt;string&gt; errors;
+ 
+ 		// Did any error occur on this source ?
+-		unsigned int errorCount = crawlerHistory.getSourceItems(sourceIter-&gt;first, CrawlHistory::ERROR, errors);
++		unsigned int errorCount = crawlerHistory.getSourceItems(sourceIter-&gt;first,
++			CrawlHistory::ERROR, errors, m_lastErrorDate);
+ 		if ((errorCount &gt; 0) &amp;&amp;
+ 			(errors.empty() == false))
+ 		{
+ 			Url urlObj(sourceIter-&gt;second);
+ 			ustring sourceName(urlObj.getLocation());
+ 
+-			if (hasErrors == false)
++			// Add an errors row
++			if (m_hasErrors == false)
+ 			{
+-				// Add an errors row
+-				errIter  = m_refStore-&gt;append(folderIter-&gt;children());
+-				row = *errIter;
++				m_errorsIter  = m_refStore-&gt;append(m_daemonIter-&gt;children());
++				row = *m_errorsIter;
+ 				row[m_statsColumns.m_name] = _(&quot;Errors&quot;);
+ 
+-				hasErrors = true;
++				// Don't expand it
++				TreeModel::Path errPath = m_refStore-&gt;get_path(m_errorsIter);
++				statisticsTreeview-&gt;collapse_row(errPath);
++
++				m_hasErrors = true;
+ 			}
+ 
+ 			// Add the source
+-			TreeModel::iterator srcIter = m_refStore-&gt;append(errIter-&gt;children());
++			TreeModel::iterator srcIter = m_refStore-&gt;append(m_errorsIter-&gt;children());
+ 			row = *srcIter;
+ 			if (urlObj.getFile().empty() == false)
+ 			{
+@@ -182,27 +225,14 @@
+ 			for (set&lt;string&gt;::const_iterator errorIter = errors.begin();
+ 				errorIter != errors.end(); ++errorIter)
+ 			{
+-				statIter = m_refStore-&gt;append(srcIter-&gt;children());
+-				row = *statIter;
++				TreeModel::iterator errIter = m_refStore-&gt;append(srcIter-&gt;children());
++				row = *errIter;
+ 				row[m_statsColumns.m_name] = (*errorIter);
+ 			}
+ 		}
+ 	}
++	m_lastErrorDate = time(NULL);
+ 
+-	// Expand everything except errors
+-	statisticsTreeview-&gt;expand_all();
+-	if (hasErrors == true)
+-	{
+-		TreeModel::Path errPath = m_refStore-&gt;get_path(errIter);
+-		statisticsTreeview-&gt;collapse_row(errPath);
+-	}
++	return true;
++}
+ 
+-	Adjustment *pAdjustement = statisticsScrolledwindow-&gt;get_hadjustment();
+-#ifdef DEBUG
+-	cout &lt;&lt; &quot;statisticsDialog: &quot; &lt;&lt; pAdjustement-&gt;get_value() &lt;&lt; &quot; &quot;
+-		&lt;&lt; pAdjustement-&gt;get_lower() &lt;&lt; &quot; &quot; &lt;&lt; pAdjustement-&gt;get_upper() &lt;&lt; endl;
+-#endif
+-	pAdjustement-&gt;set_value(pAdjustement-&gt;get_upper());
+-	statisticsScrolledwindow-&gt;set_hadjustment(pAdjustement);
+-	resize((int )pAdjustement-&gt;get_upper() * 2, get_height());
+-}
+
+Modified: trunk/UI/GTK2/src/statisticsDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/statisticsDialog.hh	2007-03-17 13:08:04 UTC (rev 769)
++++ trunk/UI/GTK2/src/statisticsDialog.hh	2007-03-18 08:50:01 UTC (rev 770)
+@@ -19,6 +19,9 @@
+ #ifndef _STATISTICSDIALOG_HH
+ #define _STATISTICSDIALOG_HH
+ 
++#include &lt;time.h&gt;
++#include &lt;sigc++/slot.h&gt;
++#include &lt;sigc++/connection.h&gt;
+ #include &lt;glibmm/refptr.h&gt;
+ #include &lt;gtkmm/treestore.h&gt;
+ 
+@@ -34,8 +37,20 @@
+ protected:
+ 	Glib::RefPtr&lt;Gtk::TreeStore&gt; m_refStore;
+ 	ComboModelColumns m_statsColumns;
++	Gtk::TreeModel::iterator m_myWebPagesIter;
++	Gtk::TreeModel::iterator m_myDocumentsIter;
++	Gtk::TreeModel::iterator m_viewStatIter;
++	Gtk::TreeModel::iterator m_daemonIter;
++	Gtk::TreeModel::iterator m_daemonStatIter;
++	Gtk::TreeModel::iterator m_crawledStatIter;
++	Gtk::TreeModel::iterator m_errorsIter;
++	bool m_hasErrors;
++	time_t m_lastErrorDate;
++	SigC::Connection m_idleConnection;
+ 
+ 	void populate(void);
+ 
++	bool on_activity_timeout(void);
++
+ };
+ #endif
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000763.html">[Pinot-svn] r769 - in trunk: . UI UI/GTK2 UI/icons UI/icons/16x16	UI/icons/22x22 UI/icons/24x24 UI/icons/32x32 UI/icons/48x48
+</A></li>
+	<LI>Next message: <A HREF="000765.html">[Pinot-svn] r771 - trunk/SQL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#764">[ date ]</a>
+              <a href="thread.html#764">[ thread ]</a>
+              <a href="subject.html#764">[ subject ]</a>
+              <a href="author.html#764">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

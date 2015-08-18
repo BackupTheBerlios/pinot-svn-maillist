@@ -1,0 +1,447 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r57 - in trunk: Index UI/GTK2/src Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2006-January/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r57%20-%20in%20trunk%3A%20Index%20UI/GTK2/src%20Utils&In-Reply-To=%3C200601111326.k0BDQN3N023126%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000055.html">
+   <LINK REL="Next"  HREF="000057.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r57 - in trunk: Index UI/GTK2/src Utils</H1>
+    <B>fabricecolin at BerliOS</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r57%20-%20in%20trunk%3A%20Index%20UI/GTK2/src%20Utils&In-Reply-To=%3C200601111326.k0BDQN3N023126%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r57 - in trunk: Index UI/GTK2/src Utils">fabricecolin at berlios.de
+       </A><BR>
+    <I>Wed Jan 11 14:26:23 CET 2006</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000055.html">[Pinot-svn] r56 - trunk/po
+</A></li>
+        <LI>Next message: <A HREF="000057.html">[Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#56">[ date ]</a>
+              <a href="thread.html#56">[ thread ]</a>
+              <a href="subject.html#56">[ subject ]</a>
+              <a href="author.html#56">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2006-01-11 14:26:19 +0100 (Wed, 11 Jan 2006)
+New Revision: 57
+
+Modified:
+   trunk/Index/XapianIndex.cpp
+   trunk/Index/indextest.cpp
+   trunk/UI/GTK2/src/WorkerThreads.cpp
+   trunk/UI/GTK2/src/importDialog.cc
+   trunk/UI/GTK2/src/importDialog.hh
+   trunk/Utils/MIMEScanner.cpp
+Log:
+Fixed XapianIndex::hasDocument() and the importing of URLs.
+
+
+Modified: trunk/Index/XapianIndex.cpp
+===================================================================
+--- trunk/Index/XapianIndex.cpp	2006-01-10 16:01:00 UTC (rev 56)
++++ trunk/Index/XapianIndex.cpp	2006-01-11 13:26:19 UTC (rev 57)
+@@ -147,7 +147,7 @@
+ 	Url urlObj(location);
+ 
+ 	// Index the full URL with prefix U
+-	doc.add_term(limitTermLength(string(&quot;U&quot;) + location));
++	doc.add_term(limitTermLength(string(&quot;U&quot;) + StringManip::toLowerCase(location)));
+ 	// ...the host name with prefix H
+ 	string hostName = urlObj.getHost();
+ 	doc.add_term(limitTermLength(string(&quot;H&quot;) + StringManip::toLowerCase(hostName)));
+@@ -738,26 +738,29 @@
+ 		Xapian::Database *pIndex = pDatabase-&gt;readLock();
+ 		if (pIndex != NULL)
+ 		{
+-			string term(&quot;U&quot;);
++			string term(string(&quot;U&quot;) + StringManip::toLowerCase(url));
+ 
+ 			// Get documents that have this term
+-			term += url;
+ 			Xapian::PostingIterator postingIter = pIndex-&gt;postlist_begin(term);
+ 			if (postingIter != pIndex-&gt;postlist_end(term))
+ 			{
+ 				// This URL was indexed
+ 				docId = *postingIter;
++#ifdef DEBUG
++				cout &lt;&lt; &quot;XapianIndex::hasDocument: &quot; &lt;&lt; term &lt;&lt; &quot; in document &quot;
++					&lt;&lt; docId &lt;&lt; &quot; &quot; &lt;&lt; postingIter.get_wdf() &lt;&lt; &quot; time(s)&quot; &lt;&lt; endl;
++#endif
+ 			}
+-			// FIXME: what if the term exist in more than one document ?
++			// FIXME: what if the term exists in more than one document ?
+ 		}
+ 	}
+ 	catch (const Xapian::Error &amp;error)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't delete label: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't look for document: &quot; &lt;&lt; error.get_msg() &lt;&lt; endl;
+ 	}
+ 	catch (...)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't delete label, unknown exception occured&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Couldn't look for document, unknown exception occured&quot; &lt;&lt; endl;
+ 	}
+ 	pDatabase-&gt;unlock();
+ 
+
+Modified: trunk/Index/indextest.cpp
+===================================================================
+--- trunk/Index/indextest.cpp	2006-01-10 16:01:00 UTC (rev 56)
++++ trunk/Index/indextest.cpp	2006-01-11 13:26:19 UTC (rev 57)
+@@ -33,90 +33,94 @@
+ 
+ int main(int argc, char **argv)
+ {
+-	if (argc &lt; 4)
++	bool success = false;
++
++	if (argc &lt; 3)
+ 	{
+-		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; &lt;index type&gt; &lt;database name&gt; &lt;file name&gt;|CHECK|CREATE&quot; &lt;&lt; endl;
++		cerr &lt;&lt; &quot;Usage: &quot; &lt;&lt; argv[0] &lt;&lt; &quot; &lt;index type&gt; &lt;database name&gt; CHECK|CREATE|HASURL=&lt;url&gt;|INDEX=&lt;file name&gt;&quot; &lt;&lt; endl;
+ 		return EXIT_FAILURE;
+ 	}
+ 
+ 	// Check database ?
+ 	if (strncasecmp(argv[3], &quot;CHECK&quot;, 5) == 0)
+ 	{
+-		if (XapianDatabaseFactory::getDatabase(argv[2], true) != NULL)
++		XapianIndex index(argv[2]);
++
++		if (index.isGood() == true)
+ 		{
+-			XapianIndex index(argv[2]);
+ 			cout &lt;&lt; &quot;Index has &quot; &lt;&lt; index.getDocumentsCount() &lt;&lt; &quot; document(s)&quot; &lt;&lt; endl;
+-
+-			return EXIT_SUCCESS;
++			success = true;
+ 		}
+-
+-		return EXIT_FAILURE;
+ 	}
+ 	// Create database ?
+ 	else if (strncasecmp(argv[3], &quot;CREATE&quot;, 6) == 0)
+ 	{
+ 		if (XapianDatabaseFactory::getDatabase(argv[2], false) != NULL)
+ 		{
+-			return EXIT_SUCCESS;
++			success = true;
+ 		}
+-
+-		return EXIT_FAILURE;
+ 	}
++	// Look for an URL ?
++	else if (strncasecmp(argv[3], &quot;HASURL&quot;, 6) == 0)
++	{
++		XapianIndex index(argv[2]);
+ 
+-	struct stat fileStat;
+-	if ((stat(argv[3], &amp;fileStat) == 0) &amp;&amp;
+-		(S_ISREG(fileStat.st_mode)))
+-	{
+-		char *buffer = new char[fileStat.st_size + 1];
+-		int fd = open(argv[3], O_RDONLY);
+-		// Read the file
+-		ssize_t readBytes = read(fd, buffer, fileStat.st_size);
+-		if (readBytes == -1)
++		if ((index.isGood() == true) &amp;&amp;
++			(index.hasDocument(argv[3] + 7) &gt; 0))
+ 		{
+-			cerr &lt;&lt; &quot;Couldn't read &quot; &lt;&lt; argv[3] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-			return EXIT_FAILURE;
++			success = true;
+ 		}
++	}
++	// Index a file ?
++	else if (strncasecmp(argv[3], &quot;INDEX&quot;, 5) == 0)
++	{
++		struct stat fileStat;
++		string fileName(argv[3] + 6);
+ 
+-		// Assume file is HTML...
+-		Document doc(argv[3], argv[3], &quot;text/html&quot;, &quot;&quot;);
+-		doc.setData(buffer, readBytes);
+-		if (doc.isBinary() == true)
++		if ((stat(fileName.c_str(), &amp;fileStat) == 0) &amp;&amp;
++			(S_ISREG(fileStat.st_mode)))
+ 		{
+-			cerr &lt;&lt; argv[3] &lt;&lt; &quot; is binary !&quot; &lt;&lt; endl;
+-		}
+-		else
+-		{
+-			set&lt;string&gt; labels;
+-			unsigned int docId = 0;
+-
+-			Tokenizer *pTokens = TokenizerFactory::getTokenizer(argv[3], &amp;doc);
+-			if (pTokens == NULL)
++			char *buffer = new char[fileStat.st_size + 1];
++			int fd = open(fileName.c_str(), O_RDONLY);
++			// Read the file
++			ssize_t readBytes = read(fd, buffer, fileStat.st_size);
++			if (readBytes &gt; 0)
+ 			{
+-				cerr &lt;&lt; &quot;Couldn't obtain tokenizer for &quot; &lt;&lt; argv[3] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
+-				return EXIT_FAILURE;
+-			}
++				// Assume file is HTML...
++				Document doc(fileName, fileName, &quot;text/html&quot;, &quot;&quot;);
++				doc.setData(buffer, readBytes);
++				if (doc.isBinary() == false)
++				{
++					set&lt;string&gt; labels;
++					unsigned int docId = 0;
+ 
+-			// Ignore index type, use a XapianIndex
+-			XapianIndex index(argv[2]);
+-			index.setStemmingMode(IndexInterface::STORE_BOTH);
+-			if (index.indexDocument(*pTokens, labels, docId) == false)
+-			{
+-				cerr &lt;&lt; &quot;Couldn't index &quot; &lt;&lt; argv[3] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
++					Tokenizer *pTokens = TokenizerFactory::getTokenizer(fileName, &amp;doc);
++					if (pTokens != NULL)
++					{
++						// Ignore index type, use a XapianIndex
++						XapianIndex index(argv[2]);
++						index.setStemmingMode(IndexInterface::STORE_BOTH);
++						if (index.indexDocument(*pTokens, labels, docId) == true)
++						{
++							cout &lt;&lt; &quot;Added &quot; &lt;&lt; fileName &lt;&lt; &quot; to index, document&quot; &lt;&lt; docId &lt;&lt; endl;
++							success = true;
++						}
++
++						delete pTokens;
++					}
++				}
++
++				delete[] buffer;
+ 			}
+-			else
+-			{
+-				cout &lt;&lt; &quot;Added &quot; &lt;&lt; argv[3] &lt;&lt; &quot; to index, document&quot; &lt;&lt; docId &lt;&lt; endl;
+-			}
+-
+-			delete pTokens;
+ 		}
++	}
+ 
+-		delete[] buffer;
+-	}
+-	else
++	XapianDatabaseFactory::closeAll();
++
++	if (success == true)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't stat &quot; &lt;&lt; argv[3] &lt;&lt; &quot; !&quot; &lt;&lt; endl;
++		return EXIT_SUCCESS;
+ 	}
+ 
+-	return EXIT_SUCCESS;
++	return EXIT_FAILURE;
+ }
+
+Modified: trunk/UI/GTK2/src/WorkerThreads.cpp
+===================================================================
+--- trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-10 16:01:00 UTC (rev 56)
++++ trunk/UI/GTK2/src/WorkerThreads.cpp	2006-01-11 13:26:19 UTC (rev 57)
+@@ -1702,8 +1702,10 @@
+ 	if ((m_pMutex != NULL) &amp;&amp;
+ 		(m_pCondVar != NULL))
+ 	{
++		string url(string(&quot;<A HREF="file://">file://</A>&quot;) + fileName);
++
+ 		m_pMutex-&gt;lock();
+-		if (m_signalFileFound(fileName) == true)
++		if (m_signalFileFound(url) == true)
+ 		{
+ 			// Another file is needed right now
+ 			m_pMutex-&gt;unlock();
+
+Modified: trunk/UI/GTK2/src/importDialog.cc
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.cc	2006-01-10 16:01:00 UTC (rev 56)
++++ trunk/UI/GTK2/src/importDialog.cc	2006-01-11 13:26:19 UTC (rev 57)
+@@ -188,18 +188,22 @@
+ 	return true;
+ }
+ 
+-bool importDialog::on_import_file(const string &amp;fileName)
++bool importDialog::on_import_url(const string &amp;location)
+ {
+-	string mimeType = MIMEScanner::scanFile(fileName);
++	Url urlObj(location);
++	string mimeType(MIMEScanner::scanUrl(location));
+ 	bool askForAnotherFile = false;
+ 
++#ifdef DEBUG
++	cout &lt;&lt; &quot;importDialog::on_import_url: file type is &quot; &lt;&lt; mimeType &lt;&lt; endl;
++#endif
+ 	// Check the MIME type
+ 	if ((m_mimeTypesBlackList.find(mimeType) != m_mimeTypesBlackList.end()) ||
+ 		((m_mimeTypes.find(mimeType) == m_mimeTypes.end()) &amp;&amp;
+ 		(strncasecmp(mimeType.c_str(), &quot;text&quot;, 4) != 0)))
+ 	{
+ #ifdef DEBUG
+-		cout &lt;&lt; &quot;importDialog::on_import_file: filtering out type &quot; &lt;&lt; mimeType &lt;&lt; endl;
++		cout &lt;&lt; &quot;importDialog::on_import_url: filtering out&quot; &lt;&lt; endl;
+ #endif
+ 		// It's black-listed, or not authorized and not text
+ 		askForAnotherFile = true;
+@@ -208,26 +212,23 @@
+ 	{
+ 		XapianIndex index(PinotSettings::getInstance().m_indexLocation);
+ 		IndexingThread *pThread = NULL;
+-		string url(&quot;<A HREF="file://">file://</A>&quot; + fileName);
+ 		string title = locale_from_utf8(m_title);
+ 		unsigned int docId = 0;
+ 
+ 		if (index.isGood() == true)
+ 		{
+-			docId = index.hasDocument(url);
++			docId = index.hasDocument(location);
+ 		}
+ 
+ 		if (m_importDirectory == true)
+ 		{
+-			Url urlObj(url);
+-
+ 			if (title.empty() == false)
+ 			{
+ 				title += &quot; &quot;;
+ 			}
+ 			title += urlObj.getFile();
+ 		}
+-		DocumentInfo docInfo(title, url, mimeType, &quot;&quot;);
++		DocumentInfo docInfo(title, location, mimeType, &quot;&quot;);
+ 
+ 		if (docId &gt; 0)
+ 		{
+@@ -312,10 +313,17 @@
+ 
+ 	if (m_state.m_importing == false)
+ 	{
++		double fractionFilled = 1.0;
++
+ 		m_timeoutConnection.block();
+ 		m_timeoutConnection.disconnect();
+ 
+-		importProgressbar-&gt;set_fraction(1.0);
++		if (success == false)
++		{
++			// FIXME: there are better ways to show what happened :-)
++			fractionFilled = 0.0;
++		}
++		importProgressbar-&gt;set_fraction(fractionFilled);
+ 		importButton-&gt;set_sensitive(true);
+ 	}
+ }
+@@ -492,12 +500,20 @@
+ 		// Scan the directory and import all its files
+ 		m_pScannerThread = new DirectoryScannerThread(location,
+ 			maxDirLevel, &amp;m_state.m_scanMutex, &amp;m_state.m_scanCondVar);
+-		m_pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;importDialog::on_import_file));
++		m_pScannerThread-&gt;getFileFoundSignal().connect(SigC::slot(*this, &amp;importDialog::on_import_url));
+ 		start_thread(m_pScannerThread);
+ 	}
+ 	else
+ 	{
+-		on_import_file(location);
++		if (on_import_url(location) == true)
++		{
++			// It's asking for another file, so this one couldn't be indexed
++			m_timeoutConnection.block();
++			m_timeoutConnection.disconnect();
++
++			importProgressbar-&gt;set_fraction(0.0);
++			importButton-&gt;set_sensitive(true);
++		}
+ 	}
+ #ifdef DEBUG
+ 	cout &lt;&lt; &quot;importDialog::on_importButton_clicked: done&quot; &lt;&lt; endl;
+
+Modified: trunk/UI/GTK2/src/importDialog.hh
+===================================================================
+--- trunk/UI/GTK2/src/importDialog.hh	2006-01-10 16:01:00 UTC (rev 56)
++++ trunk/UI/GTK2/src/importDialog.hh	2006-01-11 13:26:19 UTC (rev 57)
+@@ -50,7 +50,7 @@
+ 	void signal_scanner(void);
+ 
+ 	bool on_activity_timeout(void);
+-	bool on_import_file(const std::string &amp;fileName);
++	bool on_import_url(const std::string &amp;location);
+ 	void on_thread_end(void);
+ 
+ private:
+
+Modified: trunk/Utils/MIMEScanner.cpp
+===================================================================
+--- trunk/Utils/MIMEScanner.cpp	2006-01-10 16:01:00 UTC (rev 56)
++++ trunk/Utils/MIMEScanner.cpp	2006-01-11 13:26:19 UTC (rev 57)
+@@ -26,7 +26,7 @@
+ {
+ }
+ 
+-string MIMEScanner::scanFileType(const std::string &amp;fileName)
++string MIMEScanner::scanFileType(const string &amp;fileName)
+ {
+ 	string::size_type fileExtPos = fileName.find_last_of(&quot;.&quot;);
+ 	if (fileExtPos != string::npos)
+@@ -108,9 +108,17 @@
+ /// Finds out the given URL's MIME type.
+ string MIMEScanner::scanUrl(const Url &amp;urlObj)
+ {
+-	string fileName = urlObj.getFile();
++	// Is it a local file ?
++	if (urlObj.getProtocol() == &quot;file&quot;)
++	{
++		string fileName = urlObj.getLocation();
++		fileName += &quot;/&quot;;
++		fileName += urlObj.getFile();
+ 
+-	string mimeType = scanFileType(fileName);
++		return scanFile(fileName);
++	}
++
++	string mimeType = scanFileType(urlObj.getFile());
+ 	if (mimeType.empty() == true)
+ 	{
+ 		mimeType = &quot;text/plain&quot;;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000055.html">[Pinot-svn] r56 - trunk/po
+</A></li>
+	<LI>Next message: <A HREF="000057.html">[Pinot-svn] r58 - in trunk: Collect Index UI/GTK2 UI/GTK2/src Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#56">[ date ]</a>
+              <a href="thread.html#56">[ thread ]</a>
+              <a href="subject.html#56">[ subject ]</a>
+              <a href="author.html#56">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

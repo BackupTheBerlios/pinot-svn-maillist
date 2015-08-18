@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1396 - trunk/Utils
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1396%20-%20trunk/Utils&In-Reply-To=%3C200811020612.mA26CMpl029747%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001386.html">
+   <LINK REL="Next"  HREF="001388.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1396 - trunk/Utils</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1396%20-%20trunk/Utils&In-Reply-To=%3C200811020612.mA26CMpl029747%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1396 - trunk/Utils">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sun Nov  2 07:12:22 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001386.html">[Pinot-svn] r1395 - in trunk: . SQL
+</A></li>
+        <LI>Next message: <A HREF="001388.html">[Pinot-svn] r1397 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1387">[ date ]</a>
+              <a href="thread.html#1387">[ thread ]</a>
+              <a href="subject.html#1387">[ subject ]</a>
+              <a href="author.html#1387">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-02 07:11:49 +0100 (Sun, 02 Nov 2008)
+New Revision: 1396
+
+Modified:
+   trunk/Utils/Document.cpp
+Log:
+In setDataFromFile(), look for extended attributes. At the moment, only the
+attribute user.mime_type is supported.
+
+
+Modified: trunk/Utils/Document.cpp
+===================================================================
+--- trunk/Utils/Document.cpp	2008-11-01 14:52:37 UTC (rev 1395)
++++ trunk/Utils/Document.cpp	2008-11-02 06:11:49 UTC (rev 1396)
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright 2005,2006 Fabrice Colin
++ *  Copyright 2005-2008 Fabrice Colin
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -16,12 +16,16 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
++#include &quot;config.h&quot;
+ #include &lt;stdlib.h&gt;
+ #include &lt;string.h&gt;
+ #include &lt;ctype.h&gt;
+ #include &lt;sys/types.h&gt;
+ #include &lt;sys/stat.h&gt;
+ #include &lt;sys/mman.h&gt;
++#ifdef HAVE_ATTR_XATTR
++#include &lt;attr/xattr.h&gt;
++#endif
+ #include &lt;unistd.h&gt;
+ #include &lt;fcntl.h&gt;
+ #include &lt;errno.h&gt;
+@@ -35,6 +39,26 @@
+ using std::endl;
+ using std::string;
+ 
++#ifdef HAVE_ATTR_XATTR
++static char *getXAttr(int fd, const string &amp;attrName)
++{
++	ssize_t attrSize = fgetxattr(fd, attrName.c_str(), NULL, 0);
++
++	if (attrSize &gt; 0)
++	{
++		char *pAttr = new char[attrSize];
++
++		if ((pAttr != NULL) &amp;&amp;
++			(fgetxattr(fd, attrName.c_str(), pAttr, attrSize) &gt; 0))
++		{
++			return pAttr;
++		}
++	}
++
++	return NULL;
++}
++#endif
++
+ Document::Document() :
+ 	DocumentInfo(),
+ 	m_pData(NULL),
+@@ -197,6 +221,66 @@
+ 		cerr &lt;&lt; &quot;Document::setDataFromFile: mapping failed&quot; &lt;&lt; endl;
+ 	}
+ 
++#ifdef HAVE_ATTR_XATTR
++	// Any extended attributes ?
++	ssize_t listSize = flistxattr(fd, NULL, 0);
++	if (listSize &gt; 0)
++	{
++		char *pList = new char[listSize];
++
++		if (flistxattr(fd, pList, listSize) &gt; 0)
++		{
++			set&lt;string&gt; labels;
++			string attrList(pList, listSize);
++			string::size_type startPos = 0, endPos = attrList.find('\0');
++
++			while (endPos != string::npos)
++			{
++				string attrName(attrList.substr(startPos, endPos - startPos));
++				char *pAttr = NULL;
++
++				// FIXME: support common attributes defined at
++				// <A HREF="http://www.freedesktop.org/wiki/CommonExtendedAttributes">http://www.freedesktop.org/wiki/CommonExtendedAttributes</A>
++				if (attrName == &quot;user.mime_type&quot;)
++				{
++					pAttr = getXAttr(fd, attrName);
++					if (pAttr != NULL)
++					{
++						// Set the MIME type
++						setType(pAttr);
++					}
++				}
++
++				if (pAttr != NULL)
++				{
++#ifdef DEBUG
++					cout &lt;&lt; &quot;Document::setDataFromFile: xattr &quot; &lt;&lt; attrName &lt;&lt; &quot;=&quot; &lt;&lt; pAttr &lt;&lt; endl;
++#endif
++					delete[] pAttr;
++				}
++
++				// Next
++				startPos = endPos + 1;
++				if (startPos &lt; listSize)
++				{
++					endPos = attrList.find('\0', startPos);
++				}
++				else
++				{
++					endPos = string::npos;
++				}
++			}
++
++			if (labels.empty() == false)
++			{
++				setLabels(labels);
++			}
++		}
++
++		delete[] pList;
++	}
++#endif
++
+ 	// Close the file
+ 	if (close(fd) == -1)
+ 	{
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001386.html">[Pinot-svn] r1395 - in trunk: . SQL
+</A></li>
+	<LI>Next message: <A HREF="001388.html">[Pinot-svn] r1397 - trunk/Collect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1387">[ date ]</a>
+              <a href="thread.html#1387">[ thread ]</a>
+              <a href="subject.html#1387">[ subject ]</a>
+              <a href="author.html#1387">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

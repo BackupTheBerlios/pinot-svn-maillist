@@ -1,0 +1,769 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1418 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1418%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811220553.mAM5ri7c024836%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001408.html">
+   <LINK REL="Next"  HREF="001410.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1418 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1418%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200811220553.mAM5ri7c024836%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1418 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Sat Nov 22 06:53:44 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001408.html">[Pinot-svn] r1417 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001410.html">[Pinot-svn] r1419 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1409">[ date ]</a>
+              <a href="thread.html#1409">[ thread ]</a>
+              <a href="subject.html#1409">[ subject ]</a>
+              <a href="author.html#1409">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-11-22 06:53:32 +0100 (Sat, 22 Nov 2008)
+New Revision: 1418
+
+Modified:
+   trunk/UI/GTK2/src/PinotSettings.cpp
+   trunk/UI/GTK2/src/PinotSettings.h
+Log:
+Split the configuration file in two, one part being updated by preferences, and
+the other by the UI.
+The load() method now handles everything, including engines and their editable
+values.
+
+
+Modified: trunk/UI/GTK2/src/PinotSettings.cpp
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.cpp	2008-11-19 14:40:31 UTC (rev 1417)
++++ trunk/UI/GTK2/src/PinotSettings.cpp	2008-11-22 05:53:32 UTC (rev 1418)
+@@ -138,7 +138,7 @@
+ 	m_daemonIndexLocation = directoryName;
+ 	m_daemonIndexLocation += &quot;/daemon&quot;;
+ 
+-	// This is not set in the configuration file
++	// This is not set in the settings files
+ 	char *pEnvVar = getenv(&quot;PINOT_MINIMUM_DISK_SPACE&quot;);
+ 	if ((pEnvVar != NULL) &amp;&amp;
+ 		(strlen(pEnvVar) &gt; 0))
+@@ -199,11 +199,19 @@
+ 	return directoryName;
+ }
+ 
+-string PinotSettings::getConfigurationFileName(void)
++string PinotSettings::getFileName(bool prefsOrUI)
+ {
+-	string configFileName = getConfigurationDirectory();
+-	configFileName += &quot;/config.xml&quot;;
++	string configFileName(getConfigurationDirectory());
+ 
++	if (prefsOrUI == true)
++	{
++		configFileName += &quot;/prefs.xml&quot;;
++	}
++	else
++	{
++		configFileName += &quot;/ui.xml&quot;;
++	}
++
+ 	return configFileName;
+ }
+ 
+@@ -303,19 +311,60 @@
+ 	m_labels.clear();
+ }
+ 
+-bool PinotSettings::loadGlobal(const string &amp;fileName)
++bool PinotSettings::load(LoadWhat what)
+ {
+-	if (loadConfiguration(fileName, true) == false)
++	string fileName;
++
++	if ((what == LOAD_ALL) ||
++		(what == LOAD_GLOBAL))
+ 	{
+-		return false;
++		fileName = string(SYSCONFDIR) + &quot;/pinot/globalconfig.xml&quot;;
++
++		if (loadConfiguration(fileName, true) == false)
++		{
++			return false;
++		}
++
++		if (what == LOAD_GLOBAL)
++		{
++			// Stop here
++			return true;
++		}
+ 	}
+ 
+-	return true;
+-}
++	// Load settings ?
++	if (m_firstRun == false)
++	{
++		if ((loadConfiguration(getFileName(true), false) == false) ||
++			(loadConfiguration(getFileName(false), false) == false))
++		{
++			fileName = getConfigurationDirectory() + &quot;/config.xml&quot;;
+ 
++			// We may have to migrate away from a pre-0.90 configuration
++			clear();
++			if (loadConfiguration(fileName, false) == true)
++			{
++				// Save settings now to the new format
++				save(SAVE_PREFS);
++				save(SAVE_CONFIG);
+ 
+-bool PinotSettings::load(void)
+-{
++				cout &lt;&lt; &quot;Migrated settings to 0.90 format&quot; &lt;&lt; endl;
++			}
++			else
++			{
++				m_firstRun = true;
++			}
++		}
++
++	}
++
++	if (what == LOAD_ALL)
++	{
++		// Load search engines
++		loadSearchEngines(string(PREFIX) + &quot;/share/pinot/engines&quot;);
++		loadSearchEngines(getConfigurationDirectory() + &quot;/engines&quot;);
++	}
++
+ 	map&lt;ModuleProperties, bool&gt; engines;
+ 	string currentUserChannelName(_(&quot;Current User&quot;));
+ 
+@@ -344,13 +393,6 @@
+ 		}
+ 	}
+ 
+-	// Load the configuration file
+-	string fileName = getConfigurationFileName();
+-	if (m_firstRun == false)
+-	{
+-		loadConfiguration(fileName, false);
+-	}
+-
+ 	// Internal indices
+ 	addIndex(_(&quot;My Web Pages&quot;), m_docsIndexLocation);
+ 	addIndex(_(&quot;My Documents&quot;), m_daemonIndexLocation);
+@@ -401,6 +443,77 @@
+ 	return true;
+ }
+ 
++bool PinotSettings::loadSearchEngines(const string &amp;directoryName)
++{
++	if (directoryName.empty() == true)
++	{
++		return true;
++	}
++
++	DIR *pDir = opendir(directoryName.c_str());
++	if (pDir == NULL)
++	{
++		return false;
++	}
++
++	// Iterate through this directory's entries
++	struct dirent *pDirEntry = readdir(pDir);
++	while (pDirEntry != NULL)
++	{
++		char *pEntryName = pDirEntry-&gt;d_name;
++		if (pEntryName != NULL)
++		{
++			struct stat fileStat;
++			string location = directoryName;
++			location += &quot;/&quot;;
++			location += pEntryName;
++
++			// Is that a file ?
++			if ((stat(location.c_str(), &amp;fileStat) == 0) &amp;&amp;
++				(S_ISREG(fileStat.st_mode)))
++			{
++				SearchPluginProperties properties;
++
++				if ((PluginWebEngine::getDetails(location, properties) == true) &amp;&amp;
++					(properties.m_name.empty() == false) &amp;&amp;
++					(properties.m_longName.empty() == false))
++				{
++					m_engineIds[1 &lt;&lt; m_engines.size()] = properties.m_longName;
++					if (properties.m_channel.empty() == true)
++					{
++						properties.m_channel = _(&quot;Unclassified&quot;);
++					}
++					// SearchPluginProperties derives ModuleProperties
++					m_engines.insert(properties);
++					m_engineChannels.insert(pair&lt;string, bool&gt;(properties.m_channel, true));
++
++					// Any editable parameters in this plugin ?
++					for (map&lt;string, string&gt;::const_iterator editableIter = properties.m_editableParameters.begin();
++						editableIter != properties.m_editableParameters.end(); ++editableIter)
++					{
++						// This may have been created when loading settings
++						if (m_editablePluginValues.find(editableIter-&gt;second) == m_editablePluginValues.end())
++						{
++							m_editablePluginValues[editableIter-&gt;second] = &quot;&quot;;
++						}
++					}
++#ifdef DEBUG
++					cout &lt;&lt; &quot;PinotSettings::loadSearchEngines: &quot; &lt;&lt; properties.m_name
++						&lt;&lt; &quot;, &quot; &lt;&lt; properties.m_longName &lt;&lt; &quot;, &quot; &lt;&lt; properties.m_option
++						&lt;&lt; &quot; has &quot; &lt;&lt; properties.m_editableParameters.size() &lt;&lt; &quot; editable values&quot; &lt;&lt; endl;
++#endif
++				}
++			}
++		}
++
++		// Next entry
++		pDirEntry = readdir(pDir);
++	}
++	closedir(pDir);
++
++	return true;
++}
++
+ bool PinotSettings::loadConfiguration(const std::string &amp;fileName, bool isGlobal)
+ {
+ 	struct stat fileStat;
+@@ -409,17 +522,13 @@
+ 	if ((stat(fileName.c_str(), &amp;fileStat) != 0) ||
+ 		(!S_ISREG(fileStat.st_mode)))
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't open configuration file &quot; &lt;&lt; fileName &lt;&lt; endl;
+-		if (isGlobal == false)
+-		{
+-			m_firstRun = true;
+-		}
++		cerr &lt;&lt; &quot;Couldn't open settings file &quot; &lt;&lt; fileName &lt;&lt; endl;
+ 		return false;
+ 	}
+ 
+ 	try
+ 	{
+-		// Parse the configuration file
++		// Parse the settings file
+ 		DomParser parser;
+ 		parser.set_substitute_entities(true);
+ 		parser.parse_file(fileName);
+@@ -561,7 +670,7 @@
+ 	}
+ 	catch (const std::exception&amp; ex)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't parse configuration file: &quot;
++		cerr &lt;&lt; &quot;Couldn't parse settings file: &quot;
+ 			&lt;&lt; ex.what() &lt;&lt; endl;
+ 		success = false;
+ 	}
+@@ -1226,11 +1335,7 @@
+ 		}
+ 	}
+ 
+-	map&lt;string, string&gt;::iterator valueIter = m_editablePluginValues.find(name);
+-	if (valueIter != m_editablePluginValues.end())
+-	{
+-		valueIter-&gt;second = value;
+-	}
++	m_editablePluginValues[name] = value;
+ 
+ 	return true;
+ }
+@@ -1304,79 +1409,18 @@
+ 	return true;
+ }
+ 
+-bool PinotSettings::loadSearchEngines(const string &amp;directoryName)
++bool PinotSettings::save(SaveWhat what)
+ {
+-	if (directoryName.empty() == true)
+-	{
+-		return true;
+-	}
++	Element *pRootElem = NULL;
++	Element *pElem = NULL;
++	char numStr[64];
++	bool prefsOrUI = true;
+ 
+-	DIR *pDir = opendir(directoryName.c_str());
+-	if (pDir == NULL)
++	if (what == SAVE_CONFIG)
+ 	{
+-		return false;
++		prefsOrUI = false;
+ 	}
+ 
+-	// Iterate through this directory's entries
+-	struct dirent *pDirEntry = readdir(pDir);
+-	while (pDirEntry != NULL)
+-	{
+-		char *pEntryName = pDirEntry-&gt;d_name;
+-		if (pEntryName != NULL)
+-		{
+-			struct stat fileStat;
+-			string location = directoryName;
+-			location += &quot;/&quot;;
+-			location += pEntryName;
+-
+-			// Is that a file ?
+-			if ((stat(location.c_str(), &amp;fileStat) == 0) &amp;&amp;
+-				(S_ISREG(fileStat.st_mode)))
+-			{
+-				SearchPluginProperties properties;
+-
+-				if ((PluginWebEngine::getDetails(location, properties) == true) &amp;&amp;
+-					(properties.m_name.empty() == false) &amp;&amp;
+-					(properties.m_longName.empty() == false))
+-				{
+-					m_engineIds[1 &lt;&lt; m_engines.size()] = properties.m_longName;
+-					if (properties.m_channel.empty() == true)
+-					{
+-						properties.m_channel = _(&quot;Unclassified&quot;);
+-					}
+-					// SearchPluginProperties derives ModuleProperties
+-					m_engines.insert(properties);
+-					m_engineChannels.insert(pair&lt;string, bool&gt;(properties.m_channel, true));
+-
+-					// Any editable parameters in this plugin ?
+-					for (map&lt;string, string&gt;::const_iterator editableIter = properties.m_editableParameters.begin();
+-						editableIter != properties.m_editableParameters.end(); ++editableIter)
+-					{
+-						m_editablePluginValues[editableIter-&gt;second] = &quot;&quot;;
+-					}
+-#ifdef DEBUG
+-					cout &lt;&lt; &quot;PinotSettings::loadSearchEngines: &quot; &lt;&lt; properties.m_name
+-						&lt;&lt; &quot;, &quot; &lt;&lt; properties.m_longName &lt;&lt; &quot;, &quot; &lt;&lt; properties.m_option
+-						&lt;&lt; &quot; has &quot; &lt;&lt; properties.m_editableParameters.size() &lt;&lt; &quot; editable values&quot; &lt;&lt; endl;
+-#endif
+-				}
+-			}
+-		}
+-
+-		// Next entry
+-		pDirEntry = readdir(pDir);
+-	}
+-	closedir(pDir);
+-
+-	return true;
+-}
+-
+-bool PinotSettings::save(void)
+-{
+-	Element *pRootElem = NULL;
+-	Element *pElem = NULL;
+-	char numStr[64];
+-
+ 	try
+ 	{
+ 		xmlpp::Document doc(&quot;1.0&quot;);
+@@ -1389,177 +1433,183 @@
+ 		}
+ 		// ...with text children nodes
+ 		addChildElement(pRootElem, &quot;version&quot;, VERSION);
+-		addChildElement(pRootElem, &quot;warnaboutversion&quot;, (m_warnAboutVersion ? &quot;YES&quot; : &quot;NO&quot;));
+-		addChildElement(pRootElem, &quot;backend&quot;, m_defaultBackend);
+-		addChildElement(pRootElem, &quot;googleapikey&quot;, m_googleAPIKey);
+-		// User interface position and size
+-		pElem = pRootElem-&gt;add_child(&quot;ui&quot;);
+-		if (pElem == NULL)
++		if (what == SAVE_CONFIG)
+ 		{
+-			return false;
+-		}
+-		snprintf(numStr, 64, &quot;%d&quot;, m_xPos);
+-		addChildElement(pElem, &quot;xpos&quot;, numStr);
+-		snprintf(numStr, 64, &quot;%d&quot;, m_yPos);
+-		addChildElement(pElem, &quot;ypos&quot;, numStr);
+-		snprintf(numStr, 64, &quot;%d&quot;, m_width);
+-		addChildElement(pElem, &quot;width&quot;, numStr);
+-		snprintf(numStr, 64, &quot;%d&quot;, m_height);
+-		addChildElement(pElem, &quot;height&quot;, numStr);
+-		snprintf(numStr, 64, &quot;%d&quot;, m_panePos);
+-		addChildElement(pElem, &quot;panepos&quot;, numStr);
+-		addChildElement(pElem, &quot;expandqueries&quot;, (m_expandQueries ? &quot;YES&quot; : &quot;NO&quot;));
+-		addChildElement(pElem, &quot;showengines&quot;, (m_showEngines ? &quot;YES&quot; : &quot;NO&quot;));
+-		// User-defined indexes
+-		for (map&lt;string, string&gt;::iterator indexIter = m_indexNames.begin(); indexIter != m_indexNames.end(); ++indexIter)
+-		{
+-			string indexName = indexIter-&gt;first;
+-
+-			if (isInternalIndex(indexName) == true)
+-			{
+-				continue;
+-			}
+-
+-			pElem = pRootElem-&gt;add_child(&quot;extraindex&quot;);
++			addChildElement(pRootElem, &quot;warnaboutversion&quot;, (m_warnAboutVersion ? &quot;YES&quot; : &quot;NO&quot;));
++			addChildElement(pRootElem, &quot;backend&quot;, m_defaultBackend);
++			addChildElement(pRootElem, &quot;googleapikey&quot;, m_googleAPIKey);
++			// User interface position and size
++			pElem = pRootElem-&gt;add_child(&quot;ui&quot;);
+ 			if (pElem == NULL)
+ 			{
+ 				return false;
+ 			}
+-			addChildElement(pElem, &quot;name&quot;, indexIter-&gt;first);
+-			addChildElement(pElem, &quot;location&quot;, indexIter-&gt;second);
+-		}
+-		// Engine channels
+-		for (map&lt;string, bool&gt;::iterator channelIter = m_engineChannels.begin();
+-			channelIter != m_engineChannels.end(); ++channelIter)
+-		{
+-			// Only save those whose group was collapsed
+-			if (channelIter-&gt;second == false)
++			snprintf(numStr, 64, &quot;%d&quot;, m_xPos);
++			addChildElement(pElem, &quot;xpos&quot;, numStr);
++			snprintf(numStr, 64, &quot;%d&quot;, m_yPos);
++			addChildElement(pElem, &quot;ypos&quot;, numStr);
++			snprintf(numStr, 64, &quot;%d&quot;, m_width);
++			addChildElement(pElem, &quot;width&quot;, numStr);
++			snprintf(numStr, 64, &quot;%d&quot;, m_height);
++			addChildElement(pElem, &quot;height&quot;, numStr);
++			snprintf(numStr, 64, &quot;%d&quot;, m_panePos);
++			addChildElement(pElem, &quot;panepos&quot;, numStr);
++			addChildElement(pElem, &quot;expandqueries&quot;, (m_expandQueries ? &quot;YES&quot; : &quot;NO&quot;));
++			addChildElement(pElem, &quot;showengines&quot;, (m_showEngines ? &quot;YES&quot; : &quot;NO&quot;));
++			// User-defined indexes
++			for (map&lt;string, string&gt;::iterator indexIter = m_indexNames.begin(); indexIter != m_indexNames.end(); ++indexIter)
+ 			{
+-				pElem = pRootElem-&gt;add_child(&quot;channel&quot;);
++				string indexName = indexIter-&gt;first;
++
++				if (isInternalIndex(indexName) == true)
++				{
++					continue;
++				}
++
++				pElem = pRootElem-&gt;add_child(&quot;extraindex&quot;);
+ 				if (pElem == NULL)
+ 				{
+ 					return false;
+ 				}
+-				addChildElement(pElem, &quot;name&quot;, channelIter-&gt;first);
++				addChildElement(pElem, &quot;name&quot;, indexIter-&gt;first);
++				addChildElement(pElem, &quot;location&quot;, indexIter-&gt;second);
+ 			}
+-		}
+-		// User-defined queries
+-		for (map&lt;string, QueryProperties&gt;::iterator queryIter = m_queries.begin();
+-			queryIter != m_queries.end(); ++queryIter)
+-		{
+-			pElem = pRootElem-&gt;add_child(&quot;storedquery&quot;);
+-			if (pElem == NULL)
++			// Engine channels
++			for (map&lt;string, bool&gt;::iterator channelIter = m_engineChannels.begin();
++				channelIter != m_engineChannels.end(); ++channelIter)
+ 			{
+-				return false;
++				// Only save those whose group was collapsed
++				if (channelIter-&gt;second == false)
++				{
++					pElem = pRootElem-&gt;add_child(&quot;channel&quot;);
++					if (pElem == NULL)
++					{
++						return false;
++					}
++					addChildElement(pElem, &quot;name&quot;, channelIter-&gt;first);
++				}
+ 			}
++			// User-defined queries
++			for (map&lt;string, QueryProperties&gt;::iterator queryIter = m_queries.begin();
++				queryIter != m_queries.end(); ++queryIter)
++			{
++				pElem = pRootElem-&gt;add_child(&quot;storedquery&quot;);
++				if (pElem == NULL)
++				{
++					return false;
++				}
+ 
+-			addChildElement(pElem, &quot;name&quot;, queryIter-&gt;first);
+-			addChildElement(pElem, &quot;sortorder&quot;, (queryIter-&gt;second.getSortOrder() == QueryProperties::DATE ? &quot;DATE&quot; : &quot;RELEVANCE&quot;));
+-			addChildElement(pElem, &quot;text&quot;, queryIter-&gt;second.getFreeQuery());
+-			addChildElement(pElem, &quot;stemlanguage&quot;, Languages::toEnglish(queryIter-&gt;second.getStemmingLanguage()));
+-			snprintf(numStr, 64, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
+-			addChildElement(pElem, &quot;maxresults&quot;, numStr);
+-			QueryProperties::IndexWhat indexResults = queryIter-&gt;second.getIndexResults();
+-			if (indexResults == QueryProperties::NEW_RESULTS)
+-			{
+-				addChildElement(pElem, &quot;index&quot;, &quot;NEW&quot;);
++				addChildElement(pElem, &quot;name&quot;, queryIter-&gt;first);
++				addChildElement(pElem, &quot;sortorder&quot;, (queryIter-&gt;second.getSortOrder() == QueryProperties::DATE ? &quot;DATE&quot; : &quot;RELEVANCE&quot;));
++				addChildElement(pElem, &quot;text&quot;, queryIter-&gt;second.getFreeQuery());
++				addChildElement(pElem, &quot;stemlanguage&quot;, Languages::toEnglish(queryIter-&gt;second.getStemmingLanguage()));
++				snprintf(numStr, 64, &quot;%u&quot;, queryIter-&gt;second.getMaximumResultsCount());
++				addChildElement(pElem, &quot;maxresults&quot;, numStr);
++				QueryProperties::IndexWhat indexResults = queryIter-&gt;second.getIndexResults();
++				if (indexResults == QueryProperties::NEW_RESULTS)
++				{
++					addChildElement(pElem, &quot;index&quot;, &quot;NEW&quot;);
++				}
++				else if (indexResults == QueryProperties::ALL_RESULTS)
++				{
++					addChildElement(pElem, &quot;index&quot;, &quot;ALL&quot;);
++				}
++				else
++				{
++					addChildElement(pElem, &quot;index&quot;, &quot;NONE&quot;);
++				}
++				addChildElement(pElem, &quot;label&quot;, queryIter-&gt;second.getLabelName());
++				addChildElement(pElem, &quot;modified&quot;, (queryIter-&gt;second.getModified() ? &quot;YES&quot; : &quot;NO&quot;));
+ 			}
+-			else if (indexResults == QueryProperties::ALL_RESULTS)
++		}
++		if (what == SAVE_PREFS)
++		{
++			// Labels
++			for (set&lt;string&gt;::iterator labelIter = m_labels.begin(); labelIter != m_labels.end(); ++labelIter)
+ 			{
+-				addChildElement(pElem, &quot;index&quot;, &quot;ALL&quot;);
++				pElem = pRootElem-&gt;add_child(&quot;label&quot;);
++				if (pElem == NULL)
++				{
++					return false;
++				}
++				addChildElement(pElem, &quot;name&quot;, *labelIter);
+ 			}
+-			else
+-			{
+-				addChildElement(pElem, &quot;index&quot;, &quot;NONE&quot;);
+-			}
+-			addChildElement(pElem, &quot;label&quot;, queryIter-&gt;second.getLabelName());
+-			addChildElement(pElem, &quot;modified&quot;, (queryIter-&gt;second.getModified() ? &quot;YES&quot; : &quot;NO&quot;));
+-		}
+-		// Labels
+-		for (set&lt;string&gt;::iterator labelIter = m_labels.begin(); labelIter != m_labels.end(); ++labelIter)
+-		{
+-			pElem = pRootElem-&gt;add_child(&quot;label&quot;);
++			// Ignore robots directives
++			addChildElement(pRootElem, &quot;robots&quot;, (m_ignoreRobotsDirectives ? &quot;IGNORE&quot; : &quot;OBEY&quot;));
++			// Enable terms suggestion
++			addChildElement(pRootElem, &quot;suggestterms&quot;, (m_suggestQueryTerms ? &quot;YES&quot; : &quot;NO&quot;));
++			// New results colour
++			pElem = pRootElem-&gt;add_child(&quot;newresults&quot;);
+ 			if (pElem == NULL)
+ 			{
+ 				return false;
+ 			}
+-			addChildElement(pElem, &quot;name&quot;, *labelIter);
+-		}
+-		// Ignore robots directives
+-		addChildElement(pRootElem, &quot;robots&quot;, (m_ignoreRobotsDirectives ? &quot;IGNORE&quot; : &quot;OBEY&quot;));
+-		// Enable terms suggestion
+-		addChildElement(pRootElem, &quot;suggestterms&quot;, (m_suggestQueryTerms ? &quot;YES&quot; : &quot;NO&quot;));
+-		// New results colour
+-		pElem = pRootElem-&gt;add_child(&quot;newresults&quot;);
+-		if (pElem == NULL)
+-		{
+-			return false;
+-		}
+-		snprintf(numStr, 64, &quot;%u&quot;, m_newResultsColourRed);
+-		addChildElement(pElem, &quot;red&quot;, numStr);
+-		snprintf(numStr, 64, &quot;%u&quot;, m_newResultsColourGreen);
+-		addChildElement(pElem, &quot;green&quot;, numStr);
+-		snprintf(numStr, 64, &quot;%u&quot;, m_newResultsColourBlue);
+-		addChildElement(pElem, &quot;blue&quot;, numStr);
+-		// Proxy
+-		pElem = pRootElem-&gt;add_child(&quot;proxy&quot;);
+-		if (pElem == NULL)
+-		{
+-			return false;
+-		}
+-		addChildElement(pElem, &quot;address&quot;, m_proxyAddress);
+-		snprintf(numStr, 64, &quot;%u&quot;, m_proxyPort);
+-		addChildElement(pElem, &quot;port&quot;, numStr);
+-		addChildElement(pElem, &quot;type&quot;, m_proxyType);
+-		addChildElement(pElem, &quot;enable&quot;, (m_proxyEnabled ? &quot;YES&quot; : &quot;NO&quot;));
+-		// Locations to index 
+-		for (set&lt;IndexableLocation&gt;::iterator locationIter = m_indexableLocations.begin();
+-			locationIter != m_indexableLocations.end(); ++locationIter)
+-		{
+-			pElem = pRootElem-&gt;add_child(&quot;indexable&quot;);
++			snprintf(numStr, 64, &quot;%u&quot;, m_newResultsColourRed);
++			addChildElement(pElem, &quot;red&quot;, numStr);
++			snprintf(numStr, 64, &quot;%u&quot;, m_newResultsColourGreen);
++			addChildElement(pElem, &quot;green&quot;, numStr);
++			snprintf(numStr, 64, &quot;%u&quot;, m_newResultsColourBlue);
++			addChildElement(pElem, &quot;blue&quot;, numStr);
++			// Proxy
++			pElem = pRootElem-&gt;add_child(&quot;proxy&quot;);
+ 			if (pElem == NULL)
+ 			{
+ 				return false;
+ 			}
+-			addChildElement(pElem, &quot;name&quot;, locationIter-&gt;m_name);
+-			addChildElement(pElem, &quot;monitor&quot;, (locationIter-&gt;m_monitor ? &quot;YES&quot; : &quot;NO&quot;));
+-		}
+-		// File patterns
+-		pElem = pRootElem-&gt;add_child(&quot;patterns&quot;);
+-		if (pElem == NULL)
+-		{
+-			return false;
+-		}
+-		for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsList.begin();
+-			patternIter != m_filePatternsList.end() ; ++patternIter)
+-		{
+-			addChildElement(pElem, &quot;pattern&quot;, *patternIter);
+-		}
+-		addChildElement(pElem, &quot;forbid&quot;, (m_isBlackList ? &quot;YES&quot; : &quot;NO&quot;));
+-		// Values of editable plugin parameters
+-		for (map&lt;string, string&gt;::iterator editableIter = m_editablePluginValues.begin();
+-			editableIter != m_editablePluginValues.end() ; ++editableIter)
+-		{
+-			if (editableIter-&gt;second.empty() == true)
++			addChildElement(pElem, &quot;address&quot;, m_proxyAddress);
++			snprintf(numStr, 64, &quot;%u&quot;, m_proxyPort);
++			addChildElement(pElem, &quot;port&quot;, numStr);
++			addChildElement(pElem, &quot;type&quot;, m_proxyType);
++			addChildElement(pElem, &quot;enable&quot;, (m_proxyEnabled ? &quot;YES&quot; : &quot;NO&quot;));
++			// Locations to index 
++			for (set&lt;IndexableLocation&gt;::iterator locationIter = m_indexableLocations.begin();
++				locationIter != m_indexableLocations.end(); ++locationIter)
+ 			{
+-				continue;
++				pElem = pRootElem-&gt;add_child(&quot;indexable&quot;);
++				if (pElem == NULL)
++				{
++					return false;
++				}
++				addChildElement(pElem, &quot;name&quot;, locationIter-&gt;m_name);
++				addChildElement(pElem, &quot;monitor&quot;, (locationIter-&gt;m_monitor ? &quot;YES&quot; : &quot;NO&quot;));
+ 			}
+-
+-			pElem = pRootElem-&gt;add_child(&quot;pluginparameters&quot;);
++			// File patterns
++			pElem = pRootElem-&gt;add_child(&quot;patterns&quot;);
+ 			if (pElem == NULL)
+ 			{
+ 				return false;
+ 			}
+-			addChildElement(pElem, &quot;name&quot;, editableIter-&gt;first);
+-			addChildElement(pElem, &quot;value&quot;, editableIter-&gt;second);
++			for (set&lt;ustring&gt;::iterator patternIter = m_filePatternsList.begin();
++				patternIter != m_filePatternsList.end() ; ++patternIter)
++			{
++				addChildElement(pElem, &quot;pattern&quot;, *patternIter);
++			}
++			addChildElement(pElem, &quot;forbid&quot;, (m_isBlackList ? &quot;YES&quot; : &quot;NO&quot;));
++			// Values of editable plugin parameters
++			for (map&lt;string, string&gt;::iterator editableIter = m_editablePluginValues.begin();
++				editableIter != m_editablePluginValues.end() ; ++editableIter)
++			{
++				if (editableIter-&gt;second.empty() == true)
++				{
++					continue;
++				}
++
++				pElem = pRootElem-&gt;add_child(&quot;pluginparameters&quot;);
++				if (pElem == NULL)
++				{
++					return false;
++				}
++				addChildElement(pElem, &quot;name&quot;, editableIter-&gt;first);
++				addChildElement(pElem, &quot;value&quot;, editableIter-&gt;second);
++			}
+ 		}
+ 
+ 		// Save to file
+-		doc.write_to_file_formatted(getConfigurationFileName());
++		doc.write_to_file_formatted(getFileName(prefsOrUI));
+ 	}
+ 	catch (const std::exception&amp; ex)
+ 	{
+-		cerr &lt;&lt; &quot;Couldn't save configuration file: &quot;
++		cerr &lt;&lt; &quot;Couldn't save settings file: &quot;
+ 			&lt;&lt; ex.what() &lt;&lt; endl;
+ 		return false;
+ 	}
+
+Modified: trunk/UI/GTK2/src/PinotSettings.h
+===================================================================
+--- trunk/UI/GTK2/src/PinotSettings.h	2008-11-19 14:40:31 UTC (rev 1417)
++++ trunk/UI/GTK2/src/PinotSettings.h	2008-11-22 05:53:32 UTC (rev 1418)
+@@ -37,6 +37,10 @@
+ 	public:
+ 		~PinotSettings();
+ 
++		typedef enum { LOAD_ALL = 0, LOAD_GLOBAL, LOAD_LOCAL } LoadWhat;
++
++		typedef enum { SAVE_PREFS = 0, SAVE_CONFIG } SaveWhat;
++
+ 		static PinotSettings &amp;getInstance(void);
+ 
+ 		static bool enableClientMode(bool enable);
+@@ -45,7 +49,7 @@
+ 
+ 		static std::string getConfigurationDirectory(void);
+ 
+-		static std::string getConfigurationFileName(void);
++		static std::string getFileName(bool prefsOrUI);
+ 
+ 		static std::string getCurrentUserName(void);
+ 
+@@ -57,14 +61,10 @@
+ 
+ 		void clear(void);
+ 
+-		bool loadGlobal(const std::string &amp;fileName);
++		bool load(LoadWhat what);
+ 
+-		bool load(void);
++		bool save(SaveWhat what);
+ 
+-		bool loadSearchEngines(const std::string &amp;directoryName);
+-
+-		bool save(void);
+-
+ 		/// Returns the indexes map, keyed by name.
+ 		const std::map&lt;std::string, std::string&gt; &amp;getIndexes(void) const;
+ 
+@@ -214,6 +214,7 @@
+ 		std::map&lt;std::string, QueryProperties&gt; m_queries;
+ 
+ 		PinotSettings();
++		bool loadSearchEngines(const std::string &amp;directoryName);
+ 		bool loadConfiguration(const std::string &amp;fileName, bool isGlobal);
+ 		bool loadUi(const xmlpp::Element *pElem);
+ 		bool loadIndexes(const xmlpp::Element *pElem);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001408.html">[Pinot-svn] r1417 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001410.html">[Pinot-svn] r1419 - trunk/UI/GTK2/src
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1409">[ date ]</a>
+              <a href="thread.html#1409">[ thread ]</a>
+              <a href="subject.html#1409">[ subject ]</a>
+              <a href="author.html#1409">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,285 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Pinot-svn] r1453 - trunk/UI/GTK2/src
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/pinot-svn/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1453%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200812291801.mBTI1w2m031332%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001442.html">
+   <LINK REL="Next"  HREF="001444.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Pinot-svn] r1453 - trunk/UI/GTK2/src</H1>
+    <B>fabricecolin at mail.berlios.de</B> 
+    <A HREF="mailto:pinot-svn%40lists.berlios.de?Subject=Re%3A%20%5BPinot-svn%5D%20r1453%20-%20trunk/UI/GTK2/src&In-Reply-To=%3C200812291801.mBTI1w2m031332%40sheep.berlios.de%3E"
+       TITLE="[Pinot-svn] r1453 - trunk/UI/GTK2/src">fabricecolin at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec 29 19:01:58 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001442.html">[Pinot-svn] r1452 - trunk/UI/GTK2/src
+</A></li>
+        <LI>Next message: <A HREF="001444.html">[Pinot-svn] r1454 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1443">[ date ]</a>
+              <a href="thread.html#1443">[ thread ]</a>
+              <a href="subject.html#1443">[ subject ]</a>
+              <a href="author.html#1443">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: fabricecolin
+Date: 2008-12-29 19:01:01 +0100 (Mon, 29 Dec 2008)
+New Revision: 1453
+
+Modified:
+   trunk/UI/GTK2/src/ResultsTree.cpp
+   trunk/UI/GTK2/src/ResultsTree.h
+Log:
+Export also works in flat mode, ie when browsing an index.
+
+
+Modified: trunk/UI/GTK2/src/ResultsTree.cpp
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.cpp	2008-12-29 17:59:08 UTC (rev 1452)
++++ trunk/UI/GTK2/src/ResultsTree.cpp	2008-12-29 18:01:01 UTC (rev 1453)
+@@ -27,14 +27,13 @@
+ #include &lt;gtkmm/stock.h&gt;
+ #include &lt;gtkmm/cellrendererprogress.h&gt;
+ 
++#include &quot;config.h&quot;
++#include &quot;NLS.h&quot;
+ #include &quot;StringManip.h&quot;
+ #include &quot;TimeConverter.h&quot;
+ #include &quot;Url.h&quot;
+ #include &quot;QueryHistory.h&quot;
+ #include &quot;ViewHistory.h&quot;
+-#include &quot;ResultsExporter.h&quot;
+-#include &quot;config.h&quot;
+-#include &quot;NLS.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ #include &quot;PinotUtils.h&quot;
+ #include &quot;ResultsTree.h&quot;
+@@ -1259,10 +1258,10 @@
+ //
+ // Exports results to a file.
+ //
+-void ResultsTree::exportResults(const string &amp;fileName, bool csvFormat)
++void ResultsTree::exportResults(const string &amp;fileName,
++	const string &amp;queryName, bool csvFormat)
+ {
+-	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
+-	QueryProperties queryProps(m_treeName, &quot;&quot;);
++	QueryProperties queryProps(queryName, &quot;&quot;);
+ 	ResultsExporter *pExporter = NULL;
+ 	unsigned int maxResultsCount = 0;
+ 
+@@ -1284,7 +1283,11 @@
+ 
+ 	// How many results are there altogether ?
+ 	TreeModel::Children children = m_refStore-&gt;children();
+-	for (TreeModel::Children::iterator iter = children.begin();
++	if (m_groupMode == FLAT)
++	{
++		maxResultsCount = children.size();
++	}
++	else for (TreeModel::Children::iterator iter = children.begin();
+ 		iter != children.end(); ++iter)
+ 	{
+ 		TreeModel::Row row = *iter;
+@@ -1299,11 +1302,18 @@
+ 		TreeModel::Children groupChildren = iter-&gt;children();
+ 		maxResultsCount += groupChildren.size();
+ 	}
++#ifdef DEBUG
++	cout &lt;&lt; &quot;ResultsTree::exportResults: &quot; &lt;&lt; maxResultsCount &lt;&lt; &quot; results to export&quot; &lt;&lt; endl;
++#endif
+ 
+ 	// Start
+ 	pExporter-&gt;exportStart(&quot;&quot;, maxResultsCount);
+ 
+-	for (TreeModel::Children::iterator iter = children.begin();
++	if (m_groupMode == FLAT)
++	{
++		exportResults(children, queryName, pExporter);
++	}
++	else for (TreeModel::Children::iterator iter = children.begin();
+ 		iter != children.end(); ++iter)
+ 	{
+ 		TreeModel::Row row = *iter;
+@@ -1316,51 +1326,76 @@
+ 		}
+ 
+ 		TreeModel::Children groupChildren = iter-&gt;children();
+-		for (TreeModel::Children::iterator childIter = groupChildren.begin();
+-			childIter != groupChildren.end(); ++childIter)
++		exportResults(groupChildren, queryName, pExporter);
++	}
++
++	// End
++	pExporter-&gt;exportEnd();
++
++	delete pExporter;
++}
++
++//
++// Exports results to a file.
++//
++void ResultsTree::exportResults(TreeModel::Children &amp;groupChildren,
++	const string &amp;queryName, ResultsExporter *pExporter)
++{
++	QueryHistory queryHistory(m_settings.getHistoryDatabaseName());
++
++	for (TreeModel::Children::iterator childIter = groupChildren.begin();
++		childIter != groupChildren.end(); ++childIter)
++	{
++		TreeModel::Row childRow = *childIter;
++		ResultsModelColumns::RowType type = childRow[m_resultsColumns.m_resultType];
++
++		if (type == ResultsModelColumns::ROW_OTHER)
+ 		{
+-			set&lt;string&gt; engineNames, indexNames;
+-			TreeModel::Row childRow = *childIter;
+-			DocumentInfo result;
+-			string engineName, serial(from_utf8(childRow[m_resultsColumns.m_serial]));
+-			unsigned int engineIds = childRow[m_resultsColumns.m_engines];
+-			unsigned int indexIds = childRow[m_resultsColumns.m_indexes];
++			continue;
++		}
+ 
++		set&lt;string&gt; engineNames, indexNames;
++		DocumentInfo result;
++		string engineName, serial(from_utf8(childRow[m_resultsColumns.m_serial]));
++		unsigned int engineIds = childRow[m_resultsColumns.m_engines];
++		unsigned int indexIds = childRow[m_resultsColumns.m_indexes];
++
+ #ifdef DEBUG
+-			cout &lt;&lt; &quot;ResultsTree::exportResults: engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
++		cout &lt;&lt; &quot;ResultsTree::exportResults: engines &quot; &lt;&lt; engineIds &lt;&lt; &quot;, indexes &quot; &lt;&lt; indexIds &lt;&lt; endl;
+ #endif
+-			result.deserialize(serial);
+-			m_settings.getEngineNames(engineIds, engineNames);
+-			if (engineNames.empty() == false)
++		result.deserialize(serial);
++		m_settings.getEngineNames(engineIds, engineNames);
++		if (engineNames.empty() == false)
++		{
++			// Get the first engine this result was obtained from
++			engineName = *engineNames.begin();
++			if (engineName == m_settings.m_defaultBackend)
+ 			{
+-				// Get the first engine this result was obtained from
+-				engineName = *engineNames.begin();
+-				if (engineName == m_settings.m_defaultBackend)
++				m_settings.getIndexNames(indexIds, indexNames);
++				if (indexNames.empty() == false)
+ 				{
+-					m_settings.getIndexNames(indexIds, indexNames);
+-					if (indexNames.empty() == false)
+-					{
+-						// Use the name of the first index as engine name
+-						engineName = (*indexNames.begin());
+-					}
++					// Use the name of the first index as engine name
++					engineName = (*indexNames.begin());
+ 				}
+ 			}
+-			if (m_groupMode != FLAT)
+-			{
+-				result.setExtract(queryHistory.getItemExtract(from_utf8(m_treeName),
+-					engineName, result.getLocation()));
+-			}
+-			result.setTimestamp(from_utf8(childRow[m_resultsColumns.m_timestamp]));
++		}
++		if (m_groupMode != FLAT)
++		{
++			result.setExtract(queryHistory.getItemExtract(from_utf8(queryName),
++				engineName, result.getLocation()));
++		}
++		else
++		{
++			engineName = m_treeName;
++		}
++		result.setTimestamp(from_utf8(childRow[m_resultsColumns.m_timestamp]));
+ 
+-			// Export this
++		// Export this
++		if (pExporter != NULL)
++		{
+ 			pExporter-&gt;exportResult(engineName, result);
+ 		}
+ 	}
+-
+-	// End
+-	pExporter-&gt;exportEnd();
+-
+-	delete pExporter;
+ }
+ 
+ //
+
+Modified: trunk/UI/GTK2/src/ResultsTree.h
+===================================================================
+--- trunk/UI/GTK2/src/ResultsTree.h	2008-12-29 17:59:08 UTC (rev 1452)
++++ trunk/UI/GTK2/src/ResultsTree.h	2008-12-29 18:01:01 UTC (rev 1453)
+@@ -35,6 +35,7 @@
+ #include &lt;gtkmm/treeview.h&gt;
+ #include &lt;gtkmm/treeselection.h&gt;
+ 
++#include &quot;ResultsExporter.h&quot;
+ #include &quot;ModelColumns.h&quot;
+ #include &quot;PinotSettings.h&quot;
+ 
+@@ -103,7 +104,8 @@
+ 		void showExtract(bool showExtract = true);
+ 
+ 		/// Exports results to a file.
+-		void exportResults(const std::string &amp;fileName, bool csvFormat);
++		void exportResults(const std::string &amp;fileName,
++			const string &amp;queryName, bool csvFormat);
+ 
+ 		/// Returns the changed selection signal.
+ 		sigc::signal1&lt;void, Glib::ustring&gt;&amp; getSelectionChangedSignal(void);
+@@ -174,6 +176,10 @@
+ 		/// Retrieves the extract to show for the given row.
+ 		Glib::ustring findResultsExtract(const Gtk::TreeModel::Row &amp;row);
+ 
++		/// Exports results to a file.
++		void exportResults(Gtk::TreeModel::Children &amp;groupChildren,
++			const string &amp;queryName, ResultsExporter *pExporter);
++
+ 	private:
+ 		ResultsTree(const ResultsTree &amp;other);
+ 		ResultsTree &amp;operator=(const ResultsTree &amp;other);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001442.html">[Pinot-svn] r1452 - trunk/UI/GTK2/src
+</A></li>
+	<LI>Next message: <A HREF="001444.html">[Pinot-svn] r1454 - trunk/Utils
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1443">[ date ]</a>
+              <a href="thread.html#1443">[ thread ]</a>
+              <a href="subject.html#1443">[ subject ]</a>
+              <a href="author.html#1443">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/pinot-svn">More information about the Pinot-svn
+mailing list</a><br>
+</body></html>
